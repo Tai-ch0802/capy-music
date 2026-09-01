@@ -17,6 +17,10 @@ echo "① 取兩首 catalog 歌曲當測試素材"
 ids=($(curl -sS "${H[@]}" \
   "${API}/v1/catalog/tw/search?types=songs&limit=2&term=$(jq -rn --arg s '五月天' '$s|@uri')" \
   | jq -r '.results.songs.data[].id'))
+if [ "${#ids[@]}" -lt 2 ]; then
+  echo "搜尋結果不足兩首(得到 ${#ids[@]} 首),換個搜尋詞再跑" >&2
+  exit 1
+fi
 echo "  song ids: ${ids[*]}"
 
 NAME="capy-p0-2-$(date +%s)"
