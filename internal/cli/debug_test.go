@@ -111,11 +111,7 @@ func TestDebugAppleAuthStoresMUT(t *testing.T) {
 				"state":            {string(m[1])},
 				"music_user_token": {"FAKE_MUT"},
 			}); err != nil {
-				// 這通 POST 觸發 apple.AuthorizeMUT 內部 Deliver → Wait 解鎖 → return →
-				// defer lb.Close(),可能搶在這個 goroutine 讀完 204 回應前砍斷連線
-				// (client 端看到 EOF)。伺服器其實已處理完 POST;真沒送達的話 cmd.Execute()
-				// 會因逾時而回錯,下面的斷言會抓到,故此處只記錄不判失敗。
-				t.Logf("POST /apple/callback 回應讀取失敗(預期中的 Close 競態):%v", err)
+				t.Error(err)
 			}
 		}()
 		return nil

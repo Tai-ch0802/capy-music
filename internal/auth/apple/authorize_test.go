@@ -54,12 +54,7 @@ func fakeBrowserPoster(t *testing.T, mut string, wantDT string) func(string) err
 				"music_user_token": {mut},
 			})
 			if err != nil {
-				// 這通 POST 本身觸發 lb.Deliver → AuthorizeMUT 的 Wait 解鎖 → return →
-				// defer lb.Close()。Close 可能搶在這個 goroutine 讀完 204 回應前砍斷連線,
-				// client 端會看到 EOF/connection reset——伺服器其實已收到並處理完 POST。
-				// 真的沒送達的話 AuthorizeMUT 會逾時,主 goroutine 的斷言會抓到,故此處
-				// 只記錄不判失敗,避免這個良性競態把測試變 flaky。
-				t.Logf("POST /apple/callback 回應讀取失敗(預期中的 Close 競態):%v", err)
+				t.Error(err)
 			}
 		}()
 		return nil

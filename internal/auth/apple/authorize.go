@@ -47,6 +47,7 @@ func AuthorizeMUT(ctx context.Context, devToken string, openBrowser func(string)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+		_ = http.NewResponseController(w).Flush() // Deliver 會解鎖 Wait→Close;先把回應送出去
 		lb.Deliver(url.Values{"music_user_token": {r.PostForm.Get("music_user_token")}})
 	})
 

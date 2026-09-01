@@ -70,6 +70,7 @@ func (l *Loopback) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	io.WriteString(w, successHTML)
+	_ = http.NewResponseController(w).Flush() // Deliver 會解鎖 Wait→Close;先把回應送出去
 	l.Deliver(q)
 }
 
