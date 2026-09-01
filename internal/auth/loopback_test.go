@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -98,4 +99,20 @@ func TestFallbackToDynamicPortWhenPreferredBusy(t *testing.T) {
 	if lb.Port() == busy || lb.Port() == 0 {
 		t.Fatalf("應 fallback 到其他實際 port,得到 %d", lb.Port())
 	}
+}
+
+func TestCloseWithoutStartReleasesPort(t *testing.T) {
+	lb, err := NewLoopback(0, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := lb.Port()
+	if err := lb.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("Close 後 port 應被釋放:%v", err)
+	}
+	ln.Close()
 }

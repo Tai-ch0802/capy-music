@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -105,4 +106,12 @@ func (l *Loopback) BaseURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", l.Port())
 }
 
-func (l *Loopback) Close() error { return l.srv.Close() }
+// Close 關閉伺服器並釋放 listener。
+// srv.Close 只關它經由 Serve 追蹤的 listener;Start 未被呼叫時必須直接關 l.ln。
+func (l *Loopback) Close() error {
+	err := l.srv.Close()
+	if cerr := l.ln.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) && err == nil {
+		err = cerr
+	}
+	return err
+}
