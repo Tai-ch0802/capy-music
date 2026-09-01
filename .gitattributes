@@ -1,0 +1,2 @@
+# Windows runner 的 autocrlf 會把 checkout 轉 CRLF,gofmt 會全部點名 — 強制全 repo LF
+* text=auto eol=lf

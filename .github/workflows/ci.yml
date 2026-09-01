@@ -6,6 +6,7 @@ on:
 jobs:
   test:
     strategy:
+      fail-fast: false # 兩個平台獨立回報,單邊紅燈不取消另一邊
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
