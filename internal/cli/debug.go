@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -8,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	"github.com/Tai-ch0802/capy-music/internal/browser"
+	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
 func newDebugCmd() *cobra.Command {
@@ -17,6 +20,7 @@ func newDebugCmd() *cobra.Command {
 		Hidden: true,
 	}
 	cmd.AddCommand(newDebugAppleTokenCmd())
+	cmd.AddCommand(newDebugAppleAuthCmd())
 	return cmd
 }
 
@@ -81,5 +85,40 @@ func newDebugAppleTokenCmd() *cobra.Command {
 		},
 	}
 	appleKeyFlags(cmd)
+	return cmd
+}
+
+// 測試替換點。
+var openBrowser = browser.Open
+
+const keyAppleMUT = "apple.music_user_token"
+
+func newDebugAppleAuthCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "apple-auth",
+		Short: "跑 MusicKit 橋接取得 Music User Token(P0-2/P0-3 用);存 keychain 並印出",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			tok, err := signLocalDevToken(cmd)
+			if err != nil {
+				return err
+			}
+			timeout, _ := cmd.Flags().GetDuration("timeout")
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成授權…(逾時", timeout, ")")
+			mut, err := apple.AuthorizeMUT(ctx, tok, openBrowser)
+			if err != nil {
+				return err
+			}
+			if err := secret.Set(keyAppleMUT, mut); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "已存入 keychain(capy-music /", keyAppleMUT, ")。注意:MUT 是機密。")
+			fmt.Fprintln(cmd.OutOrStdout(), mut)
+			return nil
+		},
+	}
+	appleKeyFlags(cmd)
+	cmd.Flags().Duration("timeout", 180*time.Second, "等待授權的逾時")
 	return cmd
 }

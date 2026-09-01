@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  ToS 硬約束(CLAUDE.md):本頁唯一的外部 script 是下面那一個 Apple CDN 的
+  musickit.js。禁止 bundle、禁止引入任何其他 JS 函式庫。
+  inline script 僅為必要的橋接膠水(configure → user gesture authorize → POST 回 CLI)。
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>capy — Apple Music 授權</title>
+<script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" async></script>
+</head>
+<body style="font-family:system-ui;text-align:center;padding-top:4rem">
+<h1>capy 要求存取你的 Apple Music</h1>
+<p>點下方按鈕登入並授權(授權必須由你親自點擊,無法自動進行)。</p>
+<button id="authorize" disabled>連線 Apple Music</button>
+<p id="status">正在載入 MusicKit…</p>
+<script>
+  const DT = {{.DeveloperToken}};
+  const STATE = {{.State}};
+  const status = (msg) => { document.getElementById('status').textContent = msg; };
+  document.addEventListener('musickitloaded', async () => {
+    try {
+      await MusicKit.configure({ developerToken: DT, app: { name: 'capy', build: '1' } });
+    } catch (e) { status('MusicKit 設定失敗:' + e); return; }
+    const btn = document.getElementById('authorize');
+    btn.disabled = false;
+    status('準備好了,請點按鈕。');
+    // authorize() 必須由 user gesture 觸發(Safari 會擋 onload 自動執行)
+    btn.addEventListener('click', async () => {
+      try {
+        const mut = await MusicKit.getInstance().authorize();
+        await fetch('/apple/callback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ state: STATE, music_user_token: mut }),
+        });
+        status('✅ 完成,可以關閉此分頁,回到終端機。');
+      } catch (e) { status('授權失敗:' + e); }
+    });
+  });
+</script>
+</body>
+</html>
