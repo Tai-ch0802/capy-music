@@ -28,9 +28,9 @@ func TestDoRetriesOn429ThenSucceeds(t *testing.T) {
 	defer srv.Close()
 
 	var slept []time.Duration
-	orig := sleep
-	sleep = func(d time.Duration) { slept = append(slept, d) }
-	t.Cleanup(func() { sleep = orig })
+	orig := wait
+	wait = func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }
+	t.Cleanup(func() { wait = orig })
 
 	c := NewClient(srv.Client(), srv.URL)
 	var out struct{ OK bool }
@@ -52,9 +52,9 @@ func TestDoGivesUpAfterMaxRetries(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	orig := sleep
-	sleep = func(time.Duration) {}
-	t.Cleanup(func() { sleep = orig })
+	orig := wait
+	wait = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { wait = orig })
 
 	c := NewClient(srv.Client(), srv.URL)
 	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, nil)
@@ -120,5 +120,30 @@ func TestDoSendsQueryAndBody(t *testing.T) {
 	status, err := c.do(context.Background(), http.MethodPut, "/me/player/play", q, map[string]any{"uris": []string{"spotify:track:x"}}, nil)
 	if err != nil || status != http.StatusNoContent {
 		t.Fatalf("(%d, %v)", status, err)
+	}
+}
+
+// TestDoBackoffCancellable 驗證 429 退避可被 ctx 取消:Retry-After 刻意設 30(無上限的
+// 真實情境),ctx 50ms 逾時應讓 do 快速返回,而不是傻等伺服器指定的秒數。
+func TestDoBackoffCancellable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.Client(), srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := c.do(ctx, http.MethodGet, "/x", nil, nil, nil)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("應在 ctx timeout 後回 DeadlineExceeded,得到 %v", err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Errorf("應快速回傳(< 2s),實際耗時 %v", elapsed)
 	}
 }

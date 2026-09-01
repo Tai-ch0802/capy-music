@@ -23,8 +23,17 @@ const DefaultAPIBase = "https://api.spotify.com/v1"
 
 const maxRetries = 3
 
-// sleep 為測試替換點(429 退避)。
-var sleep = time.Sleep
+// wait:429 退避的等待,可被 ctx 取消(Retry-After 無上限,不可讓 Ctrl-C 失效)。測試替換點。
+var wait = func(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
 
 type Client struct {
 	hc   *http.Client
@@ -86,7 +95,9 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			if attempt >= maxRetries {
 				return resp.StatusCode, &apiError{Status: resp.StatusCode, Message: "rate limited,重試已達上限"}
 			}
-			sleep(time.Duration(retryAfterSeconds(resp, 1)) * time.Second)
+			if err := wait(ctx, time.Duration(retryAfterSeconds(resp, 1))*time.Second); err != nil {
+				return 0, err
+			}
 			continue
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
