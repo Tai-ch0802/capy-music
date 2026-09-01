@@ -165,6 +165,30 @@ func TestPersistingTokenSourceRotates(t *testing.T) {
 	}
 }
 
+// 硬約束的另一半:輪替後寫入 keychain 失敗,Token() 必須失敗(否則新 token 靜默遺失=永久登出)。
+func TestPersistingTokenSourceFailsWhenKeychainWriteFails(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"at3","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-new2"}`))
+	}))
+	defer tokenSrv.Close()
+	swapTokenURL(t, tokenSrv.URL)
+
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-old2"); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := SpotifyTokenSource(context.Background(), "cid123") // Get 在正常 mock 下先成功
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring.MockInitWithError(errors.New("keychain 掛了"))
+	t.Cleanup(func() { keyring.MockInit() })
+
+	if _, err := ts.Token(); err == nil || !strings.Contains(err.Error(), "keychain") {
+		t.Fatalf("keychain 寫入失敗必須讓 Token() 失敗,得到 %v", err)
+	}
+}
+
 func TestSpotifyTokenSourceMissingToken(t *testing.T) {
 	_ = secret.Delete(KeySpotifyRefreshToken)
 	if _, err := SpotifyTokenSource(context.Background(), "cid123"); !errors.Is(err, secret.ErrNotFound) {
