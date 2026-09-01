@@ -68,8 +68,13 @@ func withDefaults(c *Config) *Config {
 	return c
 }
 
-// Save 原子寫入(temp + rename),避免寫到一半的殘檔。
+// Save 原子寫入。等於預設值的欄位先正規化為空(omitempty 不落地),
+// 避免把「當下的預設」釘進使用者檔案(P0 review 便條:P1 wizard 的 Load→Save 路徑)。
 func Save(c *Config) error {
+	norm := *c
+	if norm.AppleTokenEndpoint == DefaultAppleTokenEndpoint {
+		norm.AppleTokenEndpoint = ""
+	}
 	p, err := configPath()
 	if err != nil {
 		return err
@@ -77,7 +82,7 @@ func Save(c *Config) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := json.MarshalIndent(&norm, "", "  ")
 	if err != nil {
 		return err
 	}

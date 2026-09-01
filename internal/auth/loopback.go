@@ -22,6 +22,12 @@ const successHTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="ut
 <h1>✅ 授權完成</h1><p>可以關閉這個分頁,回到終端機。</p>
 <script>window.close()</script></body></html>`
 
+const deniedHTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<title>capy — 授權未完成</title></head>
+<body style="font-family:system-ui;text-align:center;padding-top:4rem">
+<h1>❌ 授權未完成</h1><p>你拒絕了授權或發生錯誤。可以關閉這個分頁,回到終端機重試。</p>
+</body></html>`
+
 // NewState 產生 32 bytes CSPRNG 的 base64url state(CSRF 防護)。
 func NewState() (string, error) {
 	b := make([]byte, 32)
@@ -69,7 +75,11 @@ func (l *Loopback) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.WriteString(w, successHTML)
+	if q.Get("error") != "" {
+		io.WriteString(w, deniedHTML)
+	} else {
+		io.WriteString(w, successHTML)
+	}
 	_ = http.NewResponseController(w).Flush() // Deliver 會解鎖 Wait→Close;先把回應送出去
 	l.Deliver(q)
 }
