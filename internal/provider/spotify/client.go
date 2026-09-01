@@ -299,3 +299,90 @@ func (c *Client) Prev(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodPost, "/me/player/previous", nil, nil, nil)
 	return mapPlayerErr(err)
 }
+
+// ── playlists ──
+// 2026-02 改名:端點 /tracks→/items、欄位 tracks→items(spec §1.1)。內層形狀 spec 未載明,
+// 雙鍵 decode 防衛;附錄 B-4 真實驗收確認後可簡化。
+
+const playlistPageSize = 50
+
+type playlistJSON struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Owner struct {
+		DisplayName string `json:"display_name"`
+	} `json:"owner"`
+	Items *struct {
+		Total int `json:"total"`
+	} `json:"items"`
+	Tracks *struct {
+		Total int `json:"total"`
+	} `json:"tracks"`
+}
+
+func (p *playlistJSON) toRef() provider.PlaylistRef {
+	total := 0
+	switch {
+	case p.Items != nil:
+		total = p.Items.Total
+	case p.Tracks != nil:
+		total = p.Tracks.Total
+	}
+	return provider.PlaylistRef{ID: p.ID, Name: p.Name, Owner: p.Owner.DisplayName, Total: total}
+}
+
+func (c *Client) MyPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
+	var out []provider.PlaylistRef
+	for offset := 0; ; {
+		q := url.Values{"limit": {strconv.Itoa(playlistPageSize)}, "offset": {strconv.Itoa(offset)}}
+		var resp struct {
+			Items []playlistJSON `json:"items"`
+			Total int            `json:"total"`
+		}
+		if _, err := c.do(ctx, http.MethodGet, "/me/playlists", q, nil, &resp); err != nil {
+			return nil, err
+		}
+		for i := range resp.Items {
+			out = append(out, resp.Items[i].toRef())
+		}
+		offset += len(resp.Items)
+		if len(resp.Items) < playlistPageSize || offset >= resp.Total {
+			return out, nil
+		}
+	}
+}
+
+func (c *Client) PlaylistItems(ctx context.Context, id string) ([]provider.Track, error) {
+	var out []provider.Track
+	for offset := 0; ; {
+		q := url.Values{"limit": {strconv.Itoa(playlistPageSize)}, "offset": {strconv.Itoa(offset)}}
+		var resp struct {
+			Items []struct {
+				Track *trackJSON `json:"track"` // 舊內層鍵
+				Item  *trackJSON `json:"item"`  // 新內層鍵
+			} `json:"items"`
+			Total int `json:"total"`
+		}
+		_, err := c.do(ctx, http.MethodGet, "/playlists/"+url.PathEscape(id)+"/items", q, nil, &resp)
+		if err != nil {
+			var ae *apiError
+			if errors.As(err, &ae) && ae.Status == http.StatusForbidden {
+				return nil, provider.ErrRestricted
+			}
+			return nil, err
+		}
+		for i := range resp.Items {
+			tj := resp.Items[i].Item
+			if tj == nil {
+				tj = resp.Items[i].Track
+			}
+			if tj != nil {
+				out = append(out, tj.toTrack())
+			}
+		}
+		offset += len(resp.Items)
+		if len(resp.Items) < playlistPageSize || offset >= resp.Total {
+			return out, nil
+		}
+	}
+}

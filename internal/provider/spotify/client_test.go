@@ -299,3 +299,67 @@ func TestDevicesDecodes(t *testing.T) {
 		t.Fatalf("(%+v, %v)", ds, err)
 	}
 }
+
+func TestMyPlaylistsPaginatesAndDualKey(t *testing.T) {
+	var offsets []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/me/playlists" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		offsets = append(offsets, r.URL.Query().Get("offset"))
+		if r.URL.Query().Get("offset") == "0" {
+			// 50 筆滿頁:新欄位 items.total
+			items := make([]string, 50)
+			for i := range items {
+				items[i] = fmt.Sprintf(`{"id":"p%02d","name":"清單%02d","owner":{"display_name":"tai"},"items":{"total":3}}`, i, i)
+			}
+			fmt.Fprintf(w, `{"items":[%s],"total":51}`, strings.Join(items, ","))
+			return
+		}
+		// 第二頁 1 筆:舊欄位 tracks.total(雙鍵防衛)
+		w.Write([]byte(`{"items":[{"id":"p50","name":"通勤","owner":{"display_name":"tai"},"tracks":{"total":7}}],"total":51}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	pls, err := c.MyPlaylists(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pls) != 51 || len(offsets) != 2 {
+		t.Fatalf("分頁錯誤:%d 筆 / offsets %v", len(pls), offsets)
+	}
+	if pls[0].Total != 3 || pls[50].Total != 7 || pls[50].Name != "通勤" || pls[50].Owner != "tai" {
+		t.Errorf("欄位映射(含雙鍵)錯誤:%+v %+v", pls[0], pls[50])
+	}
+}
+
+func TestPlaylistItemsDualKeyAndPagination(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/playlists/p1/items" {
+			t.Errorf("應打新端點 /items:%s", r.URL.Path)
+		}
+		// 同頁混用新舊內層鍵(防衛雙鍵)
+		fmt.Fprintf(w, `{"items":[{"item":%s},{"track":%s}],"total":2}`, trackFx("n1"), trackFx("o1"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	ts, err := c.PlaylistItems(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 2 || ts[0].ProviderID != "n1" || ts[1].ProviderID != "o1" {
+		t.Fatalf("雙鍵 decode 錯誤:%+v", ts)
+	}
+}
+
+func TestPlaylistItemsRestricted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"status":403,"message":"Forbidden"}}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	if _, err := c.PlaylistItems(context.Background(), "someone-elses"); !errors.Is(err, provider.ErrRestricted) {
+		t.Fatalf("403 應映射 ErrRestricted,得到 %v", err)
+	}
+}
