@@ -99,6 +99,25 @@ func TestLoadP8Roundtrip(t *testing.T) {
 	}
 }
 
+func TestLoadP8RejectsNonP256(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "AuthKey_TEST384.p8")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	if err := os.WriteFile(p, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadP8(p); err == nil {
+		t.Fatal("P-384 金鑰應回錯誤,而非成功載入(SignDeveloperToken 的 FillBytes 會 panic)")
+	}
+}
+
 func TestLoadP8NotPEM(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.p8")
 	if err := os.WriteFile(p, []byte("not pem"), 0o600); err != nil {

@@ -29,6 +29,10 @@ create="$(curl -sS -X POST "${H[@]}" -H 'Content-Type: application/json' \
   -d "{\"attributes\":{\"name\":\"${NAME}\",\"description\":\"capy P0-2 驗證,可刪\"}}" \
   "${API}/v1/me/library/playlists")"
 PL="$(echo "${create}" | jq -r '.data[0].id')"
+if [ -z "${PL}" ] || [ "${PL}" = "null" ]; then
+  echo "建立清單失敗,回應:${create}" >&2
+  exit 1
+fi
 echo "  playlist id: ${PL}"
 
 echo "③ 加入兩首歌"
@@ -41,6 +45,10 @@ echo "④ 讀回清單曲目(取得 library track id)"
 tracks="$(curl -sS "${H[@]}" "${API}/v1/me/library/playlists/${PL}/tracks")"
 echo "${tracks}" | jq -r '.data[] | [.id, .attributes.name] | @tsv'
 LT0="$(echo "${tracks}" | jq -r '.data[0].id')"
+if [ -z "${LT0}" ] || [ "${LT0}" = "null" ]; then
+  echo "讀回清單曲目失敗,回應:${tracks}" >&2
+  exit 1
+fi
 
 echo "⑤ 嘗試「移除單曲」— 兩種候選端點,記錄 HTTP code:"
 curl -sS -o /dev/null -w '  DELETE …/tracks/{id}       → HTTP %{http_code}\n' \

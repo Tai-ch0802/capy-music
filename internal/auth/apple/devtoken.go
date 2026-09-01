@@ -4,6 +4,7 @@ package apple
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -37,6 +38,9 @@ func LoadP8(path string) (*ecdsa.PrivateKey, error) {
 	ec, ok := key.(*ecdsa.PrivateKey)
 	if !ok {
 		return nil, errors.New("不是 ECDSA 私鑰")
+	}
+	if ec.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("MusicKit 金鑰必須是 P-256,得到 %s", ec.Curve.Params().Name)
 	}
 	return ec, nil
 }
