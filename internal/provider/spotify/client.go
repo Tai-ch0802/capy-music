@@ -135,3 +135,167 @@ func retryAfterSeconds(resp *http.Response, fallback int) int {
 	}
 	return fallback
 }
+
+// ── JSON 映射 ──
+
+type trackJSON struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DurationMS int    `json:"duration_ms"`
+	Explicit   bool   `json:"explicit"`
+	Album      struct {
+		Name string `json:"name"`
+	} `json:"album"`
+	Artists []struct {
+		Name string `json:"name"`
+	} `json:"artists"`
+	ExternalIDs struct {
+		ISRC string `json:"isrc"`
+	} `json:"external_ids"`
+}
+
+func (t *trackJSON) toTrack() provider.Track {
+	artists := make([]string, len(t.Artists))
+	for i, a := range t.Artists {
+		artists[i] = a.Name
+	}
+	return provider.Track{
+		ProviderID: t.ID,
+		ISRC:       t.ExternalIDs.ISRC,
+		Title:      t.Name,
+		Artists:    artists,
+		Album:      t.Album.Name,
+		DurationMS: t.DurationMS,
+		Explicit:   t.Explicit,
+	}
+}
+
+type deviceJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	IsActive  bool   `json:"is_active"`
+	VolumePct int    `json:"volume_percent"`
+}
+
+func (d *deviceJSON) toDevice() provider.Device {
+	return provider.Device{ID: d.ID, Name: d.Name, Type: d.Type, Active: d.IsActive, VolumePct: d.VolumePct}
+}
+
+// ── search ──
+
+const searchPageMax = 10 // spec §1.1:GET /search 單次上限 10
+
+// SearchTracks 依 spec 上限分頁,取滿 limit 或結果耗盡為止。
+func (c *Client) SearchTracks(ctx context.Context, text string, limit int) ([]provider.Track, error) {
+	var out []provider.Track
+	for offset := 0; len(out) < limit; {
+		page := limit - len(out)
+		if page > searchPageMax {
+			page = searchPageMax
+		}
+		q := url.Values{
+			"type":   {"track"},
+			"q":      {text},
+			"limit":  {strconv.Itoa(page)},
+			"offset": {strconv.Itoa(offset)},
+		}
+		var resp struct {
+			Tracks struct {
+				Items []trackJSON `json:"items"`
+				Total int         `json:"total"`
+			} `json:"tracks"`
+		}
+		if _, err := c.do(ctx, http.MethodGet, "/search", q, nil, &resp); err != nil {
+			return nil, err
+		}
+		for i := range resp.Tracks.Items {
+			out = append(out, resp.Tracks.Items[i].toTrack())
+		}
+		offset += len(resp.Tracks.Items)
+		if len(resp.Tracks.Items) < page || offset >= resp.Tracks.Total {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ── player ──
+
+// mapPlayerErr:player 端點的 404 + NO_ACTIVE_DEVICE 是語意,不是 URL 打錯。
+func mapPlayerErr(err error) error {
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound && ae.Reason == "NO_ACTIVE_DEVICE" {
+		return provider.ErrNoActiveDevice
+	}
+	return err
+}
+
+func (c *Client) Devices(ctx context.Context) ([]provider.Device, error) {
+	var resp struct {
+		Devices []deviceJSON `json:"devices"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/me/player/devices", nil, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Device, len(resp.Devices))
+	for i := range resp.Devices {
+		out[i] = resp.Devices[i].toDevice()
+	}
+	return out, nil
+}
+
+// State 回傳目前播放狀態;204(無播放內容)回 (nil, nil)。
+func (c *Client) State(ctx context.Context) (*provider.PlaybackState, error) {
+	var resp struct {
+		IsPlaying  bool       `json:"is_playing"`
+		ProgressMS int        `json:"progress_ms"`
+		Item       *trackJSON `json:"item"`
+		Device     deviceJSON `json:"device"`
+	}
+	status, err := c.do(ctx, http.MethodGet, "/me/player", nil, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNoContent {
+		return nil, nil
+	}
+	st := &provider.PlaybackState{Playing: resp.IsPlaying, ProgressMS: resp.ProgressMS, Device: resp.Device.toDevice()}
+	if resp.Item != nil {
+		tr := resp.Item.toTrack()
+		st.Track = &tr
+	}
+	return st, nil
+}
+
+func deviceQuery(deviceID string) url.Values {
+	if deviceID == "" {
+		return nil
+	}
+	return url.Values{"device_id": {deviceID}}
+}
+
+// Play:uris 空 → 無 body(resume)。
+func (c *Client) Play(ctx context.Context, uris []string, deviceID string) error {
+	var body any
+	if len(uris) > 0 {
+		body = map[string]any{"uris": uris}
+	}
+	_, err := c.do(ctx, http.MethodPut, "/me/player/play", deviceQuery(deviceID), body, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) Pause(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodPut, "/me/player/pause", nil, nil, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) Next(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodPost, "/me/player/next", nil, nil, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) Prev(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodPost, "/me/player/previous", nil, nil, nil)
+	return mapPlayerErr(err)
+}

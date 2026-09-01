@@ -2,10 +2,14 @@ package spotify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,5 +149,153 @@ func TestDoBackoffCancellable(t *testing.T) {
 	}
 	if elapsed >= 2*time.Second {
 		t.Errorf("應快速回傳(< 2s),實際耗時 %v", elapsed)
+	}
+}
+
+// ── SearchTracks, Devices, State, Play 測試 ──
+
+const trackJSONFixture = `{"id":"%s","name":"派對動物","uri":"spotify:track:%s","duration_ms":227000,"explicit":false,
+"album":{"name":"自傳"},"artists":[{"name":"五月天"}],"external_ids":{"isrc":"TWA472400123"}}`
+
+func trackFx(id string) string { return fmt.Sprintf(trackJSONFixture, id, id) }
+
+func TestSearchTracksPaginates(t *testing.T) {
+	var offsets []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("type") != "track" || q.Get("q") != "五月天" {
+			t.Errorf("search 參數錯誤:%s", r.URL.RawQuery)
+		}
+		if lim := q.Get("limit"); lim != "10" && lim != "5" {
+			t.Errorf("單次 limit 應 ≤10:%s", lim)
+		}
+		offsets = append(offsets, q.Get("offset"))
+		n := 10
+		if q.Get("offset") == "10" {
+			n = 5
+		}
+		items := make([]string, n)
+		for i := range items {
+			items[i] = trackFx(fmt.Sprintf("id%s-%02d", q.Get("offset"), i))
+		}
+		fmt.Fprintf(w, `{"tracks":{"items":[%s],"total":15}}`, strings.Join(items, ","))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	tracks, err := c.SearchTracks(context.Background(), "五月天", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 15 {
+		t.Fatalf("應取回 15 首,得到 %d", len(tracks))
+	}
+	if len(offsets) != 2 || offsets[0] != "0" || offsets[1] != "10" {
+		t.Errorf("分頁 offset 錯誤:%v", offsets)
+	}
+	tr := tracks[0]
+	if tr.Title != "派對動物" || tr.Artists[0] != "五月天" || tr.Album != "自傳" ||
+		tr.ISRC != "TWA472400123" || tr.DurationMS != 227000 || tr.ProviderID == "" {
+		t.Errorf("track 映射錯誤:%+v", tr)
+	}
+}
+
+func TestSearchTracksStopsWhenExhausted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"tracks":{"items":[%s],"total":1}}`, trackFx("only1"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	tracks, err := c.SearchTracks(context.Background(), "x", 10)
+	if err != nil || len(tracks) != 1 {
+		t.Fatalf("(%d, %v)", len(tracks), err)
+	}
+}
+
+func TestStateHandles204(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	st, err := c.State(context.Background())
+	if err != nil || st != nil {
+		t.Fatalf("204 應回 (nil, nil),得到 (%+v, %v)", st, err)
+	}
+}
+
+func TestStateDecodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"is_playing":true,"progress_ms":61000,"item":%s,
+"device":{"id":"d1","name":"MacBook","type":"Computer","is_active":true,"volume_percent":80}}`, trackFx("t1"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	st, err := c.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Playing || st.ProgressMS != 61000 || st.Track == nil || st.Track.Title != "派對動物" ||
+		st.Device.Name != "MacBook" || !st.Device.Active || st.Device.VolumePct != 80 {
+		t.Errorf("state 映射錯誤:%+v", st)
+	}
+}
+
+func TestPlayMapsNoActiveDevice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":{"status":404,"message":"Player command failed: No active device found","reason":"NO_ACTIVE_DEVICE"}}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	if err := c.Play(context.Background(), []string{"spotify:track:x"}, ""); !errors.Is(err, provider.ErrNoActiveDevice) {
+		t.Fatalf("player 404 NO_ACTIVE_DEVICE 應映射,得到 %v", err)
+	}
+}
+
+func TestPlaySendsURIsAndDevice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/me/player/play" || r.URL.Query().Get("device_id") != "d9" {
+			t.Errorf("play 請求形狀錯誤:%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		var body struct {
+			URIs []string `json:"uris"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.URIs) != 1 || body.URIs[0] != "spotify:track:abc" {
+			t.Errorf("body 錯誤:%+v", body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	if err := c.Play(context.Background(), []string{"spotify:track:abc"}, "d9"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlayResumeSendsNoBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if len(b) != 0 {
+			t.Errorf("resume 不應帶 body:%s", b)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	if err := c.Play(context.Background(), nil, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDevicesDecodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"devices":[{"id":"d1","name":"手機","type":"Smartphone","is_active":false,"volume_percent":50}]}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	ds, err := c.Devices(context.Background())
+	if err != nil || len(ds) != 1 || ds[0].Name != "手機" || ds[0].Type != "Smartphone" {
+		t.Fatalf("(%+v, %v)", ds, err)
 	}
 }
