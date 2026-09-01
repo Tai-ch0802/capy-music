@@ -21,10 +21,18 @@ func TestAuthorizePageToSConstraint(t *testing.T) {
 }
 
 // fakeBrowserPoster 模擬真實頁面 JS 的行為:GET 頁面 → 從頁面撈 state → POST MUT。
+//
+// done + t.Cleanup:AuthorizeMUT 收到結果就會 return,defer lb.Close() 可能
+// 搶在這個 goroutine 的 http.PostForm 拿到回應之前關掉伺服器,導致此 goroutine
+// 在 test 已標記完成後才呼叫 t.Error/t.Errorf(→ panic)。t.Cleanup 在完成標記
+// 前執行,drain done 保證 goroutine 收工在 test 存活期間。
 func fakeBrowserPoster(t *testing.T, mut string, wantDT string) func(string) error {
 	t.Helper()
 	return func(pageURL string) error {
+		done := make(chan struct{})
+		t.Cleanup(func() { <-done })
 		go func() {
+			defer close(done)
 			resp, err := http.Get(pageURL)
 			if err != nil {
 				t.Error(err)
@@ -46,7 +54,12 @@ func fakeBrowserPoster(t *testing.T, mut string, wantDT string) func(string) err
 				"music_user_token": {mut},
 			})
 			if err != nil {
-				t.Error(err)
+				// 這通 POST 本身觸發 lb.Deliver → AuthorizeMUT 的 Wait 解鎖 → return →
+				// defer lb.Close()。Close 可能搶在這個 goroutine 讀完 204 回應前砍斷連線,
+				// client 端會看到 EOF/connection reset——伺服器其實已收到並處理完 POST。
+				// 真的沒送達的話 AuthorizeMUT 會逾時,主 goroutine 的斷言會抓到,故此處
+				// 只記錄不判失敗,避免這個良性競態把測試變 flaky。
+				t.Logf("POST /apple/callback 回應讀取失敗(預期中的 Close 競態):%v", err)
 			}
 		}()
 		return nil
@@ -67,7 +80,10 @@ func TestAuthorizeMUTFullLoop(t *testing.T) {
 
 func TestAuthorizeMUTRejectsBadState(t *testing.T) {
 	badPoster := func(pageURL string) error {
+		done := make(chan struct{})
+		t.Cleanup(func() { <-done })
 		go func() {
+			defer close(done)
 			base := strings.TrimSuffix(pageURL, "/apple/authorize")
 			resp, err := http.PostForm(base+"/apple/callback", url.Values{
 				"state":            {"WRONG"},

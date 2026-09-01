@@ -85,8 +85,15 @@ func TestDebugAppleAuthStoresMUT(t *testing.T) {
 	p8 := writeTestP8(t)
 
 	orig := openBrowser
+	// done + t.Cleanup:AuthorizeMUT 一收到結果就 return、defer lb.Close(),可能搶在
+	// 這個 goroutine 的 http.PostForm 拿到回應之前關掉伺服器,讓 t.Error 在 test 已
+	// 標記完成後才被呼叫(→ panic)。t.Cleanup 在完成標記前執行,drain done 保證
+	// goroutine 收工在 test 存活期間。
 	openBrowser = func(pageURL string) error {
+		done := make(chan struct{})
+		t.Cleanup(func() { <-done })
 		go func() {
+			defer close(done)
 			resp, err := http.Get(pageURL)
 			if err != nil {
 				t.Error(err)
@@ -104,7 +111,11 @@ func TestDebugAppleAuthStoresMUT(t *testing.T) {
 				"state":            {string(m[1])},
 				"music_user_token": {"FAKE_MUT"},
 			}); err != nil {
-				t.Error(err)
+				// 這通 POST 觸發 apple.AuthorizeMUT 內部 Deliver → Wait 解鎖 → return →
+				// defer lb.Close(),可能搶在這個 goroutine 讀完 204 回應前砍斷連線
+				// (client 端看到 EOF)。伺服器其實已處理完 POST;真沒送達的話 cmd.Execute()
+				// 會因逾時而回錯,下面的斷言會抓到,故此處只記錄不判失敗。
+				t.Logf("POST /apple/callback 回應讀取失敗(預期中的 Close 競態):%v", err)
 			}
 		}()
 		return nil
