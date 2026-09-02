@@ -19,7 +19,10 @@
   const DT = {{.DeveloperToken}};
   const STATE = {{.State}};
   const status = (msg) => { document.getElementById('status').textContent = msg; };
-  document.addEventListener('musickitloaded', async () => {
+  // musickitloaded 競態:script 標籤是 async,若下載夠快,MusicKit 可能在瀏覽器解析到
+  // 這段 inline script、掛上監聽器之前就已經觸發過 musickitloaded——那樣事件永遠等不到人聽。
+  // 所以先看 window.MusicKit 是否已經在,是的話直接跑,不是才掛監聽器等之後的事件。
+  async function init() {
     try {
       await MusicKit.configure({ developerToken: DT, app: { name: 'capy', build: '1' } });
     } catch (e) { status('MusicKit 設定失敗:' + e); return; }
@@ -38,7 +41,8 @@
         status('✅ 完成,可以關閉此分頁,回到終端機。');
       } catch (e) { status('授權失敗:' + e); }
     });
-  });
+  }
+  if (window.MusicKit) { init(); } else { document.addEventListener('musickitloaded', init); }
 </script>
 </body>
 </html>

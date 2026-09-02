@@ -73,9 +73,13 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 			}
 			continue
 		}
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			resp.Body.Close()
-			return resp.StatusCode, provider.ErrAuthExpired
+			return resp.StatusCode, fmt.Errorf("developer token 無效(401):%w", provider.ErrAuthExpired)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return resp.StatusCode, fmt.Errorf("Music User Token 無效或訂閱失效(403):%w", provider.ErrAuthExpired)
 		}
 		if resp.StatusCode >= 400 {
 			var eb struct {
@@ -101,6 +105,16 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 		resp.Body.Close()
 		return status, derr
 	}
+}
+
+// Preflight 只驗 developer token 是否被 Apple 接受,不需 MUT(呼叫端建 Client 時傳空字串)。
+// 404 視為通過——這支端點形狀在驗收前是 provisional(調整條款 b);其餘 4xx/5xx 才算失敗。
+func (c *Client) Preflight(ctx context.Context) error {
+	status, err := c.do(ctx, http.MethodGet, "/storefronts/us", nil, nil)
+	if err == nil || status == http.StatusNotFound {
+		return nil
+	}
+	return err
 }
 
 // ── JSON 映射 ──
@@ -199,6 +213,7 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 					Name string `json:"name"`
 				} `json:"attributes"`
 			} `json:"data"`
+			Next string `json:"next"` // 分頁看這個,不是「回傳數 < limit」——Apple 可能單頁回不滿 limit 仍有下一頁
 		}
 		if _, err := c.do(ctx, http.MethodGet, "/me/library/playlists", q, &resp); err != nil {
 			return nil, err
@@ -206,7 +221,7 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 		for _, p := range resp.Data {
 			out = append(out, provider.PlaylistRef{ID: p.ID, Name: p.Attributes.Name, Total: -1}) // library 物件不含曲數
 		}
-		if len(resp.Data) < libraryPage {
+		if resp.Next == "" {
 			return out, nil
 		}
 		offset += len(resp.Data)
@@ -232,8 +247,13 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 					} `json:"catalog"`
 				} `json:"relationships"`
 			} `json:"data"`
+			Next string `json:"next"` // 分頁看這個,不是「回傳數 < limit」
 		}
-		if _, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", q, &resp); err != nil {
+		status, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", q, &resp)
+		if err != nil {
+			if status == http.StatusNotFound { // Apple 對空清單或不存在的清單可能回 404
+				return nil, fmt.Errorf("清單為空或不存在:%w", provider.ErrNotFound)
+			}
 			return nil, err
 		}
 		for _, it := range resp.Data {
@@ -249,7 +269,7 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 			}
 			out = append(out, tr)
 		}
-		if len(resp.Data) < libraryPage {
+		if resp.Next == "" {
 			return out, nil
 		}
 		offset += len(resp.Data)

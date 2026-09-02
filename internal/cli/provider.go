@@ -76,9 +76,11 @@ func friendlyErr(providerID string, err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, provider.ErrAuthExpired):
-		return fmt.Errorf("授權已過期 — 重新執行 capy auth login %s", providerID)
+		return fmt.Errorf("授權已過期或被拒(%v)— 重新執行 capy auth login %s", err, providerID)
 	case errors.Is(err, provider.ErrNoActiveDevice):
 		return fmt.Errorf("沒有作用中的播放裝置 — 開一個播放器,或用 capy devices --provider %s 查看後以 --device 指定", providerID)
+	case errors.Is(err, provider.ErrNotFound):
+		return err // 訊息已可行動(如「清單為空或不存在」),不需再包一層
 	default:
 		return err
 	}

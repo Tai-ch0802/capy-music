@@ -44,9 +44,55 @@ func TestDoMapsAuthErrors(t *testing.T) {
 			w.WriteHeader(code)
 			w.Write([]byte(`{"errors":[{"status":"` + fmt.Sprint(code) + `","title":"Unauthorized"}]}`))
 		})
-		if _, err := c.Storefront(context.Background()); !errors.Is(err, provider.ErrAuthExpired) {
+		_, err := c.Storefront(context.Background())
+		if !errors.Is(err, provider.ErrAuthExpired) {
 			t.Errorf("%d 應映射 ErrAuthExpired,得到 %v", code, err)
 		}
+		if !strings.Contains(err.Error(), fmt.Sprint(code)) {
+			t.Errorf("%d 的錯誤訊息應含狀態碼以便分辨 dev token/MUT,得到 %v", code, err)
+		}
+	}
+}
+
+func TestPreflight(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{"200 通過", 200, false},
+		{"404 視為通過(端點形狀可能異動)", 404, false},
+		{"401 判定 dev token 被拒", 401, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/storefronts/us" {
+					t.Errorf("path = %s,應打 /storefronts/us", r.URL.Path)
+				}
+				if r.Header.Get("Music-User-Token") != "" {
+					t.Error("preflight 不該帶 Music-User-Token")
+				}
+				w.WriteHeader(tc.status)
+				if tc.status >= 400 {
+					w.Write([]byte(`{"errors":[{"status":"` + fmt.Sprint(tc.status) + `","title":"x"}]}`))
+				} else {
+					w.Write([]byte(`{"data":[{"id":"us"}]}`))
+				}
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClient(srv.Client(), srv.URL, "DEV", "") // preflight 不需 MUT
+			err := c.Preflight(context.Background())
+			if tc.wantErr && err == nil {
+				t.Fatal("預期錯誤,得到 nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("預期通過,得到 %v", err)
+			}
+			if tc.wantErr && !errors.Is(err, provider.ErrAuthExpired) {
+				t.Errorf("失敗應仍映射 ErrAuthExpired,得到 %v", err)
+			}
+		})
 	}
 }
 
@@ -136,11 +182,22 @@ func TestSongReturnsURL(t *testing.T) {
 	}
 }
 
+// TestLibraryPlaylistsAndTracks:playlists 端點用兩頁 fixture,第一頁只回 1 筆但帶 next
+// (cap 遠低於 libraryPage=100),證明分頁改看 next 欄位而非「回傳數 < cap」。
 func TestLibraryPlaylistsAndTracks(t *testing.T) {
+	var playlistCalls int
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/me/library/playlists":
-			w.Write([]byte(`{"data":[{"id":"p.1","type":"library-playlists","attributes":{"name":"通勤","canEdit":true}}]}`))
+			playlistCalls++
+			switch r.URL.Query().Get("offset") {
+			case "0":
+				w.Write([]byte(`{"data":[{"id":"p.1","type":"library-playlists","attributes":{"name":"通勤","canEdit":true}}],"next":"/v1/me/library/playlists?offset=1"}`))
+			case "1":
+				w.Write([]byte(`{"data":[{"id":"p.2","type":"library-playlists","attributes":{"name":"深夜","canEdit":true}}]}`))
+			default:
+				t.Errorf("非預期 offset:%s", r.URL.Query().Get("offset"))
+			}
 		case "/me/library/playlists/p.1/tracks":
 			if r.URL.Query().Get("include") != "catalog" {
 				t.Errorf("應帶 include=catalog")
@@ -154,8 +211,14 @@ func TestLibraryPlaylistsAndTracks(t *testing.T) {
 		}
 	})
 	pls, err := c.LibraryPlaylists(context.Background())
-	if err != nil || len(pls) != 1 || pls[0].ID != "p.1" || pls[0].Name != "通勤" || pls[0].Total != -1 {
+	if err != nil || len(pls) != 2 || pls[0].ID != "p.1" || pls[0].Name != "通勤" || pls[0].Total != -1 {
 		t.Fatalf("(%+v, %v)", pls, err)
+	}
+	if pls[1].ID != "p.2" || pls[1].Name != "深夜" {
+		t.Errorf("cap(100) 遠高於單頁筆數,仍應取到第二頁(next 驅動):%+v", pls)
+	}
+	if playlistCalls != 2 {
+		t.Errorf("應呼叫兩次(第一頁 next 非空):calls=%d", playlistCalls)
 	}
 	ts, err := c.LibraryPlaylistTracks(context.Background(), "p.1")
 	if err != nil || len(ts) != 2 {
@@ -166,5 +229,21 @@ func TestLibraryPlaylistsAndTracks(t *testing.T) {
 	}
 	if ts[1].ProviderID != "i.2" || ts[1].ISRC != "" {
 		t.Errorf("無 catalog 對應時用 library id:%+v", ts[1])
+	}
+}
+
+// TestLibraryPlaylistTracksEmpty404:Apple 對空清單或不存在的清單可能回 404 ——
+// 映射成 provider.ErrNotFound(不是 ErrRestricted,那個語意是「他人清單」)。
+func TestLibraryPlaylistTracksEmpty404(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"errors":[{"status":"404","title":"Not Found"}]}`))
+	})
+	_, err := c.LibraryPlaylistTracks(context.Background(), "p.missing")
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("404 應映射 provider.ErrNotFound,得到 %v", err)
+	}
+	if !strings.Contains(err.Error(), "清單為空或不存在") {
+		t.Errorf("錯誤訊息應可行動:%v", err)
 	}
 }

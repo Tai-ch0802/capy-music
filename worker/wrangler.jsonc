@@ -6,9 +6,13 @@
   "observability": { "enabled": true, "logs": { "head_sampling_rate": 1 } },
   // 前提:taislife.work zone 在 Cloudflare 上(DNS 與憑證由 Cloudflare 自動建)。
   // 不在時先拿掉 routes 用 *.workers.dev,並以 capy config 的 apple_token_endpoint 覆寫。
+  // 改用 workers.dev 時 caches.default 無效(每請求重簽,仍正確——只是失去省簽章次數的效果)。
   "routes": [{ "pattern": "capy.taislife.work", "custom_domain": true }],
   // 速率限制用原生 binding(不用 KV:免費層每日 1,000 次寫入的陷阱,spec §8.5.2)。
   // key = install_id(文件建議避 IP);client 自選的弱點依 spec R-2 接受(token 半公開、12h TTL)。
-  "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }]
+  "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
+  // Cache API(caches.default)的 key 併入這個版本號:`wrangler deploy` 不會清 Cache API 裡的舊資料,
+  // 金鑰輪替或不小心簽錯時,把這個數字改掉(例如改成 "2")即可讓舊快取失效,不必手動清快取。
+  "vars": { "CACHE_VERSION": "1" }
   // Secrets(不放 vars):wrangler secret put APPLE_P8 / APPLE_KID / APPLE_TEAM_ID
 }

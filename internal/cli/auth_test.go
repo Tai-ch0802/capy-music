@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
@@ -142,10 +144,17 @@ func TestAuthLoginUnsupportedProvider(t *testing.T) {
 func TestAuthLoginAppleStoresMUTAndStorefront(t *testing.T) {
 	setupAppleBYO(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/me/storefront" || r.Header.Get("Music-User-Token") != "MUT1" {
-			t.Errorf("storefront 請求錯誤:%s %v", r.URL.Path, r.Header)
+		switch r.URL.Path {
+		case "/storefronts/us": // preflight(login 開瀏覽器前的 dev token 驗證,不帶 MUT)
+			w.Write([]byte(`{"data":[{"id":"us"}]}`))
+		case "/me/storefront":
+			if r.Header.Get("Music-User-Token") != "MUT1" {
+				t.Errorf("storefront 請求錯誤:%s %v", r.URL.Path, r.Header)
+			}
+			w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
 		}
-		w.Write([]byte(`{"data":[{"id":"tw"}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("CAPY_APPLE_API_BASE", srv.URL) // 測試用 base 覆寫(見 Step 3)
@@ -171,6 +180,11 @@ func TestAuthLoginAppleStoresMUTAndStorefront(t *testing.T) {
 
 func TestAuthLoginAppleFailureDoesNotPersist(t *testing.T) {
 	setupAppleBYO(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"us"}]}`)) // preflight 通過,才輪到橋接失敗
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
 	origA := appleAuthorize
 	appleAuthorize = func(context.Context, string, func(string) error) (string, error) {
 		return "", errors.New("使用者取消")
@@ -178,6 +192,116 @@ func TestAuthLoginAppleFailureDoesNotPersist(t *testing.T) {
 	t.Cleanup(func() { appleAuthorize = origA })
 	if _, err := runCLI(t, "auth", "login", "apple"); err == nil {
 		t.Fatal("橋接失敗應回錯")
+	}
+	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Error("失敗不應留下 MUT")
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "" {
+		t.Error("失敗不應存 storefront")
+	}
+}
+
+// appleLoginFixture:C-1(storefronts/us preflight)+ /me/storefront 都通過的最小 fixture。
+func appleLoginFixture(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/storefronts/us":
+			w.Write([]byte(`{"data":[{"id":"us"}]}`))
+		case "/me/storefront":
+			w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAuthLoginAppleClearsStaleDevTokenCache:keychain 裡即使有一顆「看起來還沒過期」的
+// developer token 快取,login 也要整條鏈重來——否則被 Apple 端撤銷/輪替的快取值會一直被
+// 信任,使用者永遠修不好(review 發現的洞)。
+func TestAuthLoginAppleClearsStaleDevTokenCache(t *testing.T) {
+	setupAppleBYO(t)
+	stale, _ := json.Marshal(struct {
+		Token string `json:"token"`
+		Exp   int64  `json:"exp"`
+	}{Token: "stale", Exp: time.Now().Add(24 * time.Hour).Unix()})
+	if err := secret.Set(apple.KeyDeveloperToken, string(stale)); err != nil {
+		t.Fatal(err)
+	}
+	srv := appleLoginFixture(t)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	origA := appleAuthorize
+	appleAuthorize = fakeAppleAuthorize(t, "MUT1") // 內部斷言收到的 dev token 以 "eyJ" 開頭,不是 "stale"
+	t.Cleanup(func() { appleAuthorize = origA })
+
+	if _, err := runCLI(t, "auth", "login", "apple"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := secret.Get(apple.KeyDeveloperToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Token == "stale" {
+		t.Errorf("login 應清掉壞快取並重簽,keychain 仍是 stale:%q", raw)
+	}
+}
+
+// TestAuthLoginApplePreflightFailsFast:preflight 沒過就不該開瀏覽器——省一次 180s 的等待。
+func TestAuthLoginApplePreflightFailsFast(t *testing.T) {
+	setupAppleBYO(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/storefronts/us" {
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"errors":[{"status":"401","title":"Unauthorized"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	origA := appleAuthorize
+	appleAuthorize = func(context.Context, string, func(string) error) (string, error) {
+		t.Error("preflight 失敗不該呼叫 appleAuthorize(不該開瀏覽器)")
+		return "", errors.New("不應被呼叫")
+	}
+	t.Cleanup(func() { appleAuthorize = origA })
+
+	_, err := runCLI(t, "auth", "login", "apple")
+	if err == nil || !strings.Contains(err.Error(), "developer token 被 Apple 拒絕") {
+		t.Fatalf("preflight 失敗應快速回錯:%v", err)
+	}
+}
+
+// TestAuthLoginAppleStorefrontFailureDoesNotPersist:preflight 過、橋接也過,
+// 但 storefront 端本身出錯(500)—— MUT/storefront 都不該落地(T7 review)。
+func TestAuthLoginAppleStorefrontFailureDoesNotPersist(t *testing.T) {
+	setupAppleBYO(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/storefronts/us":
+			w.Write([]byte(`{"data":[{"id":"us"}]}`))
+		case "/me/storefront":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	origA := appleAuthorize
+	appleAuthorize = fakeAppleAuthorize(t, "MUT1")
+	t.Cleanup(func() { appleAuthorize = origA })
+
+	if _, err := runCLI(t, "auth", "login", "apple"); err == nil {
+		t.Fatal("storefront 失敗應回錯")
 	}
 	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
 		t.Error("失敗不應留下 MUT")

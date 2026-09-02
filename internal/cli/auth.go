@@ -91,9 +91,10 @@ func newAuthLoginCmd() *cobra.Command {
 	return cmd
 }
 
-// appleLogin:developer token(來源鏈)→ MUT(MusicKit 橋接,180s)→ storefront → 存 keychain/config。
+// appleLogin:developer token(來源鏈)→ preflight → MUT(MusicKit 橋接,180s)→ storefront → 存 keychain/config。
 // 成功後才 Save config——失敗不留半殘狀態(P1 review 教訓)。
 func appleLogin(cmd *cobra.Command) error {
+	_ = secret.Delete(apple.KeyDeveloperToken) // login = 重來整條鏈;容忍 ErrNotFound,壞快取不該一直被信任
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -103,6 +104,10 @@ func appleLogin(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	hc := &http.Client{Timeout: 30 * time.Second}
+	if err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(cmd.Context()); err != nil {
+		return fmt.Errorf("developer token 被 Apple 拒絕 — BYO 請檢查 .p8/Key ID/Team ID,Worker 請檢查 secrets:%w", err)
+	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "developer token 來源:%s;在瀏覽器完成 Apple Music 授權…(180s 內)\n", src)
 	ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
 	defer cancel()
@@ -110,7 +115,6 @@ func appleLogin(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	hc := &http.Client{Timeout: 30 * time.Second}
 	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, mut).Storefront(ctx)
 	if err != nil {
 		return friendlyErr("apple", err)

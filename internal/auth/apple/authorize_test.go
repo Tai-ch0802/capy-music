@@ -20,6 +20,11 @@ func TestAuthorizePageToSConstraint(t *testing.T) {
 	if !strings.Contains(authorizePage, `src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"`) {
 		t.Fatal("外部 script 必須指向 Apple CDN 的 musickit v3")
 	}
+	// musickitloaded 競態 guard:async 載入的 CDN script 可能搶在 inline script 掛上
+	// 事件監聽器前就完成並觸發 musickitloaded,所以要先看 window.MusicKit 是否已存在。
+	if !strings.Contains(authorizePage, "window.MusicKit") {
+		t.Fatal("應先檢查 window.MusicKit 是否已載入,避免 musickitloaded 競態(事件在監聽器掛上前就觸發)")
+	}
 }
 
 // fakeBrowserPoster 模擬真實頁面 JS 的行為:GET 頁面 → 從頁面撈 state → POST MUT。
