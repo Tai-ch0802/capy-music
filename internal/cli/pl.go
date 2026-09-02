@@ -41,11 +41,14 @@ func newPlListCmd() *cobra.Command {
 	}
 }
 
-// resolvePlaylistID:名稱(不分大小寫)精確比對 → 唯一即用;
-// 0 筆且引數像 22 碼 base62 → 當 ID;其餘給可行動錯誤。
+// resolvePlaylistID:引數像 22 碼 base62 → 直接當 ID,省一次 list 呼叫;
+// 否則名稱(不分大小寫)精確比對 → 唯一即用,其餘給可行動錯誤。
 func resolvePlaylistID(ctx context.Context, p interface {
 	ListPlaylists(context.Context) ([]provider.PlaylistRef, error)
 }, arg string) (string, error) {
+	if spotifyBase62IDRe.MatchString(arg) {
+		return arg, nil
+	}
 	refs, err := p.ListPlaylists(ctx)
 	if err != nil {
 		return "", friendlyErr(err)
@@ -60,9 +63,6 @@ func resolvePlaylistID(ctx context.Context, p interface {
 	case 1:
 		return hits[0].ID, nil
 	case 0:
-		if spotifyTrackIDRe.MatchString(arg) { // 22 碼 base62,playlist ID 同格式
-			return arg, nil
-		}
 		return "", fmt.Errorf("找不到名為 %q 的清單 — 用 capy pl list 查看", arg)
 	default:
 		ids := make([]string, len(hits))
@@ -88,7 +88,7 @@ func newPlShowCmd() *cobra.Command {
 			}
 			tracks, err := p.GetPlaylistItems(ctx, id)
 			if errors.Is(err, provider.ErrRestricted) {
-				return fmt.Errorf("這是追蹤的他人清單 — Spotify 2026-02 起只提供 metadata、不提供內容(spec §1.1),無法顯示")
+				return fmt.Errorf("無法讀取這個清單的內容 — 可能是追蹤的他人清單(Spotify 2026-02 起只提供 metadata,spec §1.1),也可能是授權不足;先跑 capy doctor 確認授權")
 			}
 			if err != nil {
 				return friendlyErr(err)

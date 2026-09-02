@@ -25,7 +25,7 @@ func TestMain(m *testing.M) {
 
 func setCLITestConfig(t *testing.T) {
 	t.Helper()
-	config.SetTestDir(t) // 見 Step 3:config 需要匯出測試 helper
+	t.Setenv("CAPY_CONFIG_DIR", t.TempDir())
 }
 
 func fakeLoginOK(t *testing.T, wantCID string) func(context.Context, string, func(string) error) (*oauth2.Token, error) {
@@ -72,8 +72,27 @@ func TestAuthLoginWithFlagSavesConfigAndLogsIn(t *testing.T) {
 func TestAuthLoginRejectsBadClientID(t *testing.T) {
 	setCLITestConfig(t)
 	if _, err := runCLI(t, "auth", "login", "spotify", "--client-id", "not-hex"); err == nil ||
-		!strings.Contains(err.Error(), "32 位十六進位") {
+		!strings.Contains(err.Error(), "小寫十六進位") {
 		t.Fatalf("格式錯誤應被擋下:%v", err)
+	}
+}
+
+// TestAuthLoginFailureDoesNotPersistClientID:登入失敗不該把 client ID 存進 config——
+// 否則使用者以為已設定,下次 auth status 顯示「已設定」卻其實從未成功授權。
+func TestAuthLoginFailureDoesNotPersistClientID(t *testing.T) {
+	setCLITestConfig(t)
+	orig := spotifyLogin
+	spotifyLogin = func(context.Context, string, func(string) error) (*oauth2.Token, error) {
+		return nil, errors.New("boom")
+	}
+	t.Cleanup(func() { spotifyLogin = orig })
+
+	if _, err := runCLI(t, "auth", "login", "spotify", "--client-id", "0123456789abcdef0123456789abcdef"); err == nil {
+		t.Fatal("預期登入失敗回傳錯誤")
+	}
+	cfg, _ := config.Load()
+	if cfg.SpotifyClientID != "" {
+		t.Errorf("登入失敗不應保存 client ID,得到 %q", cfg.SpotifyClientID)
 	}
 }
 

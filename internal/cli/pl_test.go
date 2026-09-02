@@ -67,7 +67,30 @@ func TestPlShowFollowedPlaylistRestricted(t *testing.T) {
 	swapProvider(t, plFixtureHandler(t))
 	// 22 碼引數 → 當 playlist ID 直接查
 	_, err := runCLI(t, "pl", "show", "pfollowed0123456789abc")
-	if err == nil || !strings.Contains(err.Error(), "2026-02") {
-		t.Fatalf("追蹤他人清單應給政策說明:%v", err)
+	if err == nil || !strings.Contains(err.Error(), "2026-02") || !strings.Contains(err.Error(), "capy doctor") {
+		t.Fatalf("追蹤他人清單應給政策說明與下一步:%v", err)
+	}
+}
+
+// TestPlShowByIDSkipsList:引數已是 22 碼 base62 時應直接當 ID 查,
+// 不該先打一次 /me/playlists(省一次不必要的 API 呼叫)。
+func TestPlShowByIDSkipsList(t *testing.T) {
+	const id = "0123456789abcdefghijkl"
+	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/playlists":
+			t.Errorf("不應呼叫 list")
+		case "/playlists/" + id + "/items":
+			fmt.Fprintf(w, `{"items":[{"item":%s}],"total":1}`, fmt.Sprintf(cliTrackFx, "t1"))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	})
+	out, err := runCLI(t, "pl", "show", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "派對動物") {
+		t.Errorf("pl show by id:%q", out)
 	}
 }

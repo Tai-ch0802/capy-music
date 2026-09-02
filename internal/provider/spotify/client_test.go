@@ -1,6 +1,7 @@
 package spotify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,11 @@ func TestDoRetriesOn429ThenSucceeds(t *testing.T) {
 	wait = func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }
 	t.Cleanup(func() { wait = orig })
 
+	var stderrBuf bytes.Buffer
+	origStderr := backoffStderr
+	backoffStderr = &stderrBuf
+	t.Cleanup(func() { backoffStderr = origStderr })
+
 	c := NewClient(srv.Client(), srv.URL)
 	var out struct{ OK bool }
 	status, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, &out)
@@ -47,6 +53,37 @@ func TestDoRetriesOn429ThenSucceeds(t *testing.T) {
 	}
 	if len(slept) != 1 || slept[0] != 7*time.Second {
 		t.Errorf("應依 Retry-After 睡 7s,實際 %v", slept)
+	}
+	if !strings.Contains(stderrBuf.String(), "rate limited") {
+		t.Errorf("應向 stderr 提示 rate limited,實際 %q", stderrBuf.String())
+	}
+}
+
+// TestDoRefusesExcessiveRetryAfter:Retry-After 超過 maxBackoff 時不值得等——
+// 立即回可行動錯誤,而不是傻等一小時。
+func TestDoRefusesExcessiveRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	var waitCalls int
+	orig := wait
+	wait = func(context.Context, time.Duration) error { waitCalls++; return nil }
+	t.Cleanup(func() { wait = orig })
+
+	c := NewClient(srv.Client(), srv.URL)
+	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, nil)
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.Status != http.StatusTooManyRequests {
+		t.Fatalf("應立即回 429 apiError,得到 %v", err)
+	}
+	if !strings.Contains(err.Error(), "3600") {
+		t.Errorf("訊息應含 Spotify 要求的秒數,得到 %q", err.Error())
+	}
+	if waitCalls != 0 {
+		t.Errorf("超過上限不應等待,wait 被呼叫 %d 次", waitCalls)
 	}
 }
 

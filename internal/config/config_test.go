@@ -9,9 +9,9 @@ import (
 
 func setTestDir(t *testing.T) string {
 	t.Helper()
-	SetTestDir(t)
-	dir, _ := Dir()
-	return filepath.Dir(dir)
+	dir := t.TempDir()
+	t.Setenv("CAPY_CONFIG_DIR", filepath.Join(dir, "capy-music"))
+	return dir
 }
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
@@ -76,6 +76,18 @@ func TestSaveDropsDefaultEndpoint(t *testing.T) {
 	// Save 不應污染呼叫端手上的物件
 	if c.AppleTokenEndpoint != DefaultAppleTokenEndpoint {
 		t.Errorf("Save 改動了呼叫端的 Config:%q", c.AppleTokenEndpoint)
+	}
+}
+
+func TestDirHonorsEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_CONFIG_DIR", dir)
+	got, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != dir {
+		t.Errorf("Dir() = %q, want %q", got, dir)
 	}
 }
 

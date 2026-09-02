@@ -19,7 +19,8 @@ type spotifyProviderT = spotify.Provider
 
 var (
 	spotifyTrackURIRe = regexp.MustCompile(`^spotify:track:([0-9A-Za-z]{22})$`)
-	spotifyTrackIDRe  = regexp.MustCompile(`^[0-9A-Za-z]{22}$`)
+	// spotifyBase62IDRe:22 碼 base62,track ID 與 playlist ID 共用此格式。
+	spotifyBase62IDRe = regexp.MustCompile(`^[0-9A-Za-z]{22}$`)
 )
 
 // resolveDeviceID:名稱不分大小寫精確比對,取第一個相符(重名取先;ponytail: 夠用)。
@@ -29,6 +30,9 @@ func resolveDeviceID(ctx context.Context, p interface {
 	ds, err := p.Devices(ctx)
 	if err != nil {
 		return "", friendlyErr(err)
+	}
+	if len(ds) == 0 {
+		return "", friendlyErr(provider.ErrNoActiveDevice)
 	}
 	names := make([]string, len(ds))
 	for i, d := range ds {
@@ -58,9 +62,11 @@ func newPlayCmd() *cobra.Command {
 			case len(args) == 1 && spotifyTrackURIRe.MatchString(args[0]):
 				req.TrackIDs = []string{spotifyTrackURIRe.FindStringSubmatch(args[0])[1]}
 				label = args[0]
-			case len(args) == 1 && spotifyTrackIDRe.MatchString(args[0]):
+			case len(args) == 1 && spotifyBase62IDRe.MatchString(args[0]):
 				req.TrackIDs = []string{args[0]}
 				label = args[0]
+			case len(args) == 1 && strings.HasPrefix(args[0], "spotify:"):
+				return fmt.Errorf("目前只支援 track URI/ID,不支援 %s — 用 capy pl show 取出曲目 ID 再播放", args[0])
 			default:
 				q := strings.Join(args, " ")
 				tracks, err := p.Search(ctx, provider.Query{Text: q, Limit: 1})

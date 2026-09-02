@@ -54,8 +54,11 @@ func checkKeychain(ctx context.Context) (string, error) {
 	}
 	v, err := secret.Get(probe)
 	_ = secret.Delete(probe)
-	if err != nil || v != "ok" {
+	if err != nil {
 		return "", fmt.Errorf("讀回失敗:%w", err)
+	}
+	if v != "ok" {
+		return "", fmt.Errorf("讀回值不符(得到 %q)— keychain 可能被其他程式覆寫", v)
 	}
 	return "讀寫正常", nil
 }

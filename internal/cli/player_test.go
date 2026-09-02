@@ -49,6 +49,35 @@ func TestPlayByURIDoesNotSearch(t *testing.T) {
 	}
 }
 
+func TestPlayRejectsNonTrackURI(t *testing.T) {
+	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/search" {
+			t.Errorf("非 track URI 不應觸發 search")
+		}
+	})
+	_, err := runCLI(t, "play", "spotify:album:0123456789abcdefghijkl")
+	if err == nil || !strings.Contains(err.Error(), "只支援 track") {
+		t.Fatalf("非 track 的 spotify: URI 應被擋下並給出替代路徑,得到 %v", err)
+	}
+}
+
+func TestPlayDeviceFlagNoDevices(t *testing.T) {
+	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/player/devices":
+			w.Write([]byte(`{"devices":[]}`))
+		case "/search":
+			fmt.Fprintf(w, `{"tracks":{"items":[%s],"total":1}}`, fmt.Sprintf(cliTrackFx, "x1"))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	})
+	_, err := runCLI(t, "play", "x", "--device", "客廳喇叭")
+	if err == nil || !strings.Contains(err.Error(), "Spotify 播放器") {
+		t.Fatalf("零裝置應給可行動訊息,得到 %v", err)
+	}
+}
+
 func TestPlayDeviceFlagResolvesName(t *testing.T) {
 	var gotDevice string
 	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {

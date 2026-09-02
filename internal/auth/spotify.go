@@ -19,7 +19,7 @@ var loginStderr io.Writer = os.Stderr
 // KeySpotifyRefreshToken 是 keychain 內的 refresh token 鍵名。
 const KeySpotifyRefreshToken = "spotify.refresh_token"
 
-// SpotifyScopes:spec §4.2 逐字。P1 只用到讀+播放,但一次要齊免得 P4 重授權。
+// SpotifyScopes:spec §4.2 逐字;一次索取 9 個的取捨見 spec §4.2 決策段。
 var SpotifyScopes = []string{
 	"user-read-playback-state",
 	"user-modify-playback-state",

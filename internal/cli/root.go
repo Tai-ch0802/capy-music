@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -31,7 +34,10 @@ func newRootCmd() *cobra.Command {
 	return cmd
 }
 
-// Execute 是 CLI 進入點。
+// Execute 是 CLI 進入點。SIGINT/SIGTERM 取消 ctx,讓 429 退避等待中的請求可被中斷
+// (spec 硬約束:可腳本化/可被 cron 終止是核心價值)。
 func Execute() error {
-	return newRootCmd().Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return newRootCmd().ExecuteContext(ctx)
 }

@@ -16,28 +16,18 @@ const DefaultAppleTokenEndpoint = "https://capy.taislife.work/v1/apple/developer
 
 const dirName = "capy-music"
 
-// 測試替換點。macOS → ~/Library/Application Support;Windows → %AppData%(與 spec §7 一致)。
-var userConfigDir = os.UserConfigDir
-
 type Config struct {
 	SpotifyClientID    string `json:"spotify_client_id,omitempty"`
 	AppleTokenEndpoint string `json:"apple_token_endpoint,omitempty"`
 }
 
-// SetTestDir 把設定目錄指到 t.TempDir(),測試結束自動還原。僅供測試。
-func SetTestDir(t interface {
-	TempDir() string
-	Cleanup(func())
-}) {
-	dir := t.TempDir()
-	orig := userConfigDir
-	userConfigDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { userConfigDir = orig })
-}
-
-// Dir 回傳設定目錄(不建立)。
+// Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。
+// macOS → ~/Library/Application Support;Windows → %AppData%(與 spec §7 一致)。
 func Dir() (string, error) {
-	base, err := userConfigDir()
+	if d := os.Getenv("CAPY_CONFIG_DIR"); d != "" {
+		return d, nil
+	}
+	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}

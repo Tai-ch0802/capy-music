@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 
@@ -23,6 +24,9 @@ const DefaultAPIBase = "https://api.spotify.com/v1"
 
 const maxRetries = 3
 
+// maxBackoff:Retry-After 超過此值不值得等——直接回可行動錯誤讓使用者稍後再試。
+const maxBackoff = 60 * time.Second
+
 // wait:429 退避的等待,可被 ctx 取消(Retry-After 無上限,不可讓 Ctrl-C 失效)。測試替換點。
 var wait = func(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
@@ -34,6 +38,9 @@ var wait = func(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
+
+// backoffStderr:429 退避提示的輸出目的地。測試替換點。
+var backoffStderr io.Writer = os.Stderr
 
 type Client struct {
 	hc   *http.Client
@@ -92,10 +99,18 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
+			secs := retryAfterSeconds(resp, 1)
+			capSecs := int(maxBackoff / time.Second)
+			if secs > capSecs { // 用整數秒比較,避免超大 Retry-After 讓 Duration 乘法溢位
+				return resp.StatusCode, &apiError{Status: resp.StatusCode, Message: fmt.Sprintf(
+					"rate limited,Spotify 要求等待 %d 秒(超過上限 %d 秒),請稍後再試", secs, capSecs)}
+			}
 			if attempt >= maxRetries {
 				return resp.StatusCode, &apiError{Status: resp.StatusCode, Message: "rate limited,重試已達上限"}
 			}
-			if err := wait(ctx, time.Duration(retryAfterSeconds(resp, 1))*time.Second); err != nil {
+			d := time.Duration(secs) * time.Second
+			fmt.Fprintf(backoffStderr, "rate limited,等待 %v 後重試…\n", d)
+			if err := wait(ctx, d); err != nil {
 				return 0, err
 			}
 			continue

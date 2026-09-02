@@ -61,16 +61,17 @@ func newAuthLoginCmd() *cobra.Command {
 			}
 			cid = strings.TrimSpace(cid)
 			if !clientIDRe.MatchString(cid) {
-				return fmt.Errorf("Client ID 應為 32 位十六進位字串,得到 %q", cid)
-			}
-			cfg.SpotifyClientID = cid
-			if err := config.Save(cfg); err != nil {
-				return err
+				return fmt.Errorf("Client ID 應為 32 位小寫十六進位字串(從 dashboard 複製)")
 			}
 			fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成 Spotify 授權…(180s 內)")
 			ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
 			defer cancel()
 			if _, err := spotifyLogin(ctx, cid, openBrowser); err != nil {
+				return err
+			}
+			// 授權成功後才落地 client ID——失敗不留半殘的 config(review 便條)。
+			cfg.SpotifyClientID = cid
+			if err := config.Save(cfg); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "✅ Spotify 授權完成(refresh token 已入 keychain)")
@@ -99,7 +100,7 @@ func runClientIDWizard() (string, error) {
 			Value(&cid).
 			Validate(func(s string) error {
 				if !clientIDRe.MatchString(strings.TrimSpace(s)) {
-					return errors.New("應為 32 位十六進位字串")
+					return errors.New("Client ID 應為 32 位小寫十六進位字串(從 dashboard 複製)")
 				}
 				return nil
 			}),
