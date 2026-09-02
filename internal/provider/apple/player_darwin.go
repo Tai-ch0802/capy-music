@@ -32,10 +32,13 @@ func (p *Provider) Devices(context.Context) ([]provider.Device, error) {
 }
 
 // stateScript:一行 tab 分隔輸出;stopped 時只回 "stopped"。
+// 時長/進度在 AppleScript 端先算成整數毫秒(而非 "as text" 後在 Go 端乘 1000)——
+// 避開 macOS 非 en-US locale(如 de/fr)把小數點印成 "," 導致 Go 端解析失敗的問題
+// (review finding 1;"," 不是合法 Go float,且原本錯誤被 "_" 吞掉,靜默變 0)。
 const stateScript = `tell application "Music"
 	if player state is stopped then return "stopped"
 	set t to current track
-	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (duration of t as text) & tab & (player position as text)
+	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer)
 end tell`
 
 func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
@@ -50,13 +53,16 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 	if len(f) < 6 {
 		return nil, fmt.Errorf("osascript 輸出格式非預期:%q", out)
 	}
-	dur, _ := strconv.ParseFloat(f[4], 64)
-	pos, _ := strconv.ParseFloat(f[5], 64)
-	tr := provider.Track{Title: f[1], Artists: []string{f[2]}, Album: f[3], DurationMS: int(dur * 1000)}
+	dur, err1 := strconv.Atoi(f[4])
+	pos, err2 := strconv.Atoi(f[5])
+	if err1 != nil || err2 != nil {
+		return nil, fmt.Errorf("osascript 數值欄位無法解析:%q", out)
+	}
+	tr := provider.Track{Title: f[1], Artists: []string{f[2]}, Album: f[3], DurationMS: dur}
 	return &provider.PlaybackState{
 		Playing:    f[0] == "playing",
 		Track:      &tr,
-		ProgressMS: int(pos * 1000),
+		ProgressMS: pos,
 		Device:     provider.Device{ID: musicDevice, Name: "Music.app", Type: "Computer", Active: true},
 	}, nil
 }
@@ -83,6 +89,7 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 	if os.Getenv("CAPY_APPLE_PLAY_MECHANISM") == "open" {
 		return runOpen(u)
 	}
+	// %q 的 \" 與 \\ 跳脫與 AppleScript 字串字面值一致;改成 "%s" 會開啟 AppleScript 注入(reviewer 實測)。
 	_, err = runOSA(fmt.Sprintf(`tell application "Music" to open location %q`, u))
 	return err
 }
