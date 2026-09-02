@@ -110,6 +110,14 @@ func runClientIDWizard() (string, error) {
 	return strings.TrimSpace(cid), nil
 }
 
+// maskClientID:顯示頭尾各 4 碼;格式異常時不切片、直接指出下一步。
+func maskClientID(id string) string {
+	if !clientIDRe.MatchString(id) {
+		return "已設定但格式異常(應為 32 位十六進位)— 重跑 capy auth login spotify"
+	}
+	return "已設定(" + id[:4] + "…" + id[len(id)-4:] + ")"
+}
+
 func newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -123,7 +131,7 @@ func newAuthStatusCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintln(w, "spotify:")
 			if cfg.SpotifyClientID != "" {
-				fmt.Fprintf(w, "  client_id: 已設定(%s…%s)\n", cfg.SpotifyClientID[:4], cfg.SpotifyClientID[len(cfg.SpotifyClientID)-4:])
+				fmt.Fprintf(w, "  client_id: %s\n", maskClientID(cfg.SpotifyClientID))
 			} else {
 				fmt.Fprintln(w, "  client_id: 未設定")
 			}

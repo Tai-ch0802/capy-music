@@ -120,3 +120,15 @@ func TestAuthStatusAndLogout(t *testing.T) {
 		t.Errorf("logout 後 status 輸出:%q", out)
 	}
 }
+
+func TestAuthStatusCorruptClientIDDoesNotPanic(t *testing.T) {
+	setCLITestConfig(t)
+	_ = config.Save(&config.Config{SpotifyClientID: "abc"})
+	out, err := runCLI(t, "auth", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "格式異常") {
+		t.Errorf("壞 client ID 應提示格式異常,得到 %q", out)
+	}
+}
