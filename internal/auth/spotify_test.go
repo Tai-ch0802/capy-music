@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -129,6 +130,76 @@ func TestLoginSpotifyDenied(t *testing.T) {
 	defer cancel()
 	if _, err := LoginSpotify(ctx, "cid123", deniedBrowser); err == nil || !strings.Contains(err.Error(), "授權被拒") {
 		t.Fatalf("拒絕授權應回明確錯誤,得到 %v", err)
+	}
+}
+
+// Dashboard 的 Redirect URI 填錯時,Spotify 在瀏覽器顯示 INVALID_CLIENT 且永不 callback——
+// fake browser 什麼都不做(不打 callback),逾時錯誤必須指向 Redirect URI 這個最可能的病灶。
+func TestLoginSpotifyTimeoutMessage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	doNothingBrowser := func(string) error { return nil }
+	_, err := LoginSpotify(ctx, "cid123", doNothingBrowser)
+	if err == nil || !strings.Contains(err.Error(), "Redirect URI") {
+		t.Fatalf("逾時應提示檢查 Redirect URI,得到 %v", err)
+	}
+}
+
+// SSH/headless 場景 openBrowser 會失敗,但使用者仍可手動複製 stderr 印出的 URL 完成授權——
+// 開瀏覽器失敗不該讓整個登入中止。
+func TestLoginSpotifyBrowserOpenFailStillCompletes(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"at9","token_type":"Bearer","expires_in":3600,"refresh_token":"rt9"}`))
+	}))
+	defer tokenSrv.Close()
+	swapTokenURL(t, tokenSrv.URL)
+
+	stderrBuf := &bytes.Buffer{}
+	origStderr := loginStderr
+	loginStderr = stderrBuf
+	t.Cleanup(func() { loginStderr = origStderr })
+
+	failingBrowser := func(authURL string) error {
+		done := make(chan struct{})
+		t.Cleanup(func() { <-done })
+		go func() {
+			defer close(done)
+			u, err := url.Parse(authURL)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			q := u.Query()
+			cb := q.Get("redirect_uri") + "?code=code9&state=" + q.Get("state")
+			resp, err := http.Get(cb)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			resp.Body.Close()
+		}()
+		return errors.New("exec: \"xdg-open\": executable file not found in $PATH")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tok, err := LoginSpotify(ctx, "cid123", failingBrowser)
+	if err != nil {
+		t.Fatalf("開瀏覽器失敗不應中止登入:%v", err)
+	}
+	if tok.AccessToken != "at9" {
+		t.Errorf("access token = %q", tok.AccessToken)
+	}
+	out := stderrBuf.String()
+	if !strings.Contains(out, "手動前往") {
+		t.Errorf("應印出手動前往提示:%q", out)
+	}
+	if !strings.Contains(out, "accounts.spotify.com/authorize") || !strings.Contains(out, "client_id=cid123") {
+		t.Errorf("應印出實際授權 URL:%q", out)
+	}
+	if !strings.Contains(out, "無法自動開瀏覽器") {
+		t.Errorf("應印出開瀏覽器失敗訊息:%q", out)
 	}
 }
 

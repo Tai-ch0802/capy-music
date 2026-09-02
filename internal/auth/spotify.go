@@ -2,13 +2,19 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 
 	"golang.org/x/oauth2"
 
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
+
+// loginStderr:LoginSpotify 印手動授權 URL / 開瀏覽器失敗訊息的目的地。測試替換點。
+var loginStderr io.Writer = os.Stderr
 
 // KeySpotifyRefreshToken 是 keychain 內的 refresh token 鍵名。
 const KeySpotifyRefreshToken = "spotify.refresh_token"
@@ -60,11 +66,17 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	conf := spotifyOAuthConfig(clientID, lb.BaseURL()+"/callback")
 	verifier := oauth2.GenerateVerifier()
 	lb.Start()
-	if err := openBrowser(conf.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))); err != nil {
-		return nil, fmt.Errorf("無法開啟瀏覽器:%w", err)
+	authURL := conf.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
+	fmt.Fprintf(loginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
+	if err := openBrowser(authURL); err != nil {
+		// SSH/headless 場景 browser.Open 必失敗——不中止,使用者可手動貼上面那行 URL 完成授權。
+		fmt.Fprintf(loginStderr, "無法自動開瀏覽器:%v\n", err)
 	}
 	vals, err := lb.Wait(ctx)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("180 秒內未收到授權回呼 — 若瀏覽器顯示 INVALID_CLIENT / Invalid redirect URI,請確認 dashboard 的 Redirect URI 是 http://127.0.0.1:8888/callback(完全相同);Client ID 可用 --client-id 重設")
+		}
 		return nil, fmt.Errorf("等待授權回呼:%w", err)
 	}
 	if e := vals.Get("error"); e != "" {

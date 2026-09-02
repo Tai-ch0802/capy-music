@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -59,6 +60,14 @@ func checkKeychain(ctx context.Context) (string, error) {
 	return "讀寫正常", nil
 }
 
+// portHint:查誰佔用 8888 的指令,windows 與其他平台(macOS/Linux)不同。
+func portHint(goos string) string {
+	if goos == "windows" {
+		return "netstat -ano | findstr :8888"
+	}
+	return "lsof -i :8888"
+}
+
 func checkPort8888(ctx context.Context) (string, error) {
 	lb, err := auth.NewLoopback(auth.DefaultSpotifyPort, "probe")
 	if err != nil {
@@ -66,7 +75,7 @@ func checkPort8888(ctx context.Context) (string, error) {
 	}
 	defer lb.Close()
 	if lb.Port() != auth.DefaultSpotifyPort {
-		return "", errors.New("8888 被其他程序佔用 — auth login 會失敗,請先釋放(lsof -i :8888)")
+		return "", fmt.Errorf("8888 被其他程序佔用 — auth login 會失敗,請先釋放(%s)", portHint(runtime.GOOS))
 	}
 	return "8888 可用", nil
 }

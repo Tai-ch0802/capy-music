@@ -56,3 +56,12 @@ func TestCheckKeychainRoundTrip(t *testing.T) {
 		t.Errorf("keychain round-trip:%v", err)
 	}
 }
+
+func TestPortHintByOS(t *testing.T) {
+	if got := portHint("windows"); got != "netstat -ano | findstr :8888" {
+		t.Errorf("windows portHint = %q", got)
+	}
+	if got := portHint("darwin"); got != "lsof -i :8888" {
+		t.Errorf("darwin portHint = %q", got)
+	}
+}

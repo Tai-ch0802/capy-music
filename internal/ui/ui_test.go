@@ -13,6 +13,12 @@ func TestTableNonTTYIsRawTSV(t *testing.T) {
 	if got != "1\tx\n2\ty\n" {
 		t.Errorf("非 TTY 應為無標題 raw TSV,得到 %q", got)
 	}
+
+	buf.Reset()
+	Table(buf, false, nil, [][]string{{"a\tb\nc", "d"}})
+	if got := buf.String(); got != "a b c\td\n" {
+		t.Errorf("儲存格內嵌 tab/newline 應被替換為空白且單列多欄仍為單行,得到 %q", got)
+	}
 }
 
 func TestTableTTYHasHeaderAndAlignment(t *testing.T) {

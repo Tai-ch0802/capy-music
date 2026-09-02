@@ -81,7 +81,7 @@ func newPlayCmd() *cobra.Command {
 			if err := p.Play(ctx, req); err != nil {
 				return friendlyErr(err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "▶ ", ui.Bold(stdoutIsTTY(cmd), label))
+			fmt.Fprintln(cmd.OutOrStdout(), "▶", ui.Bold(stdoutIsTTY(cmd), label))
 			return nil
 		},
 	}

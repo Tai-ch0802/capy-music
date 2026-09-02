@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -34,7 +35,9 @@ var newSpotifyProvider = func(ctx context.Context) (*spotify.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return spotify.New(oauth2.NewClient(ctx, ts), ""), nil
+	hc := oauth2.NewClient(ctx, ts)
+	hc.Timeout = 30 * time.Second
+	return spotify.New(hc, ""), nil
 }
 
 // friendlyErr 把語意化錯誤轉成可行動訊息(spec R-5:錯誤訊息直接指出下一步)。

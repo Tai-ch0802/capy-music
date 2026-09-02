@@ -26,11 +26,18 @@ func Bold(tty bool, s string) string {
 	return boldStyle.Render(s)
 }
 
+// tsvEscaper:非 TTY 儲存格若內嵌 tab/newline 會偽造出多欄/多列,cut -f 讀出來就錯了——全換成空白。
+var tsvEscaper = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ")
+
 // Table: TTY → tabwriter 對齊含標題; 非 TTY → 無標題 raw TSV(cut -f 友善)。
 func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 	if !tty {
 		for _, r := range rows {
-			fmt.Fprintln(w, strings.Join(r, "\t"))
+			cells := make([]string, len(r))
+			for i, c := range r {
+				cells[i] = tsvEscaper.Replace(c)
+			}
+			fmt.Fprintln(w, strings.Join(cells, "\t"))
 		}
 		return
 	}

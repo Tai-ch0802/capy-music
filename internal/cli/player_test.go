@@ -32,8 +32,8 @@ func TestPlayByQuerySearchesThenPlays(t *testing.T) {
 	if len(playedURIs) != 1 || playedURIs[0] != "spotify:track:hit1" {
 		t.Errorf("播放 URI:%v", playedURIs)
 	}
-	if !strings.Contains(out, "派對動物") {
-		t.Errorf("輸出應含曲名:%q", out)
+	if !strings.Contains(out, "▶ 派對動物") {
+		t.Errorf("輸出應為單一空格的 ▶ 前綴且含曲名:%q", out)
 	}
 }
 
