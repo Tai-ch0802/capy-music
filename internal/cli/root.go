@@ -27,6 +27,7 @@ func newRootCmd() *cobra.Command {
 		simpleCtl("prev", "上一首", "⏮ 上一首", func(ctx context.Context, p *spotifyProviderT) error { return p.Prev(ctx) }),
 	)
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
+	cmd.AddCommand(newDoctorCmd())
 	return cmd
 }
 
