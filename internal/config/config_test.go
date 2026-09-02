@@ -9,11 +9,9 @@ import (
 
 func setTestDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	orig := userConfigDir
-	userConfigDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { userConfigDir = orig })
-	return dir
+	SetTestDir(t)
+	dir, _ := Dir()
+	return filepath.Dir(dir)
 }
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {

@@ -24,6 +24,17 @@ type Config struct {
 	AppleTokenEndpoint string `json:"apple_token_endpoint,omitempty"`
 }
 
+// SetTestDir 把設定目錄指到 t.TempDir(),測試結束自動還原。僅供測試。
+func SetTestDir(t interface {
+	TempDir() string
+	Cleanup(func())
+}) {
+	dir := t.TempDir()
+	orig := userConfigDir
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userConfigDir = orig })
+}
+
 // Dir 回傳設定目錄(不建立)。
 func Dir() (string, error) {
 	base, err := userConfigDir()

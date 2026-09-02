@@ -13,6 +13,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 	cmd.AddCommand(newDebugCmd())
+	cmd.AddCommand(newAuthCmd())
 	return cmd
 }
 
