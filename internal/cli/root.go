@@ -20,6 +20,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newAuthCmd())
 	cmd.AddCommand(newSearchCmd())
 	cmd.AddCommand(newPlayCmd())
+	cmd.AddCommand(newPlCmd())
 	cmd.AddCommand(
 		simpleCtl("pause", "暫停播放", "⏸ 已暫停", func(ctx context.Context, p *spotifyProviderT) error { return p.Pause(ctx) }),
 		simpleCtl("next", "下一首", "⏭ 下一首", func(ctx context.Context, p *spotifyProviderT) error { return p.Next(ctx) }),
