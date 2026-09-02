@@ -33,14 +33,14 @@ func TestDoRetriesOn429ThenSucceeds(t *testing.T) {
 	defer srv.Close()
 
 	var slept []time.Duration
-	orig := wait
-	wait = func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }
-	t.Cleanup(func() { wait = orig })
+	orig := provider.Wait
+	provider.Wait = func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }
+	t.Cleanup(func() { provider.Wait = orig })
 
 	var stderrBuf bytes.Buffer
-	origStderr := backoffStderr
-	backoffStderr = &stderrBuf
-	t.Cleanup(func() { backoffStderr = origStderr })
+	origStderr := provider.BackoffStderr
+	provider.BackoffStderr = &stderrBuf
+	t.Cleanup(func() { provider.BackoffStderr = origStderr })
 
 	c := NewClient(srv.Client(), srv.URL)
 	var out struct{ OK bool }
@@ -69,9 +69,9 @@ func TestDoRefusesExcessiveRetryAfter(t *testing.T) {
 	defer srv.Close()
 
 	var waitCalls int
-	orig := wait
-	wait = func(context.Context, time.Duration) error { waitCalls++; return nil }
-	t.Cleanup(func() { wait = orig })
+	orig := provider.Wait
+	provider.Wait = func(context.Context, time.Duration) error { waitCalls++; return nil }
+	t.Cleanup(func() { provider.Wait = orig })
 
 	c := NewClient(srv.Client(), srv.URL)
 	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, nil)
@@ -93,9 +93,9 @@ func TestDoGivesUpAfterMaxRetries(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	orig := wait
-	wait = func(context.Context, time.Duration) error { return nil }
-	t.Cleanup(func() { wait = orig })
+	orig := provider.Wait
+	provider.Wait = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { provider.Wait = orig })
 
 	c := NewClient(srv.Client(), srv.URL)
 	_, err := c.do(context.Background(), http.MethodGet, "/x", nil, nil, nil)
