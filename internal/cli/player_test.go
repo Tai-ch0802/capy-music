@@ -49,6 +49,45 @@ func TestPlayByURIDoesNotSearch(t *testing.T) {
 	}
 }
 
+// TestPlayByIDFlagSkipsSearch:--id 是給非 spotify base62 格式 ID 用的逃生口(例如 Apple 的
+// 數字字串 catalog id),但在 spotify 上也該一樣跳過搜尋直接播放。
+func TestPlayByIDFlagSkipsSearch(t *testing.T) {
+	var playedURIs []string
+	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search":
+			t.Error("--id 不應觸發 search")
+		case "/me/player/play":
+			var body struct {
+				URIs []string `json:"uris"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			playedURIs = body.URIs
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	out, err := runCLI(t, "play", "--id", "customid123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(playedURIs) != 1 || playedURIs[0] != "spotify:track:customid123" {
+		t.Errorf("播放 URI:%v", playedURIs)
+	}
+	if !strings.Contains(out, "▶ customid123") {
+		t.Errorf("輸出應以 id 當 label:%q", out)
+	}
+}
+
+func TestPlayIDAndQueryConflict(t *testing.T) {
+	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("--id 與搜尋詞擇一不應呼叫 API:%s", r.URL.Path)
+	})
+	_, err := runCLI(t, "play", "--id", "abc", "query")
+	if err == nil || !strings.Contains(err.Error(), "--id 與搜尋詞擇一") {
+		t.Fatalf("同時給 --id 與搜尋詞應報錯:%v", err)
+	}
+}
+
 func TestPlayRejectsNonTrackURI(t *testing.T) {
 	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/search" {

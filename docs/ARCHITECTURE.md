@@ -355,7 +355,7 @@ Scopes:
 | Spotify access token | 記憶體 | 1h | refresh token |
 | Spotify refresh token | **OS Keychain** | 長期 / **會輪替** | 每次 refresh 覆寫 |
 | Spotify client_id | config 檔(非機密) | 永久 | 使用者輸入 |
-| Apple developer token | 記憶體 + 快取檔 | 12h | 向 Worker 重取 |
+| Apple developer token | **OS Keychain**(快取 12h;spec 原「記憶體 + 快取檔」收緊為 keychain,符合硬約束) | 12h | 向 Worker 重取 |
 | Apple Music User Token | **OS Keychain** | 長期 / 無 refresh | 過期需重跑 §4.3(b) |
 | Google access token | 記憶體 | 1h | refresh token |
 | Google refresh token | **OS Keychain** | 長期 | 標準 refresh |
@@ -743,6 +743,8 @@ Apple developer token 的 payload 只有 `{iss, iat, exp}`,**沒有任何 per-us
 ### P2 — Apple 全鏈路
 Worker 部署(`capy.taislife.work`)→ `auth login apple`(MusicKit 橋接)→ Apple Music API search → macOS `osascript` 播放
 
+> **排程註記(2026-09-02):** 程式碼完成(PR #N);真實驗收 gate 於會籍與 `.p8`,P0-1/P0-3 併入 P2 驗收;macOS 播放機制 A/B 待 C-4 決勝。
+
 ### P3 — Google + Drive
 `auth login google` → appDataFolder 讀寫 → manifest / snapshot 基礎設施
 
@@ -767,6 +769,8 @@ op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 4. **平台** — macOS + Windows 第一天支援;**Linux 非目標**
 5. **TUI** — 第一天進場(charm 全家桶);非 TTY 純文字輸出為鐵則(見 §2)
 6. **發佈定位** — 一開始就對外發佈;`capy doctor` 進 P1
+7. **`--provider` 統一** — 不採附錄 A 的 `play --on`;所有讀/播放命令一致用 `--provider`(預設 `spotify`)
+8. **Apple `pl list/show`** — 納入 P2
 
 ### 必須寫進 CLAUDE.md 的約束
 

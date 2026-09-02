@@ -52,9 +52,15 @@ func newPlayCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			id, _ := cmd.Flags().GetString("id")
 			req := provider.PlayRequest{}
 			var label string
 			switch {
+			case id != "" && len(args) > 0:
+				return fmt.Errorf("--id 與搜尋詞擇一")
+			case id != "":
+				req.TrackIDs = []string{id}
+				label = id
 			case len(args) == 0: // resume
 				label = "恢復播放"
 			case len(args) == 1 && spotifyTrackURIRe.MatchString(args[0]):
@@ -94,6 +100,7 @@ func newPlayCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("device", "", "目標裝置名稱(見 capy devices)")
+	cmd.Flags().String("id", "", "直接以 provider 的 track ID 播放(跳過搜尋)")
 	providerFlag(cmd)
 	return cmd
 }

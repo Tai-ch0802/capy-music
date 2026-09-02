@@ -27,6 +27,18 @@ var (
 
 const musicDevice = "music.app"
 
+// StubOSAForTest 把 runOSA 換成記錄器(僅供測試;darwin 專用)。
+// 跨套件測試鉤子不能放 _test.go(cli 套件的測試需要呼叫它,但 _test.go 的匯出只在同套件內可見),
+// 故放在一般檔案裡,以 *ForTest 命名清楚標示用途(同 P1 SetTestDir 討論;若未來認為應避免,
+// 替代方案是 CAPY_OSA_SCRIPT_LOG=<path> 環境變數把 script 寫檔)。
+func StubOSAForTest(t interface{ Cleanup(func()) }) *[]string {
+	var scripts []string
+	orig := runOSA
+	runOSA = func(script string) (string, error) { scripts = append(scripts, script); return "", nil }
+	t.Cleanup(func() { runOSA = orig })
+	return &scripts
+}
+
 func (p *Provider) Devices(context.Context) ([]provider.Device, error) {
 	return []provider.Device{{ID: musicDevice, Name: "Music.app", Type: "Computer", Active: true}}, nil
 }

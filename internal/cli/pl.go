@@ -37,7 +37,11 @@ func newPlListCmd() *cobra.Command {
 			}
 			rows := make([][]string, len(refs))
 			for i, ref := range refs {
-				rows[i] = []string{ref.ID, ref.Name, strconv.Itoa(ref.Total), ref.Owner}
+				total := strconv.Itoa(ref.Total)
+				if ref.Total < 0 { // Apple library playlist 物件不含曲數(client.go)
+					total = "-"
+				}
+				rows[i] = []string{ref.ID, ref.Name, total, ref.Owner}
 			}
 			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "名稱", "曲數", "擁有者"}, rows)
 			return nil
