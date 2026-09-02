@@ -4,9 +4,12 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 )
@@ -15,6 +18,9 @@ import (
 var authorizePage string
 
 var authorizeTmpl = template.Must(template.New("authorize").Parse(authorizePage))
+
+// AuthStderr:AuthorizeMUT 印手動授權 URL / 開瀏覽器失敗訊息的目的地。測試替換點。
+var AuthStderr io.Writer = os.Stderr
 
 // AuthorizeMUT 執行 spec §4.3(b) 的 MusicKit 橋接:
 // 起 loopback(動態 port,P0-3 驗的就是這個)→ 開瀏覽器 → 使用者按按鈕
@@ -52,8 +58,10 @@ func AuthorizeMUT(ctx context.Context, devToken string, openBrowser func(string)
 	})
 
 	lb.Start()
-	if err := openBrowser(lb.BaseURL() + "/apple/authorize"); err != nil {
-		return "", err
+	pageURL := lb.BaseURL() + "/apple/authorize"
+	fmt.Fprintf(AuthStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", pageURL)
+	if err := openBrowser(pageURL); err != nil {
+		fmt.Fprintf(AuthStderr, "無法自動開瀏覽器:%v(可手動開啟上方網址)\n", err)
 	}
 	vals, err := lb.Wait(ctx)
 	if err != nil {

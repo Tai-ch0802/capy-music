@@ -1,7 +1,9 @@
 package apple
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -99,5 +101,39 @@ func TestAuthorizeMUTRejectsBadState(t *testing.T) {
 	defer cancel()
 	if _, err := AuthorizeMUT(ctx, "DT", badPoster); err == nil {
 		t.Fatal("錯誤 state 不應成功,應逾時")
+	}
+}
+
+// SSH/headless 場景 openBrowser 會失敗,但使用者仍可手動複製 stderr 印出的 URL 完成授權——
+// 開瀏覽器失敗不該讓整個 MUT 授權中止(P1 交接便條 #3,對齊 spotify.go 的行為)。
+func TestAuthorizeMUTBrowserOpenFailStillCompletes(t *testing.T) {
+	stderrBuf := &bytes.Buffer{}
+	origStderr := AuthStderr
+	AuthStderr = stderrBuf
+	t.Cleanup(func() { AuthStderr = origStderr })
+
+	// 仍沿用 fakeBrowserPoster 的 done-channel 模式觸發真正的 GET+POST;
+	// 外層 openBrowser 改回錯,模擬 exec.Command("open",...) 失敗。
+	poster := fakeBrowserPoster(t, "FAKE_MUT2", "FAKE_DT2")
+	failingBrowser := func(pageURL string) error {
+		_ = poster(pageURL)
+		return errors.New("exec: \"open\": executable file not found in $PATH")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	mut, err := AuthorizeMUT(ctx, "FAKE_DT2", failingBrowser)
+	if err != nil {
+		t.Fatalf("開瀏覽器失敗不應中止授權:%v", err)
+	}
+	if mut != "FAKE_MUT2" {
+		t.Errorf("mut = %q", mut)
+	}
+	out := stderrBuf.String()
+	if !strings.Contains(out, "/apple/authorize") {
+		t.Errorf("應印出授權頁 URL:%q", out)
+	}
+	if !strings.Contains(out, "無法自動開瀏覽器") {
+		t.Errorf("應印出開瀏覽器失敗訊息:%q", out)
 	}
 }

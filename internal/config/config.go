@@ -2,6 +2,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,22 @@ const dirName = "capy-music"
 type Config struct {
 	SpotifyClientID    string `json:"spotify_client_id,omitempty"`
 	AppleTokenEndpoint string `json:"apple_token_endpoint,omitempty"`
+	InstallID          string `json:"install_id,omitempty"`
+	AppleStorefront    string `json:"apple_storefront,omitempty"`
+}
+
+// EnsureInstallID:CLI 首次啟動產生的 uuid(spec §4.3),供 Worker 做 per-install rate limit。
+// 回傳是否有變動(呼叫端決定要不要 Save)。
+func EnsureInstallID(c *Config) bool {
+	if c.InstallID != "" {
+		return false
+	}
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand 不可用:" + err.Error()) // 系統級故障,不是可恢復錯誤
+	}
+	c.InstallID = hex.EncodeToString(b)
+	return true
 }
 
 // Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。
