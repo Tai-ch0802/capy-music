@@ -1,0 +1,257 @@
+// Package apple 實作 Apple Music 的 Provider(spec §1.2、§4.3)。
+// client.go:薄殼 REST。developer token(Authorization)與 Music User Token 由呼叫端注入。
+package apple
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+
+	"github.com/Tai-ch0802/capy-music/internal/provider"
+)
+
+const DefaultAPIBase = "https://api.music.apple.com/v1"
+
+const (
+	searchPageMax = 25  // Apple catalog search 單次上限
+	libraryPage   = 100 // library 端點單次上限
+)
+
+type Client struct {
+	hc                 *http.Client
+	base, dev, userTok string
+}
+
+func NewClient(hc *http.Client, base, devToken, userToken string) *Client {
+	if base == "" {
+		base = DefaultAPIBase
+	}
+	return &Client{hc: hc, base: base, dev: devToken, userTok: userToken}
+}
+
+type apiError struct {
+	Status int
+	Title  string
+	Detail string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("apple API %d %s %s", e.Status, e.Title, e.Detail)
+}
+
+// do:401 = developer token 無效、403 = MUT 無效——兩者對使用者都是「重跑 auth login apple」(spec §4.3)。
+func (c *Client) do(ctx context.Context, method, path string, q url.Values, out any) (int, error) {
+	for attempt := 0; ; attempt++ {
+		u := c.base + path
+		if len(q) > 0 {
+			u += "?" + q.Encode()
+		}
+		req, err := http.NewRequestWithContext(ctx, method, u, nil)
+		if err != nil {
+			return 0, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.dev)
+		if c.userTok != "" {
+			req.Header.Set("Music-User-Token", c.userTok)
+		}
+		resp, err := c.hc.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			if err := provider.Backoff(ctx, resp, attempt); err != nil {
+				var rl *provider.RateLimitError
+				if errors.As(err, &rl) {
+					return resp.StatusCode, &apiError{Status: resp.StatusCode, Title: "rate limited", Detail: rl.Message}
+				}
+				return 0, err
+			}
+			continue
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return resp.StatusCode, provider.ErrAuthExpired
+		}
+		if resp.StatusCode >= 400 {
+			var eb struct {
+				Errors []struct {
+					Title  string `json:"title"`
+					Detail string `json:"detail"`
+				} `json:"errors"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&eb)
+			resp.Body.Close()
+			ae := &apiError{Status: resp.StatusCode}
+			if len(eb.Errors) > 0 {
+				ae.Title, ae.Detail = eb.Errors[0].Title, eb.Errors[0].Detail
+			}
+			return resp.StatusCode, ae
+		}
+		status := resp.StatusCode
+		if out == nil || status == http.StatusNoContent {
+			resp.Body.Close()
+			return status, nil
+		}
+		derr := json.NewDecoder(resp.Body).Decode(out)
+		resp.Body.Close()
+		return status, derr
+	}
+}
+
+// ── JSON 映射 ──
+
+type songJSON struct {
+	ID         string `json:"id"`
+	Attributes struct {
+		Name             string `json:"name"`
+		ArtistName       string `json:"artistName"`
+		AlbumName        string `json:"albumName"`
+		DurationInMillis int    `json:"durationInMillis"`
+		ISRC             string `json:"isrc"`
+		ContentRating    string `json:"contentRating"`
+		URL              string `json:"url"`
+	} `json:"attributes"`
+}
+
+func (s *songJSON) toTrack() provider.Track {
+	return provider.Track{
+		ProviderID: s.ID,
+		ISRC:       s.Attributes.ISRC,
+		Title:      s.Attributes.Name,
+		Artists:    []string{s.Attributes.ArtistName},
+		Album:      s.Attributes.AlbumName,
+		DurationMS: s.Attributes.DurationInMillis,
+		Explicit:   s.Attributes.ContentRating == "explicit",
+	}
+}
+
+func (c *Client) Storefront(ctx context.Context) (string, error) {
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/me/storefront", nil, &resp); err != nil {
+		return "", err
+	}
+	if len(resp.Data) == 0 {
+		return "", errors.New("Apple 未回傳 storefront")
+	}
+	return resp.Data[0].ID, nil
+}
+
+func (c *Client) SearchSongs(ctx context.Context, storefront, term string, limit int) ([]provider.Track, error) {
+	var out []provider.Track
+	for offset := 0; len(out) < limit; {
+		page := limit - len(out)
+		if page > searchPageMax {
+			page = searchPageMax
+		}
+		q := url.Values{"types": {"songs"}, "term": {term}, "limit": {strconv.Itoa(page)}, "offset": {strconv.Itoa(offset)}}
+		var resp struct {
+			Results struct {
+				Songs struct {
+					Data []songJSON `json:"data"`
+				} `json:"songs"`
+			} `json:"results"`
+		}
+		if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/search", q, &resp); err != nil {
+			return nil, err
+		}
+		for i := range resp.Results.Songs.Data {
+			out = append(out, resp.Results.Songs.Data[i].toTrack())
+		}
+		if len(resp.Results.Songs.Data) < page {
+			break
+		}
+		offset += len(resp.Results.Songs.Data)
+	}
+	return out, nil
+}
+
+// Song 取單曲(含 attributes.url,macOS 播放用;不自己拼 URL)。
+func (c *Client) Song(ctx context.Context, storefront, id string) (provider.Track, string, error) {
+	var resp struct {
+		Data []songJSON `json:"data"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/songs/"+url.PathEscape(id), nil, &resp); err != nil {
+		return provider.Track{}, "", err
+	}
+	if len(resp.Data) == 0 {
+		return provider.Track{}, "", &apiError{Status: 404, Title: "not found", Detail: id}
+	}
+	return resp.Data[0].toTrack(), resp.Data[0].Attributes.URL, nil
+}
+
+func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
+	var out []provider.PlaylistRef
+	for offset := 0; ; {
+		q := url.Values{"limit": {strconv.Itoa(libraryPage)}, "offset": {strconv.Itoa(offset)}}
+		var resp struct {
+			Data []struct {
+				ID         string `json:"id"`
+				Attributes struct {
+					Name string `json:"name"`
+				} `json:"attributes"`
+			} `json:"data"`
+		}
+		if _, err := c.do(ctx, http.MethodGet, "/me/library/playlists", q, &resp); err != nil {
+			return nil, err
+		}
+		for _, p := range resp.Data {
+			out = append(out, provider.PlaylistRef{ID: p.ID, Name: p.Attributes.Name, Total: -1}) // library 物件不含曲數
+		}
+		if len(resp.Data) < libraryPage {
+			return out, nil
+		}
+		offset += len(resp.Data)
+	}
+}
+
+func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provider.Track, error) {
+	var out []provider.Track
+	for offset := 0; ; {
+		q := url.Values{"include": {"catalog"}, "limit": {strconv.Itoa(libraryPage)}, "offset": {strconv.Itoa(offset)}}
+		var resp struct {
+			Data []struct {
+				ID         string `json:"id"`
+				Attributes struct {
+					Name             string `json:"name"`
+					ArtistName       string `json:"artistName"`
+					AlbumName        string `json:"albumName"`
+					DurationInMillis int    `json:"durationInMillis"`
+				} `json:"attributes"`
+				Relationships struct {
+					Catalog struct {
+						Data []songJSON `json:"data"`
+					} `json:"catalog"`
+				} `json:"relationships"`
+			} `json:"data"`
+		}
+		if _, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", q, &resp); err != nil {
+			return nil, err
+		}
+		for _, it := range resp.Data {
+			tr := provider.Track{
+				ProviderID: it.ID,
+				Title:      it.Attributes.Name,
+				Artists:    []string{it.Attributes.ArtistName},
+				Album:      it.Attributes.AlbumName,
+				DurationMS: it.Attributes.DurationInMillis,
+			}
+			if cd := it.Relationships.Catalog.Data; len(cd) > 0 { // 有 catalog 對應:P4 resolver 要 catalog id 與 ISRC
+				tr.ProviderID, tr.ISRC = cd[0].ID, cd[0].Attributes.ISRC
+			}
+			out = append(out, tr)
+		}
+		if len(resp.Data) < libraryPage {
+			return out, nil
+		}
+		offset += len(resp.Data)
+	}
+}
