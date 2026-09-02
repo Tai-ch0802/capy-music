@@ -1,0 +1,14 @@
+{
+  "name": "capy-token",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "logs": { "head_sampling_rate": 1 } },
+  // 前提:taislife.work zone 在 Cloudflare 上(DNS 與憑證由 Cloudflare 自動建)。
+  // 不在時先拿掉 routes 用 *.workers.dev,並以 capy config 的 apple_token_endpoint 覆寫。
+  "routes": [{ "pattern": "capy.taislife.work", "custom_domain": true }],
+  // 速率限制用原生 binding(不用 KV:免費層每日 1,000 次寫入的陷阱,spec §8.5.2)。
+  // key = install_id(文件建議避 IP);client 自選的弱點依 spec R-2 接受(token 半公開、12h TTL)。
+  "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }]
+  // Secrets(不放 vars):wrangler secret put APPLE_P8 / APPLE_KID / APPLE_TEAM_ID
+}
