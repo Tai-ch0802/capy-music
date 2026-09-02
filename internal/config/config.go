@@ -16,17 +16,18 @@ const DefaultAppleTokenEndpoint = "https://capy.taislife.work/v1/apple/developer
 
 const dirName = "capy-music"
 
-// 測試替換點。macOS → ~/Library/Application Support;Windows → %AppData%(與 spec §7 一致)。
-var userConfigDir = os.UserConfigDir
-
 type Config struct {
 	SpotifyClientID    string `json:"spotify_client_id,omitempty"`
 	AppleTokenEndpoint string `json:"apple_token_endpoint,omitempty"`
 }
 
-// Dir 回傳設定目錄(不建立)。
+// Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。
+// macOS → ~/Library/Application Support;Windows → %AppData%(與 spec §7 一致)。
 func Dir() (string, error) {
-	base, err := userConfigDir()
+	if d := os.Getenv("CAPY_CONFIG_DIR"); d != "" {
+		return d, nil
+	}
+	base, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
@@ -68,8 +69,13 @@ func withDefaults(c *Config) *Config {
 	return c
 }
 
-// Save 原子寫入(temp + rename),避免寫到一半的殘檔。
+// Save 原子寫入。等於預設值的欄位先正規化為空(omitempty 不落地),
+// 避免把「當下的預設」釘進使用者檔案(P0 review 便條:P1 wizard 的 Load→Save 路徑)。
 func Save(c *Config) error {
+	norm := *c
+	if norm.AppleTokenEndpoint == DefaultAppleTokenEndpoint {
+		norm.AppleTokenEndpoint = ""
+	}
 	p, err := configPath()
 	if err != nil {
 		return err
@@ -77,7 +83,7 @@ func Save(c *Config) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
+	b, err := json.MarshalIndent(&norm, "", "  ")
 	if err != nil {
 		return err
 	}

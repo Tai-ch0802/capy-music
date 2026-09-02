@@ -116,3 +116,39 @@ func TestCloseWithoutStartReleasesPort(t *testing.T) {
 	}
 	ln.Close()
 }
+
+func TestCallbackShowsDeniedPageOnError(t *testing.T) {
+	state, _ := NewState()
+	lb, err := NewLoopback(0, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	lb.Start()
+
+	resp, err := http.Get(lb.BaseURL() + "/callback?error=access_denied&state=" + state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "授權未完成") {
+		t.Error("拒絕授權應顯示失敗頁,不是成功頁")
+	}
+	if strings.Contains(string(body), "授權完成</h1>") {
+		t.Error("不應顯示成功頁")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	vals, err := lb.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vals.Get("error") != "access_denied" {
+		t.Errorf("error 參數應交付給呼叫端:%v", vals)
+	}
+}

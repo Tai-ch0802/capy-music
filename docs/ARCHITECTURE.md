@@ -240,6 +240,9 @@ playlist-modify-public
 user-library-read
 user-library-modify
 ```
+
+> **決策(2026-09-02,PR #4 review):** P1 只用到讀+播放,但一開始就索取全部 9 個(含三個 modify)。理由:避免 P4 同步進場時全體 BYO 使用者重跑授權(重授權的支援成本高於風險);接受的代價:P1–P3 期間憑證握有尚無程式路徑使用的寫入權限。與 Google 最小權限標準不同的原因:Google 的 scope 分級直接觸發審查與資安評估成本,Spotify 無此機制。緩解:憑證只在 keychain、P4 寫入路徑上線前必過 dry-run 與閾值護欄。
+
 > 不需要 `streaming`(那是 Web Playback SDK 用的,我們走 Connect 遙控)。
 > 不需要 `user-read-email` / `user-read-private`(2026-02 後 `GET /me` 已不回傳這些欄位)。
 
@@ -571,7 +574,7 @@ capy pl sync 的一輪:
 
 ## 7. 本機儲存(SQLite)
 
-`~/Library/Application Support/capy-music/state.db`(macOS);Windows 用 `%AppData%\capy-music\state.db`
+`~/Library/Application Support/capy-music/state.db`(macOS);Windows 用 `%AppData%\capy-music\state.db`;可用 `CAPY_CONFIG_DIR` 覆寫整個設定目錄
 
 ```sql
 CREATE TABLE tracks (
