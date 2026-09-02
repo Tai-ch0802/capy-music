@@ -52,7 +52,8 @@ func newPlListCmd() *cobra.Command {
 }
 
 // resolvePlaylistID:引數像 22 碼 base62 → 直接當 ID,省一次 list 呼叫;
-// 否則名稱(不分大小寫)精確比對 → 唯一即用,其餘給可行動錯誤。
+// 否則先比其他 provider 自己的 ID 格式(Apple 是 p.xxx,不進 base62 快速路徑);
+// 再不中才按名稱(不分大小寫)精確比對 → 唯一即用,其餘給可行動錯誤。
 func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, providerID, arg string) (string, error) {
 	if spotifyBase62IDRe.MatchString(arg) {
 		return arg, nil
@@ -60,6 +61,11 @@ func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, provider
 	refs, err := pr.ListPlaylists(ctx)
 	if err != nil {
 		return "", friendlyErr(providerID, err)
+	}
+	for _, r := range refs { // provider 自己的 ID 格式(Apple 是 p.xxx)不進 base62 快速路徑,先比 ID
+		if r.ID == arg {
+			return r.ID, nil
+		}
 	}
 	var hits []provider.PlaylistRef
 	for _, r := range refs {

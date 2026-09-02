@@ -58,6 +58,28 @@ func TestApplePlListShowsDashForUnknownTotal(t *testing.T) {
 	}
 }
 
+func TestApplePlShowByLibraryID(t *testing.T) {
+	// Apple library playlist ID(p.xxx)不符 spotifyBase62IDRe,resolvePlaylistID
+	// 必須能在 ListPlaylists 結果裡直接比對 ID,而不是把它當名稱查。
+	swapApple(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/library/playlists":
+			w.Write([]byte(`{"data":[{"id":"p.1","attributes":{"name":"通勤"}}]}`))
+		case "/me/library/playlists/p.1/tracks":
+			w.Write([]byte(`{"data":[{"id":"i.1","attributes":{"name":"派對動物","artistName":"五月天","albumName":"自傳","durationInMillis":227000}}]}`))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	})
+	out, err := runCLI(t, "pl", "show", "p.1", "--provider", "apple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "派對動物") {
+		t.Errorf("pl show by library id:%q", out)
+	}
+}
+
 func TestApplePlayByIDOffDarwinIsNotSupported(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		t.Skip("darwin 由 TestApplePlayByIDOnDarwin 覆蓋")
