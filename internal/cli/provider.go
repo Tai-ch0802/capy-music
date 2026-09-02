@@ -4,10 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
+	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
 const flagProvider = "provider"
@@ -18,8 +25,10 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 	switch id {
 	case "spotify":
 		return newSpotifyProvider(ctx)
+	case "apple":
+		return newAppleProvider(ctx)
 	default:
-		return nil, fmt.Errorf("未知的 provider %q(可用:spotify)", id)
+		return nil, fmt.Errorf("未知的 provider %q(可用:spotify、apple)", id)
 	}
 }
 
@@ -73,4 +82,49 @@ func friendlyErr(providerID string, err error) error {
 	default:
 		return err
 	}
+}
+
+// 測試替換點。
+var appleAuthorize = apple.AuthorizeMUT
+
+// appleAPIBase:測試以 CAPY_APPLE_API_BASE 指向 httptest;正式為空(用預設)。
+func appleAPIBase() string { return os.Getenv("CAPY_APPLE_API_BASE") }
+
+func devTokenOptsFromEnv(cfg *config.Config) apple.DevTokenOptions {
+	return apple.DevTokenOptions{
+		P8Path:    os.Getenv("CAPY_APPLE_P8_PATH"),
+		KID:       os.Getenv("CAPY_APPLE_KID"),
+		TeamID:    os.Getenv("CAPY_APPLE_TEAM_ID"),
+		Endpoint:  cfg.AppleTokenEndpoint,
+		InstallID: cfg.InstallID,
+	}
+}
+
+// newAppleProvider:config → dev token(來源鏈)→ MUT(缺 → 提示 login)→ storefront(缺 → 提示 login)。
+func newAppleProvider(ctx context.Context) (*appleprov.Provider, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if config.EnsureInstallID(cfg) {
+		if err := config.Save(cfg); err != nil {
+			return nil, err
+		}
+	}
+	dev, _, err := apple.DeveloperToken(ctx, devTokenOptsFromEnv(cfg))
+	if err != nil {
+		return nil, err
+	}
+	mut, err := secret.Get(apple.KeyMusicUserToken)
+	if errors.Is(err, secret.ErrNotFound) {
+		return nil, errors.New("尚未登入 Apple Music — 先執行 capy auth login apple")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cfg.AppleStorefront == "" {
+		return nil, errors.New("缺 Apple storefront — 重新執行 capy auth login apple")
+	}
+	hc := &http.Client{Timeout: 30 * time.Second}
+	return appleprov.New(hc, appleAPIBase(), dev, mut, cfg.AppleStorefront), nil
 }

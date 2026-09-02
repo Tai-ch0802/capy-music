@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -14,7 +16,9 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -35,12 +39,17 @@ func newAuthCmd() *cobra.Command {
 
 func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "login <spotify>",
+		Use:   "login <spotify|apple>",
 		Short: "登入平台(BYO Client ID + PKCE)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] != "spotify" {
-				return fmt.Errorf("目前僅支援 spotify(apple 於 P2、google 於 P3 進場)")
+			switch args[0] {
+			case "apple":
+				return appleLogin(cmd)
+			case "spotify":
+				// 走下方既有流程。
+			default:
+				return fmt.Errorf("目前支援 spotify、apple(google 於 P3)")
 			}
 			cfg, err := config.Load()
 			if err != nil {
@@ -80,6 +89,41 @@ func newAuthLoginCmd() *cobra.Command {
 	}
 	cmd.Flags().String("client-id", "", "你的 Spotify app Client ID(略過精靈)")
 	return cmd
+}
+
+// appleLogin:developer token(來源鏈)→ MUT(MusicKit 橋接,180s)→ storefront → 存 keychain/config。
+// 成功後才 Save config——失敗不留半殘狀態(P1 review 教訓)。
+func appleLogin(cmd *cobra.Command) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	config.EnsureInstallID(cfg) // 成功後才 Save
+	dev, src, err := apple.DeveloperToken(cmd.Context(), devTokenOptsFromEnv(cfg))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "developer token 來源:%s;在瀏覽器完成 Apple Music 授權…(180s 內)\n", src)
+	ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
+	defer cancel()
+	mut, err := appleAuthorize(ctx, dev, openBrowser)
+	if err != nil {
+		return err
+	}
+	hc := &http.Client{Timeout: 30 * time.Second}
+	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, mut).Storefront(ctx)
+	if err != nil {
+		return friendlyErr("apple", err)
+	}
+	if err := secret.Set(apple.KeyMusicUserToken, mut); err != nil {
+		return fmt.Errorf("寫入 keychain 失敗:%w", err)
+	}
+	cfg.AppleStorefront = sf
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✅ Apple Music 授權完成(storefront %s;user token 已入 keychain)\n", sf)
+	return nil
 }
 
 // runClientIDWizard:BYO onboarding(spec §4.2)。
@@ -141,6 +185,24 @@ func newAuthStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(w, "  refresh token: 不存在(執行 capy auth login spotify)")
 			}
+			fmt.Fprintln(w, "apple:")
+			if raw, err := secret.Get(apple.KeyDeveloperToken); err == nil {
+				var c struct{ Exp int64 }
+				_ = json.Unmarshal([]byte(raw), &c)
+				fmt.Fprintf(w, "  developer token: 快取有效至 %s\n", time.Unix(c.Exp, 0).Format(time.RFC3339))
+			} else {
+				fmt.Fprintln(w, "  developer token: 無快取(下次使用時取得)")
+			}
+			if _, err := secret.Get(apple.KeyMusicUserToken); err == nil {
+				fmt.Fprintln(w, "  user token: 存在")
+			} else {
+				fmt.Fprintln(w, "  user token: 不存在(執行 capy auth login apple)")
+			}
+			if cfg.AppleStorefront != "" {
+				fmt.Fprintf(w, "  storefront: %s\n", cfg.AppleStorefront)
+			} else {
+				fmt.Fprintln(w, "  storefront: 未設定")
+			}
 			return nil
 		},
 	}
@@ -148,17 +210,26 @@ func newAuthStatusCmd() *cobra.Command {
 
 func newAuthLogoutCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "logout <spotify>",
+		Use:   "logout <spotify|apple>",
 		Short: "登出平台(刪除 keychain 憑證;client_id 保留在 config)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] != "spotify" {
-				return fmt.Errorf("目前僅支援 spotify")
+			switch args[0] {
+			case "spotify":
+				if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+					return err
+				}
+			case "apple":
+				if err := secret.Delete(apple.KeyMusicUserToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+					return err
+				}
+				if err := secret.Delete(apple.KeyDeveloperToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+					return err
+				}
+			default:
+				return fmt.Errorf("目前支援 spotify、apple")
 			}
-			if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "已登出 spotify")
+			fmt.Fprintf(cmd.OutOrStdout(), "已登出 %s\n", args[0])
 			return nil
 		},
 	}

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
@@ -48,6 +51,26 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return buf.String(), err
+}
+
+func fakeAppleAuthorize(t *testing.T, mut string) func(context.Context, string, func(string) error) (string, error) {
+	t.Helper()
+	return func(_ context.Context, devToken string, _ func(string) error) (string, error) {
+		if !strings.HasPrefix(devToken, "eyJ") {
+			t.Errorf("應以簽好的 developer token 呼叫橋接:%q", devToken)
+		}
+		return mut, nil
+	}
+}
+
+func setupAppleBYO(t *testing.T) {
+	t.Helper()
+	setCLITestConfig(t)
+	_ = secret.Delete(apple.KeyDeveloperToken)
+	_ = secret.Delete(apple.KeyMusicUserToken)
+	t.Setenv("CAPY_APPLE_P8_PATH", writeTestP8(t)) // AuthKey_TESTKID.p8(debug_test 的 helper)
+	t.Setenv("CAPY_APPLE_TEAM_ID", "TEAM1")
+	t.Setenv("CAPY_APPLE_KID", "")
 }
 
 func TestAuthLoginWithFlagSavesConfigAndLogsIn(t *testing.T) {
@@ -107,10 +130,84 @@ func TestAuthLoginNonTTYWithoutFlagErrors(t *testing.T) {
 	}
 }
 
+// apple 從本 task 起是受支援的 provider(見下方 TestAuthLoginApple*),
+// 故不支援清單改測 google(P3 才進場)。
 func TestAuthLoginUnsupportedProvider(t *testing.T) {
 	setCLITestConfig(t)
-	if _, err := runCLI(t, "auth", "login", "apple"); err == nil || !strings.Contains(err.Error(), "P2") {
-		t.Fatalf("apple 應提示 P2:%v", err)
+	if _, err := runCLI(t, "auth", "login", "google"); err == nil || !strings.Contains(err.Error(), "P3") {
+		t.Fatalf("google 應提示 P3:%v", err)
+	}
+}
+
+func TestAuthLoginAppleStoresMUTAndStorefront(t *testing.T) {
+	setupAppleBYO(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/me/storefront" || r.Header.Get("Music-User-Token") != "MUT1" {
+			t.Errorf("storefront 請求錯誤:%s %v", r.URL.Path, r.Header)
+		}
+		w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL) // 測試用 base 覆寫(見 Step 3)
+	origA := appleAuthorize
+	appleAuthorize = fakeAppleAuthorize(t, "MUT1")
+	t.Cleanup(func() { appleAuthorize = origA })
+
+	out, err := runCLI(t, "auth", "login", "apple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Apple Music 授權完成") {
+		t.Errorf("輸出:%q", out)
+	}
+	if mut, err := secret.Get(apple.KeyMusicUserToken); err != nil || mut != "MUT1" {
+		t.Errorf("MUT 應入 keychain:(%q, %v)", mut, err)
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "tw" || len(cfg.InstallID) != 32 {
+		t.Errorf("config 應存 storefront 與 install_id:%+v", cfg)
+	}
+}
+
+func TestAuthLoginAppleFailureDoesNotPersist(t *testing.T) {
+	setupAppleBYO(t)
+	origA := appleAuthorize
+	appleAuthorize = func(context.Context, string, func(string) error) (string, error) {
+		return "", errors.New("使用者取消")
+	}
+	t.Cleanup(func() { appleAuthorize = origA })
+	if _, err := runCLI(t, "auth", "login", "apple"); err == nil {
+		t.Fatal("橋接失敗應回錯")
+	}
+	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Error("失敗不應留下 MUT")
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "" {
+		t.Error("失敗不應存 storefront")
+	}
+}
+
+func TestAuthStatusAndLogoutApple(t *testing.T) {
+	setupAppleBYO(t)
+	_ = secret.Set(apple.KeyMusicUserToken, "MUT1")
+	_ = config.Save(&config.Config{AppleStorefront: "tw"})
+	out, err := runCLI(t, "auth", "status")
+	if err != nil || !strings.Contains(out, "apple:") || !strings.Contains(out, "storefront: tw") || !strings.Contains(out, "user token: 存在") {
+		t.Fatalf("status 輸出:%q err=%v", out, err)
+	}
+	if _, err := runCLI(t, "auth", "logout", "apple"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Error("logout 應刪 MUT")
+	}
+}
+
+func TestNewAppleProviderNeedsLogin(t *testing.T) {
+	setupAppleBYO(t)
+	if _, err := newProvider(context.Background(), "apple"); err == nil || !strings.Contains(err.Error(), "capy auth login apple") {
+		t.Fatalf("無 MUT 應提示 login apple:%v", err)
 	}
 }
 
