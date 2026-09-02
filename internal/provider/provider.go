@@ -32,6 +32,7 @@ var (
 	ErrAuthExpired    = errors.New("授權已過期")
 	ErrNoActiveDevice = errors.New("沒有作用中的播放裝置")
 	ErrRestricted     = errors.New("平台不提供此內容")
+	ErrNotSupported   = errors.New("此平台不支援這個操作")
 )
 
 type Track struct {

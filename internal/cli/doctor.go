@@ -106,12 +106,12 @@ func checkTokenRefresh(ctx context.Context) (string, error) {
 }
 
 func checkAPI(ctx context.Context) (string, error) {
-	p, err := newSpotifyProvider(ctx)
+	p, err := newProvider(ctx, "spotify")
 	if err != nil {
 		return "", err
 	}
 	if err := p.Health(ctx); err != nil {
-		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr(err))
+		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr("spotify", err))
 	}
 	return "API 可達、授權有效", nil
 }

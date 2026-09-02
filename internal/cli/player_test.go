@@ -73,7 +73,8 @@ func TestPlayDeviceFlagNoDevices(t *testing.T) {
 		}
 	})
 	_, err := runCLI(t, "play", "x", "--device", "客廳喇叭")
-	if err == nil || !strings.Contains(err.Error(), "Spotify 播放器") {
+	// friendlyErr 已 provider 泛化(T1):訊息不再寫死 "Spotify",改指向 --provider 對應值。
+	if err == nil || !strings.Contains(err.Error(), "capy devices --provider spotify") {
 		t.Fatalf("零裝置應給可行動訊息,得到 %v", err)
 	}
 }

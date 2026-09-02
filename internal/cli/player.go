@@ -10,12 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
-	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
-
-// spotifyProviderT 固定型別別名,讓 simpleCtl 簽名可讀。
-type spotifyProviderT = spotify.Provider
 
 var (
 	spotifyTrackURIRe = regexp.MustCompile(`^spotify:track:([0-9A-Za-z]{22})$`)
@@ -24,15 +20,13 @@ var (
 )
 
 // resolveDeviceID:名稱不分大小寫精確比對,取第一個相符(重名取先;ponytail: 夠用)。
-func resolveDeviceID(ctx context.Context, p interface {
-	Devices(context.Context) ([]provider.Device, error)
-}, name string) (string, error) {
-	ds, err := p.Devices(ctx)
+func resolveDeviceID(ctx context.Context, pc provider.PlaybackController, providerID, name string) (string, error) {
+	ds, err := pc.Devices(ctx)
 	if err != nil {
-		return "", friendlyErr(err)
+		return "", friendlyErr(providerID, err)
 	}
 	if len(ds) == 0 {
-		return "", friendlyErr(provider.ErrNoActiveDevice)
+		return "", friendlyErr(providerID, provider.ErrNoActiveDevice)
 	}
 	names := make([]string, len(ds))
 	for i, d := range ds {
@@ -50,7 +44,11 @@ func newPlayCmd() *cobra.Command {
 		Short: "播放(無參數 = 恢復播放)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			p, err := newSpotifyProvider(ctx)
+			p, err := getProvider(cmd)
+			if err != nil {
+				return err
+			}
+			pc, err := asPlayback(p)
 			if err != nil {
 				return err
 			}
@@ -68,10 +66,14 @@ func newPlayCmd() *cobra.Command {
 			case len(args) == 1 && strings.HasPrefix(args[0], "spotify:"):
 				return fmt.Errorf("目前只支援 track URI/ID,不支援 %s — 用 capy pl show 取出曲目 ID 再播放", args[0])
 			default:
-				q := strings.Join(args, " ")
-				tracks, err := p.Search(ctx, provider.Query{Text: q, Limit: 1})
+				s, err := asSearcher(p)
 				if err != nil {
-					return friendlyErr(err)
+					return err
+				}
+				q := strings.Join(args, " ")
+				tracks, err := s.Search(ctx, provider.Query{Text: q, Limit: 1})
+				if err != nil {
+					return friendlyErr(p.ID(), err)
 				}
 				if len(tracks) == 0 {
 					return fmt.Errorf("找不到:%s", q)
@@ -80,50 +82,61 @@ func newPlayCmd() *cobra.Command {
 				label = fmt.Sprintf("%s — %s", tracks[0].Title, strings.Join(tracks[0].Artists, ", "))
 			}
 			if name, _ := cmd.Flags().GetString("device"); name != "" {
-				if req.DeviceID, err = resolveDeviceID(ctx, p, name); err != nil {
+				if req.DeviceID, err = resolveDeviceID(ctx, pc, p.ID(), name); err != nil {
 					return err
 				}
 			}
-			if err := p.Play(ctx, req); err != nil {
-				return friendlyErr(err)
+			if err := pc.Play(ctx, req); err != nil {
+				return friendlyErr(p.ID(), err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "▶", ui.Bold(stdoutIsTTY(cmd), label))
 			return nil
 		},
 	}
 	cmd.Flags().String("device", "", "目標裝置名稱(見 capy devices)")
+	providerFlag(cmd)
 	return cmd
 }
 
 // simpleCtl:pause/next/prev 共用形狀。
-func simpleCtl(use, short, done string, call func(ctx context.Context, p *spotifyProviderT) error) *cobra.Command {
-	return &cobra.Command{
+func simpleCtl(use, short, done string, call func(ctx context.Context, pc provider.PlaybackController) error) *cobra.Command {
+	cmd := &cobra.Command{
 		Use: use, Short: short, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := newSpotifyProvider(cmd.Context())
+			p, err := getProvider(cmd)
 			if err != nil {
 				return err
 			}
-			if err := call(cmd.Context(), p); err != nil {
-				return friendlyErr(err)
+			pc, err := asPlayback(p)
+			if err != nil {
+				return err
+			}
+			if err := call(cmd.Context(), pc); err != nil {
+				return friendlyErr(p.ID(), err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), done)
 			return nil
 		},
 	}
+	providerFlag(cmd)
+	return cmd
 }
 
 func newNowCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use: "now", Short: "目前播放狀態", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := newSpotifyProvider(cmd.Context())
+			p, err := getProvider(cmd)
 			if err != nil {
 				return err
 			}
-			st, err := p.State(cmd.Context())
+			pc, err := asPlayback(p)
 			if err != nil {
-				return friendlyErr(err)
+				return err
+			}
+			st, err := pc.State(cmd.Context())
+			if err != nil {
+				return friendlyErr(p.ID(), err)
 			}
 			w := cmd.OutOrStdout()
 			if st == nil || st.Track == nil {
@@ -142,19 +155,25 @@ func newNowCmd() *cobra.Command {
 			return nil
 		},
 	}
+	providerFlag(cmd)
+	return cmd
 }
 
 func newDevicesCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use: "devices", Short: "列出 Spotify Connect 裝置", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p, err := newSpotifyProvider(cmd.Context())
+			p, err := getProvider(cmd)
 			if err != nil {
 				return err
 			}
-			ds, err := p.Devices(cmd.Context())
+			pc, err := asPlayback(p)
 			if err != nil {
-				return friendlyErr(err)
+				return err
+			}
+			ds, err := pc.Devices(cmd.Context())
+			if err != nil {
+				return friendlyErr(p.ID(), err)
 			}
 			rows := make([][]string, len(ds))
 			for i, d := range ds {
@@ -168,4 +187,6 @@ func newDevicesCmd() *cobra.Command {
 			return nil
 		},
 	}
+	providerFlag(cmd)
+	return cmd
 }
