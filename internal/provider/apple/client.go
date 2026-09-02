@@ -221,6 +221,9 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 		for _, p := range resp.Data {
 			out = append(out, provider.PlaylistRef{ID: p.ID, Name: p.Attributes.Name, Total: -1}) // library 物件不含曲數
 		}
+		if len(resp.Data) == 0 { // 防呆:有 next 但無資料也視為結束,不重打同一 offset
+			return out, nil
+		}
 		if resp.Next == "" {
 			return out, nil
 		}
@@ -268,6 +271,9 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 				tr.ProviderID, tr.ISRC = cd[0].ID, cd[0].Attributes.ISRC
 			}
 			out = append(out, tr)
+		}
+		if len(resp.Data) == 0 { // 防呆:有 next 但無資料也視為結束,不重打同一 offset
+			return out, nil
 		}
 		if resp.Next == "" {
 			return out, nil

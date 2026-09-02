@@ -247,3 +247,28 @@ func TestLibraryPlaylistTracksEmpty404(t *testing.T) {
 		t.Errorf("錯誤訊息應可行動:%v", err)
 	}
 }
+
+// TestLibraryPaginationStopsOnEmptyPageWithNext:回應 data 是空陣列但 next 非空
+// (異常但理論上可能發生的回應)不該一直重打同一個 offset——offset 用 len(resp.Data)
+// 累加,空 data 讓 offset 停滯不前,若只看 next 就會卡在同一頁。
+// calls>3 的安全網只是避免這個測試在 RED 階段真的卡死整個 test 進程。
+func TestLibraryPaginationStopsOnEmptyPageWithNext(t *testing.T) {
+	var calls int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls > 3 {
+			t.Fatal("分頁沒有停止,不斷重打同一個 offset(RED 安全網,避免真的卡死)")
+		}
+		if calls > 1 {
+			t.Error("data 為空的頁應視為結束,不該再打第二次")
+		}
+		w.Write([]byte(`{"data":[],"next":"/v1/me/library/playlists?offset=0"}`))
+	})
+	pls, err := c.LibraryPlaylists(context.Background())
+	if err != nil || len(pls) != 0 {
+		t.Fatalf("(%+v, %v)", pls, err)
+	}
+	if calls != 1 {
+		t.Errorf("應只呼叫一次,得到 %d 次", calls)
+	}
+}
