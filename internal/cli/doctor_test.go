@@ -185,7 +185,9 @@ func TestDoctorRotatesRefreshTokenOnce(t *testing.T) {
 		fmt.Fprint(w, `{"devices":[]}`)
 	}))
 	defer apiSrv.Close()
-	t.Setenv("CAPY_SPOTIFY_API_BASE", apiSrv.URL)
+	origBase := spotifyAPIBase
+	spotifyAPIBase = apiSrv.URL
+	t.Cleanup(func() { spotifyAPIBase = origBase })
 
 	buf := &strings.Builder{}
 	runChecks(context.Background(), buf, spotifyChecks())
@@ -215,5 +217,48 @@ func TestDoctorAppleExpiredDevToken(t *testing.T) {
 	detail, err := checkAppleDevToken(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "過期") {
 		t.Fatalf("過期應回錯並含「過期」:(%q, %v)", detail, err)
+	}
+}
+
+// ⭐ ④⑤ 不得把真正的錯誤吞掉印成「沒有 refresh token」/「需要先通過 refresh token 檢查」:
+// 本分支起 keychain 內容可能是壞掉的 JSON,也可能整個讀不到(被拒絕存取、已鎖定)。
+// 尤其⑤,吞掉後印出的那句會緊接在④的 ✅ 後面自相矛盾,使用者完全無從下手。
+// 把兩處還原成無條件的固定字串,這個測試會掛。
+func TestDoctorReportsCorruptKeychainInsteadOfMissing(t *testing.T) {
+	setCLITestConfig(t)
+	if err := config.Save(&config.Config{SpotifyClientID: "0123456789abcdef0123456789abcdef"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = secret.Delete(auth.KeySpotifyToken)
+		_ = secret.Delete(auth.KeySpotifyRefreshToken)
+	})
+	if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := secret.Set(auth.KeySpotifyToken, "{壞掉的 JSON"); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := checkRefreshToken(context.Background())
+	if err == nil {
+		t.Fatalf("內容毀損應失敗,得到 %q", detail)
+	}
+	if strings.Contains(err.Error(), "沒有 refresh token") {
+		t.Errorf("內容毀損不是「沒有」:%v", err)
+	}
+	if !strings.Contains(err.Error(), "不是有效的 token JSON") {
+		t.Errorf("應帶出真正的原因:%v", err)
+	}
+
+	detail, err = checkTokenRefresh(context.Background())
+	if err == nil {
+		t.Fatalf("內容毀損應失敗,得到 %q", detail)
+	}
+	if strings.Contains(err.Error(), "需要先通過 refresh token 檢查") {
+		t.Errorf("④ 剛印過 ❌ 的真正原因,⑤ 不該改口說是前一項沒過:%v", err)
+	}
+	if !strings.Contains(err.Error(), "不是有效的 token JSON") {
+		t.Errorf("應帶出真正的原因:%v", err)
 	}
 }

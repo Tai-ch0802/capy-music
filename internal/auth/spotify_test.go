@@ -257,6 +257,7 @@ func TestSpotifyTokenSourceMigratesLegacyKeyAndRotates(t *testing.T) {
 // 假 token 端點的 handler 在回 200 之前才把 keyring 弄壞:此時鎖內重讀早已成功,踩到的正是寫回那一步。
 func TestSpotifyTokenSourceFailsWhenPersistFails(t *testing.T) {
 	setTokenTest(t)
+	shortSaveRetry(t)
 	t.Cleanup(func() { keyring.MockInit() })
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		keyring.MockInitWithError(errors.New("boom"))
@@ -274,8 +275,13 @@ func TestSpotifyTokenSourceFailsWhenPersistFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 訊息由本專案的守衛貢獻(tokenstore.go),不是注入的 "boom" ——比對得到才代表真的踩到那條分支。
-	if _, err := ts.Token(); err == nil || !strings.Contains(err.Error(), "token 已 refresh 但寫入 keychain 失敗") {
+	_, err = ts.Token()
+	if err == nil || !strings.Contains(err.Error(), "寫不回 keychain") {
 		t.Fatalf("refresh 成功但寫回失敗必須讓 Token() 失敗,得到 %v", err)
+	}
+	// 此刻使用者是真的登出了(舊 RT 已作廢、新 RT 隨這個 return 消失),訊息必須講明並給下一步(R-5)。
+	if !strings.Contains(err.Error(), "已登出") || !strings.Contains(err.Error(), "capy auth login spotify") {
+		t.Errorf("訊息要說明已登出並指出下一步:%v", err)
 	}
 }
 
@@ -299,7 +305,10 @@ func TestSpotifyTokenMigrationLocksAndRechecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- migrateSpotifyToken(context.Background()) }()
+	go func() {
+		_, err := migrateSpotifyToken(context.Background())
+		done <- err
+	}()
 	select {
 	case <-done:
 		unlock()
@@ -332,7 +341,7 @@ func TestSpotifyTokenMigrationKeepsBrokenNewKey(t *testing.T) {
 	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateSpotifyToken(context.Background()); err == nil {
+	if _, err := migrateSpotifyToken(context.Background()); err == nil {
 		t.Fatal("新鍵存在但讀不出來時,遷移必須失敗而不是拿舊鍵蓋掉它")
 	}
 	raw, err := secret.Get(KeySpotifyToken)
@@ -501,4 +510,79 @@ func TestLoginSpotifyPortBusy(t *testing.T) {
 func netListen8888(t *testing.T) (interface{ Close() error }, error) {
 	t.Helper()
 	return net.Listen("tcp", "127.0.0.1:8888")
+}
+
+// ⭐ 每個 provider 命令(search / play / pause / now / devices / pl / doctor)只該讀一次 keychain:
+// 遷移已經在鎖內把 token 讀出來了,建構 TokenSource 時再讀一次,等於每次執行都多 exec 一次
+// /usr/bin/security(在 macOS 還可能多跳一次授權對話框)。go-keyring 的 mock 沒有計數器,所以數 secretGet。
+// 把 SpotifyTokenSource 改回呼叫 NewTokenSource,這個測試會看到 2 次。
+func TestSpotifyTokenSourceReadsKeychainOnce(t *testing.T) {
+	setTokenTest(t)
+	// 先種好再裝計數器:SaveToken 自己也會讀一次(算 issued_at)。
+	if err := SaveToken(KeySpotifyToken, freshToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	var reads atomic.Int32
+	orig := secretGet
+	secretGet = func(key string) (string, error) {
+		if key == KeySpotifyToken {
+			reads.Add(1)
+		}
+		return orig(key)
+	}
+	t.Cleanup(func() { secretGet = orig })
+
+	ts, err := SpotifyTokenSource(context.Background(), "cid123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := reads.Load(); n != 1 {
+		t.Errorf("建構只該讀一次 %s,實際 %d 次", KeySpotifyToken, n)
+	}
+	// 遷移讀到的那顆必須真的被當成初始快取帶進來,否則省下的讀取會在第一次 Token() 補回去。
+	if tok, err := ts.Token(); err != nil || tok.AccessToken != "at-fresh" {
+		t.Fatalf("Token() 應直接回鎖內讀到的那顆:(%+v, %v)", tok, err)
+	}
+	if n := reads.Load(); n != 1 {
+		t.Errorf("token 仍新鮮,Token() 不該再讀 keychain,累計 %d 次", n)
+	}
+}
+
+// ⭐ PKCE public client 沒有 client secret,client_id 要放在 request body(Spotify 文件的 PKCE 流程)。
+// AuthStyle 留預設的 AutoDetect 時,oauth2 會先試 HTTP Basic(密碼是空字串)、失敗才退回 params:
+// 那是在賭 Spotify 對未文件化形狀的容忍度,而且被拒時多打一次 token 端點。
+// handler 對任何帶 Authorization 的請求一律 401:少了 AuthStyleInParams 就會看到 2 次請求。
+func TestSpotifyTokenExchangeUsesParamsAuthStyle(t *testing.T) {
+	setTokenTest(t)
+	var reqs, withClientID atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"invalid_client"}`)
+			return
+		}
+		_ = r.ParseForm()
+		if r.PostForm.Get("client_id") == "cid123" {
+			withClientID.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at1", "rt2"))
+	}))
+	defer srv.Close()
+	swapTokenURL(t, srv.URL)
+
+	if err := SaveToken(KeySpotifyToken, staleToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := SpotifyTokenSource(context.Background(), "cid123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.Token(); err != nil {
+		t.Fatal(err)
+	}
+	if reqs.Load() != 1 || withClientID.Load() != 1 {
+		t.Errorf("token 端點應只被打 1 次且 client_id 在 body,實際 reqs=%d、body 帶 client_id=%d 次", reqs.Load(), withClientID.Load())
+	}
 }

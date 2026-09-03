@@ -34,6 +34,14 @@ func setTokenTest(t *testing.T) string {
 	return dir
 }
 
+// shortSaveRetry:把寫回重試的等待縮短,免得測試白等半秒(正式值 500ms)。
+func shortSaveRetry(t *testing.T) {
+	t.Helper()
+	orig := saveRetryInterval
+	saveRetryInterval = 10 * time.Millisecond
+	t.Cleanup(func() { saveRetryInterval = orig })
+}
+
 func testConf(tokenURL string) *oauth2.Config {
 	return &oauth2.Config{ClientID: "cid", Endpoint: oauth2.Endpoint{TokenURL: tokenURL}}
 }
@@ -281,6 +289,7 @@ func TestLoadTokenCorruptJSON(t *testing.T) {
 // 拿掉重試,第一次失敗就會直接回錯,這個測試掛。
 func TestTokenSourceRetriesWriteBackOnce(t *testing.T) {
 	setTokenTest(t)
+	shortSaveRetry(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, tokenJSON("at-new", "rt2"))
@@ -312,6 +321,87 @@ func TestTokenSourceRetriesWriteBackOnce(t *testing.T) {
 	}
 	if stored, err := LoadToken(testKey); err != nil || stored.RefreshToken != "rt2" {
 		t.Errorf("重試成功後 keychain 應含輪替後的 rt2:(%+v, %v)", stored, err)
+	}
+}
+
+// ⭐ 重試要隔一段時間才有意義(背靠背重試等於同一瞬間再試一次,救不了「security 剛好 fork 失敗 /
+// keychain 守護程序剛好忙」),但 ctx 已取消時不能把間隔等完——這個分支換來的正是 Ctrl-C 殺得掉。
+// 取消刻意發生在第一次 saveToken 裡(refresh 之後):ctx 若一開始就取消,HTTP 那步就先失敗、根本走不到寫回。
+// 間隔設 10s,拿掉 select 的 ctx.Done() 分支的話,Token() 會卡滿 10 秒,這個測試會走到 5 秒那條斷言。
+func TestTokenSourceWriteBackRetryGivesUpWhenContextCanceled(t *testing.T) {
+	setTokenTest(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at-new", "rt2"))
+	}))
+	defer srv.Close()
+	origInterval := saveRetryInterval
+	saveRetryInterval = 10 * time.Second
+	t.Cleanup(func() { saveRetryInterval = origInterval })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls atomic.Int32
+	origSave := saveToken
+	saveToken = func(key string, tok *oauth2.Token) error {
+		calls.Add(1)
+		cancel() // 使用者在寫回失敗與重試之間按下 Ctrl-C
+		return errors.New("暫時性失敗")
+	}
+	t.Cleanup(func() { saveToken = origSave })
+
+	if err := SaveToken(testKey, staleToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := NewTokenSource(ctx, testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err = ts.Token()
+	if err == nil {
+		t.Fatal("兩次寫回都沒成功時 Token() 必須失敗")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("ctx 已取消卻仍把重試間隔等完(%v):Ctrl-C 殺不掉", elapsed)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("ctx 取消後不該再重試,saveToken 呼叫 %d 次", n)
+	}
+	// 此刻舊 RT 已作廢、新 RT 隨著這個 return 消失 = 使用者真的登出了,訊息必須說明並給下一步(R-5)。
+	if !strings.Contains(err.Error(), "已登出") || !strings.Contains(err.Error(), "capy auth login") {
+		t.Errorf("訊息要講明已登出並指出下一步:%v", err)
+	}
+}
+
+// ⭐ 等鎖不能悄無聲息:持有者可能停在 macOS keychain 授權對話框上,而這邊的 capy search 看起來只是
+// 當掉,使用者不會知道該去按「允許」。等超過門檻要往 stderr 提醒,而且只提醒一次(每輪都印會洗版)。
+// 拿掉 lockFile 裡的提醒區塊,這個測試會看到 0 次。
+func TestLockFileWarnsOnceWhileWaiting(t *testing.T) {
+	setTokenTest(t)
+	var buf strings.Builder
+	origW, origAfter, origRetry := lockStderr, lockNoticeAfter, lockRetryInterval
+	lockStderr, lockNoticeAfter, lockRetryInterval = &buf, 10*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { lockStderr, lockNoticeAfter, lockRetryInterval = origW, origAfter, origRetry })
+
+	unlock, err := lockFile(context.Background(), "t.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	// 等鎖在本 goroutine 內完成(buf 沒有並行存取);ctx 逾時是唯一的出口。
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if u, err := lockFile(ctx, "t.lock"); err == nil {
+		u()
+		t.Fatal("鎖仍被持有,不該取得")
+	}
+	out := buf.String()
+	if n := strings.Count(out, "等待另一個 capy 釋放"); n != 1 {
+		t.Errorf("等鎖提醒應剛好印 1 次(輪詢每 5ms 一輪),實際 %d 次:%q", n, out)
+	}
+	if !strings.Contains(out, "允許") {
+		t.Errorf("提醒要告訴使用者對話框按「允許」:%q", out)
 	}
 }
 

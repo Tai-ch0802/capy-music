@@ -119,7 +119,7 @@ func appleServer(t *testing.T, wantDev, wantMUT string) *int32 {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	seedAppleAPIBase(t, srv.URL)
 	return &hits
 }
 
@@ -417,7 +417,7 @@ func TestAuthLoginApplePreflight404StorefrontFailsMentionsAPIBase(t *testing.T) 
 		w.Write([]byte(`{"errors":[{"status":"404","title":"x"}]}`))
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	seedAppleAPIBase(t, srv.URL)
 	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
 	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
 
@@ -447,7 +447,7 @@ func TestAuthLoginApplePreflight404StorefrontSucceedsStillLogsIn(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	seedAppleAPIBase(t, srv.URL)
 	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
 	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
 

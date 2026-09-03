@@ -265,12 +265,16 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	if err != nil {
 		return err
 	}
+	base, err := appleAPIBase()
+	if err != nil {
+		return err
+	}
 	hc := &http.Client{Timeout: 30 * time.Second}
-	verified, err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(ctx)
+	verified, err := appleprov.NewClient(hc, base, dev, "").Preflight(ctx)
 	if err != nil {
 		return fmt.Errorf("developer token 被 Apple 拒絕 — 重新複製 authorization 標頭(Apple 可能已輪替):%w", err)
 	}
-	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, user).Storefront(ctx)
+	sf, err := appleprov.NewClient(hc, base, dev, user).Storefront(ctx)
 	if err != nil {
 		if !verified {
 			err = fmt.Errorf("%w;preflight 回 404,也可能是 API base 或端點形狀不對(CAPY_APPLE_API_BASE,見計畫附錄 A C-0)", err)

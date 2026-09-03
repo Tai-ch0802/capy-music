@@ -36,9 +36,13 @@ var SpotifyScopes = []string{
 }
 
 // SpotifyEndpoint 是 Spotify 的 OAuth 端點。可變的套件變數:測試(含 cli 的 doctor 測試)把 TokenURL 指向 httptest。
+// AuthStyle 明寫 InParams:PKCE public client 沒有 client secret,Spotify 文件的 PKCE 流程就是把
+// client_id 放在 body。留 AutoDetect 的話 oauth2 會先試 HTTP Basic(密碼空字串)再退回 params,
+// 等於押 Spotify 對那種形狀的容忍度(未驗證),而且被拒時要多打一次 token 端點。
 var SpotifyEndpoint = oauth2.Endpoint{
-	AuthURL:  "https://accounts.spotify.com/authorize",
-	TokenURL: "https://accounts.spotify.com/api/token",
+	AuthURL:   "https://accounts.spotify.com/authorize",
+	TokenURL:  "https://accounts.spotify.com/api/token",
+	AuthStyle: oauth2.AuthStyleInParams,
 }
 
 func spotifyOAuthConfig(clientID, redirectURL string) *oauth2.Config {
@@ -128,10 +132,14 @@ func LogoutSpotify(ctx context.Context) error {
 // keychain 兩個鍵都沒有時原樣透傳 secret.ErrNotFound(CLI 轉成「請先 auth login」提示)。
 // 回傳具體型別:doctor 需要 Refresh() 明確驗 RT 存活,一般存取仍走 Token()(oauth2.TokenSource)。
 func SpotifyTokenSource(ctx context.Context, clientID string) (*TokenSource, error) {
-	if err := migrateSpotifyToken(ctx); err != nil {
+	tok, err := migrateSpotifyToken(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return NewTokenSource(ctx, spotifyOAuthConfig(clientID, ""), KeySpotifyToken)
+	// 直接組 TokenSource 而不是走 NewTokenSource:遷移已經在鎖內把同一顆 token 讀出來了,再讀一次
+	// 等於每個 provider 命令都多 exec 一次 /usr/bin/security。放鎖到這裡之間別的 capy 可能已經輪替,
+	// 但無妨:tok 只當快取用(過期就走慢路徑,慢路徑一定在鎖內重讀),refresh 送的永遠是重讀到的 RT。
+	return &TokenSource{ctx: ctx, conf: spotifyOAuthConfig(clientID, ""), key: KeySpotifyToken, tok: tok}, nil
 }
 
 // migrateSpotifyToken:舊版把 refresh token 以裸字串寫在 KeySpotifyRefreshToken,直接餵給 LoadToken 會
@@ -145,28 +153,30 @@ func SpotifyTokenSource(ctx context.Context, clientID string) (*TokenSource, err
 // 同一把鎖也擋掉另一個變體:B 的 Get(舊鍵) 落在 A 刪除之後 → 對已登入的使用者誤報「尚未登入」。
 // 每次建構都取一次鎖(不做鎖外快路徑,那正是上面那個窗口):成本是一次 open/flock/close,而且
 // TokenSource.Token() 的慢路徑本來就要取同一把鎖。不會自我死鎖:defer unlock 在本函式 return 就釋放,
-// NewTokenSource 是之後才呼叫的。
-func migrateSpotifyToken(ctx context.Context) error {
+// TokenSource 要到之後呼叫 Token() 走慢路徑時才會再取。
+// 順便把鎖內讀到的 token 回傳給 SpotifyTokenSource 當初始快取,省掉緊接著再讀一次 keychain。
+func migrateSpotifyToken(ctx context.Context) (*oauth2.Token, error) {
 	unlock, err := lockFile(ctx, KeySpotifyToken+".lock")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer unlock()
-	switch _, err := LoadToken(KeySpotifyToken); {
+	switch tok, err := LoadToken(KeySpotifyToken); {
 	case err == nil:
-		return nil // 已升級,或等鎖期間別的 capy 剛升級並輪替過——絕不可再用舊鍵覆寫
+		return tok, nil // 已升級,或等鎖期間別的 capy 剛升級並輪替過——絕不可再用舊鍵覆寫
 	case !errors.Is(err, secret.ErrNotFound):
-		return err // 新鍵存在但壞掉 / keychain 讀不到:不要退回舊鍵蓋掉它
+		return nil, err // 新鍵存在但壞掉 / keychain 讀不到:不要退回舊鍵蓋掉它
 	}
 	rt, err := secret.Get(KeySpotifyRefreshToken)
 	if err != nil {
-		return err // 含 ErrNotFound:兩個鍵都沒有 = 尚未登入
+		return nil, err // 含 ErrNotFound:兩個鍵都沒有 = 尚未登入
 	}
-	if err := SaveToken(KeySpotifyToken, &oauth2.Token{RefreshToken: rt}); err != nil {
-		return err
+	tok := &oauth2.Token{RefreshToken: rt} // 與剛寫進去的記錄等價(access token 空 → 首次 Token() 會 refresh)
+	if err := SaveToken(KeySpotifyToken, tok); err != nil {
+		return nil, err
 	}
 	_ = secret.Delete(KeySpotifyRefreshToken)
-	return nil
+	return tok, nil
 }
 
 // SpotifyStored 回報 keychain 是否有 Spotify 憑證:新鍵優先,退回尚未升級的舊鍵(auth status / doctor 的

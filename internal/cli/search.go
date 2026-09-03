@@ -37,7 +37,7 @@ func newSpotifyProvider(ctx context.Context) (*spotify.Provider, error) {
 	}
 	hc := oauth2.NewClient(ctx, ts)
 	hc.Timeout = 30 * time.Second
-	return spotify.New(hc, spotifyAPIBase()), nil
+	return spotify.New(hc, spotifyAPIBase), nil
 }
 
 func stdoutIsTTY(cmd *cobra.Command) bool {

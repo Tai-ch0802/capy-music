@@ -90,3 +90,33 @@ func TestFriendlyErrPassesThroughNotFound(t *testing.T) {
 		t.Errorf("ErrNotFound 應原樣回傳,得到 %v", err)
 	}
 }
+
+// seedAppleAPIBase:把 Apple API base 指向 httptest。走套件變數而不是 CAPY_APPLE_API_BASE:
+// httptest 是 http://,而環境變數那條路現在只收 https(見 appleAPIBase)。
+func seedAppleAPIBase(t *testing.T, base string) {
+	t.Helper()
+	orig := appleAPIBaseSeed
+	appleAPIBaseSeed = base
+	t.Cleanup(func() { appleAPIBaseSeed = orig })
+}
+
+// ⭐ CAPY_APPLE_API_BASE 只收 https:這條路的請求標頭裡有 developer token 與 Media-User-Token
+// (長期有效的帳號憑證),明文送出等於外洩。不做主機白名單——C-0 的前提正是正確主機還沒定案。
+func TestAppleAPIBaseRequiresHTTPS(t *testing.T) {
+	t.Setenv("CAPY_APPLE_API_BASE", "http://amp-api.music.apple.com/v1")
+	base, err := appleAPIBase()
+	if err == nil {
+		t.Fatalf("http:// 必須被拒,得到 base=%q", base)
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Errorf("訊息要指出下一步(改成 https):%v", err)
+	}
+	t.Setenv("CAPY_APPLE_API_BASE", "https://api.music.apple.com/v1")
+	if base, err := appleAPIBase(); err != nil || base != "https://api.music.apple.com/v1" {
+		t.Errorf("https 應原樣通過:(%q, %v)", base, err)
+	}
+	t.Setenv("CAPY_APPLE_API_BASE", "")
+	if base, err := appleAPIBase(); err != nil || base != "" {
+		t.Errorf("未設定應回空字串(用預設 base):(%q, %v)", base, err)
+	}
+}
