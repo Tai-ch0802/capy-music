@@ -126,7 +126,7 @@ func checkAppleDevToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	config.EnsureInstallID(cfg)
-	_, src, err := apple.DeveloperToken(ctx, devTokenOptsFromEnv(cfg))
+	_, src, err := apple.LegacyDeveloperToken(ctx, devTokenOptsFromEnv(cfg))
 	if err != nil {
 		return "", err
 	}

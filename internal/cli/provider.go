@@ -113,7 +113,7 @@ func newAppleProvider(ctx context.Context) (*appleprov.Provider, error) {
 			return nil, err
 		}
 	}
-	dev, _, err := apple.DeveloperToken(ctx, devTokenOptsFromEnv(cfg))
+	dev, _, err := apple.LegacyDeveloperToken(ctx, devTokenOptsFromEnv(cfg))
 	if err != nil {
 		return nil, err
 	}

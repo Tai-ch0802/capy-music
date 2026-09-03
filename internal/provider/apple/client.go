@@ -14,7 +14,11 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
-const DefaultAPIBase = "https://api.music.apple.com/v1"
+// DefaultAPIBase:網頁播放器的私有 API。使用者複製來的 web developer token 只在這裡有效
+// (官方 api.music.apple.com 對它的行為未驗證;附錄 A C-0)。CAPY_APPLE_API_BASE 可覆寫。
+const DefaultAPIBase = "https://amp-api.music.apple.com/v1"
+
+const webOrigin = "https://music.apple.com"
 
 const (
 	searchPageMax = 25  // Apple catalog search 單次上限
@@ -55,8 +59,11 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 			return 0, err
 		}
 		req.Header.Set("Authorization", "Bearer "+c.dev)
+		// ponytail: web token 綁 origin,缺這行 amp-api 會拒(gamdl 同);MUT 用網頁播放器的標頭名。
+		// 這兩行的去留由附錄 A C-0 用真 token 決定。
+		req.Header.Set("Origin", webOrigin)
 		if c.userTok != "" {
-			req.Header.Set("Music-User-Token", c.userTok)
+			req.Header.Set("Media-User-Token", c.userTok)
 		}
 		resp, err := c.hc.Do(req)
 		if err != nil {

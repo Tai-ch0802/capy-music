@@ -148,7 +148,7 @@ func TestAuthLoginAppleStoresMUTAndStorefront(t *testing.T) {
 		case "/storefronts/us": // preflight(login 開瀏覽器前的 dev token 驗證,不帶 MUT)
 			w.Write([]byte(`{"data":[{"id":"us"}]}`))
 		case "/me/storefront":
-			if r.Header.Get("Music-User-Token") != "MUT1" {
+			if r.Header.Get("Media-User-Token") != "MUT1" {
 				t.Errorf("storefront 請求錯誤:%s %v", r.URL.Path, r.Header)
 			}
 			w.Write([]byte(`{"data":[{"id":"tw"}]}`))

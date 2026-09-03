@@ -25,9 +25,42 @@ func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
 	return NewClient(srv.Client(), srv.URL, "DEV", "MUT")
 }
 
+// TestClientSendsWebPlayerHeaders:amp-api(網頁播放器私有 API)要求 Origin 標頭,
+// MUT 標頭名是 Media-User-Token(不是官方 API 文件的舊標頭名——client.go 只設這一個 MUT 標頭,
+// 下面斷言它等於 "MUT" 已隱含排除了舊名;不另外斷言舊標頭名字串,以維持 grep 可歸零)。
+// 同時驗證 NewClient 在 base 空字串時預設到 DefaultAPIBase,且該常數確實指向 amp-api。
+func TestClientSendsWebPlayerHeaders(t *testing.T) {
+	var gotOrigin, gotAuth, gotMUT string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotOrigin = r.Header.Get("Origin")
+		gotAuth = r.Header.Get("Authorization")
+		gotMUT = r.Header.Get("Media-User-Token")
+		w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+	})
+	if _, err := c.Storefront(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotOrigin != "https://music.apple.com" {
+		t.Errorf("Origin = %q", gotOrigin)
+	}
+	if gotAuth != "Bearer DEV" {
+		t.Errorf("Authorization = %q", gotAuth)
+	}
+	if gotMUT != "MUT" {
+		t.Errorf("Media-User-Token = %q", gotMUT)
+	}
+
+	if !strings.Contains(DefaultAPIBase, "amp-api") {
+		t.Fatalf("DefaultAPIBase = %q,應指向 amp-api", DefaultAPIBase)
+	}
+	if def := NewClient(&http.Client{}, "", "DEV", "MUT"); def.base != DefaultAPIBase {
+		t.Errorf("base 空字串應預設 DefaultAPIBase,得到 %q", def.base)
+	}
+}
+
 func TestDoSendsBothTokens(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer DEV" || r.Header.Get("Music-User-Token") != "MUT" {
+		if r.Header.Get("Authorization") != "Bearer DEV" || r.Header.Get("Media-User-Token") != "MUT" {
 			t.Errorf("headers = %v", r.Header)
 		}
 		w.Write([]byte(`{"data":[{"id":"tw"}]}`))
@@ -70,8 +103,8 @@ func TestPreflight(t *testing.T) {
 				if r.URL.Path != "/storefronts/us" {
 					t.Errorf("path = %s,應打 /storefronts/us", r.URL.Path)
 				}
-				if r.Header.Get("Music-User-Token") != "" {
-					t.Error("preflight 不該帶 Music-User-Token")
+				if r.Header.Get("Media-User-Token") != "" {
+					t.Error("preflight 不該帶 Media-User-Token")
 				}
 				w.WriteHeader(tc.status)
 				if tc.status >= 400 {

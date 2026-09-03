@@ -12,15 +12,8 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
-const (
-	// KeyDeveloperToken:developer token 快取(JSON {"token","exp"})。spec §4.5 寫「快取檔」,
-	// 本專案收緊為 keychain(CLAUDE.md:憑證只進 keychain)。
-	KeyDeveloperToken = "apple.developer_token"
-	// KeyMusicUserToken:Music User Token(無 refresh,過期只能重跑授權)。
-	KeyMusicUserToken = "apple.music_user_token"
-
-	refreshMargin = time.Hour
-)
+// KeyDeveloperToken、KeyMusicUserToken 兩個 key 常數已搬去 token.go(同 package apple 擁有)。
+const refreshMargin = time.Hour
 
 type DevTokenOptions struct {
 	P8Path, KID, TeamID string // BYO(P8Path 空 = 不用);KID 空則從檔名推
@@ -35,9 +28,11 @@ type cachedToken struct {
 	Exp   int64  `json:"exp"`
 }
 
-// DeveloperToken 回傳可用的 developer token 與來源("cache"|"byo"|"worker")。
+// LegacyDeveloperToken 回傳可用的 developer token 與來源("cache"|"byo"|"worker")。
 // 順序:keychain 快取(剩餘 > 1h)→ BYO .p8 本地簽 → Worker。BYO 與 Worker 同等地位(CLAUDE.md)。
-func DeveloperToken(ctx context.Context, o DevTokenOptions) (string, string, error) {
+// ponytail: 原名 DeveloperToken;改名純粹讓新 token.go 的 DeveloperToken(now) 不撞名(見 progress.md Ruling 2)。
+// 本檔(含這個函式)整份在 Task 2 刪除,改名不留殘跡。
+func LegacyDeveloperToken(ctx context.Context, o DevTokenOptions) (string, string, error) {
 	now := time.Now
 	if o.Now != nil {
 		now = o.Now

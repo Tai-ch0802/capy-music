@@ -100,7 +100,7 @@ func appleLogin(cmd *cobra.Command) error {
 		return err
 	}
 	config.EnsureInstallID(cfg) // 成功後才 Save
-	dev, src, err := apple.DeveloperToken(cmd.Context(), devTokenOptsFromEnv(cfg))
+	dev, src, err := apple.LegacyDeveloperToken(cmd.Context(), devTokenOptsFromEnv(cfg))
 	if err != nil {
 		return err
 	}
