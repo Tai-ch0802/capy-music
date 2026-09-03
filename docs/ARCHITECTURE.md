@@ -461,7 +461,10 @@ $ capy resolve --review
   "title": "派對動物",
   "artists": ["五月天"],
   "album": "自傳",
-  "duration_ms": 227000
+  "duration_ms": 227000,
+  "conflicts": [                  // 同 ISRC 但 title/duration 不符的觀測;P3 只記錄不裁決(見下)
+    { "provider": "spotify", "provider_id": "6rqhFg...", "title": "派對動物 (Live)", "duration_ms": 252000 }
+  ]
 }
 ```
 
@@ -469,14 +472,14 @@ $ capy resolve --review
 
 **`iid` 是 playlist item 的鍵,`cid` 只是屬性(附錄 C 決策 13)。** 每個 item 有自己的 ULID `iid`,同一首歌在同一個清單裡可以出現多次,不去重——Drive 上的副本是 source of truth,現在去重等於備份永久少掉資訊。
 
-**`cid` 是決定性 ID,不是 ULID。** 有 ISRC → `i:<正規化 ISRC>`(大寫、去連字號、非 12 碼視為缺失);沒有 → `p:<provider>:<provider_id>`。cid 是 Drive 檔案裡的鍵,不能隨「當時觀測到什麼」而變:**不做「同 ISRC 但 metadata 不符就退回 `p:`」的防呆**——那會讓裝置 A(只看到一首)與裝置 B(看到衝突)算出不同的 cid。偵測到衝突時照樣用 `i:` 當鍵,另寫一筆 review 記錄交給使用者或 P4。上傳曲 / 純 library 曲沒有 ISRC 也沒有 catalog id,保留成 `p:` 形式的 provider-only track,**絕不可當成已刪除**。
+**`cid` 是決定性 ID,不是 ULID。** 有 ISRC → `i:<正規化 ISRC>`(大寫、去連字號、非 12 碼視為缺失);沒有 → `p:<provider>:<provider_id>`。cid 是 Drive 檔案裡的鍵,不能隨「當時觀測到什麼」而變:**不做「同 ISRC 但 metadata 不符就退回 `p:`」的防呆**——那會讓裝置 A(只看到一首)與裝置 B(看到衝突)算出不同的 cid。偵測到衝突時照樣用 `i:` 當鍵,把衝突事實寫進 Drive `tracks.json` 該 cid 的 `conflicts[]`(上方 JSON:另一個 provider 的 `provider_id` 與觀測到的 `title` / `duration_ms`)並在 stderr 印一行警告;**不落 SQLite**(§7,db 只存 Drive 上有的東西)。真正的 review queue 是 P4 的事(§5.3),這裡只把事實記在 source of truth 上——髒 ISRC 會讓兩首不同的歌塌進同一個 cid,只印 stderr 太弱。上傳曲 / 純 library 曲沒有 ISRC 也沒有 catalog id,保留成 `p:` 形式的 provider-only track,**絕不可當成已刪除**。
 
 ### 6.3 Drive appData 佈局
 
 ```
 appDataFolder/                       # 扁平,不建子資料夾(見下)
 ├── manifest.json                    # schema_version, devices[], last_compaction
-├── tracks.json                      # cid → 曲目 metadata + { provider: provider_id } mapping
+├── tracks.json                      # cid → 曲目 metadata + { provider: provider_id } mapping + conflicts[](§6.2)
 ├── pl__<pid>.json                   # canonical playlist(§6.2:name/desc/links + items[])
 ├── pl__<pid>.json
 ├── dev__<device_id>.json            # ⭐ 每台裝置只寫自己的檔;含 base[pid][provider] = { snapshot, observed_at }
