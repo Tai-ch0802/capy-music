@@ -252,12 +252,14 @@ func TestSpotifyTokenSourceMigratesLegacyKeyAndRotates(t *testing.T) {
 	}
 }
 
-// 硬約束的另一半:keychain 壞掉時 Token() 必須失敗(不得靜默成功,否則輪替後的新 token 遺失=永久登出)。
-// 註:mock keyring 是全有全無(MockInitWithError 讓 Get/Set/Delete 全掛),這裡實際踩到的是鎖內重讀失敗;
-// 「refresh 成功但寫回失敗」那條分支在 tokenstore.go 內有守衛,但無法用這個假造物單獨觸發。
-func TestSpotifyTokenSourceFailsWhenKeychainBroken(t *testing.T) {
+// ⭐ 硬約束的另一半:refresh 成功但寫回 keychain 失敗時,Token() 必須失敗。
+// 舊 RT 在 Spotify 端已隨這次 refresh 作廢,新 RT 若靜默遺失就是永久登出。
+// 假 token 端點的 handler 在回 200 之前才把 keyring 弄壞:此時鎖內重讀早已成功,踩到的正是寫回那一步。
+func TestSpotifyTokenSourceFailsWhenPersistFails(t *testing.T) {
 	setTokenTest(t)
+	t.Cleanup(func() { keyring.MockInit() })
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keyring.MockInitWithError(errors.New("boom"))
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"access_token":"at3","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-new2"}`))
 	}))
@@ -267,15 +269,55 @@ func TestSpotifyTokenSourceFailsWhenKeychainBroken(t *testing.T) {
 	if err := secret.Set(KeySpotifyRefreshToken, "rt-old2"); err != nil {
 		t.Fatal(err)
 	}
-	ts, err := SpotifyTokenSource(context.Background(), "cid123") // 建構在正常 mock 下先成功
+	ts, err := SpotifyTokenSource(context.Background(), "cid123") // 建構(含升級)在正常 mock 下先成功
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyring.MockInitWithError(errors.New("keychain 掛了"))
-	t.Cleanup(func() { keyring.MockInit() })
+	// 訊息由本專案的守衛貢獻(tokenstore.go),不是注入的 "boom" ——比對得到才代表真的踩到那條分支。
+	if _, err := ts.Token(); err == nil || !strings.Contains(err.Error(), "token 已 refresh 但寫入 keychain 失敗") {
+		t.Fatalf("refresh 成功但寫回失敗必須讓 Token() 失敗,得到 %v", err)
+	}
+}
 
-	if _, err := ts.Token(); err == nil || !strings.Contains(err.Error(), "keychain") {
-		t.Fatalf("keychain 失效必須讓 Token() 失敗,得到 %v", err)
+// ⭐ 升級窗口:遷移的「查新鍵 → 讀舊鍵 → 寫新鍵」必須整段在鎖內,而且查新鍵要在鎖內查。
+// 情境:B 是換新 binary 後第一次跑(macOS 會為新簽章的 binary 跳 keychain 授權對話框,遷移又剛好只發生
+// 這一次),卡住的期間 A 已經完整升級並輪替過(新鍵 = rt2)。B 恢復後若照鎖外看到的狀態寫入,會把 rt2
+// 蓋回 Spotify 端已失效的 rt1 —— 憑證真的沒了。測試自己持鎖扮演「正在升級的 A」,結果在起 goroutine 前
+// 就放好(新鍵 rt2;舊鍵 rt1 仍在,模擬 A 的刪除尚未生效)。
+// 拿掉鎖 → B 不會被擋住,「應該還沒完成」那條斷言掛;拿掉鎖內重查 → B 用 rt1 覆寫 rt2,值的斷言掛。
+// 起 goroutine 之後主測試不再碰 keychain,-race 乾淨。
+func TestSpotifyTokenMigrationLocksAndRechecks(t *testing.T) {
+	setTokenTest(t)
+	if err := SaveToken(KeySpotifyToken, freshToken("rt2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := secret.Set(KeySpotifyRefreshToken, "rt1"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockFile(KeySpotifyToken + ".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- migrateSpotifyToken() }()
+	select {
+	case <-done:
+		unlock()
+		t.Fatal("別人持鎖時遷移就跑完了:遷移沒取鎖,升級窗口內會把已輪替的 RT 蓋回死掉的舊 RT")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("放鎖後遷移仍未完成")
+	}
+	stored, err := LoadToken(KeySpotifyToken)
+	if err != nil || stored.RefreshToken != "rt2" {
+		t.Fatalf("鎖內重查應發現新鍵已經存在,不得用舊鍵的 rt1 蓋掉:(%+v, %v)", stored, err)
 	}
 }
 

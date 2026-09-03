@@ -112,10 +112,24 @@ func SpotifyTokenSource(ctx context.Context, clientID string) (*TokenSource, err
 // migrateSpotifyToken:舊版把 refresh token 以裸字串寫在 KeySpotifyRefreshToken,直接餵給 LoadToken 會
 // JSON 解析失敗、等於把既有使用者全部登出。新鍵不存在時把舊鍵種成完整 token 記錄(access token 留空
 // → 首次 Token() 會 refresh,與升級前的行為一致),成功落地後刪掉舊鍵,不留兩份真相。
+//
+// 整段(查新鍵 → 讀舊鍵 → 寫新鍵 → 刪舊鍵)必須在 TokenSource 用的同一把跨程序鎖內,而且查新鍵要在鎖內:
+// 升級只發生一次,而 macOS 在新簽章的 binary 第一次碰 keychain item 時會跳授權對話框——B 卡在對話框等
+// 使用者按 Allow 的期間,A 可能已經完整跑完遷移 + refresh(新鍵 = rt2、舊鍵已刪)。B 恢復後若還照鎖外
+// 讀到的舊值寫入,會把 rt2 蓋回 Spotify 端已失效的 rt1,憑證真的沒了(比 issue #3 原本的病徵更糟);
+// 同一把鎖也擋掉另一個變體:B 的 Get(舊鍵) 落在 A 刪除之後 → 對已登入的使用者誤報「尚未登入」。
+// 每次建構都取一次鎖(不做鎖外快路徑,那正是上面那個窗口):成本是一次 open/flock/close,而且
+// TokenSource.Token() 的慢路徑本來就要取同一把鎖。不會自我死鎖:defer unlock 在本函式 return 就釋放,
+// NewTokenSource 是之後才呼叫的。
 func migrateSpotifyToken() error {
+	unlock, err := lockFile(KeySpotifyToken + ".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	switch _, err := LoadToken(KeySpotifyToken); {
 	case err == nil:
-		return nil
+		return nil // 已升級,或等鎖期間別的 capy 剛升級並輪替過——絕不可再用舊鍵覆寫
 	case !errors.Is(err, secret.ErrNotFound):
 		return err // 新鍵存在但壞掉 / keychain 讀不到:不要退回舊鍵蓋掉它
 	}
