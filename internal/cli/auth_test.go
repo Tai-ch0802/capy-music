@@ -631,6 +631,233 @@ func TestAuthLoginAppleTTYWithFlagsSkipsWizard(t *testing.T) {
 	assertAppleNotPersisted(t)
 }
 
+// TestAuthLoginAppleAutoPersists:非 TTY;--auto --i-understand;seam 回 tokens → 落地行為應與
+// TestAuthLoginAppleEnvPersists 相同。
+func TestAuthLoginAppleAutoPersists(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUT1")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origAuto := appleAutoTokens
+	appleAutoTokens = func() (apple.WebTokens, error) {
+		return apple.WebTokens{Developer: dev, User: "MUT1"}, nil
+	}
+	t.Cleanup(func() { appleAutoTokens = origAuto })
+
+	out, err := runCLI(t, "auth", "login", "apple", "--auto", "--i-understand")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
+		t.Errorf("輸出:%q", out)
+	}
+	raw, err := secret.Get(apple.KeyDeveloperToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Token string `json:"token"`
+		Exp   int64  `json:"exp"`
+	}
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Token != dev {
+		t.Errorf("keychain token = %q, want %q", c.Token, dev)
+	}
+	if c.Exp != exp.Unix() {
+		t.Errorf("keychain exp = %d, want %d", c.Exp, exp.Unix())
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT1" {
+		t.Errorf("user token = (%q, %v)", user, err)
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "tw" {
+		t.Errorf("storefront = %q", cfg.AppleStorefront)
+	}
+}
+
+// TestAuthLoginAppleAutoNeedsDisclosure:非 TTY;--auto 無 --i-understand → 拒絕且不呼叫 seam
+// (揭露不可跳過,連自動擷取都不該先跑)。
+func TestAuthLoginAppleAutoNeedsDisclosure(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	hits := appleServer(t, "whatever", "whatever")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origAuto := appleAutoTokens
+	called := false
+	appleAutoTokens = func() (apple.WebTokens, error) {
+		called = true
+		return apple.WebTokens{}, nil
+	}
+	t.Cleanup(func() { appleAutoTokens = origAuto })
+
+	_, err := runCLI(t, "auth", "login", "apple", "--auto")
+	if err == nil || !strings.Contains(err.Error(), "--i-understand") {
+		t.Fatalf("應要求 --i-understand:%v", err)
+	}
+	if called {
+		t.Error("未過揭露不該呼叫 appleAutoTokens")
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+// TestAuthLoginAppleAutoTTYConfirmsThenExtracts:TTY;揭露 Confirm 一次、seam 成功 → 不進手動精靈、落地。
+func TestAuthLoginAppleAutoTTYConfirmsThenExtracts(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUT1")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmed := 0
+	confirmAppleDisclosure = func() error {
+		confirmed++
+		return nil
+	}
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origInputs := runAppleWizardInputs
+	inputsCalled := false
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		inputsCalled = true
+		return "", "", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	origAuto := appleAutoTokens
+	appleAutoTokens = func() (apple.WebTokens, error) {
+		return apple.WebTokens{Developer: dev, User: "MUT1"}, nil
+	}
+	t.Cleanup(func() { appleAutoTokens = origAuto })
+
+	out, err := runCLI(t, "auth", "login", "apple", "--auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed != 1 {
+		t.Errorf("confirmAppleDisclosure 呼叫次數 = %d, want 1", confirmed)
+	}
+	if inputsCalled {
+		t.Error("自動擷取成功不該呼叫 runAppleWizardInputs")
+	}
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
+		t.Errorf("輸出:%q", out)
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT1" {
+		t.Errorf("user token = (%q, %v)", user, err)
+	}
+}
+
+// TestAuthLoginAppleAutoFallsBackToWizardInputs:TTY;seam 失敗 → stderr 說明原因、回退呼叫手動精靈、落地。
+func TestAuthLoginAppleAutoFallsBackToWizardInputs(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUT1")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmAppleDisclosure = func() error { return nil }
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origInputs := runAppleWizardInputs
+	inputsCalled := false
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		inputsCalled = true
+		return dev, "MUT1", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	origAuto := appleAutoTokens
+	appleAutoTokens = func() (apple.WebTokens, error) {
+		return apple.WebTokens{}, errors.New("Safari 沒開;Google Chrome 沒開")
+	}
+	t.Cleanup(func() { appleAutoTokens = origAuto })
+
+	out, err := runCLI(t, "auth", "login", "apple", "--auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "自動擷取失敗") {
+		t.Errorf("輸出應含自動擷取失敗說明:%q", out)
+	}
+	if !inputsCalled {
+		t.Error("自動擷取失敗且為 TTY 應回退呼叫 runAppleWizardInputs")
+	}
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
+		t.Errorf("輸出:%q", out)
+	}
+}
+
+// TestAuthLoginAppleAutoNonTTYFailureErrors:非 TTY;seam 失敗 → 直接回錯誤(不回退、不落地)。
+func TestAuthLoginAppleAutoNonTTYFailureErrors(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	hits := appleServer(t, "whatever", "whatever")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origAuto := appleAutoTokens
+	appleAutoTokens = func() (apple.WebTokens, error) {
+		return apple.WebTokens{}, errors.New("Safari 沒開;Google Chrome 沒開")
+	}
+	t.Cleanup(func() { appleAutoTokens = origAuto })
+
+	_, err := runCLI(t, "auth", "login", "apple", "--auto", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "Safari 沒開") {
+		t.Fatalf("應回自動擷取失敗原因:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+// TestAutoFlagHiddenFromHelp:--auto 是隱藏 flag——--help 不列它,但 --i-understand 這種正常 flag 仍要看得到。
+func TestAutoFlagHiddenFromHelp(t *testing.T) {
+	setCLITestConfig(t)
+	out, err := runCLI(t, "auth", "login", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "--auto") {
+		t.Errorf("--auto 應從 --help 隱藏:%q", out)
+	}
+	if !strings.Contains(out, "--i-understand") {
+		t.Errorf("--help 應列出 --i-understand:%q", out)
+	}
+}
+
 func TestAuthStatusApple(t *testing.T) {
 	setupAppleTokens(t)
 	out, err := runCLI(t, "auth", "status")

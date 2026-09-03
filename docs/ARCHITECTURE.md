@@ -304,10 +304,11 @@ Apple 的網頁播放器(music.apple.com)自己就是一個 MusicKit 用戶端:�
 - developer token 是**標頭不是 cookie**;media-user-token 兩者皆是。這決定了 (d) 的自動擷取只能靠驅動瀏覽器或攔截流量,讀 cookie 資料庫拿不到 developer token。
 - Apple 輪替 developer token 時,舊 MUT 通常仍有效(MUT 綁帳號不綁 developer token)→ 重登只換前者。
 - DevTools 的欄位名稱與 amp-api 路徑以真實驗收首次觀察為準;本節依社群多年穩定作法寫成。
+- developer token 也寫死在網頁播放器的前端 bundle(首頁 HTML 裡的 `assets/index[~-]*.js`)裡,一個未認證的 GET 就拿得到——`--auto` 不走這條(單一機制,見 (d)),預設路徑更不走(鐵則);記在這裡供日後決策。
 
 #### (d) 隱藏的 `--auto`(未文件化、opt-in、開發者自負)
 
-`capy auth login apple --auto`:`--help` 不列、README 不提。嘗試自動擷取——從瀏覽器 cookie 資料庫讀 media-user-token、驅動瀏覽器(AppleScript / CDP)從活動頁面取 developer token;任一失敗即回退到手動流程並說明原因。它是 CLAUDE.md 鐵則的唯一例外,存在不改變預設路徑「絕不自動擷取」;揭露頁在 `--auto` 下同樣不可跳過。macOS 優先、best-effort、瀏覽器版本相依,預期會壞。
+`capy auth login apple --auto`:`--help` 不列、README 不提。單一機制:用 AppleScript 找 Safari / Google Chrome 裡第一個已登入的 `https://music.apple.com` 分頁,在頁面執行 `MusicKit.getInstance()` 一次讀出 `developerToken` 與 `musicUserToken`(不讀 cookie 資料庫——developer token 本來就不在 cookie 裡,而驅動瀏覽器一次就能拿到兩個)。前提:瀏覽器已開啟「允許來自 Apple 事件的 JavaScript」(Safari:設定 → 進階 → 顯示「開發」選單 → 開發選單;Chrome:View → Developer),首次執行 macOS 會詢問「終端機想控制 Safari」。任一失敗即說明原因並回退到手動貼上;揭露在 `--auto` 下同樣不可跳過(TTY 為 Confirm,非 TTY 為 `--i-understand`)。它是 CLAUDE.md 鐵則的唯一例外,存在不改變預設路徑「絕不自動擷取」。macOS 限定、best-effort、瀏覽器版本相依,預期會壞。
 
 ### 4.4 Google:Authorization Code + PKCE(Desktop app client)
 

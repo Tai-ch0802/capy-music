@@ -93,6 +93,8 @@ func newAuthLoginCmd() *cobra.Command {
 	cmd.Flags().String("developer-token", "", "(apple)developer token;等同 CAPY_APPLE_DEVELOPER_TOKEN。argv 可被 ps 看到,建議用環境變數")
 	cmd.Flags().String("user-token", "", "(apple)media-user-token;等同 CAPY_APPLE_USER_TOKEN")
 	cmd.Flags().Bool("i-understand", false, "(apple)以 flag/環境變數提供 token 時,表示已閱讀「非 Apple 官方支援」聲明")
+	cmd.Flags().Bool("auto", false, "")
+	_ = cmd.Flags().MarkHidden("auto") // 未文件化、opt-in、開發者自負(CLAUDE.md 鐵則的唯一例外,見 auto_darwin.go)
 	return cmd
 }
 
@@ -119,6 +121,30 @@ func appleLogin(cmd *cobra.Command) error {
 	if user == "" {
 		user = os.Getenv("CAPY_APPLE_USER_TOKEN")
 	}
+	if auto, _ := cmd.Flags().GetBool("auto"); auto && dev == "" {
+		// 唯一例外(CLAUDE.md):隱藏、opt-in、開發者自負。揭露照樣不可跳過。
+		if stdinIsTTY() {
+			if err := confirmAppleDisclosure(); err != nil {
+				return err
+			}
+		} else if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
+			return errors.New(appleDisclosure + "\n\n--auto 在非互動環境需加 --i-understand")
+		}
+		wt, err := appleAutoTokens()
+		if err == nil {
+			return applePersist(cmd.Context(), cmd.OutOrStdout(), wt.Developer, wt.User)
+		}
+		if !stdinIsTTY() {
+			return err
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "自動擷取失敗,改用手動貼上:%v\n", err)
+		_, gerr := secret.Get(apple.KeyMusicUserToken)
+		dev, user, err = runAppleWizardInputs(gerr == nil)
+		if err != nil {
+			return err
+		}
+		return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
+	}
 	if dev == "" {
 		if !stdinIsTTY() {
 			return errors.New("非互動環境請設 CAPY_APPLE_DEVELOPER_TOKEN(首次登入另需 CAPY_APPLE_USER_TOKEN)並加 --i-understand。\n" + appleGuide)
@@ -143,6 +169,7 @@ func appleLogin(cmd *cobra.Command) error {
 var (
 	confirmAppleDisclosure = appleConfirmDisclosure
 	runAppleWizardInputs   = appleWizardInputs
+	appleAutoTokens        = apple.AutoWebTokens
 )
 
 // appleConfirmDisclosure:揭露頁,Confirm 預設「取消」;不同意即 error。CLAUDE.md:不可跳過。
