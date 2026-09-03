@@ -151,6 +151,8 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 | P0-1 | `scripts/p0/p0-1-isrc.sh`:確認 catalog search 回傳 ISRC。結果回填 spec §9 P0-1 | ISRC 是 P4 resolver 的基礎 |
 | **P0-2** | `scripts/p0/p0-2-playlist-ops.sh`:**Apple Music API 能否從 library playlist 移除/重排曲目**。結果決定 `CapPlaylistRemove`/`CapPlaylistReorder` 與 §6.5 是否需要 rebuild fallback | P5 的架構風險點,建議在 P5 開工前跑掉 |
 
+> **編號沒有 C-5**:原本的 C-5 是隱藏 `--auto` 的驗收(Safari / Chrome 各一次),維護者已明確把 `--auto` 排除在本階段之外,故不列。編號沿用 Apple 計畫附錄 A 以便對照,不是漏抄。
+>
 > Spotify 端也有一項:`/playlists/{id}/items` 內層鍵名確認後,可以刪掉 `spotify/client.go` 的雙鍵 decode。
 
 ---
@@ -175,7 +177,12 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 
 依賴鏈:**T0 最先**(其他任務都照它改後的 spec 做)→ T1 →(T2 ∥ T3)→ T4 → T5 → T6 → T7 → T8 → T9。T10 任何時候都能做。
 
-> **開工前必須先有的東西**:§4 的決策 3(閾值公式)與決策 7(`ops` 表存廢)要在 T6 前拍板;`scripts/p0/p0-1-isrc.sh`(ISRC 可得性)要在 T5 前跑,否則 `cid` 的設計前提不成立;G-0 要在 T3 前跑。
+> **開工前必須先有的東西**(§4 用 `Q` 編號,與 §1 的「決策 9–13」是兩套命名空間,不要混):
+> **T0 前** — Q2(Drive quota 文字查證)、Q4(`ops` / `review_queue` 兩張表存廢;T0 就要動 spec §7,所以它是 T0 的輸入)。
+> **T3 前** — Q1(跑 G-0 決定 `client_secret` 是否必送)、Q8(`auth status` 要不要顯示 Google email)。
+> **T5 前** — Q7(先跑 `scripts/p0/p0-1-isrc.sh`;若 library 曲目普遍沒有 ISRC,`cid` 的設計前提就不成立)。
+> **T7 前** — Q5(平台清單 ↔ `pid` 的連結規則)、Q6(平台端清單被刪時的行為)。
+> **T8 前** — Q3(刪除閾值公式)。
 
 ### T0 — 文件對齊(只改 docs,不動程式)
 
@@ -190,13 +197,28 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 - §6.5:衝突規則「add vs add 同 cid → 去重」與決策 13(item 保真)相衝,改成「同 `iid` 才去重」。
 - §6.6:`pl restore` 從 `base/` 回滾的語意隨扁平化改變(base 進 dev 檔),改寫或標為 P5 再定。
 - §5.1 / §5.2 / §5.4:「ISRC 是主鍵」與 §1.5 查證的「ISRC 是候選產生器」相衝,統一為後者;§5.4 的 `Drive tracks/mappings.json` 路徑改扁平命名。
-- §7:`playlist_items` 主鍵 `(pid, cid)` → `(pid, iid)`;**刪掉 `ops` 與 `review_queue` 兩張表**(它們不在 Drive,存在就違反「刪 db 可從 Drive 重建」——見 §4 決策 7);補一句 migration = `PRAGMA user_version` 不符就整檔丟棄重建;明寫 db 位置 = `config.Dir()/state.db`,`CAPY_CONFIG_DIR` 一併覆寫。
-- §8.5:「Drive API 無用量計費」改成 quota units 模型(依 §4 決策 2 的查證結果)。
+- §7:`playlist_items` 主鍵 `(pid, cid)` → `(pid, iid)`;**P3 不建 `ops` 與 `review_queue` 兩張表**(見 Q4)。
+  ⚠️ **理由要寫準,否則 P5 接手的人會以為 op log 整個被否決**:已上傳的 op log **在 Drive 上**(spec §6.3 的 `ops/<device_id>.jsonl`,§6.5 步驟 6 會上傳它),真正不在 Drive 的只有 `synced = 0` 的離線佇列與使用者尚未裁決的 review。P3 為了讓「刪 db 可從 Drive 重建」成立而不建這兩張表,**不是否決 §6.4 的 op log 設計**。
+- §6.3 的 `ops/`、`snapshot.json`、`export/latest.json` 與 §6.4 整節:扁平化之後這些路徑就不存在了,但 T4 的扁平檔名清單只有 `manifest` / `tracks` / `pl__*` / `dev__*`。**明確標註「op log 與 snapshot 的佈局待 P5 重新設計,扁平化後的路徑未定」**,不要靜靜留著一節寫到不存在檔案的規格。
+- §6.3 的 `export/latest.json`(Drive 上的檔案)與 T9 的 `export` 命令(輸出到 stdout)是兩回事,要定義關係。**建議**:T9 只做 stdout,Drive 上的 `export/latest.json` 一併標為 P5 待定或刪掉——逃生口的價值在於「不依賴 Drive」,把它存回 Drive 沒有意義。
+- §7 補一句 migration = `PRAGMA user_version` 不符就整檔丟棄重建;明寫 db 位置 = `config.Dir()/state.db`,`CAPY_CONFIG_DIR` 一併覆寫。
+- §8.5:「Drive API 無用量計費」改成 quota units 模型(依 Q2 的查證結果)。
 - 附錄 A:加 `pl pull/link/unlink/diff`、`export`、`import`、`drive init`、`device list/forget`、`db rebuild`,並標註哪些在 P3、哪些延後。
 - 附錄 B:加一列 Drive quota units 計費時程。
 - 附錄 C:新增決策 9 / 10 / 11 / 13。
 
-**驗收**:`grep -n "PRIMARY KEY (pid, cid)\|無用量計費\|playlists/<pid>/\|base/<provider>.json\|ISRC.*主鍵" docs/ARCHITECTURE.md` 為空;CLAUDE.md 與 spec 對 Google client 歸屬、`pl pull` 方向的說法一致。
+**驗收**(反向 grep 加正向檢查——只用反向會有假綠燈:§6.3 的巢狀樹畫在 ASCII art 裡、`playlists/` 與 `<pid>/` 分屬兩行,`playlists/<pid>/` 這個 pattern 永遠 0 match):
+
+```bash
+# 以下必須全部為空
+grep -n "PRIMARY KEY (pid, cid)\|無用量計費\|base/<provider>.json\|ISRC.*主鍵" docs/ARCHITECTURE.md
+grep -n '└── <pid>/' docs/ARCHITECTURE.md          # 巢狀樹的實際字串
+grep -n 'review_queue\|CREATE TABLE ops' docs/ARCHITECTURE.md
+# 以下必須有東西
+grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平命名已寫入 §6.3
+```
+
+另外人工確認三件事:§6.1 表格的 `pl pull` 那一列已改成「平台 → canonical → Drive」;CLAUDE.md 與 spec 對 Google client 歸屬的說法一致;§6.4 已標註 P5 重新設計(見下)。
 
 ### T1 — 共用單元:檔案鎖 + keychain JSON token source
 
@@ -205,7 +227,8 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 - 鎖:`golang.org/x/sys` 已是間接依賴(v0.47.0),升 direct 零新下載。**必須用 `unix.Flock` / `windows.LockFileEx`,不可用 fcntl**——前者 per-fd,同一 process 開兩個 fd 會互斥,測試才測得到。Windows 的 `LockFileEx` 需要 byte range 與 `Overlapped`,別漏。鎖檔是空檔,放 `config.Dir()`(先 `MkdirAll`)。
 - token store:`Load(key) (*oauth2.Token, error)` / `Save(key string, tok *oauth2.Token) error`,值為 JSON。**明確定義欄位**:`access_token` / `token_type` / `refresh_token` / `expiry` / `issued_at`(自己加的,`oauth2.Token` 沒有這個欄位,`ErrGoogleGrant` 要用它算 token 年齡)。**明確排除 `id_token`**(Windows Credential Manager blob 上限 2560 bytes;目前 `json.Marshal(oauth2.Token)` 不含 id_token 只是因為它藏在未匯出欄位,要顯式化)。
 - 通用的 `Token()` 包裝:先看記憶體(`time.Until(Expiry) > 60s` 就直接用)→ 取鎖 → **鎖內重讀 keychain 雙重檢查**(別的 process 可能剛換好)→ 仍過期才 refresh → 寫回 → 釋放。refresh 一律包 `context.WithTimeout(30s)`(oauth2 預設用沒有 timeout 的 client,鎖內卡死會拖垮所有並行呼叫)。
-- **所有 keychain 存取都必須在鎖內**——`go-keyring` 的 mock 是裸 map 無鎖,CI 跑 `-race`,鎖外存取會被 race detector 抓。
+- **鎖的範圍限定在 token refresh 路徑**:`Token()` 內的 keychain 讀寫必須在鎖內。**不要**把規則寫成「所有 keychain 存取都要加鎖」——非測試的 `secret.Get/Set/Delete` 呼叫點目前有 21 個(`internal/cli/auth.go`、`doctor.go`、`provider.go`、`debug.go`、`internal/auth/apple/token.go`…),它們不在 refresh 路徑上,而且 T1–T3 的產出清單一個都沒列到,照字面做會變成一個沒排進計畫的大改動。
+- 順帶一提:`go-keyring` 的 mock 是裸 map 無鎖,測試裡並行打 keychain 會被 `-race` 抓到。**那是測試 helper 的問題,不是生產程式碼的形狀問題**——修測試(序列建構、只在鎖保護的路徑上並行),不要為了遷就假造物去加鎖。
 
 **測試**:序列建構、並行呼叫;有效 token 時 HTTP handler 直接 `t.Fatal`(證明零網路);鎖檔目錄不存在時仍成功;marshal 一個含長 access/refresh token 的樣本斷言 **< 2560 bytes**;JSON 內不含 `id_token`。
 
@@ -273,7 +296,7 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 **產出**:`internal/store/`。相依:`modernc.org/sqlite`(spec §2 指定,純 Go 無 cgo)。
 
 - db 位置 `config.Dir()/state.db`(`CAPY_CONFIG_DIR` 一併覆寫,測試靠它隔離)。
-- 存:canonical 鏡像(tracks / playlists / items / mappings)、provider `base` 副本、resolution cache。**不存**:憑證、provider 原始 JSON、**任何不在 Drive 的東西**(`ops` 離線佇列與 `review_queue` 見 §4 決策 7;T0 已從 spec §7 刪掉)。
+- 存:canonical 鏡像(tracks / playlists / items / mappings)、provider `base` 副本、resolution cache。**不存**:憑證、provider 原始 JSON、**任何不在 Drive 的東西**(`ops` 離線佇列與 `review_queue` 見 Q4;T0 已從 spec §7 拿掉)。
 - Migration:`PRAGMA user_version` 不符就**整檔丟棄重建**。
 - **Windows**:`os.Remove(state.db)` 在連線未關時會失敗(sharing violation);`-wal` / `-shm` 不一併刪的話舊 WAL 會 replay 進新 db,rebuild 不乾淨。刪除要先 `Close()`、三個檔一起刪,並有 Windows 上會跑到的測試。
 
@@ -298,11 +321,14 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 
 - **GATE 是唯一的寫入閘**:算變更集 → dry-run 呈現 → 閾值檢查 → 才寫。
 - 非 TTY dry-run 輸出為無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;TTY 用 `ui.Table` 渲染同一份資料。**首次 pull 在 TTY 下**:spec §6.6 要求「自動先 dry-run 並要求確認」——定案用 huh Confirm,非 TTY 則靠 `--yes`。
-- **exit code**:`0` 無變更、`2` 有待套用變更、`3` 安全閥擋下、`1` 錯誤。
+- **exit code**:`0` 無變更**或已成功套用**、`2` 有待套用變更(dry-run,或非 TTY 未給 `--yes`)、`3` 安全閥擋下、`1` 錯誤。
+  **`--yes` 成功套用後回 `0`,不是 `2`**——exit code 的語意保留給「需要人介入」,「這次動了幾筆」由 TSV 的行數判斷。這是對外契約,使用者的 `if [ $? -eq 2 ]` 會依賴它;若維護者偏好相反的讀法,要在 T8 開工前改掉這一行,不要留給實作者猜。
   ⚠️ **機制**:`root.go` 目前只有 `SilenceUsage`,沒有 `SilenceErrors`,`main.go` 一律 exit 1。用「回傳 error」表達 exit 2 會讓 cobra 印出 `Error: …`,但那不是錯誤。做法:加 `SilenceErrors`,由 `main.go` 自己判斷哨兵型別 → 決定 exit code 與要不要印。對照表集中在 `main.go`。
 - `--yes` 跳過確認,`--force` 才越過刪除閾值;**兩者必須分開**。
-- **`--yes` 絕不可放行「Drive 是空的但本機 cache 有清單」**(評審列為第一致命項):這種狀態一律 exit 3 且**零寫入**,出口是 `capy drive init --from-local`(T9)。理由:`--yes` 是 cron 的常態旗標,而「使用者兩下清空 appdata」「登錯 Google 帳號」「已知 file id 回 404」都會走到這個狀態。
-- **閾值分母要寫死並測**:用「該 provider 可見的曲數」而非 canonical 總曲數,否則 5 首刪 2 首會誤判(§4 決策 3)。
+- **`--yes` 絕不可放行「Drive 的狀態不完整」**(第一致命項)。條件不是「Drive 全空」而是:**manifest 宣告存在、但實際取不到的檔案數 > 0**(Drive 全空是它的特例)。
+  為什麼要放寬:只擋全空的話,部分遺失會繞過閘——`manifest.json` 還在、某個 `pl__<pid>.json` 回 404,DERIVE 會把那個清單算成「所有曲目都被移除」,然後只剩閾值檢查在擋,而閾值有 `--force`、`--yes` 也不受這條保護。§5 把「登錯 Google 帳號」「已知 file id 回 404」與「被清空」並列為同一個風險,閘就要一起蓋住。
+  行為:一律 exit 3 且**零寫入**,訊息列出取不到的檔案,出口是 `capy drive init --from-local`(T9)。理由:`--yes` 是 cron 的常態旗標,不能同時兼任「我知道 Drive 壞了」的確認。
+- **閾值分母要寫死並測**:用「該 provider 可見的曲數」而非 canonical 總曲數,否則 5 首刪 2 首會誤判(Q3)。
 - **COMMIT 順序寫死:Drive 先、SQLite 後**。反過來(先寫 cache 再上傳、上傳失敗)會讓 cache 領先 source of truth,下一次 rebuild 反而「倒退」。上傳失敗就不寫 cache,下次 pull 重算。
 - 同裝置並行守門:COMMIT 用 `BEGIN IMMEDIATE`,交易內重驗 `base.observed_at` 與 FETCH 時相同,否則中止並提示「另一個 capy 正在同步」。可直接複用 T1 的鎖。
 
@@ -328,19 +354,19 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 
 ---
 
-## §4 仍待拍板
+## §4 仍待拍板(Q 編號;與 §1 的「決策 9–13」是**兩套命名空間**)
 
 | # | 議題 | 選項 | 建議 | 何時要決定 |
 |---|---|---|---|---|
-| 1 | Desktop client 換 token 是否**真的**必送 `client_secret` | 文件把欄位標 Optional,豁免只列 Android/iOS/Chrome | 跑 G-0 再定 | **T3 前** |
-| 2 | Drive quota 是否已改 quota units 模型與 2026 計費 | 只影響 spec 文字 | 開 limits 頁對照數字再改,別改成錯的 | **T0 前** |
-| 3 | 刪除閾值公式 | A `>10 或 >30%`(spec 現況)/ B `>10 或 (>30% 且 >3)` / C 只看比例、清單 <10 首不擋 | B。A 會擋掉「5 首刪 2 首」 | **T8 前** |
-| 4 | `ops` 離線佇列與 `review_queue` 兩張表 | A 從 spec §7 刪掉(它們不在 Drive,存在就違反硬約束)/ B 保留但明示「未上傳的 ops 隨 db 遺失」 | A | **T0 前** |
-| 5 | 平台清單 ↔ `pid` 的連結 | A 自動連結(名稱相符)+ `pl link` 覆寫 / B 只認明確 `pl link` | B(猜錯會寫進 source of truth) | **T7 前** |
-| 6 | 平台端清單被使用者刪除時 | A 傳播刪除 / B 自動 unlink + 警告 / C 下次 push 重建 | B | T7 前 |
-| 7 | P0-1 若驗出 library 曲目普遍無 ISRC | 決定性 cid 幾乎全退成 `p:` 形式,跨 provider 收斂價值歸零 | 屆時重議 T5 的 cid 設計 | **T5 前** |
-| 8 | `auth status` 要不要顯示 Google email | A 顯示(email 進 config,非機密)/ B 不顯示(那就別從 id_token 取) | A(§5 的「登錯帳號」風險沒有其他偵測手段) | T3 前 |
-| 9 | P5 的引擎 / 順序合併 | op log + HLC vs state 三方合併 | 延到 P5,用 Drive 是否真的沒有 precondition 的實測結果決定 | P5 |
+| Q1 | Desktop client 換 token 是否**真的**必送 `client_secret` | 文件把欄位標 Optional,豁免只列 Android/iOS/Chrome | 跑 G-0 再定 | **T3 前** |
+| Q2 | Drive quota 是否已改 quota units 模型與 2026 計費 | 只影響 spec 文字 | 開 limits 頁對照數字再改,別改成錯的 | **T0 前** |
+| Q3 | 刪除閾值公式 | A `>10 或 >30%`(spec 現況)/ B `>10 或 (>30% 且 >3)` / C 只看比例、清單 <10 首不擋 | B。A 會擋掉「5 首刪 2 首」 | **T8 前** |
+| Q4 | `ops` 離線佇列與 `review_queue` 兩張表 | A 從 spec §7 刪掉(它們不在 Drive,存在就違反硬約束)/ B 保留但明示「未上傳的 ops 隨 db 遺失」 | A | **T0 前** |
+| Q5 | 平台清單 ↔ `pid` 的連結 | A 自動連結(名稱相符)+ `pl link` 覆寫 / B 只認明確 `pl link` | B(猜錯會寫進 source of truth) | **T7 前** |
+| Q6 | 平台端清單被使用者刪除時 | A 傳播刪除 / B 自動 unlink + 警告 / C 下次 push 重建 | B | T7 前 |
+| Q7 | P0-1 若驗出 library 曲目普遍無 ISRC | 決定性 cid 幾乎全退成 `p:` 形式,跨 provider 收斂價值歸零 | 屆時重議 T5 的 cid 設計 | **T5 前** |
+| Q8 | `auth status` 要不要顯示 Google email | A 顯示(email 進 config,非機密)/ B 不顯示(那就別從 id_token 取) | A(§5 的「登錯帳號」風險沒有其他偵測手段) | T3 前 |
+| Q9 | P5 的引擎 / 順序合併 | op log + HLC vs state 三方合併 | 延到 P5,用 Drive 是否真的沒有 precondition 的實測結果決定 | P5 |
 
 ---
 
@@ -348,7 +374,7 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 
 | 風險 | 觸發條件 | 緩解 |
 |---|---|---|
-| **靜默清空平台清單** | Drive appdata 被使用者兩下清空 / 登錯 Google 帳號 / 已知 file id 回 404,而程式把「Drive 空」讀成「使用者刪光了」 | T8 的 exit 3 + 零寫入 + `drive init --from-local`;`--yes` 不得放行。驗收 G-4 |
+| **靜默清空平台清單** | Drive appdata 被使用者兩下清空 / 登錯 Google 帳號 / 已知 file id 回 404(**部分遺失也算**),而程式把它讀成「使用者刪光了」 | T8 的閘:manifest 宣告存在但取不到的檔案數 > 0 → exit 3 + 零寫入 + `drive init --from-local`;`--yes` 不得放行。驗收 G-4 |
 | **cache 領先 source of truth** | COMMIT 先寫 SQLite 再上傳 Drive,上傳失敗 | T8 寫死順序:Drive 先、SQLite 後 |
 | **共享檔 last-write-wins** | 兩台裝置同時寫 `manifest.json` / `tracks.json` / `pl__*.json`(Drive 沒有 CAS) | P3 單裝置為主,接受並記錄;P5 前必須重審 |
 | **source of truth 資料遺失** | 若日後加入「N 天未更新的裝置檔忽略」規則 | T5 明令 P3 不做;只能由 `device forget` 移除 |
@@ -375,7 +401,7 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 
 1. 讀本文件 §0 → §1 → §3。spec(`docs/ARCHITECTURE.md`)是設計權威,本文件是排程與決策權威;**兩者衝突時以 §1 的決策為準,並由 T0 把 spec 改過來**。
 2. 開分支(不要在 main 上動工),先做 **T0**,單獨一個 docs commit。T0 的 PR 描述要明寫「CLAUDE.md 硬約束依決策 9 放寬」。
-3. 先把 §4 標「T0 前 / T3 前 / T5 前 / T8 前」的決策清掉,再開對應任務。
+3. 先把 §4 標了期限的 Q 清掉,再開對應任務(Q2 / Q4 在 T0 前,Q1 / Q8 在 T3 前,Q7 在 T5 前,Q5 / Q6 在 T7 前,Q3 在 T8 前)。
 4. T1–T10 用 `superpowers:subagent-driven-development` 執行:每個 task 一個實作 subagent → task review → fix loop → 最後全分支 review。實作者的 model 用 fable(本次已驗證可用)。
 5. 每個 task 都要 TDD;bug fix 必附「未修前會 fail」的回歸測試(全域 CLAUDE.md 硬規則)。
 6. CI 是 macOS + Windows 雙矩陣;`GOOS=windows go vet ./...` 在本機先跑過再推,但注意 **vet 抓不到 Windows 的檔案 sharing violation**,SQLite 刪檔那條要靠 CI 真的跑。
