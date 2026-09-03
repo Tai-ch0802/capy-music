@@ -219,12 +219,13 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 		// ——一次暫時性失敗就等於永久登出,所以隔一段時間重試一次再放棄。
 		// 這個間隔救得了的只有瞬時失敗(fork 失敗、keychain 守護程序剛好忙);keychain 被鎖住時
 		// security 是停在對話框而不是回錯,退避對那種情況沒有幫助,別高估它。
-		// ctx 已取消(Ctrl-C / cron 逾時)就不要把間隔等完,直接帶著第一次的原因放棄。
+		// ctx 已取消(Ctrl-C / cron 逾時)只跳過「等」,不跳過「寫」:secret.Set 不吃 context、
+		// exec /usr/bin/security 約 10ms 就結束,取消後那次寫入照樣會成功;而放棄它的代價是永久登出。
 		select {
 		case <-s.ctx.Done():
 		case <-time.After(saveRetryInterval):
-			err = saveToken(s.key, tok)
 		}
+		err = saveToken(s.key, tok)
 		if err != nil {
 			// 兩次都失敗:此刻舊 RT 在對方端已作廢、新 RT 只活在這個 return 就會丟掉的變數裡
 			// ——使用者是真的登出了,必須講明白並給下一步,不能只說「寫入失敗」。

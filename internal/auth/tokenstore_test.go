@@ -327,7 +327,9 @@ func TestTokenSourceRetriesWriteBackOnce(t *testing.T) {
 // ⭐ 重試要隔一段時間才有意義(背靠背重試等於同一瞬間再試一次,救不了「security 剛好 fork 失敗 /
 // keychain 守護程序剛好忙」),但 ctx 已取消時不能把間隔等完——這個分支換來的正是 Ctrl-C 殺得掉。
 // 取消刻意發生在第一次 saveToken 裡(refresh 之後):ctx 若一開始就取消,HTTP 那步就先失敗、根本走不到寫回。
-// 間隔設 10s,拿掉 select 的 ctx.Done() 分支的話,Token() 會卡滿 10 秒,這個測試會走到 5 秒那條斷言。
+// 兩件事一起釘住:取消會跳過「等」(間隔設 10s,拿掉 select 的 ctx.Done() 分支就會卡滿 10 秒,走到 5 秒
+// 那條斷言),但**不會**跳過「寫」——secret.Set 不吃 context、約 10ms 就結束,取消後那次寫入照樣會成功,
+// 而放棄它的代價是永久登出(舊 RT 在 refresh 成功那一刻就死了)。把重試搬進 ctx.Done() 的另一臂,calls 會是 1。
 func TestTokenSourceWriteBackRetryGivesUpWhenContextCanceled(t *testing.T) {
 	setTokenTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -365,8 +367,8 @@ func TestTokenSourceWriteBackRetryGivesUpWhenContextCanceled(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("ctx 已取消卻仍把重試間隔等完(%v):Ctrl-C 殺不掉", elapsed)
 	}
-	if n := calls.Load(); n != 1 {
-		t.Errorf("ctx 取消後不該再重試,saveToken 呼叫 %d 次", n)
+	if n := calls.Load(); n != 2 {
+		t.Errorf("取消只該跳過「等」、不該跳過「寫」(secret.Set 不吃 ctx,約 10ms 就結束,放棄寫回的代價是永久登出),saveToken 呼叫 %d 次", n)
 	}
 	// 此刻舊 RT 已作廢、新 RT 隨著這個 return 消失 = 使用者真的登出了,訊息必須說明並給下一步(R-5)。
 	if !strings.Contains(err.Error(), "已登出") || !strings.Contains(err.Error(), "capy auth login") {
