@@ -392,11 +392,9 @@ func newAuthLogoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "spotify":
-				// 兩個鍵都刪:尚未升級的使用者只有舊鍵,留著等於登出沒登乾淨。
-				for _, k := range []string{auth.KeySpotifyToken, auth.KeySpotifyRefreshToken} {
-					if err := secret.Delete(k); err != nil && !errors.Is(err, secret.ErrNotFound) {
-						return err
-					}
+				// 刪哪幾個鍵、要不要鎖,是 auth package 的內部知識(見 auth.LogoutSpotify)。
+				if err := auth.LogoutSpotify(cmd.Context()); err != nil {
+					return err
 				}
 			case "apple":
 				if err := secret.Delete(apple.KeyMusicUserToken); err != nil && !errors.Is(err, secret.ErrNotFound) {

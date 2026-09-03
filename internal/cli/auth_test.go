@@ -1099,7 +1099,9 @@ func TestNewAppleProviderSucceedsWithTokens(t *testing.T) {
 func TestAuthStatusAndLogout(t *testing.T) {
 	setCLITestConfig(t)
 	_ = config.Save(&config.Config{SpotifyClientID: "0123456789abcdef0123456789abcdef"})
+	// 新舊兩個鍵都種:只種舊鍵的話,「logout 忘了刪新鍵」= keychain 裡留著一份還能用的憑證,測不出來。
 	_ = secret.Set(auth.KeySpotifyRefreshToken, "rt1")
+	_ = secret.Set(auth.KeySpotifyToken, `{"access_token":"at","token_type":"Bearer","refresh_token":"rt2"}`)
 
 	out, err := runCLI(t, "auth", "status")
 	if err != nil {
@@ -1112,8 +1114,10 @@ func TestAuthStatusAndLogout(t *testing.T) {
 	if _, err := runCLI(t, "auth", "logout", "spotify"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := secret.Get(auth.KeySpotifyRefreshToken); !errors.Is(err, secret.ErrNotFound) {
-		t.Error("logout 後 refresh token 應被刪除")
+	for _, k := range []string{auth.KeySpotifyToken, auth.KeySpotifyRefreshToken} {
+		if _, err := secret.Get(k); !errors.Is(err, secret.ErrNotFound) {
+			t.Errorf("logout 後 %s 應被刪除,得到 %v", k, err)
+		}
 	}
 
 	out, _ = runCLI(t, "auth", "status")

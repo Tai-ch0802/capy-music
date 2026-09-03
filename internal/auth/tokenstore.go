@@ -30,6 +30,9 @@ type storedToken struct {
 // now:issued_at 用的時鐘。測試替換點。
 var now = time.Now
 
+// saveToken:token() 寫回 keychain 的入口。測試替換點(注入暫時性寫入失敗,驗證重試)。
+var saveToken = SaveToken
+
 // refreshTimeout:鎖內 refresh 的上限。oauth2 預設 client 沒有 timeout,鎖內卡死會拖垮所有並行呼叫。測試替換點。
 var refreshTimeout = 30 * time.Second
 
@@ -74,8 +77,17 @@ func SaveToken(key string, tok *oauth2.Token) error {
 	return secret.Set(key, string(b))
 }
 
-// lockFile 對 config.Dir()/<name> 取跨程序排他鎖(阻塞直到取得)。鎖檔是空檔,不放任何內容。
-func lockFile(name string) (unlock func(), err error) {
+// lockRetryInterval:等鎖的輪詢間隔。測試替換點。
+var lockRetryInterval = 50 * time.Millisecond
+
+// lockFile 對 config.Dir()/<name> 取跨程序排他鎖。鎖檔是空檔,不放任何內容。
+//
+// 鎖被別的 capy 持有時輪詢等待,ctx 取消(Ctrl-C / cron 逾時)就放棄並回錯誤——不能用作業系統的阻塞
+// 鎖:那個系統呼叫不吃 context,signal.NotifyContext 只取消 ctx、不終止 process,卡在裡面的 goroutine
+// 只剩 SIGKILL 殺得掉。臨界區也不是 30s refresh 逾時擋得住的:LoadToken / SaveToken 會 exec
+// /usr/bin/security,keychain 上鎖時會停在密碼對話框等到天荒地老。
+// ctx 已取消但鎖是空的仍會取得(第一次嘗試在檢查 ctx 之前):沒人競爭時不該平白失敗。
+func lockFile(ctx context.Context, name string) (unlock func(), err error) {
 	dir, err := config.Dir()
 	if err != nil {
 		return nil, err
@@ -87,11 +99,21 @@ func lockFile(name string) (unlock func(), err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := flock(f); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("取得鎖 %s:%w", name, err)
+	for {
+		switch ok, err := tryFlock(f); {
+		case err != nil:
+			f.Close()
+			return nil, fmt.Errorf("取得鎖 %s:%w", name, err)
+		case ok:
+			return func() { _ = funlock(f); f.Close() }, nil
+		}
+		select {
+		case <-ctx.Done():
+			f.Close()
+			return nil, fmt.Errorf("另一個 capy 正持有 %s 鎖,等待中被中斷或逾時,請稍後再試:%w", name, ctx.Err())
+		case <-time.After(lockRetryInterval):
+		}
 	}
-	return func() { _ = funlock(f); f.Close() }, nil
 }
 
 // TokenSource 是以 keychain 為後盾的 oauth2.TokenSource(附錄 C 決策 11):記憶體內 token 還有 60s 以上就直接用;
@@ -133,7 +155,7 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	if !force && fresh(s.tok) {
 		return s.tok, nil
 	}
-	unlock, err := lockFile(s.key + ".lock")
+	unlock, err := lockFile(s.ctx, s.key+".lock")
 	if err != nil {
 		return nil, err
 	}
@@ -160,9 +182,13 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	if tok.RefreshToken == "" {
 		tok.RefreshToken = cur.RefreshToken // Google 不輪替:回應沒有 RT,沿用舊的
 	}
-	if err := SaveToken(s.key, tok); err != nil {
-		// Spotify 的舊 RT 在 refresh 後已失效——寫回失敗必須讓呼叫失敗,否則下次啟動永久登出。
-		return nil, fmt.Errorf("token 已 refresh 但寫入 keychain 失敗:%w", err)
+	if err := saveToken(s.key, tok); err != nil {
+		// Spotify 的舊 RT 在 refresh 後已失效、新的只在記憶體裡,而 macOS 的寫入是 exec /usr/bin/security
+		// ——一次暫時性失敗就等於永久登出,所以重試一次再放棄。
+		if err = saveToken(s.key, tok); err != nil {
+			// 兩次都失敗:寫回失敗必須讓呼叫失敗,否則下次啟動永久登出。
+			return nil, fmt.Errorf("token 已 refresh 但寫入 keychain 失敗:%w", err)
+		}
 	}
 	s.tok = tok
 	return tok, nil

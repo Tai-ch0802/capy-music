@@ -294,12 +294,12 @@ func TestSpotifyTokenMigrationLocksAndRechecks(t *testing.T) {
 	if err := secret.Set(KeySpotifyRefreshToken, "rt1"); err != nil {
 		t.Fatal(err)
 	}
-	unlock, err := lockFile(KeySpotifyToken + ".lock")
+	unlock, err := lockFile(context.Background(), KeySpotifyToken+".lock")
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- migrateSpotifyToken() }()
+	go func() { done <- migrateSpotifyToken(context.Background()) }()
 	select {
 	case <-done:
 		unlock()
@@ -318,6 +318,96 @@ func TestSpotifyTokenMigrationLocksAndRechecks(t *testing.T) {
 	stored, err := LoadToken(KeySpotifyToken)
 	if err != nil || stored.RefreshToken != "rt2" {
 		t.Fatalf("鎖內重查應發現新鍵已經存在,不得用舊鍵的 rt1 蓋掉:(%+v, %v)", stored, err)
+	}
+}
+
+// ⭐ 遷移不得在「新鍵存在但讀不出來」時退回舊鍵:那會把壞掉(但可能只是 keychain 一時讀不到)的新鍵
+// 用舊鍵的值蓋掉。刪掉 migrateSpotifyToken 裡的 `case !errors.Is(err, secret.ErrNotFound): return err`,
+// 這個測試會看到新鍵被 rt-legacy 覆寫。
+func TestSpotifyTokenMigrationKeepsBrokenNewKey(t *testing.T) {
+	setTokenTest(t)
+	if err := secret.Set(KeySpotifyToken, "{壞掉的 JSON"); err != nil {
+		t.Fatal(err)
+	}
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateSpotifyToken(context.Background()); err == nil {
+		t.Fatal("新鍵存在但讀不出來時,遷移必須失敗而不是拿舊鍵蓋掉它")
+	}
+	raw, err := secret.Get(KeySpotifyToken)
+	if err != nil || raw != "{壞掉的 JSON" {
+		t.Fatalf("新鍵不得被覆寫:(%q, %v)", raw, err)
+	}
+	if got, err := secret.Get(KeySpotifyRefreshToken); err != nil || got != "rt-legacy" {
+		t.Errorf("失敗時舊鍵也不該被刪:(%q, %v)", got, err)
+	}
+}
+
+// ⭐ 登入的寫入必須在同一把鎖內(形狀同 TestSpotifyTokenMigrationLocksAndRechecks)。
+// 不在鎖內的交錯:B(capy search)進鎖讀到舊鍵 rt-legacy → A(登入)寫入 rt-new 並刪舊鍵 →
+// B 恢復後把 rt-legacy 寫回新鍵,剛拿到的 rt-new 就沒了。
+// 鎖刻意在 Exchange 之後才取:測試持鎖期間 LoginSpotify 已經跑完瀏覽器流程,只會卡在寫入前。
+func TestLoginSpotifyLocksBeforeWrite(t *testing.T) {
+	setTokenTest(t)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"at1","token_type":"Bearer","expires_in":3600,"refresh_token":"rt1"}`))
+	}))
+	defer tokenSrv.Close()
+	swapTokenURL(t, tokenSrv.URL)
+
+	unlock, err := lockFile(context.Background(), KeySpotifyToken+".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := LoginSpotify(ctx, "cid123", fakeAuthBrowser(t, "code1"))
+		done <- err
+	}()
+	select {
+	case <-done:
+		unlock()
+		t.Fatal("別人持鎖時登入就寫完了:登入的寫入沒取鎖,會蓋掉並行 refresh 剛輪替出來的 RT")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("放鎖後登入仍未完成")
+	}
+	if stored, err := LoadToken(KeySpotifyToken); err != nil || stored.RefreshToken != "rt1" {
+		t.Errorf("登入後 keychain 應含 rt1:(%+v, %v)", stored, err)
+	}
+}
+
+// LogoutSpotify 兩個鍵都要刪(尚未升級的使用者只有舊鍵;已升級的只有新鍵),整段在同一把鎖內。
+func TestLogoutSpotifyDeletesBothKeys(t *testing.T) {
+	setTokenTest(t)
+	if err := SaveToken(KeySpotifyToken, freshToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := LogoutSpotify(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{KeySpotifyToken, KeySpotifyRefreshToken} {
+		if _, err := secret.Get(k); !errors.Is(err, secret.ErrNotFound) {
+			t.Errorf("logout 後 %s 應已刪除,得到 %v", k, err)
+		}
+	}
+	// 兩個鍵都不存在時再登出一次不算錯(ErrNotFound 視為已經沒有)。
+	if err := LogoutSpotify(context.Background()); err != nil {
+		t.Errorf("重複 logout 不該報錯:%v", err)
 	}
 }
 

@@ -92,6 +92,14 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	if tok.RefreshToken == "" {
 		return nil, fmt.Errorf("Spotify 未回傳 refresh token")
 	}
+	// 取鎖的位置刻意在 Exchange 之後、寫入之前:同一把鎖現在每個 provider 命令都會進(遷移),鎖在等
+	// 瀏覽器回呼那 180 秒會癱掉整台機器的 capy。不取鎖則有這個交錯:B(capy search)進鎖讀到舊鍵
+	// rt-legacy → A(本函式)寫入 rt-new 並刪舊鍵 → B 恢復後把 rt-legacy 寫回新鍵,rt-new 沒了。
+	unlock, err := lockFile(ctx, KeySpotifyToken+".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := SaveToken(KeySpotifyToken, tok); err != nil {
 		return nil, fmt.Errorf("寫入 keychain 失敗:%w", err)
 	}
@@ -99,11 +107,28 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	return tok, nil
 }
 
+// LogoutSpotify 刪掉 Spotify 的兩個 keychain 鍵(新鍵 + 尚未升級的舊鍵),兩者都在同一把跨程序鎖內:
+// 鎖外刪的話,並行中的 refresh 可能在刪除之後才把輪替出來的 RT 寫回去,登出等於沒登乾淨。
+// 「有幾個鍵」是本 package 的內部知識,CLI 不該知道。ErrNotFound 視為已經沒有,其餘錯誤照實回報。
+func LogoutSpotify(ctx context.Context) error {
+	unlock, err := lockFile(ctx, KeySpotifyToken+".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	for _, k := range []string{KeySpotifyToken, KeySpotifyRefreshToken} {
+		if err := secret.Delete(k); err != nil && !errors.Is(err, secret.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
 // SpotifyTokenSource 回傳 keychain 為後盾的 token source(輪替後的 RT 一定寫回,跨程序以檔案鎖互斥)。
 // keychain 兩個鍵都沒有時原樣透傳 secret.ErrNotFound(CLI 轉成「請先 auth login」提示)。
 // 回傳具體型別:doctor 需要 Refresh() 明確驗 RT 存活,一般存取仍走 Token()(oauth2.TokenSource)。
 func SpotifyTokenSource(ctx context.Context, clientID string) (*TokenSource, error) {
-	if err := migrateSpotifyToken(); err != nil {
+	if err := migrateSpotifyToken(ctx); err != nil {
 		return nil, err
 	}
 	return NewTokenSource(ctx, spotifyOAuthConfig(clientID, ""), KeySpotifyToken)
@@ -121,8 +146,8 @@ func SpotifyTokenSource(ctx context.Context, clientID string) (*TokenSource, err
 // 每次建構都取一次鎖(不做鎖外快路徑,那正是上面那個窗口):成本是一次 open/flock/close,而且
 // TokenSource.Token() 的慢路徑本來就要取同一把鎖。不會自我死鎖:defer unlock 在本函式 return 就釋放,
 // NewTokenSource 是之後才呼叫的。
-func migrateSpotifyToken() error {
-	unlock, err := lockFile(KeySpotifyToken + ".lock")
+func migrateSpotifyToken(ctx context.Context) error {
+	unlock, err := lockFile(ctx, KeySpotifyToken+".lock")
 	if err != nil {
 		return err
 	}

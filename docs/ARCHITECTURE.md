@@ -462,6 +462,10 @@ $ capy resolve --review
   "artists": ["五月天"],
   "album": "自傳",
   "duration_ms": 227000,
+  "mappings": {                   // cid → 各平台 id;§7 mappings 表就是這個的鏡像,P3 不帶 confidence/pinned
+    "spotify": "6rqhFg...",
+    "apple":   "i.abc123"
+  },
   "conflicts": [                  // 同 ISRC 但 title/duration 不符的觀測;P3 只記錄不裁決(見下)
     { "provider": "spotify", "provider_id": "6rqhFg...", "title": "派對動物 (Live)", "duration_ms": 252000 }
   ]
@@ -558,7 +562,7 @@ capy pl sync 的一輪:
 | 機制 | 說明 |
 |---|---|
 | Dry-run 預設引導 | 首次 `sync` 自動先跑 `--dry-run` 並要求確認 |
-| 刪除閾值 | 單次 push 刪除 >10 首或 >30% 時中止並要求 `--force` |
+| 刪除閾值 | 單次 `pl pull` 或 `pl push` 刪除 >10 首或 >30% 時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push) |
 | 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore` 從它回滾的語意隨扁平化改變(base 不再是共享檔),**P5 再定** |
 | Export 逃生口 | `capy export` 輸出完整 JSON 到 stdout(Drive 檔的合併形式),不依賴 Drive、不回存 Drive;Drive 空 / 404 時的反向路徑是 `capy drive init --from-local`(只重新上傳本機 cache,永不對非空 cache 做 hydrate-empty) |
 
@@ -576,7 +580,6 @@ CREATE TABLE tracks (
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (
   cid TEXT, provider TEXT, provider_id TEXT,
-  confidence REAL, pinned INTEGER DEFAULT 0, updated_at INTEGER,
   PRIMARY KEY (cid, provider)
 );
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updated_at INTEGER);
@@ -589,6 +592,8 @@ CREATE TABLE resolution_cache (cid TEXT, provider TEXT, provider_id TEXT, found 
 Migration:`PRAGMA user_version` 不符就**整檔丟棄重建**(從 Drive hydrate),不寫 ALTER。
 
 SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive 完整重建。這是設計約束,要寫測試驗證。
+
+**`mappings` 在 P3 只有 `(cid, provider, provider_id)`,沒有 `confidence` / `pinned` / `updated_at`。** 這三欄在 Drive 上沒有來源——`tracks.json` 的 mapping 就是 `{ provider: provider_id }`(§5.4、§6.2、§6.3)——留著就等於「刪 db 可從 Drive 完整重建」這條硬約束在規格層面先天不成立。理由與下一段拒收 ops / review 兩張表**完全相同**:db 裡只能存 Drive 上有的東西。而且 P3 沒有 resolver(§9,resolver 與 review queue 是 P4),沒有任何程式碼會產生信心度或釘選。**P4 做 resolver 時要把這三欄同時加回 `tracks.json` 與本表**(§5.1 Layer 3 的人工釘選是使用者意圖,必須跟著 Drive 走才「永久沿用」);migration policy 是整檔丟棄重建,加欄位不用寫 ALTER,成本為零。只加表不加 Drive 形狀,同一個洞就會在 P4 原樣重現。
 
 **P3 不建 `ops` 離線佇列與 review 佇列兩張表(v0.5 有)。** 理由要讀準:已上傳的 op log **在 Drive 上**(§6.3 的 `ops/<device_id>.jsonl`,§6.5 步驟 6 會上傳它),真正不在 Drive 的只有 `synced = 0` 的離線佇列與使用者尚未裁決的 review 項目——這兩樣一旦進 db,「刪 db 可從 Drive 完整重建」就不成立。P3 為了讓這條硬約束成立而不建這兩張表,**不是否決 §6.4 的 op log 設計**;P5 要做離線佇列時,得連同它的重建策略一起回頭加表。db 裡只能存 Drive 上有的東西(canonical 鏡像、各裝置 `base` 副本)與純快取(`resolution_cache`);不存憑證、不存 provider 原始 JSON。
 

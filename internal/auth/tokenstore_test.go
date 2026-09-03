@@ -174,7 +174,7 @@ func TestLockFileMutualExclusion(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			unlock, err := lockFile("t.lock")
+			unlock, err := lockFile(context.Background(), "t.lock")
 			if err != nil {
 				t.Error(err)
 				return
@@ -190,6 +190,128 @@ func TestLockFileMutualExclusion(t *testing.T) {
 	wg.Wait()
 	if _, err := os.Stat(filepath.Join(dir, "t.lock")); err != nil {
 		t.Errorf("鎖檔應建立在 config dir(目錄不存在時自建):%v", err)
+	}
+}
+
+// ⭐ 鎖必須吃 context:Ctrl-C(signal.NotifyContext)只取消 ctx、不終止 process,所以等鎖不能用作業
+// 系統的阻塞鎖——卡在那個系統呼叫的 goroutine 永遠看不到取消,只剩 SIGKILL 殺得掉。臨界區也不是 refresh
+// 的 30s 逾時擋得住的(LoadToken/SaveToken 會 exec /usr/bin/security,keychain 上鎖時停在密碼對話框)。
+// 拿掉 lockFile 迴圈裡的 ctx.Done() 分支,這個測試會走到 2 秒那條 t.Fatal。
+func TestLockFileGivesUpWhenContextCanceled(t *testing.T) {
+	setTokenTest(t)
+	unlock, err := lockFile(context.Background(), "t.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		u, err := lockFile(ctx, "t.lock")
+		if err == nil {
+			u()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "另一個 capy 正持有") {
+			t.Fatalf("ctx 取消應回「另一個 capy 正持有」錯誤,得到 %v", err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("錯誤應包住 context.Canceled:%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx 已取消卻仍卡在等鎖:Ctrl-C 殺不掉這個 process")
+	}
+}
+
+// ⭐ 同一件事要從真正的入口驗一次:遷移在每次 SpotifyTokenSource 建構都會取鎖,等於 search / play /
+// pause / now / devices / pl / doctor 全部都會進這把鎖。只測 lockFile 的話,日後有人在 migrateSpotifyToken
+// 裡改傳 context.Background() 不會被抓到。
+func TestSpotifyTokenSourceGivesUpWhenContextCanceled(t *testing.T) {
+	setTokenTest(t)
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockFile(context.Background(), KeySpotifyToken+".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := SpotifyTokenSource(ctx, "cid123")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "另一個 capy 正持有") {
+			t.Fatalf("ctx 取消應讓建構失敗並說明鎖被佔用,得到 %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx 已取消卻仍卡在遷移的鎖上:每個 provider 命令都會卡死且 Ctrl-C 無效")
+	}
+}
+
+// keychain 內容不是有效 JSON(改用 JSON 儲存後才可能出現的失敗模式:舊格式殘留、外部工具寫壞)。
+// 必須是明確的、指得出下一步的錯誤,而且不能被誤判成 ErrNotFound(那會讓遷移拿舊鍵蓋掉它)。
+func TestLoadTokenCorruptJSON(t *testing.T) {
+	setTokenTest(t)
+	if err := secret.Set(testKey, "not json at all"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadToken(testKey)
+	if err == nil || !strings.Contains(err.Error(), "不是有效的 token JSON") {
+		t.Fatalf("壞掉的 JSON 應回可歸因的錯誤,得到 %v", err)
+	}
+	if errors.Is(err, secret.ErrNotFound) {
+		t.Error("壞掉的 JSON 不得被當成「沒有 token」")
+	}
+	if _, err := NewTokenSource(context.Background(), testConf("http://127.0.0.1:0"), testKey); err == nil {
+		t.Error("NewTokenSource 對壞掉的 JSON 應失敗")
+	}
+}
+
+// ⭐ 寫回 keychain 失敗要重試一次:此刻舊 RT 在 Spotify 端已作廢、新 RT 只在記憶體裡,而 macOS 的寫入是
+// exec /usr/bin/security,一次暫時性失敗(fork 失敗、keychain 剛好忙)就等於永久登出。
+// 拿掉重試,第一次失敗就會直接回錯,這個測試掛。
+func TestTokenSourceRetriesWriteBackOnce(t *testing.T) {
+	setTokenTest(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at-new", "rt2"))
+	}))
+	defer srv.Close()
+	var calls atomic.Int32
+	orig := saveToken
+	saveToken = func(key string, tok *oauth2.Token) error {
+		if calls.Add(1) == 1 {
+			return errors.New("暫時性失敗")
+		}
+		return orig(key, tok)
+	}
+	t.Cleanup(func() { saveToken = orig })
+
+	if err := SaveToken(testKey, staleToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := NewTokenSource(context.Background(), testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := ts.Token()
+	if err != nil {
+		t.Fatalf("寫回第一次失敗應重試而非直接放棄:%v", err)
+	}
+	if tok.AccessToken != "at-new" || calls.Load() != 2 {
+		t.Errorf("token = %+v,saveToken 呼叫 %d 次(want 2)", tok, calls.Load())
+	}
+	if stored, err := LoadToken(testKey); err != nil || stored.RefreshToken != "rt2" {
+		t.Errorf("重試成功後 keychain 應含輪替後的 rt2:(%+v, %v)", stored, err)
 	}
 }
 
@@ -372,7 +494,7 @@ func TestTokenSourceRefreshTimeoutReleasesLock(t *testing.T) {
 	// 漏鎖會阻塞到 test binary timeout;用 2s 上限讓失敗可歸因。
 	acquired := make(chan error, 1)
 	go func() {
-		unlock, err := lockFile(testKey + ".lock")
+		unlock, err := lockFile(context.Background(), testKey+".lock")
 		if err == nil {
 			unlock()
 		}
@@ -404,7 +526,7 @@ func TestTokenSlowPathTakesLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlock, err := lockFile(testKey + ".lock")
+	unlock, err := lockFile(context.Background(), testKey+".lock")
 	if err != nil {
 		t.Fatal(err)
 	}
