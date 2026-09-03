@@ -120,13 +120,84 @@ func appleLogin(cmd *cobra.Command) error {
 		user = os.Getenv("CAPY_APPLE_USER_TOKEN")
 	}
 	if dev == "" {
-		// Task 3 在這裡插入 TTY 精靈分支。
-		return errors.New("請設 CAPY_APPLE_DEVELOPER_TOKEN(首次登入另需 CAPY_APPLE_USER_TOKEN)並加 --i-understand。\n" + appleGuide)
+		if !stdinIsTTY() {
+			return errors.New("非互動環境請設 CAPY_APPLE_DEVELOPER_TOKEN(首次登入另需 CAPY_APPLE_USER_TOKEN)並加 --i-understand。\n" + appleGuide)
+		}
+		if err := confirmAppleDisclosure(); err != nil {
+			return err
+		}
+		_, err := secret.Get(apple.KeyMusicUserToken)
+		dev, user, err = runAppleWizardInputs(err == nil)
+		if err != nil {
+			return err
+		}
+		return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
 	}
 	if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
 		return errors.New(appleDisclosure + "\n\n以 flag / 環境變數提供 token 時,請加 --i-understand 表示已閱讀並同意上述聲明")
 	}
 	return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
+}
+
+// 測試替換點(精靈本體需要 TTY;單元測試只測分流,同 Spotify runClientIDWizard 慣例)。
+var (
+	confirmAppleDisclosure = appleConfirmDisclosure
+	runAppleWizardInputs   = appleWizardInputs
+)
+
+// appleConfirmDisclosure:揭露頁,Confirm 預設「取消」;不同意即 error。CLAUDE.md:不可跳過。
+func appleConfirmDisclosure() error {
+	agree := false
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewNote().Title("使用前請先閱讀").Description(appleDisclosure),
+		huh.NewConfirm().Title("我已閱讀,同意自負風險,繼續?").Affirmative("同意").Negative("取消").Value(&agree),
+	)).Run(); err != nil {
+		return err
+	}
+	if !agree {
+		return errors.New("已取消(未同意聲明)")
+	}
+	return nil
+}
+
+// appleWizardInputs:已有 user token 時先問「只更新 developer token?」(預設是——Apple 輪替時的常態,R-6 唯一緩解)
+// → 指引 → 貼 token。回傳 user 空字串 = 只更新 developer token。
+func appleWizardInputs(hasUser bool) (dev, user string, err error) {
+	onlyDev := hasUser
+	if hasUser {
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().Title("keychain 已有 user token。只更新 developer token?").
+				Affirmative("只更新 developer token").Negative("兩個都重新貼").Value(&onlyDev),
+		)).Run(); err != nil {
+			return "", "", err
+		}
+	}
+	fields := []huh.Field{
+		huh.NewNote().Title("從網頁播放器複製 token").Description(appleGuide),
+		huh.NewInput().Title("developer token(authorization 標頭的值)").Value(&dev).Validate(func(s string) error {
+			exp, err := apple.JWTExp(apple.NormalizeDevToken(s))
+			if err != nil {
+				return err
+			}
+			if !exp.After(time.Now()) {
+				return fmt.Errorf("已於 %s 過期,請重新複製", exp.Format(time.RFC3339))
+			}
+			return nil
+		}),
+	}
+	if !onlyDev {
+		fields = append(fields, huh.NewInput().Title("user token(media-user-token 標頭的值)").
+			EchoMode(huh.EchoModePassword).Value(&user).Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("不可為空")
+			}
+			return nil
+		}))
+	}
+	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+		return "", "", err
+	}
+	return dev, user, nil
 }
 
 // applePersist:三段驗證(JWT exp → preflight 401 → storefront 403)全過才寫 keychain/config——失敗不留半殘狀態。

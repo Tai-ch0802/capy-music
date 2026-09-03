@@ -440,6 +440,197 @@ func TestAuthLoginAppleFlagsWork(t *testing.T) {
 	}
 }
 
+// TestAuthLoginAppleTTYRunsWizard:TTY 且無 flag/env token → 走精靈,不需 --i-understand
+// (揭露頁本身就是同意動作)。落地行為應與 TestAuthLoginAppleEnvPersists 相同。
+func TestAuthLoginAppleTTYRunsWizard(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "") // 避免真實環境變數洩漏,擠掉 dev == "" 判斷
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUT1")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmed := 0
+	confirmAppleDisclosure = func() error {
+		confirmed++
+		return nil
+	}
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origInputs := runAppleWizardInputs
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		if hasUser {
+			t.Error("hasUser = true, want false(clearAppleTokens 後不該有既有 user token)")
+		}
+		return dev, "MUT1", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	out, err := runCLI(t, "auth", "login", "apple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed != 1 {
+		t.Errorf("confirmAppleDisclosure 呼叫次數 = %d, want 1", confirmed)
+	}
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
+		t.Errorf("輸出:%q", out)
+	}
+	raw, err := secret.Get(apple.KeyDeveloperToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Token string `json:"token"`
+		Exp   int64  `json:"exp"`
+	}
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Token != dev {
+		t.Errorf("keychain token = %q, want %q", c.Token, dev)
+	}
+	if c.Exp != exp.Unix() {
+		t.Errorf("keychain exp = %d, want %d", c.Exp, exp.Unix())
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT1" {
+		t.Errorf("user token = (%q, %v)", user, err)
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "tw" {
+		t.Errorf("storefront = %q", cfg.AppleStorefront)
+	}
+}
+
+// TestAuthLoginAppleTTYWizardOnlyDev:已有 user token 時,精靈回傳空字串 user
+// (「只更新 developer token」)→ 沿用既有 MUT0 打 storefront,MUT0 應維持不變。
+func TestAuthLoginAppleTTYWizardOnlyDev(t *testing.T) {
+	setupAppleTokens(t)                        // 預放 dev + user "MUT0"
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "") // 避免真實環境變數洩漏,擠掉 dev == "" 判斷
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	exp := time.Now().Add(48 * time.Hour)
+	newDev := fakeJWT(t, exp)
+	appleServer(t, newDev, "MUT0")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmAppleDisclosure = func() error { return nil }
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origInputs := runAppleWizardInputs
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		if !hasUser {
+			t.Error("hasUser = false, want true(setupAppleTokens 已放 user token)")
+		}
+		return newDev, "", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	out, err := runCLI(t, "auth", "login", "apple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "登入完成") {
+		t.Errorf("輸出:%q", out)
+	}
+	raw, err := secret.Get(apple.KeyDeveloperToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal([]byte(raw), &c)
+	if c.Token != newDev {
+		t.Errorf("dev token 應更新為新 JWT:%q", c.Token)
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT0" {
+		t.Errorf("user token 應仍是 MUT0:(%q, %v)", user, err)
+	}
+}
+
+// TestAuthLoginAppleTTYDisclosureDeclined:揭露頁不同意 → 精靈輸入階段不呼叫、不打網路、不落地
+// (CLAUDE.md:揭露不可跳過,拒絕必須在任何輸入頁與網路呼叫之前結束)。
+func TestAuthLoginAppleTTYDisclosureDeclined(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "") // 避免真實環境變數洩漏,擠掉 dev == "" 判斷
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	hits := appleServer(t, "whatever", "whatever")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmAppleDisclosure = func() error { return errors.New("已取消(未同意聲明)") }
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origInputs := runAppleWizardInputs
+	inputsCalled := false
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		inputsCalled = true
+		return "", "", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	_, err := runCLI(t, "auth", "login", "apple")
+	if err == nil {
+		t.Fatal("預期不同意聲明後回傳錯誤")
+	}
+	if inputsCalled {
+		t.Error("不同意聲明後不該呼叫 runAppleWizardInputs")
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+// TestAuthLoginAppleTTYWithFlagsSkipsWizard:即使在 TTY 下,只要 token 是從 flag/env 來的,
+// 仍要求 --i-understand,且完全不進精靈(兩個 seam 都不呼叫)——Task 2 的不變量,TTY 化後仍要守住。
+func TestAuthLoginAppleTTYWithFlagsSkipsWizard(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	hits := appleServer(t, dev, "MUT1")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmAppleDisclosure = func() error {
+		t.Error("有 flag/env token 時不該呼叫 confirmAppleDisclosure")
+		return nil
+	}
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origInputs := runAppleWizardInputs
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		t.Error("有 flag/env token 時不該呼叫 runAppleWizardInputs")
+		return "", "", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	_, err := runCLI(t, "auth", "login", "apple",
+		"--developer-token", dev, "--user-token", "MUT1")
+	if err == nil || !strings.Contains(err.Error(), "--i-understand") {
+		t.Fatalf("應要求 --i-understand:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
 func TestAuthStatusApple(t *testing.T) {
 	setupAppleTokens(t)
 	out, err := runCLI(t, "auth", "status")
