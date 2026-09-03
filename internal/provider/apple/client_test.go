@@ -89,13 +89,14 @@ func TestDoMapsAuthErrors(t *testing.T) {
 
 func TestPreflight(t *testing.T) {
 	cases := []struct {
-		name    string
-		status  int
-		wantErr bool
+		name         string
+		status       int
+		wantVerified bool
+		wantErr      bool
 	}{
-		{"200 通過", 200, false},
-		{"404 視為通過(端點形狀可能異動)", 404, false},
-		{"401 判定 dev token 被拒", 401, true},
+		{"200 通過", 200, true, false},
+		{"404 視為未驗證,不是失敗(端點形狀可能異動)", 404, false, false},
+		{"401 判定 dev token 被拒", 401, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,15 +116,21 @@ func TestPreflight(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			c := NewClient(srv.Client(), srv.URL, "DEV", "") // preflight 不需 MUT
-			err := c.Preflight(context.Background())
+			verified, err := c.Preflight(context.Background())
 			if tc.wantErr && err == nil {
 				t.Fatal("預期錯誤,得到 nil")
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("預期通過,得到 %v", err)
+				t.Fatalf("預期不回錯誤,得到 %v", err)
+			}
+			if verified != tc.wantVerified {
+				t.Errorf("verified = %v, want %v", verified, tc.wantVerified)
 			}
 			if tc.wantErr && !errors.Is(err, provider.ErrAuthExpired) {
 				t.Errorf("失敗應仍映射 ErrAuthExpired,得到 %v", err)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), fmt.Sprint(tc.status)) {
+				t.Errorf("錯誤訊息應含狀態碼,得到 %v", err)
 			}
 		})
 	}
@@ -142,9 +149,12 @@ func TestPreflight403MentionsDeveloperTokenNotMUT(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	c := NewClient(srv.Client(), srv.URL, "DEV", "") // preflight 不需 MUT
-	err := c.Preflight(context.Background())
+	verified, err := c.Preflight(context.Background())
 	if err == nil {
 		t.Fatal("預期錯誤,得到 nil")
+	}
+	if verified {
+		t.Error("403 不該視為通過")
 	}
 	if !errors.Is(err, provider.ErrAuthExpired) {
 		t.Errorf("應仍映射 ErrAuthExpired,得到 %v", err)

@@ -114,17 +114,20 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 	}
 }
 
-// Preflight 只驗 developer token 是否被 Apple 接受,不需 MUT(呼叫端建 Client 時傳空字串)。
-// 404 視為通過——這支端點形狀在驗收前是 provisional(調整條款 b);其餘 4xx/5xx 才算失敗。
-func (c *Client) Preflight(ctx context.Context) error {
+// Preflight:只帶 developer token 打一個公開端點。err == nil 且 verified → 確認通過;
+// 404 → 端點形狀未定(附錄 A C-0 前 base/路徑都是推定),無法驗證:非失敗,但也不算通過,
+// 呼叫端據此在後續失敗訊息裡把「API base 可能不對」列為原因。
+func (c *Client) Preflight(ctx context.Context) (bool, error) {
 	status, err := c.do(ctx, http.MethodGet, "/storefronts/us", nil, nil)
-	if err == nil || status == http.StatusNotFound {
-		return nil
+	switch {
+	case err == nil:
+		return true, nil
+	case status == http.StatusNotFound:
+		return false, nil
+	case status == http.StatusForbidden: // 沒帶 MUT,403 只可能是 developer token / Origin
+		return false, fmt.Errorf("developer token 或 Origin 被拒(403):%w", provider.ErrAuthExpired)
 	}
-	if status == http.StatusForbidden { // 沒帶 MUT,403 只可能是 developer token / Origin——do() 的通用 403 措辭會誤指 MUT
-		return fmt.Errorf("developer token 或 Origin 被拒(403):%w", provider.ErrAuthExpired)
-	}
-	return err
+	return false, err
 }
 
 // ── JSON 映射 ──

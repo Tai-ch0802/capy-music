@@ -221,6 +221,10 @@ func TestAuthLoginAppleEnvPersists(t *testing.T) {
 	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
 		t.Errorf("輸出:%q", out)
 	}
+	// review item 5:揭露必須實際印出,不能只在「不同意就報錯」的訊息裡才看得到——成功路徑也要有。
+	if !strings.Contains(out, "非 Apple 官方支援") {
+		t.Errorf("flag/env 路徑應印出揭露聲明,得到 %q", out)
+	}
 	raw, err := secret.Get(apple.KeyDeveloperToken)
 	if err != nil {
 		t.Fatal(err)
@@ -284,6 +288,73 @@ func TestAuthLoginAppleNonTTYMissingEnv(t *testing.T) {
 	assertAppleNotPersisted(t)
 }
 
+// TestAuthLoginAppleUserTokenWithoutDevTokenErrorsNonTTY:只給 user token(env)沒給 developer
+// token 應直接報錯「兩個都給,或都不給」——注意這裡不能只斷言錯誤訊息含「developer token」,
+// 因為非互動環境原本那句「請設 CAPY_APPLE_DEVELOPER_TOKEN」的 appleGuide 本來就含這幾個字,
+// 斷言不夠精確會在修復前就通過(review item 4)。
+func TestAuthLoginAppleUserTokenWithoutDevTokenErrorsNonTTY(t *testing.T) {
+	clearAppleTokens(t)
+	hits := appleServer(t, "whatever", "whatever")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	_, err := runCLI(t, "auth", "login", "apple")
+	if err == nil || !strings.Contains(err.Error(), "兩個都給") {
+		t.Fatalf("只給 user token 應報錯並提示兩個都給或都不給:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+// TestAuthLoginAppleAutoWithUserTokenOnlyErrorsBeforeSeams:TTY;--auto --user-token=X(沒給 dev)
+// 一樣要在任何 seam(confirmAppleDisclosure / appleAutoTokens / runAppleWizardInputs)被呼叫之前
+// 就報錯——user-only 的檢查在 --auto 分支之前,兩條入口都要蓋到(review item 4)。
+func TestAuthLoginAppleAutoWithUserTokenOnlyErrorsBeforeSeams(t *testing.T) {
+	clearAppleTokens(t)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	hits := appleServer(t, "whatever", "whatever")
+
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return true }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	origConfirm := confirmAppleDisclosure
+	confirmAppleDisclosure = func() error {
+		t.Error("user-only 應在呼叫 confirmAppleDisclosure 之前就報錯")
+		return nil
+	}
+	t.Cleanup(func() { confirmAppleDisclosure = origConfirm })
+
+	origAuto := appleAutoTokens
+	appleAutoTokens = func() (apple.WebTokens, error) {
+		t.Error("user-only 應在呼叫 appleAutoTokens 之前就報錯")
+		return apple.WebTokens{}, nil
+	}
+	t.Cleanup(func() { appleAutoTokens = origAuto })
+
+	origInputs := runAppleWizardInputs
+	runAppleWizardInputs = func(hasUser bool) (string, string, error) {
+		t.Error("user-only 應在呼叫 runAppleWizardInputs 之前就報錯")
+		return "", "", nil
+	}
+	t.Cleanup(func() { runAppleWizardInputs = origInputs })
+
+	_, err := runCLI(t, "auth", "login", "apple", "--auto", "--user-token", "MUT1")
+	if err == nil || !strings.Contains(err.Error(), "兩個都給") {
+		t.Fatalf("只給 user token 應報錯並提示兩個都給或都不給:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
 func TestAuthLoginAppleExpiredJWTRejectedBeforeNetwork(t *testing.T) {
 	clearAppleTokens(t)
 	exp := time.Now().Add(-1 * time.Hour)
@@ -331,6 +402,62 @@ func TestAuthLoginApplePreflight401(t *testing.T) {
 		t.Fatalf("應回 developer token 401:%v", err)
 	}
 	assertAppleNotPersisted(t)
+}
+
+// TestAuthLoginApplePreflight404StorefrontFailsMentionsAPIBase:preflight 回 404(端點形狀未定,
+// verified=false)且 storefront 也失敗時,錯誤要多提示一句「API base 可能不對」,指向
+// CAPY_APPLE_API_BASE 與計畫附錄 A C-0(review item 2)。appleServer 的假 handler 固定只認
+// /storefronts/us、/me/storefront 兩條路徑且不支援回 404,這裡另外開一個專用 handler。
+func TestAuthLoginApplePreflight404StorefrontFailsMentionsAPIBase(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"errors":[{"status":"404","title":"x"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "CAPY_APPLE_API_BASE") || !strings.Contains(err.Error(), "C-0") {
+		t.Fatalf("preflight 404 + storefront 失敗應提示 API base 可能不對:%v", err)
+	}
+	assertAppleNotPersisted(t)
+}
+
+// TestAuthLoginApplePreflight404StorefrontSucceedsStillLogsIn:preflight 404(verified=false)
+// 不該被當成失敗擋下登入——只要 storefront 成功就算數(guard:此測試在修復前後都會過,
+// 用來防止之後有人誤把 !verified 當失敗條件)。
+func TestAuthLoginApplePreflight404StorefrontSucceedsStillLogsIn(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/storefronts/us":
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"errors":[{"status":"404","title":"x"}]}`))
+		case "/me/storefront":
+			w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	out, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
+		t.Errorf("輸出:%q", out)
+	}
 }
 
 func TestAuthLoginAppleStorefront403DoesNotPersistDevToken(t *testing.T) {
@@ -690,6 +817,10 @@ func TestAuthLoginAppleAutoPersists(t *testing.T) {
 	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
 		t.Errorf("輸出:%q", out)
 	}
+	// review item 5:非 TTY 的 --auto 路徑沒有 Confirm 頁,揭露要另外印出來,成功路徑也要有。
+	if !strings.Contains(out, "非 Apple 官方支援") {
+		t.Errorf("非 TTY --auto 路徑應印出揭露聲明,得到 %q", out)
+	}
 	raw, err := secret.Get(apple.KeyDeveloperToken)
 	if err != nil {
 		t.Fatal(err)
@@ -796,6 +927,11 @@ func TestAuthLoginAppleAutoTTYConfirmsThenExtracts(t *testing.T) {
 	}
 	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
 		t.Errorf("輸出:%q", out)
+	}
+	// review item 5:TTY 的 --auto 路徑靠 confirmAppleDisclosure(這裡是不印東西的 stub)顯示揭露,
+	// 不該再額外印一次文字版——確保 flag/env 與非 TTY --auto 兩處新加的 print 沒有誤觸這條路徑。
+	if n := strings.Count(out, "非 Apple 官方支援"); n != 0 {
+		t.Errorf("TTY --auto 路徑不該額外印出揭露文字(已由 Confirm 頁顯示),出現 %d 次:%q", n, out)
 	}
 	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT1" {
 		t.Errorf("user token = (%q, %v)", user, err)
@@ -983,6 +1119,30 @@ func TestAuthStatusAndLogout(t *testing.T) {
 	out, _ = runCLI(t, "auth", "status")
 	if !strings.Contains(out, "不存在") {
 		t.Errorf("logout 後 status 輸出:%q", out)
+	}
+}
+
+// TestAuthStatusAppleKeychainErrorNotReportedAsMissing:keychain 存取失敗(非 ErrNotFound)不該被
+// auth status 誤報成「不存在」——使用者會誤以為要重新登入,但實際上重新登入一樣會卡在同一個
+// keychain 錯誤(review item 3)。Spotify 那行本就用「不存在」蓋掉所有錯誤(未動它),故只斷言
+// apple 兩行。
+func TestAuthStatusAppleKeychainErrorNotReportedAsMissing(t *testing.T) {
+	setCLITestConfig(t)
+	keyring.MockInitWithError(errors.New("user canceled"))
+	t.Cleanup(func() { keyring.MockInit() })
+
+	out, err := runCLI(t, "auth", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "developer token: 讀取 keychain 失敗") {
+		t.Errorf("developer token 應回讀取失敗,得到 %q", out)
+	}
+	if !strings.Contains(out, "user token: 讀取 keychain 失敗") {
+		t.Errorf("user token 應回讀取失敗,得到 %q", out)
+	}
+	if strings.Contains(out, "developer token: 不存在") || strings.Contains(out, "user token: 不存在") {
+		t.Errorf("keychain 讀取失敗不該顯示「不存在」:%q", out)
 	}
 }
 

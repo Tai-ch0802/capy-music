@@ -129,15 +129,23 @@ func checkAppleDevToken(ctx context.Context) (string, error) {
 	case errors.Is(err, apple.ErrDevTokenExpired):
 		return "", fmt.Errorf("已於 %s 過期 — 重新執行 capy auth login apple", exp.Format(time.RFC3339))
 	default:
-		return "", errors.New("keychain 沒有 developer token — 執行 capy auth login apple")
+		if errors.Is(err, secret.ErrNotFound) {
+			return "", errors.New("keychain 沒有 developer token — 執行 capy auth login apple")
+		}
+		return "", fmt.Errorf("讀取 keychain 失敗(可能被拒絕存取或已鎖定):%w", err)
 	}
 }
 
 func checkAppleUserToken(ctx context.Context) (string, error) {
-	if _, err := secret.Get(apple.KeyMusicUserToken); err != nil {
+	_, err := secret.Get(apple.KeyMusicUserToken)
+	switch {
+	case err == nil:
+		return "keychain 存在", nil
+	case errors.Is(err, secret.ErrNotFound):
 		return "", errors.New("keychain 沒有 Music User Token — 執行 capy auth login apple")
+	default:
+		return "", fmt.Errorf("讀取 keychain 失敗(可能被拒絕存取或已鎖定):%w", err)
 	}
-	return "keychain 存在", nil
 }
 
 func checkAppleStorefront(ctx context.Context) (string, error) {

@@ -121,15 +121,21 @@ func appleLogin(cmd *cobra.Command) error {
 	if user == "" {
 		user = os.Getenv("CAPY_APPLE_USER_TOKEN")
 	}
-	if auto, _ := cmd.Flags().GetBool("auto"); auto && dev == "" { // dev 非空(flag/env 明確提供)優先於 --auto;有 dev 時本區塊整段略過,--auto 形同未設
+	if dev == "" && user != "" {
+		return errors.New("給了 user token(--user-token / CAPY_APPLE_USER_TOKEN)但沒有 developer token — 兩個都給,或都不給(走精靈 / --auto)")
+	}
+	if auto, _ := cmd.Flags().GetBool("auto"); auto && dev == "" { // 明確提供任一 token 就不走 --auto;user-only 已在上面報錯,故這裡 dev == "" 等同「兩者都沒給」
 		// 唯一例外(CLAUDE.md):隱藏、opt-in、開發者自負。揭露照樣不可跳過。
 		fmt.Fprintln(cmd.ErrOrStderr(), "--auto:將以 AppleScript 讀取已登入分頁的 MusicKit token(隱藏功能,開發者自負)")
 		if stdinIsTTY() {
 			if err := confirmAppleDisclosure(); err != nil {
 				return err
 			}
-		} else if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
-			return errors.New(appleDisclosure + "\n\n--auto 在非互動環境需加 --i-understand")
+		} else {
+			if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
+				return errors.New(appleDisclosure + "\n\n--auto 在非互動環境需加 --i-understand")
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), appleDisclosure) // 非 TTY 沒有 Confirm 頁,揭露要另外印出來(每條路徑都出現;CLAUDE.md 鐵則)
 		}
 		wt, err := appleAutoTokens()
 		if err == nil {
@@ -163,6 +169,7 @@ func appleLogin(cmd *cobra.Command) error {
 	if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
 		return errors.New(appleDisclosure + "\n\n以 flag / 環境變數提供 token 時,請加 --i-understand 表示已閱讀並同意上述聲明")
 	}
+	fmt.Fprintln(cmd.ErrOrStderr(), appleDisclosure) // 揭露在指令內、每條路徑都出現(CLAUDE.md 鐵則);印到 stderr,不動 stdout 契約
 	return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
 }
 
@@ -228,8 +235,12 @@ func appleWizardInputs(hasUser bool) (dev, user string, err error) {
 	return dev, user, nil
 }
 
-// applePersist:三段驗證(JWT exp → preflight 401 → storefront 403)全過才寫 keychain/config——失敗不留半殘狀態。
-// user 為空 = 只更新 developer token:用 keychain 既有 user token 跑第三段(順便驗它還活著)。
+// applePersist:三段驗證(JWT exp → preflight → storefront)全部通過才會落地——驗證期間完全不寫入,
+// 視為一個整體(atomic):任一段失敗就直接回傳錯誤,keychain/config 都不會被動到。
+// 驗證通過後的三個寫入(developer token → user token → config)依序執行、彼此不是 atomic:
+// 若中途失敗(例如前兩個都寫成功、config.Save 才失敗),已寫入的不會回滾——重新執行
+// capy auth login apple 用新值覆寫即可,不需要、也沒有實作 rollback。
+// user 為空 = 只更新 developer token:用 keychain 既有 user token 跑第三段驗證(順便驗它還活著)。
 func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	dev = apple.NormalizeDevToken(dev)
 	exp, err := apple.JWTExp(dev)
@@ -255,11 +266,15 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 		return err
 	}
 	hc := &http.Client{Timeout: 30 * time.Second}
-	if err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(ctx); err != nil {
+	verified, err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(ctx)
+	if err != nil {
 		return fmt.Errorf("developer token 被 Apple 拒絕 — 重新複製 authorization 標頭(Apple 可能已輪替):%w", err)
 	}
 	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, user).Storefront(ctx)
 	if err != nil {
+		if !verified {
+			err = fmt.Errorf("%w;preflight 回 404,也可能是 API base 或端點形狀不對(CAPY_APPLE_API_BASE,見計畫附錄 A C-0)", err)
+		}
 		if keepUser {
 			return fmt.Errorf("既有 user token 已失效 — 請一併提供新的 media-user-token:%w", err)
 		}
@@ -346,13 +361,18 @@ func newAuthStatusCmd() *cobra.Command {
 				fmt.Fprintf(w, "  developer token: 有效至 %s\n", exp.Format(time.RFC3339))
 			case errors.Is(err, apple.ErrDevTokenExpired):
 				fmt.Fprintf(w, "  developer token: 已於 %s 過期(執行 capy auth login apple)\n", exp.Format(time.RFC3339))
-			default:
+			case errors.Is(err, secret.ErrNotFound):
 				fmt.Fprintln(w, "  developer token: 不存在(執行 capy auth login apple)")
+			default:
+				fmt.Fprintf(w, "  developer token: 讀取 keychain 失敗:%v\n", err)
 			}
-			if _, err := secret.Get(apple.KeyMusicUserToken); err == nil {
+			switch _, err := secret.Get(apple.KeyMusicUserToken); {
+			case err == nil:
 				fmt.Fprintln(w, "  user token: 存在")
-			} else {
+			case errors.Is(err, secret.ErrNotFound):
 				fmt.Fprintln(w, "  user token: 不存在(執行 capy auth login apple)")
+			default:
+				fmt.Fprintf(w, "  user token: 讀取 keychain 失敗:%v\n", err)
 			}
 			if cfg.AppleStorefront != "" {
 				fmt.Fprintf(w, "  storefront: %s\n", cfg.AppleStorefront)

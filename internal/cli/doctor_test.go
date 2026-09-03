@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
@@ -102,6 +104,31 @@ func TestDoctorProviderFlagSelectsAppleSet(t *testing.T) {
 	_, err := runCLI(t, "doctor", "--provider", "apple")
 	if err == nil || !strings.Contains(err.Error(), "檢查未通過") {
 		t.Fatalf("未登入 apple 的 doctor 應回錯:%v", err)
+	}
+}
+
+// TestDoctorAppleChecksKeychainErrorNotReportedAsMissing:keychain 存取失敗(非 ErrNotFound,例如
+// 使用者拒絕授權或 keychain 已鎖定)不該被誤報成「沒有 token」——那會讓人誤以為要重新 login,
+// 但實際上重新 login 也會卡在同一個 keychain 錯誤(review item 3)。
+func TestDoctorAppleChecksKeychainErrorNotReportedAsMissing(t *testing.T) {
+	setCLITestConfig(t)
+	keyring.MockInitWithError(errors.New("user canceled"))
+	t.Cleanup(func() { keyring.MockInit() })
+	origCheckOSA := checkOSA
+	t.Cleanup(func() { checkOSA = origCheckOSA })
+	checkOSA = func(context.Context) (string, error) { return "stub", nil }
+
+	buf := &strings.Builder{}
+	runChecks(context.Background(), buf, appleChecks())
+	out := buf.String()
+	if !strings.Contains(out, "❌ Apple developer token") || !strings.Contains(out, "讀取 keychain 失敗") {
+		t.Errorf("developer token 應回讀取失敗,得到 %q", out)
+	}
+	if !strings.Contains(out, "❌ Apple user token") || !strings.Contains(out, "讀取 keychain 失敗") {
+		t.Errorf("user token 應回讀取失敗,得到 %q", out)
+	}
+	if strings.Contains(out, "沒有") {
+		t.Errorf("keychain 讀取失敗不該說「沒有」token:%q", out)
 	}
 }
 
