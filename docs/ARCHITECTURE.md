@@ -297,7 +297,7 @@ JWT 內容:
 設計決策:
 - **簽短期 token(12h)而非上限的 6 個月** —— 外洩損害可控
 - **不加 `origin` claim** —— 因為 loopback port 是動態的。MUT 仍需使用者互動授權,風險可接受
-- Worker 做 per-`install_id` 與 per-IP rate limit(用原生 Rate Limiting binding,見 §8.5.2)
+- Worker 做 per-`install_id` rate limit(原生 Rate Limiting binding,見 §8.5.2);不做 per-IP —— 文件建議避 IP,且 client 自選 install_id 的弱點依 R-2 接受
 - 使用者若自備 Apple Developer 帳號,可設 `CAPY_APPLE_P8_PATH` 走本地自簽,完全繞過 Worker
 
 #### (b) Music User Token — loopback + MusicKit JS 橋接
@@ -355,7 +355,7 @@ Scopes:
 | Spotify access token | 記憶體 | 1h | refresh token |
 | Spotify refresh token | **OS Keychain** | 長期 / **會輪替** | 每次 refresh 覆寫 |
 | Spotify client_id | config 檔(非機密) | 永久 | 使用者輸入 |
-| Apple developer token | 記憶體 + 快取檔 | 12h | 向 Worker 重取 |
+| Apple developer token | **OS Keychain**(快取 12h;spec 原「記憶體 + 快取檔」收緊為 keychain,符合硬約束) | 12h | 向 Worker 重取 |
 | Apple Music User Token | **OS Keychain** | 長期 / 無 refresh | 過期需重跑 §4.3(b) |
 | Google access token | 記憶體 | 1h | refresh token |
 | Google refresh token | **OS Keychain** | 長期 | 標準 refresh |
@@ -743,6 +743,8 @@ Apple developer token 的 payload 只有 `{iss, iat, exp}`,**沒有任何 per-us
 ### P2 — Apple 全鏈路
 Worker 部署(`capy.taislife.work`)→ `auth login apple`(MusicKit 橋接)→ Apple Music API search → macOS `osascript` 播放
 
+> **排程註記(2026-09-02):** 程式碼完成(feat/p2-apple 分支);真實驗收 gate 於會籍與 `.p8`,P0-1/P0-3 併入 P2 驗收;macOS 播放機制 A/B 待 C-4 決勝。
+
 ### P3 — Google + Drive
 `auth login google` → appDataFolder 讀寫 → manifest / snapshot 基礎設施
 
@@ -767,6 +769,8 @@ op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 4. **平台** — macOS + Windows 第一天支援;**Linux 非目標**
 5. **TUI** — 第一天進場(charm 全家桶);非 TTY 純文字輸出為鐵則(見 §2)
 6. **發佈定位** — 一開始就對外發佈;`capy doctor` 進 P1
+7. **`--provider` 統一** — 不採附錄 A 的 `play --on`;所有讀/播放命令一致用 `--provider`(預設 `spotify`)
+8. **Apple `pl list/show`** — 納入 P2
 
 ### 必須寫進 CLAUDE.md 的約束
 

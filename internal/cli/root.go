@@ -7,6 +7,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
 // version 由 release 流程以 ldflags 注入;開發環境為 dev。
@@ -25,9 +27,9 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newPlayCmd())
 	cmd.AddCommand(newPlCmd())
 	cmd.AddCommand(
-		simpleCtl("pause", "暫停播放", "⏸ 已暫停", func(ctx context.Context, p *spotifyProviderT) error { return p.Pause(ctx) }),
-		simpleCtl("next", "下一首", "⏭ 下一首", func(ctx context.Context, p *spotifyProviderT) error { return p.Next(ctx) }),
-		simpleCtl("prev", "上一首", "⏮ 上一首", func(ctx context.Context, p *spotifyProviderT) error { return p.Prev(ctx) }),
+		simpleCtl("pause", "暫停播放", "⏸ 已暫停", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Pause(ctx) }),
+		simpleCtl("next", "下一首", "⏭ 下一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Next(ctx) }),
+		simpleCtl("prev", "上一首", "⏮ 上一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Prev(ctx) }),
 	)
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
 	cmd.AddCommand(newDoctorCmd())

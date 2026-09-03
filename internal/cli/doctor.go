@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
@@ -19,6 +20,9 @@ type check struct {
 	name string
 	fn   func(ctx context.Context) (detail string, err error)
 }
+
+// checkOSA 的實作由平台決定(darwin_*.go / other_*.go)。
+var checkOSA func(ctx context.Context) (string, error)
 
 func runChecks(ctx context.Context, w io.Writer, checks []check) (failed int) {
 	for _, c := range checks {
@@ -106,17 +110,69 @@ func checkTokenRefresh(ctx context.Context) (string, error) {
 }
 
 func checkAPI(ctx context.Context) (string, error) {
-	p, err := newSpotifyProvider(ctx)
+	p, err := newProvider(ctx, "spotify")
 	if err != nil {
 		return "", err
 	}
 	if err := p.Health(ctx); err != nil {
-		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr(err))
+		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr("spotify", err))
 	}
 	return "API 可達、授權有效", nil
 }
 
-func doctorChecks() []check {
+func checkAppleDevToken(ctx context.Context) (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	config.EnsureInstallID(cfg)
+	_, src, err := apple.DeveloperToken(ctx, devTokenOptsFromEnv(cfg))
+	if err != nil {
+		return "", err
+	}
+	return "來源:" + src, nil
+}
+
+func checkAppleUserToken(ctx context.Context) (string, error) {
+	if _, err := secret.Get(apple.KeyMusicUserToken); err != nil {
+		return "", errors.New("keychain 沒有 Music User Token — 執行 capy auth login apple")
+	}
+	return "keychain 存在", nil
+}
+
+func checkAppleStorefront(ctx context.Context) (string, error) {
+	cfg, err := config.Load()
+	if err != nil || cfg.AppleStorefront == "" {
+		return "", errors.New("未設定 — 重新執行 capy auth login apple")
+	}
+	return cfg.AppleStorefront, nil
+}
+
+func checkAppleAPI(ctx context.Context) (string, error) {
+	p, err := newProvider(ctx, "apple")
+	if err != nil {
+		return "", err
+	}
+	if err := p.Health(ctx); err != nil {
+		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr("apple", err))
+	}
+	return "API 可達、token 有效", nil
+}
+
+func appleChecks() []check {
+	cs := []check{
+		{"Apple developer token", checkAppleDevToken},
+		{"Apple user token", checkAppleUserToken},
+		{"Apple storefront", checkAppleStorefront},
+		{"Apple Music API", checkAppleAPI},
+	}
+	if runtime.GOOS == "darwin" {
+		cs = append(cs, check{"osascript / Music.app", checkOSA})
+	}
+	return cs
+}
+
+func spotifyChecks() []check {
 	return []check{
 		{"設定檔", checkConfig},
 		{"Keychain", checkKeychain},
@@ -128,14 +184,26 @@ func doctorChecks() []check {
 }
 
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use: "doctor", Short: "診斷設定與連線(BYO 問題一站排除)", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if failed := runChecks(cmd.Context(), cmd.OutOrStdout(), doctorChecks()); failed > 0 {
+			provider, _ := cmd.Flags().GetString(flagProvider)
+			var checks []check
+			switch provider {
+			case "spotify":
+				checks = spotifyChecks()
+			case "apple":
+				checks = appleChecks()
+			default:
+				return fmt.Errorf("未知的 provider %q(可用:spotify、apple)", provider)
+			}
+			if failed := runChecks(cmd.Context(), cmd.OutOrStdout(), checks); failed > 0 {
 				return fmt.Errorf("%d 項檢查未通過", failed)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "全部通過 🎉")
 			return nil
 		},
 	}
+	providerFlag(cmd)
+	return cmd
 }

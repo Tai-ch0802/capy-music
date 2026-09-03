@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
 )
 
@@ -18,11 +19,11 @@ func swapProvider(t *testing.T, h http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	orig := newSpotifyProvider
-	newSpotifyProvider = func(ctx context.Context) (*spotify.Provider, error) {
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
 		return spotify.New(srv.Client(), srv.URL), nil
 	}
-	t.Cleanup(func() { newSpotifyProvider = orig })
+	t.Cleanup(func() { newProvider = orig })
 	return srv
 }
 

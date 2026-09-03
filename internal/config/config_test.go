@@ -104,3 +104,30 @@ func TestSaveKeepsCustomEndpoint(t *testing.T) {
 		t.Errorf("自訂 endpoint 應存活:%q", got.AppleTokenEndpoint)
 	}
 }
+
+func TestEnsureInstallID(t *testing.T) {
+	c := &Config{}
+	if !EnsureInstallID(c) || len(c.InstallID) != 32 {
+		t.Fatalf("空 InstallID 應產生 32 字元 hex:%q", c.InstallID)
+	}
+	for _, ch := range c.InstallID {
+		if !strings.ContainsRune("0123456789abcdef", ch) {
+			t.Fatalf("非 hex:%q", c.InstallID)
+		}
+	}
+	prev := c.InstallID
+	if EnsureInstallID(c) || c.InstallID != prev {
+		t.Error("已有 InstallID 不應改動")
+	}
+}
+
+func TestAppleFieldsRoundtrip(t *testing.T) {
+	setTestDir(t)
+	if err := Save(&Config{InstallID: "0123456789abcdef0123456789abcdef", AppleStorefront: "tw"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil || got.InstallID != "0123456789abcdef0123456789abcdef" || got.AppleStorefront != "tw" {
+		t.Fatalf("(%+v, %v)", got, err)
+	}
+}

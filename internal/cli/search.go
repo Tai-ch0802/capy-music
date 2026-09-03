@@ -19,8 +19,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// newSpotifyProvider 是所有讀 API 命令的入口;測試以假 API 替換。
-var newSpotifyProvider = func(ctx context.Context) (*spotify.Provider, error) {
+// newSpotifyProvider 是 spotify provider 的建構入口,由 newProvider 依 id 呼叫。
+func newSpotifyProvider(ctx context.Context) (*spotify.Provider, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -38,20 +38,6 @@ var newSpotifyProvider = func(ctx context.Context) (*spotify.Provider, error) {
 	hc := oauth2.NewClient(ctx, ts)
 	hc.Timeout = 30 * time.Second
 	return spotify.New(hc, ""), nil
-}
-
-// friendlyErr 把語意化錯誤轉成可行動訊息(spec R-5:錯誤訊息直接指出下一步)。
-func friendlyErr(err error) error {
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, provider.ErrAuthExpired):
-		return errors.New("授權已過期 — 重新執行 capy auth login spotify")
-	case errors.Is(err, provider.ErrNoActiveDevice):
-		return errors.New("沒有作用中的 Spotify 裝置 — 開一個 Spotify 播放器,或用 capy devices 查看後以 --device 指定")
-	default:
-		return err
-	}
 }
 
 func stdoutIsTTY(cmd *cobra.Command) bool {
@@ -80,13 +66,17 @@ func newSearchCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limit, _ := cmd.Flags().GetInt("limit")
-			p, err := newSpotifyProvider(cmd.Context())
+			p, err := getProvider(cmd)
 			if err != nil {
 				return err
 			}
-			tracks, err := p.Search(cmd.Context(), provider.Query{Text: strings.Join(args, " "), Limit: limit})
+			s, err := asSearcher(p)
 			if err != nil {
-				return friendlyErr(err)
+				return err
+			}
+			tracks, err := s.Search(cmd.Context(), provider.Query{Text: strings.Join(args, " "), Limit: limit})
+			if err != nil {
+				return friendlyErr(p.ID(), err)
 			}
 			tty := stdoutIsTTY(cmd)
 			// TSV 欄序(文件化):id, title, artists, album, duration_ms
@@ -95,5 +85,6 @@ func newSearchCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Int("limit", 10, "結果數(單次 API 上限 10,超過自動分頁)")
+	providerFlag(cmd)
 	return cmd
 }

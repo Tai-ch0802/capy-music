@@ -91,8 +91,6 @@ func newDebugAppleTokenCmd() *cobra.Command {
 // 測試替換點。
 var openBrowser = browser.Open
 
-const keyAppleMUT = "apple.music_user_token"
-
 func newDebugAppleAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apple-auth",
@@ -110,10 +108,10 @@ func newDebugAppleAuthCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := secret.Set(keyAppleMUT, mut); err != nil {
+			if err := secret.Set(apple.KeyMusicUserToken, mut); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "已存入 keychain(capy-music /", keyAppleMUT, ")。注意:MUT 是機密。")
+			fmt.Fprintln(cmd.ErrOrStderr(), "已存入 keychain(capy-music /", apple.KeyMusicUserToken, ")。注意:MUT 是機密。")
 			fmt.Fprintln(cmd.OutOrStdout(), mut)
 			return nil
 		},
