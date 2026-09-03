@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 
 	"golang.org/x/oauth2"
 
@@ -16,7 +15,11 @@ import (
 // loginStderr:LoginSpotify 印手動授權 URL / 開瀏覽器失敗訊息的目的地。測試替換點。
 var loginStderr io.Writer = os.Stderr
 
-// KeySpotifyRefreshToken 是 keychain 內的 refresh token 鍵名。
+// KeySpotifyToken 是 keychain 內完整 token 記錄(JSON,見 tokenstore.go)的鍵名。唯一真相來源。
+const KeySpotifyToken = "spotify.token"
+
+// KeySpotifyRefreshToken 是舊鍵:值是 refresh token 裸字串(非 JSON)。只剩兩個用途——
+// 升級既有使用者(migrateSpotifyToken)與 logout 時清乾淨,新程式不再寫入。
 const KeySpotifyRefreshToken = "spotify.refresh_token"
 
 // SpotifyScopes:spec §4.2 逐字;一次索取 9 個的取捨見 spec §4.2 決策段。
@@ -32,8 +35,8 @@ var SpotifyScopes = []string{
 	"user-library-modify",
 }
 
-// 測試替換點(TokenURL 指向 httptest)。
-var spotifyEndpoint = oauth2.Endpoint{
+// SpotifyEndpoint 是 Spotify 的 OAuth 端點。可變的套件變數:測試(含 cli 的 doctor 測試)把 TokenURL 指向 httptest。
+var SpotifyEndpoint = oauth2.Endpoint{
 	AuthURL:  "https://accounts.spotify.com/authorize",
 	TokenURL: "https://accounts.spotify.com/api/token",
 }
@@ -42,7 +45,7 @@ func spotifyOAuthConfig(clientID, redirectURL string) *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:    clientID,
 		RedirectURL: redirectURL,
-		Endpoint:    spotifyEndpoint,
+		Endpoint:    SpotifyEndpoint,
 		Scopes:      SpotifyScopes,
 	}
 }
@@ -89,45 +92,53 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	if tok.RefreshToken == "" {
 		return nil, fmt.Errorf("Spotify 未回傳 refresh token")
 	}
-	if err := secret.Set(KeySpotifyRefreshToken, tok.RefreshToken); err != nil {
+	if err := SaveToken(KeySpotifyToken, tok); err != nil {
 		return nil, fmt.Errorf("寫入 keychain 失敗:%w", err)
 	}
+	_ = secret.Delete(KeySpotifyRefreshToken) // 重新登入等於升級:舊鍵不留(刪不掉也無妨,讀取一律以新鍵為準)
 	return tok, nil
 }
 
-// SpotifyTokenSource 從 keychain 載入 refresh token,回傳會在輪替時覆寫 keychain 的 TokenSource。
-// keychain 無 token 時原樣透傳 secret.ErrNotFound(CLI 轉成「請先 auth login」提示)。
-func SpotifyTokenSource(ctx context.Context, clientID string) (oauth2.TokenSource, error) {
+// SpotifyTokenSource 回傳 keychain 為後盾的 token source(輪替後的 RT 一定寫回,跨程序以檔案鎖互斥)。
+// keychain 兩個鍵都沒有時原樣透傳 secret.ErrNotFound(CLI 轉成「請先 auth login」提示)。
+// 回傳具體型別:doctor 需要 Refresh() 明確驗 RT 存活,一般存取仍走 Token()(oauth2.TokenSource)。
+func SpotifyTokenSource(ctx context.Context, clientID string) (*TokenSource, error) {
+	if err := migrateSpotifyToken(); err != nil {
+		return nil, err
+	}
+	return NewTokenSource(ctx, spotifyOAuthConfig(clientID, ""), KeySpotifyToken)
+}
+
+// migrateSpotifyToken:舊版把 refresh token 以裸字串寫在 KeySpotifyRefreshToken,直接餵給 LoadToken 會
+// JSON 解析失敗、等於把既有使用者全部登出。新鍵不存在時把舊鍵種成完整 token 記錄(access token 留空
+// → 首次 Token() 會 refresh,與升級前的行為一致),成功落地後刪掉舊鍵,不留兩份真相。
+func migrateSpotifyToken() error {
+	switch _, err := LoadToken(KeySpotifyToken); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, secret.ErrNotFound):
+		return err // 新鍵存在但壞掉 / keychain 讀不到:不要退回舊鍵蓋掉它
+	}
 	rt, err := secret.Get(KeySpotifyRefreshToken)
 	if err != nil {
-		return nil, err
+		return err // 含 ErrNotFound:兩個鍵都沒有 = 尚未登入
 	}
-	conf := spotifyOAuthConfig(clientID, "")
-	base := conf.TokenSource(ctx, &oauth2.Token{RefreshToken: rt})
-	return &persistingTokenSource{src: base, lastRT: rt}, nil
+	if err := SaveToken(KeySpotifyToken, &oauth2.Token{RefreshToken: rt}); err != nil {
+		return err
+	}
+	_ = secret.Delete(KeySpotifyRefreshToken)
+	return nil
 }
 
-// persistingTokenSource:每次 Token() 比對 refresh token,輪替即覆寫 keychain。
-// Spotify PKCE 的 refresh token 每次 refresh 都會換新、舊的立即失效(spec §4.2)——
-// 寫入失敗必須讓呼叫失敗,否則下次啟動就永久登出。
-type persistingTokenSource struct {
-	mu     sync.Mutex
-	src    oauth2.TokenSource
-	lastRT string
-}
-
-func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	tok, err := p.src.Token()
-	if err != nil {
-		return nil, err
+// SpotifyStored 回報 keychain 是否有 Spotify 憑證:新鍵優先,退回尚未升級的舊鍵(auth status / doctor 的
+// 離線檢查用,不觸發升級也不打網路)。都沒有時回 secret.ErrNotFound。
+func SpotifyStored() error {
+	switch _, err := LoadToken(KeySpotifyToken); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, secret.ErrNotFound):
+		return err
 	}
-	if tok.RefreshToken != "" && tok.RefreshToken != p.lastRT {
-		if serr := secret.Set(KeySpotifyRefreshToken, tok.RefreshToken); serr != nil {
-			return nil, fmt.Errorf("refresh token 已輪替但寫入 keychain 失敗:%w", serr)
-		}
-		p.lastRT = tok.RefreshToken
-	}
-	return tok, nil
+	_, err := secret.Get(KeySpotifyRefreshToken)
+	return err
 }

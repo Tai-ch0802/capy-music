@@ -350,7 +350,7 @@ func newAuthStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(w, "  client_id: 未設定")
 			}
-			if _, err := secret.Get(auth.KeySpotifyRefreshToken); err == nil {
+			if err := auth.SpotifyStored(); err == nil { // 新鍵優先,尚未升級的舊鍵也算「已登入」
 				fmt.Fprintln(w, "  refresh token: keychain 存在")
 			} else {
 				fmt.Fprintln(w, "  refresh token: 不存在(執行 capy auth login spotify)")
@@ -392,8 +392,11 @@ func newAuthLogoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "spotify":
-				if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
-					return err
+				// 兩個鍵都刪:尚未升級的使用者只有舊鍵,留著等於登出沒登乾淨。
+				for _, k := range []string{auth.KeySpotifyToken, auth.KeySpotifyRefreshToken} {
+					if err := secret.Delete(k); err != nil && !errors.Is(err, secret.ErrNotFound) {
+						return err
+					}
 				}
 			case "apple":
 				if err := secret.Delete(apple.KeyMusicUserToken); err != nil && !errors.Is(err, secret.ErrNotFound) {

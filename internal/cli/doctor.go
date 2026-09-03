@@ -89,7 +89,7 @@ func checkPort8888(ctx context.Context) (string, error) {
 }
 
 func checkRefreshToken(ctx context.Context) (string, error) {
-	if _, err := secret.Get(auth.KeySpotifyRefreshToken); err != nil {
+	if err := auth.SpotifyStored(); err != nil {
 		return "", errors.New("keychain 沒有 refresh token — 執行 capy auth login spotify")
 	}
 	return "keychain 存在", nil
@@ -104,7 +104,9 @@ func checkTokenRefresh(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", errors.New("需要先通過 refresh token 檢查")
 	}
-	if _, err := ts.Token(); err != nil {
+	// 這一項就是要明確驗「refresh token 還活著」,所以強制換發;結果會寫回 keychain,
+	// 後面的 ⑥ Spotify API 直接用這顆新 token,一次 doctor 只輪替一次(issue #3)。
+	if _, err := ts.Refresh(); err != nil {
 		return "", fmt.Errorf("換發失敗(token 可能已被撤銷,重跑 capy auth login spotify):%w", err)
 	}
 	return "access token 換發成功(輪替已依硬約束覆寫)", nil

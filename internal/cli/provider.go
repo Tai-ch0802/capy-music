@@ -86,8 +86,9 @@ func friendlyErr(providerID string, err error) error {
 	}
 }
 
-// appleAPIBase:測試以 CAPY_APPLE_API_BASE 指向 httptest;正式為空(用預設)。
-func appleAPIBase() string { return os.Getenv("CAPY_APPLE_API_BASE") }
+// appleAPIBase / spotifyAPIBase:測試以環境變數指向 httptest;正式為空(用各自預設)。
+func appleAPIBase() string   { return os.Getenv("CAPY_APPLE_API_BASE") }
+func spotifyAPIBase() string { return os.Getenv("CAPY_SPOTIFY_API_BASE") }
 
 // newAppleProvider:keychain 讀 dev token(缺/過期 → 提示 login)→ MUT(缺 → 提示 login)→
 // storefront(缺 → 提示 login)。

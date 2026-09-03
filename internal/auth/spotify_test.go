@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,9 +29,9 @@ func TestMain(m *testing.M) {
 
 func swapTokenURL(t *testing.T, tokenURL string) {
 	t.Helper()
-	orig := spotifyEndpoint
-	spotifyEndpoint.TokenURL = tokenURL
-	t.Cleanup(func() { spotifyEndpoint = orig })
+	orig := SpotifyEndpoint
+	SpotifyEndpoint.TokenURL = tokenURL
+	t.Cleanup(func() { SpotifyEndpoint = orig })
 }
 
 func TestSpotifyAuthURLParams(t *testing.T) {
@@ -82,6 +85,11 @@ func fakeAuthBrowser(t *testing.T, code string) func(string) error {
 }
 
 func TestLoginSpotifyStoresRefreshToken(t *testing.T) {
+	setTokenTest(t)
+	// 舊鍵預先存在:重新登入等於升級,登入後不該留下第二份真相。
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
+		t.Fatal(err)
+	}
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if r.PostForm.Get("grant_type") != "authorization_code" || r.PostForm.Get("code_verifier") == "" {
@@ -102,9 +110,12 @@ func TestLoginSpotifyStoresRefreshToken(t *testing.T) {
 	if tok.AccessToken != "at1" {
 		t.Errorf("access token = %q", tok.AccessToken)
 	}
-	got, err := secret.Get(KeySpotifyRefreshToken)
-	if err != nil || got != "rt1" {
-		t.Fatalf("keychain 應存 refresh token:(%q, %v)", got, err)
+	stored, err := LoadToken(KeySpotifyToken)
+	if err != nil || stored.RefreshToken != "rt1" || stored.AccessToken != "at1" {
+		t.Fatalf("keychain 應存完整 token 記錄:(%+v, %v)", stored, err)
+	}
+	if _, err := secret.Get(KeySpotifyRefreshToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("登入後舊鍵應被清掉(不留兩份真相),得到 %v", err)
 	}
 }
 
@@ -204,7 +215,9 @@ func TestLoginSpotifyBrowserOpenFailStillCompletes(t *testing.T) {
 }
 
 // ⭐ load-bearing test(CLAUDE.md 硬約束):refresh token 輪替必覆寫 keychain。
-func TestPersistingTokenSourceRotates(t *testing.T) {
+// 兼升級路徑:keychain 只有舊鍵(裸字串)時,必須種進新鍵而不是把使用者登出;輪替後的 RT 落在新鍵,舊鍵清掉。
+func TestSpotifyTokenSourceMigratesLegacyKeyAndRotates(t *testing.T) {
+	setTokenTest(t)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if r.PostForm.Get("grant_type") != "refresh_token" || r.PostForm.Get("refresh_token") != "rt-old" {
@@ -230,14 +243,20 @@ func TestPersistingTokenSourceRotates(t *testing.T) {
 	if tok.AccessToken != "at2" {
 		t.Errorf("access token = %q", tok.AccessToken)
 	}
-	got, err := secret.Get(KeySpotifyRefreshToken)
-	if err != nil || got != "rt-new" {
-		t.Fatalf("輪替後 keychain 必須被覆寫:(%q, %v)", got, err)
+	stored, err := LoadToken(KeySpotifyToken)
+	if err != nil || stored.RefreshToken != "rt-new" || stored.AccessToken != "at2" {
+		t.Fatalf("輪替後 keychain 必須被覆寫:(%+v, %v)", stored, err)
+	}
+	if _, err := secret.Get(KeySpotifyRefreshToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("升級後舊鍵應被刪除(不留兩份真相),得到 %v", err)
 	}
 }
 
-// 硬約束的另一半:輪替後寫入 keychain 失敗,Token() 必須失敗(否則新 token 靜默遺失=永久登出)。
-func TestPersistingTokenSourceFailsWhenKeychainWriteFails(t *testing.T) {
+// 硬約束的另一半:keychain 壞掉時 Token() 必須失敗(不得靜默成功,否則輪替後的新 token 遺失=永久登出)。
+// 註:mock keyring 是全有全無(MockInitWithError 讓 Get/Set/Delete 全掛),這裡實際踩到的是鎖內重讀失敗;
+// 「refresh 成功但寫回失敗」那條分支在 tokenstore.go 內有守衛,但無法用這個假造物單獨觸發。
+func TestSpotifyTokenSourceFailsWhenKeychainBroken(t *testing.T) {
+	setTokenTest(t)
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"access_token":"at3","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-new2"}`))
@@ -248,7 +267,7 @@ func TestPersistingTokenSourceFailsWhenKeychainWriteFails(t *testing.T) {
 	if err := secret.Set(KeySpotifyRefreshToken, "rt-old2"); err != nil {
 		t.Fatal(err)
 	}
-	ts, err := SpotifyTokenSource(context.Background(), "cid123") // Get 在正常 mock 下先成功
+	ts, err := SpotifyTokenSource(context.Background(), "cid123") // 建構在正常 mock 下先成功
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,14 +275,81 @@ func TestPersistingTokenSourceFailsWhenKeychainWriteFails(t *testing.T) {
 	t.Cleanup(func() { keyring.MockInit() })
 
 	if _, err := ts.Token(); err == nil || !strings.Contains(err.Error(), "keychain") {
-		t.Fatalf("keychain 寫入失敗必須讓 Token() 失敗,得到 %v", err)
+		t.Fatalf("keychain 失效必須讓 Token() 失敗,得到 %v", err)
+	}
+}
+
+// ⭐ issue #3 回歸測試:兩個 capy 程序(= 兩個 token source)都從 keychain 種下同一顆 RT。
+// 假 token 端點只認「目前的」RT,舊的一律 invalid_grant——Spotify 的真實行為(RT 每次輪替、舊的立即失效)。
+// 第一個 refresh 後 keychain 已是 rt2;第二個必須在鎖內重讀 keychain 拿到 rt2,而不是拿建構時載進記憶體的 rt1。
+// 修正前:第二個送 rt1 → invalid_grant → 被歸成 ErrAuthExpired,使用者被要求重新登入(keychain 其實還是好的)。
+// 序列(非並行)呼叫:go-keyring 的 mock 是裸 map,並行會被 -race 抓到,那是假造物的問題、與本 bug 無關。
+func TestSpotifyTokenSourceSecondSourceUsesRotatedToken(t *testing.T) {
+	setTokenTest(t)
+	var hits atomic.Int32
+	var mu sync.Mutex
+	current := "rt1"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_ = r.ParseForm()
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.PostForm.Get("refresh_token") != current {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		current = "rt2"
+		fmt.Fprint(w, `{"access_token":"at2","token_type":"Bearer","expires_in":3600,"refresh_token":"rt2"}`)
+	}))
+	defer srv.Close()
+	swapTokenURL(t, srv.URL)
+
+	if err := secret.Set(KeySpotifyRefreshToken, "rt1"); err != nil {
+		t.Fatal(err)
+	}
+	ts1, err := SpotifyTokenSource(context.Background(), "cid123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts2, err := SpotifyTokenSource(context.Background(), "cid123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok1, err := ts1.Token()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok2, err := ts2.Token()
+	if err != nil {
+		t.Fatalf("第二個 token source 應重讀到已輪替的 token,不該送失效的舊 RT:%v", err)
+	}
+	if tok1.AccessToken != "at2" || tok2.AccessToken != "at2" {
+		t.Errorf("access token = %q / %q", tok1.AccessToken, tok2.AccessToken)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Errorf("一次輪替就夠,token 端點卻被打 %d 次", n)
 	}
 }
 
 func TestSpotifyTokenSourceMissingToken(t *testing.T) {
-	_ = secret.Delete(KeySpotifyRefreshToken)
+	setTokenTest(t)
 	if _, err := SpotifyTokenSource(context.Background(), "cid123"); !errors.Is(err, secret.ErrNotFound) {
-		t.Fatalf("無 refresh token 應透傳 ErrNotFound,得到 %v", err)
+		t.Fatalf("兩個鍵都沒有應透傳 ErrNotFound,得到 %v", err)
+	}
+	if err := SpotifyStored(); !errors.Is(err, secret.ErrNotFound) {
+		t.Fatalf("SpotifyStored 應透傳 ErrNotFound,得到 %v", err)
+	}
+	// 尚未升級的使用者(只有舊鍵):離線檢查要看得到,而且不該順手升級(auth status 不動 keychain)。
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SpotifyStored(); err != nil {
+		t.Fatalf("只有舊鍵時 SpotifyStored 應回 nil,得到 %v", err)
+	}
+	if _, err := LoadToken(KeySpotifyToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("SpotifyStored 不該寫入新鍵,得到 %v", err)
 	}
 }
 
