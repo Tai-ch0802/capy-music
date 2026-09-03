@@ -3,12 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,24 +58,85 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	return buf.String(), err
 }
 
-func fakeAppleAuthorize(t *testing.T, mut string) func(context.Context, string, func(string) error) (string, error) {
+// fakeJWT:只有 exp 的假 developer token(不驗簽)。
+func fakeJWT(t *testing.T, exp time.Time) string {
 	t.Helper()
-	return func(_ context.Context, devToken string, _ func(string) error) (string, error) {
-		if !strings.HasPrefix(devToken, "eyJ") {
-			t.Errorf("應以簽好的 developer token 呼叫橋接:%q", devToken)
-		}
-		return mut, nil
-	}
+	enc := base64.RawURLEncoding.EncodeToString
+	return enc([]byte(`{"alg":"ES256"}`)) + "." + enc([]byte(fmt.Sprintf(`{"exp":%d}`, exp.Unix()))) + ".sig"
 }
 
-func setupAppleBYO(t *testing.T) {
+// setupAppleTokens:乾淨 config + keychain,預放一顆 24h 有效的 dev token 與 user token "MUT0";回傳 dev token。
+func setupAppleTokens(t *testing.T) string {
+	t.Helper()
+	setCLITestConfig(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	if err := apple.SaveDeveloperToken(dev, exp); err != nil {
+		t.Fatal(err)
+	}
+	if err := secret.Set(apple.KeyMusicUserToken, "MUT0"); err != nil {
+		t.Fatal(err)
+	}
+	return dev
+}
+
+// clearAppleTokens:清 keychain(首次登入情境)。
+func clearAppleTokens(t *testing.T) {
 	t.Helper()
 	setCLITestConfig(t)
 	_ = secret.Delete(apple.KeyDeveloperToken)
 	_ = secret.Delete(apple.KeyMusicUserToken)
-	t.Setenv("CAPY_APPLE_P8_PATH", writeTestP8(t)) // AuthKey_TESTKID.p8(debug_test 的 helper)
-	t.Setenv("CAPY_APPLE_TEAM_ID", "TEAM1")
-	t.Setenv("CAPY_APPLE_KID", "")
+}
+
+// appleServer:假 amp-api。preflight 只認 dev;storefront 要 Media-User-Token == wantMUT 才回 tw,否則 403。
+// 回傳 hits 供「不該打網路」的斷言。
+func appleServer(t *testing.T, wantDev, wantMUT string) *int32 {
+	t.Helper()
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if r.Header.Get("Origin") != "https://music.apple.com" {
+			t.Errorf("缺 Origin:%v", r.Header)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+wantDev {
+			w.WriteHeader(401)
+			w.Write([]byte(`{"errors":[{"status":"401"}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/storefronts/us":
+			w.Write([]byte(`{"data":[{"id":"us"}]}`))
+		case "/me/storefront":
+			if r.Header.Get("Media-User-Token") != wantMUT {
+				w.WriteHeader(403)
+				w.Write([]byte(`{"errors":[{"status":"403"}]}`))
+				return
+			}
+			w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
+	return &hits
+}
+
+// assertAppleNotPersisted:失敗路徑的共用斷言——keychain 兩顆 token 與 config storefront
+// 都不該被寫(all-or-nothing persistence)。只適用於從乾淨狀態(clearAppleTokens)出發的測試;
+// 「既有 token 沒被覆寫」這種從非空狀態出發的情境,各測試自行比對舊值。
+func assertAppleNotPersisted(t *testing.T) {
+	t.Helper()
+	if _, err := secret.Get(apple.KeyDeveloperToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("developer token 不應被寫入:err=%v", err)
+	}
+	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("user token 不應被寫入:err=%v", err)
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "" {
+		t.Errorf("storefront 不應被寫入:%q", cfg.AppleStorefront)
+	}
 }
 
 func TestAuthLoginWithFlagSavesConfigAndLogsIn(t *testing.T) {
@@ -141,104 +205,162 @@ func TestAuthLoginUnsupportedProvider(t *testing.T) {
 	}
 }
 
-func TestAuthLoginAppleStoresMUTAndStorefront(t *testing.T) {
-	setupAppleBYO(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/storefronts/us": // preflight(login 開瀏覽器前的 dev token 驗證,不帶 MUT)
-			w.Write([]byte(`{"data":[{"id":"us"}]}`))
-		case "/me/storefront":
-			if r.Header.Get("Media-User-Token") != "MUT1" {
-				t.Errorf("storefront 請求錯誤:%s %v", r.URL.Path, r.Header)
-			}
-			w.Write([]byte(`{"data":[{"id":"tw"}]}`))
-		default:
-			t.Errorf("非預期路徑:%s", r.URL.Path)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL) // 測試用 base 覆寫(見 Step 3)
-	origA := appleAuthorize
-	appleAuthorize = fakeAppleAuthorize(t, "MUT1")
-	t.Cleanup(func() { appleAuthorize = origA })
+func TestAuthLoginAppleEnvPersists(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUT1")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "Bearer "+dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
 
-	out, err := runCLI(t, "auth", "login", "apple")
+	out, err := runCLI(t, "auth", "login", "apple", "--i-understand")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Apple Music 授權完成") {
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
 		t.Errorf("輸出:%q", out)
 	}
-	if mut, err := secret.Get(apple.KeyMusicUserToken); err != nil || mut != "MUT1" {
-		t.Errorf("MUT 應入 keychain:(%q, %v)", mut, err)
+	raw, err := secret.Get(apple.KeyDeveloperToken)
+	if err != nil {
+		t.Fatal(err)
 	}
-	cfg, _ := config.Load()
-	if cfg.AppleStorefront != "tw" || len(cfg.InstallID) != 32 {
-		t.Errorf("config 應存 storefront 與 install_id:%+v", cfg)
-	}
-}
-
-func TestAuthLoginAppleFailureDoesNotPersist(t *testing.T) {
-	setupAppleBYO(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[{"id":"us"}]}`)) // preflight 通過,才輪到橋接失敗
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
-	origA := appleAuthorize
-	appleAuthorize = func(context.Context, string, func(string) error) (string, error) {
-		return "", errors.New("使用者取消")
-	}
-	t.Cleanup(func() { appleAuthorize = origA })
-	if _, err := runCLI(t, "auth", "login", "apple"); err == nil {
-		t.Fatal("橋接失敗應回錯")
-	}
-	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
-		t.Error("失敗不應留下 MUT")
-	}
-	cfg, _ := config.Load()
-	if cfg.AppleStorefront != "" {
-		t.Error("失敗不應存 storefront")
-	}
-}
-
-// appleLoginFixture:C-1(storefronts/us preflight)+ /me/storefront 都通過的最小 fixture。
-func appleLoginFixture(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/storefronts/us":
-			w.Write([]byte(`{"data":[{"id":"us"}]}`))
-		case "/me/storefront":
-			w.Write([]byte(`{"data":[{"id":"tw"}]}`))
-		default:
-			t.Errorf("非預期路徑:%s", r.URL.Path)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// TestAuthLoginAppleClearsStaleDevTokenCache:keychain 裡即使有一顆「看起來還沒過期」的
-// developer token 快取,login 也要整條鏈重來——否則被 Apple 端撤銷/輪替的快取值會一直被
-// 信任,使用者永遠修不好(review 發現的洞)。
-func TestAuthLoginAppleClearsStaleDevTokenCache(t *testing.T) {
-	setupAppleBYO(t)
-	stale, _ := json.Marshal(struct {
+	var c struct {
 		Token string `json:"token"`
 		Exp   int64  `json:"exp"`
-	}{Token: "stale", Exp: time.Now().Add(24 * time.Hour).Unix()})
-	if err := secret.Set(apple.KeyDeveloperToken, string(stale)); err != nil {
+	}
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
 		t.Fatal(err)
 	}
-	srv := appleLoginFixture(t)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
-	origA := appleAuthorize
-	appleAuthorize = fakeAppleAuthorize(t, "MUT1") // 內部斷言收到的 dev token 以 "eyJ" 開頭,不是 "stale"
-	t.Cleanup(func() { appleAuthorize = origA })
+	if c.Token != dev {
+		t.Errorf("keychain token 不應含 Bearer 前綴:%q", c.Token)
+	}
+	if c.Exp != exp.Unix() {
+		t.Errorf("keychain exp = %d, want %d", c.Exp, exp.Unix())
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT1" {
+		t.Errorf("user token = (%q, %v)", user, err)
+	}
+	cfg, _ := config.Load()
+	if cfg.AppleStorefront != "tw" {
+		t.Errorf("storefront = %q", cfg.AppleStorefront)
+	}
+}
 
-	if _, err := runCLI(t, "auth", "login", "apple"); err != nil {
+func TestAuthLoginAppleWithoutIUnderstandRefused(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	hits := appleServer(t, dev, "MUT1")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "Bearer "+dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	_, err := runCLI(t, "auth", "login", "apple")
+	if err == nil || !strings.Contains(err.Error(), "--i-understand") || !strings.Contains(err.Error(), "非 Apple 官方支援") {
+		t.Fatalf("應拒絕並在指令內帶聲明:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("不該打網路,hits = %d", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginAppleNonTTYMissingEnv(t *testing.T) {
+	clearAppleTokens(t)
+	hits := appleServer(t, "whatever", "whatever")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+	origTTY := stdinIsTTY
+	stdinIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY = origTTY })
+
+	_, err := runCLI(t, "auth", "login", "apple")
+	if err == nil || !strings.Contains(err.Error(), "CAPY_APPLE_DEVELOPER_TOKEN") {
+		t.Fatalf("應提示設定 env:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginAppleExpiredJWTRejectedBeforeNetwork(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(-1 * time.Hour)
+	dev := fakeJWT(t, exp)
+	hits := appleServer(t, dev, "MUT1")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "已於") || !strings.Contains(err.Error(), "過期") {
+		t.Fatalf("應回過期訊息:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginAppleMalformedDevToken(t *testing.T) {
+	clearAppleTokens(t)
+	hits := appleServer(t, "whatever", "MUT1")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "not-a-jwt")
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "developer token") {
+		t.Fatalf("應回 developer token 格式錯誤:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginApplePreflight401(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, "OTHER-DEV", "MUT1") // server 認的 dev 與送進來的不同 → 一律 401
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "developer token") || !strings.Contains(err.Error(), "401") {
+		t.Fatalf("應回 developer token 401:%v", err)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginAppleStorefront403DoesNotPersistDevToken(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUTgood") // preflight 過,但送出的 user token 錯
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUTbad")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "user token") || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("應回 user token 403:%v", err)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginAppleOnlyDevTokenKeepsUserToken(t *testing.T) {
+	setupAppleTokens(t) // 預放 dev + user "MUT0"
+	exp := time.Now().Add(48 * time.Hour)
+	newDev := fakeJWT(t, exp)
+	appleServer(t, newDev, "MUT0") // 只給新 dev,應以既有 MUT0 打 storefront
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", newDev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+
+	out, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(out, "登入完成") {
+		t.Errorf("輸出:%q", out)
 	}
 	raw, err := secret.Get(apple.KeyDeveloperToken)
 	if err != nil {
@@ -247,91 +369,127 @@ func TestAuthLoginAppleClearsStaleDevTokenCache(t *testing.T) {
 	var c struct {
 		Token string `json:"token"`
 	}
-	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+	_ = json.Unmarshal([]byte(raw), &c)
+	if c.Token != newDev {
+		t.Errorf("dev token 應更新為新 JWT:%q", c.Token)
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT0" {
+		t.Errorf("user token 應仍是 MUT0:(%q, %v)", user, err)
+	}
+}
+
+func TestAuthLoginAppleOnlyDevTokenWithDeadStoredUser(t *testing.T) {
+	origDev := setupAppleTokens(t) // 預放 dev + user "MUT0"
+	exp := time.Now().Add(48 * time.Hour)
+	newDev := fakeJWT(t, exp)
+	appleServer(t, newDev, "OTHER") // 既有 MUT0 對這台 server 而言已失效
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", newDev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "既有 user token") {
+		t.Fatalf("應提示既有 user token 失效:%v", err)
+	}
+	raw, err := secret.Get(apple.KeyDeveloperToken)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Token == "stale" {
-		t.Errorf("login 應清掉壞快取並重簽,keychain 仍是 stale:%q", raw)
+	var c struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal([]byte(raw), &c)
+	if c.Token != origDev {
+		t.Errorf("dev token 不應更新,應仍是 setup 那顆:got %q want %q", c.Token, origDev)
 	}
 }
 
-// TestAuthLoginApplePreflightFailsFast:preflight 沒過就不該開瀏覽器——省一次 180s 的等待。
-func TestAuthLoginApplePreflightFailsFast(t *testing.T) {
-	setupAppleBYO(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/storefronts/us" {
-			t.Errorf("非預期路徑:%s", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"errors":[{"status":"401","title":"Unauthorized"}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
-	origA := appleAuthorize
-	appleAuthorize = func(context.Context, string, func(string) error) (string, error) {
-		t.Error("preflight 失敗不該呼叫 appleAuthorize(不該開瀏覽器)")
-		return "", errors.New("不應被呼叫")
-	}
-	t.Cleanup(func() { appleAuthorize = origA })
+func TestAuthLoginAppleOnlyDevTokenWithoutStoredUserErrors(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	hits := appleServer(t, dev, "")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
 
-	_, err := runCLI(t, "auth", "login", "apple")
-	if err == nil || !strings.Contains(err.Error(), "developer token 被 Apple 拒絕") {
-		t.Fatalf("preflight 失敗應快速回錯:%v", err)
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil || !strings.Contains(err.Error(), "media-user-token") {
+		t.Fatalf("應提示補 media-user-token:%v", err)
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("hits = %d, want 0", n)
+	}
+	assertAppleNotPersisted(t)
+}
+
+func TestAuthLoginAppleFlagsWork(t *testing.T) {
+	clearAppleTokens(t)
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	appleServer(t, dev, "MUT1")
+
+	out, err := runCLI(t, "auth", "login", "apple",
+		"--developer-token", "Bearer "+dev, "--user-token", "MUT1", "--i-understand")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "登入完成") || !strings.Contains(out, "tw") {
+		t.Errorf("輸出:%q", out)
+	}
+	if user, err := secret.Get(apple.KeyMusicUserToken); err != nil || user != "MUT1" {
+		t.Errorf("user token = (%q, %v)", user, err)
 	}
 }
 
-// TestAuthLoginAppleStorefrontFailureDoesNotPersist:preflight 過、橋接也過,
-// 但 storefront 端本身出錯(500)—— MUT/storefront 都不該落地(T7 review)。
-func TestAuthLoginAppleStorefrontFailureDoesNotPersist(t *testing.T) {
-	setupAppleBYO(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/storefronts/us":
-			w.Write([]byte(`{"data":[{"id":"us"}]}`))
-		case "/me/storefront":
-			w.WriteHeader(http.StatusInternalServerError)
-		default:
-			t.Errorf("非預期路徑:%s", r.URL.Path)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv("CAPY_APPLE_API_BASE", srv.URL)
-	origA := appleAuthorize
-	appleAuthorize = fakeAppleAuthorize(t, "MUT1")
-	t.Cleanup(func() { appleAuthorize = origA })
-
-	if _, err := runCLI(t, "auth", "login", "apple"); err == nil {
-		t.Fatal("storefront 失敗應回錯")
-	}
-	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
-		t.Error("失敗不應留下 MUT")
-	}
-	cfg, _ := config.Load()
-	if cfg.AppleStorefront != "" {
-		t.Error("失敗不應存 storefront")
-	}
-}
-
-func TestAuthStatusAndLogoutApple(t *testing.T) {
-	setupAppleBYO(t)
-	_ = secret.Set(apple.KeyMusicUserToken, "MUT1")
-	_ = config.Save(&config.Config{AppleStorefront: "tw"})
+func TestAuthStatusApple(t *testing.T) {
+	setupAppleTokens(t)
 	out, err := runCLI(t, "auth", "status")
-	if err != nil || !strings.Contains(out, "apple:") || !strings.Contains(out, "storefront: tw") || !strings.Contains(out, "user token: 存在") {
-		t.Fatalf("status 輸出:%q err=%v", out, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !strings.Contains(out, "developer token: 有效至 ") || !strings.Contains(out, "user token: 存在") {
+		t.Errorf("輸出:%q", out)
+	}
+
+	expired := time.Now().Add(-1 * time.Hour)
+	if err := apple.SaveDeveloperToken(fakeJWT(t, expired), expired); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runCLI(t, "auth", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "已於") || !strings.Contains(out, "過期") {
+		t.Errorf("過期輸出:%q", out)
+	}
+
+	// 用 logout 清掉(順便覆蓋 apple logout 路徑),而非直接戳 keychain。
 	if _, err := runCLI(t, "auth", "logout", "apple"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
-		t.Error("logout 應刪 MUT")
+	out, err = runCLI(t, "auth", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "developer token: 不存在(執行 capy auth login apple)") {
+		t.Errorf("清掉後輸出:%q", out)
 	}
 }
 
+// TestNewAppleProviderNeedsLogin:未登入(keychain 空)→「尚未登入」;
+// developer token 過期 →訊息含「過期」與下一步指示。
 func TestNewAppleProviderNeedsLogin(t *testing.T) {
-	setupAppleBYO(t)
-	if _, err := newProvider(context.Background(), "apple"); err == nil || !strings.Contains(err.Error(), "capy auth login apple") {
-		t.Fatalf("無 MUT 應提示 login apple:%v", err)
+	clearAppleTokens(t)
+	if _, err := newProvider(context.Background(), "apple"); err == nil || !strings.Contains(err.Error(), "尚未登入") {
+		t.Fatalf("清空應提示尚未登入:%v", err)
+	}
+
+	expired := time.Now().Add(-1 * time.Hour)
+	if err := apple.SaveDeveloperToken(fakeJWT(t, expired), expired); err != nil {
+		t.Fatal(err)
+	}
+	_, err := newProvider(context.Background(), "apple")
+	if err == nil || !strings.Contains(err.Error(), "過期") || !strings.Contains(err.Error(), "capy auth login apple") {
+		t.Fatalf("過期應提示重新登入:%v", err)
 	}
 }
 

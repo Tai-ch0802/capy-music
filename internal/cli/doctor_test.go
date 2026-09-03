@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
 func TestRunChecksRendersAndCounts(t *testing.T) {
@@ -67,7 +70,8 @@ func TestPortHintByOS(t *testing.T) {
 }
 
 func TestDoctorAppleChecksWithoutLogin(t *testing.T) {
-	setupAppleBYO(t)
+	setupAppleTokens(t)
+	_ = secret.Delete(apple.KeyMusicUserToken)
 	// Stub checkOSA to avoid real osascript execution
 	origCheckOSA := checkOSA
 	t.Cleanup(func() { checkOSA = origCheckOSA })
@@ -76,8 +80,8 @@ func TestDoctorAppleChecksWithoutLogin(t *testing.T) {
 	buf := &strings.Builder{}
 	failed := runChecks(context.Background(), buf, appleChecks())
 	out := buf.String()
-	if !strings.Contains(out, "✅ Apple developer token") || !strings.Contains(out, "byo") {
-		t.Errorf("BYO 應取得 dev token 並顯示來源:%q", out)
+	if !strings.Contains(out, "✅ Apple developer token") || !strings.Contains(out, "有效至") {
+		t.Errorf("應取得 dev token 並顯示有效期限:%q", out)
 	}
 	if !strings.Contains(out, "❌ Apple user token") || !strings.Contains(out, "capy auth login apple") {
 		t.Errorf("無 MUT 應失敗並指示 login:%q", out)
@@ -88,7 +92,8 @@ func TestDoctorAppleChecksWithoutLogin(t *testing.T) {
 }
 
 func TestDoctorProviderFlagSelectsAppleSet(t *testing.T) {
-	setupAppleBYO(t)
+	setupAppleTokens(t)
+	_ = secret.Delete(apple.KeyMusicUserToken)
 	// Stub checkOSA to avoid real osascript execution
 	origCheckOSA := checkOSA
 	t.Cleanup(func() { checkOSA = origCheckOSA })
@@ -97,5 +102,18 @@ func TestDoctorProviderFlagSelectsAppleSet(t *testing.T) {
 	_, err := runCLI(t, "doctor", "--provider", "apple")
 	if err == nil || !strings.Contains(err.Error(), "檢查未通過") {
 		t.Fatalf("未登入 apple 的 doctor 應回錯:%v", err)
+	}
+}
+
+// TestDoctorAppleExpiredDevToken:keychain 有 developer token 但已過期 → ❌ 並提示過期。
+func TestDoctorAppleExpiredDevToken(t *testing.T) {
+	clearAppleTokens(t)
+	expired := time.Now().Add(-1 * time.Hour)
+	if err := apple.SaveDeveloperToken(fakeJWT(t, expired), expired); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := checkAppleDevToken(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "過期") {
+		t.Fatalf("過期應回錯並含「過期」:(%q, %v)", detail, err)
 	}
 }

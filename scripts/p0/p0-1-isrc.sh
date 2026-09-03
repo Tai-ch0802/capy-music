@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # P0-1:驗證 Apple catalog search 回傳 ISRC(docs/ARCHITECTURE.md §9 P0-1)。
-# 前置:export CAPY_APPLE_P8_PATH=…(檔名 AuthKey_<KID>.p8)、CAPY_APPLE_TEAM_ID=…;需要 jq。
+# 前置:capy auth login apple(見 README);DT=capy debug apple-token;MUT=capy debug apple-token --user
 # 用法:scripts/p0/p0-1-isrc.sh [搜尋詞…]
 set -euo pipefail
 CAPY="${CAPY:-go run ./cmd/capy}"
+BASE="${CAPY_APPLE_API_BASE:-https://amp-api.music.apple.com/v1}"
 QUERY="${*:-五月天 派對動物}"
 DT="$(${CAPY} debug apple-token)"
 ENC="$(jq -rn --arg s "${QUERY}" '$s|@uri')"
-resp="$(curl -sS -H "Authorization: Bearer ${DT}" \
-  "https://api.music.apple.com/v1/catalog/tw/search?types=songs&limit=5&term=${ENC}")"
+resp="$(curl -sS -H "Authorization: Bearer ${DT}" -H "Origin: https://music.apple.com" \
+  "${BASE}/catalog/tw/search?types=songs&limit=5&term=${ENC}")"
 echo "── songs(id / ISRC / 曲名)──"
 echo "${resp}" | jq -r '.results.songs.data[] | [.id, (.attributes.isrc // "❌ NO-ISRC"), .attributes.name] | @tsv'
 echo

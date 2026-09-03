@@ -2,9 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	"github.com/Tai-ch0802/capy-music/internal/browser"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
@@ -29,6 +30,7 @@ var clientIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var (
 	spotifyLogin func(context.Context, string, func(string) error) (*oauth2.Token, error) = auth.LoginSpotify
 	stdinIsTTY                                                                            = func() bool { return ui.IsTTY(os.Stdin) }
+	openBrowser                                                                           = browser.Open
 )
 
 func newAuthCmd() *cobra.Command {
@@ -40,7 +42,7 @@ func newAuthCmd() *cobra.Command {
 func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login <spotify|apple>",
-		Short: "登入平台(BYO Client ID + PKCE)",
+		Short: "登入平台(Spotify:自己的 app + PKCE;Apple:自抓 web token)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
@@ -88,45 +90,95 @@ func newAuthLoginCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("client-id", "", "你的 Spotify app Client ID(略過精靈)")
+	cmd.Flags().String("developer-token", "", "(apple)developer token;等同 CAPY_APPLE_DEVELOPER_TOKEN。argv 可被 ps 看到,建議用環境變數")
+	cmd.Flags().String("user-token", "", "(apple)media-user-token;等同 CAPY_APPLE_USER_TOKEN")
+	cmd.Flags().Bool("i-understand", false, "(apple)以 flag/環境變數提供 token 時,表示已閱讀「非 Apple 官方支援」聲明")
 	return cmd
 }
 
-// appleLogin:developer token(來源鏈)→ preflight → MUT(MusicKit 橋接,180s)→ storefront → 存 keychain/config。
-// 成功後才 Save config——失敗不留半殘狀態(P1 review 教訓)。
+const appleDisclosure = `⚠️ 非 Apple 官方支援。你要貼上的兩個 token 屬於 Apple 網頁播放器(music.apple.com):
+  · Apple 可能隨時更換或撤銷 —— 屆時重新執行 capy auth login apple 即可
+  · 以第三方工具存取 Apple Music 的服務條款風險由你自行承擔
+  · capy 只指導你複製,不會讀取你的瀏覽器資料`
+
+const appleGuide = `從 Apple 網頁播放器複製 token(約 1 分鐘):
+  1. 用瀏覽器開 https://music.apple.com 並登入
+  2. 開 DevTools(F12 / ⌥⌘I)→ Network 分頁,篩選 "amp-api"
+  3. 隨便點一首歌或播放清單,點任一 amp-api 請求 → Request Headers
+  4. 複製 authorization 的值(整串;含不含 "Bearer " 都可)→ developer token
+  5. 複製 media-user-token 的值 → user token`
+
+// appleLogin:三條入口(flag/env、TTY 精靈[Task 3]、隱藏 --auto[Task 4])全收口到 applePersist。
+// 揭露不可跳過:flag/env 路徑要 --i-understand(拒絕訊息本身就帶聲明);精靈路徑是第一頁的 Confirm。
 func appleLogin(cmd *cobra.Command) error {
-	_ = secret.Delete(apple.KeyDeveloperToken) // login = 重來整條鏈;容忍 ErrNotFound,壞快取不該一直被信任
+	dev, _ := cmd.Flags().GetString("developer-token")
+	if dev == "" {
+		dev = os.Getenv("CAPY_APPLE_DEVELOPER_TOKEN")
+	}
+	user, _ := cmd.Flags().GetString("user-token")
+	if user == "" {
+		user = os.Getenv("CAPY_APPLE_USER_TOKEN")
+	}
+	if dev == "" {
+		// Task 3 在這裡插入 TTY 精靈分支。
+		return errors.New("請設 CAPY_APPLE_DEVELOPER_TOKEN(首次登入另需 CAPY_APPLE_USER_TOKEN)並加 --i-understand。\n" + appleGuide)
+	}
+	if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
+		return errors.New(appleDisclosure + "\n\n以 flag / 環境變數提供 token 時,請加 --i-understand 表示已閱讀並同意上述聲明")
+	}
+	return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
+}
+
+// applePersist:三段驗證(JWT exp → preflight 401 → storefront 403)全過才寫 keychain/config——失敗不留半殘狀態。
+// user 為空 = 只更新 developer token:用 keychain 既有 user token 跑第三段(順便驗它還活著)。
+func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
+	dev = apple.NormalizeDevToken(dev)
+	exp, err := apple.JWTExp(dev)
+	if err != nil {
+		return fmt.Errorf("developer token 格式不對(%v)— 應複製 authorization 標頭的值", err)
+	}
+	if !exp.After(time.Now()) {
+		return fmt.Errorf("developer token 已於 %s 過期 — 回網頁播放器重新複製", exp.Format(time.RFC3339))
+	}
+	user = strings.TrimSpace(user)
+	keepUser := user == ""
+	if keepUser {
+		user, err = secret.Get(apple.KeyMusicUserToken)
+		if errors.Is(err, secret.ErrNotFound) {
+			return errors.New("keychain 沒有 user token — 首次登入請一併提供 media-user-token")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	hc := &http.Client{Timeout: 30 * time.Second}
+	if err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(ctx); err != nil {
+		return fmt.Errorf("developer token 被 Apple 拒絕 — 重新複製 authorization 標頭(Apple 可能已輪替):%w", err)
+	}
+	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, user).Storefront(ctx)
+	if err != nil {
+		if keepUser {
+			return fmt.Errorf("既有 user token 已失效 — 請一併提供新的 media-user-token:%w", err)
+		}
+		return fmt.Errorf("user token 被 Apple 拒絕 — 重新複製 media-user-token:%w", err)
+	}
+	if err := apple.SaveDeveloperToken(dev, exp); err != nil {
+		return err
+	}
+	if !keepUser {
+		if err := secret.Set(apple.KeyMusicUserToken, user); err != nil {
+			return fmt.Errorf("寫入 keychain 失敗:%w", err)
+		}
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
-	}
-	config.EnsureInstallID(cfg) // 成功後才 Save
-	dev, src, err := apple.LegacyDeveloperToken(cmd.Context(), devTokenOptsFromEnv(cfg))
-	if err != nil {
-		return err
-	}
-	hc := &http.Client{Timeout: 30 * time.Second}
-	if err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(cmd.Context()); err != nil {
-		return fmt.Errorf("developer token 被 Apple 拒絕 — BYO 請檢查 .p8/Key ID/Team ID,Worker 請檢查 secrets:%w", err)
-	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "developer token 來源:%s;在瀏覽器完成 Apple Music 授權…(180s 內)\n", src)
-	ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
-	defer cancel()
-	mut, err := appleAuthorize(ctx, dev, openBrowser)
-	if err != nil {
-		return err
-	}
-	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, mut).Storefront(ctx)
-	if err != nil {
-		return friendlyErr("apple", err)
-	}
-	if err := secret.Set(apple.KeyMusicUserToken, mut); err != nil {
-		return fmt.Errorf("寫入 keychain 失敗:%w", err)
 	}
 	cfg.AppleStorefront = sf
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "✅ Apple Music 授權完成(storefront %s;user token 已入 keychain)\n", sf)
+	fmt.Fprintf(w, "✅ Apple Music 登入完成(storefront %s;developer token 有效至 %s)\n", sf, exp.Format("2006-01-02"))
 	return nil
 }
 
@@ -190,12 +242,13 @@ func newAuthStatusCmd() *cobra.Command {
 				fmt.Fprintln(w, "  refresh token: 不存在(執行 capy auth login spotify)")
 			}
 			fmt.Fprintln(w, "apple:")
-			if raw, err := secret.Get(apple.KeyDeveloperToken); err == nil {
-				var c struct{ Exp int64 }
-				_ = json.Unmarshal([]byte(raw), &c)
-				fmt.Fprintf(w, "  developer token: 快取有效至 %s\n", time.Unix(c.Exp, 0).Format(time.RFC3339))
-			} else {
-				fmt.Fprintln(w, "  developer token: 無快取(下次使用時取得)")
+			switch _, exp, err := apple.DeveloperToken(time.Now()); {
+			case err == nil:
+				fmt.Fprintf(w, "  developer token: 有效至 %s\n", exp.Format(time.RFC3339))
+			case errors.Is(err, apple.ErrDevTokenExpired):
+				fmt.Fprintf(w, "  developer token: 已於 %s 過期(執行 capy auth login apple)\n", exp.Format(time.RFC3339))
+			default:
+				fmt.Fprintln(w, "  developer token: 不存在(執行 capy auth login apple)")
 			}
 			if _, err := secret.Get(apple.KeyMusicUserToken); err == nil {
 				fmt.Fprintln(w, "  user token: 存在")
