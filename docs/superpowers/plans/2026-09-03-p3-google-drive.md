@@ -50,6 +50,8 @@ capy debug apple-token [--user]        # 隱藏,給 scripts/p0 用
 
 `docs/ARCHITECTURE.md` 已經寫死:§4.4 Google auth(三個 scope、Desktop client、`access_type=offline`+`prompt=consent`)、§6.2 canonical 資料模型(ULID `pid`/`cid`、fractional index `rank`、ISRC alias set)、§6.3 Drive appData 佈局、§6.4 op log 格式與 HLC、§6.5 六步同步流程與衝突規則、§6.6 安全網(dry-run、刪除 >10 首或 >30% 中止)、§7 SQLite 十張表的 schema、附錄 A 命令表面草案。**實作時以 spec 為準,不要另立設計。**
 
+⚠️ 但 spec 有幾處與本次決策衝突、也有幾處自相矛盾(`pl pull` 的方向、`cid` 是不是主鍵、item 去不去重、兩張不可重建的 SQLite 表),**T0 會把它們改掉**。T0 完成前先讀 §3 的 T0 清單,不要照著舊文字寫程式。
+
 ---
 
 ## §1 本次拍板的決策(2026-09-03,維護者裁定)
