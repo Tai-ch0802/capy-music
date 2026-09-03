@@ -1,7 +1,7 @@
 # capy-music — 跨平台音樂 CLI 架構規劃
 
 > 專案名稱 `capy-music`,binary `capy`
-> 文件版本 v0.4 — 2026-09-01(定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈、Worker 掛 capy.taislife.work,見附錄 C;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
+> 文件版本 v0.5 — 2026-09-03(Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
 > 本文件為架構基準,所有「已驗證」標記的事實均於 2026-08 查證。
 
 ---
@@ -15,7 +15,7 @@
 | # | 鐵則 | 理由 |
 |---|---|---|
 | **R1** | **絕不自己解碼串流音訊** | 所有平台的音訊都在 DRM 後面。我們只做「遙控」與「metadata」。 |
-| **R2** | **Apple Music 的程式路徑必須物理隔離** | MusicKit ToS 禁止把 MusicKit JS 與其他 JS 重組。Apple 授權頁是獨立靜態 HTML。 |
+| **R2** | **Apple 憑證由使用者自己複製,程式只指導、絕不自動擷取** | v0.5 起不載入 MusicKit JS(原 R2「物理隔離」已無對象)。web token 是 Apple 未授權第三方使用的灰色地帶:把「擷取」留在使用者手上、指令內強制揭露,是專案能開源的前提。隱藏 `--auto` 為唯一例外(附錄 C 決策 8)。 |
 | **R3** | **canonical 資料在使用者自己的 Drive,不在我們的伺服器** | 這是「不收訂閱費」的前提,也避開了 restricted scope 與資安評估。 |
 
 ---
@@ -45,8 +45,8 @@
 
 | 項目 | 現況 | 影響 |
 |---|---|---|
-| Developer Token | ES256 JWT,需 Apple Developer Program($99/年)的 MusicKit `.p8` | `.p8` 不可打包進 CLI → 需 token vending service |
-| Music User Token | **只能透過 MusicKit 的 `authorize()` 取得**,無純 HTTP OAuth 流程 | 必須做 loopback + 瀏覽器 MusicKit JS 橋接 |
+| Developer Token | 官方:ES256 JWT,需 Apple Developer Program($99/年)的 MusicKit `.p8`。**本專案(v0.5 起)改由使用者自己從 Apple 網頁播放器複製 Apple 的 web developer token**(非官方) | 免會籍、$0;代價是完全依賴 Apple 不改網頁播放器機制(§8.5.4 R-6) |
+| Music User Token | 官方只能經 MusicKit `authorize()` 取得;**本專案改由使用者從網頁播放器的 `media-user-token` 標頭/cookie 複製** | 不需 MusicKit JS 橋接;與 developer token 一起貼入 `auth login apple` |
 | MUT 生命週期 | 長期有效,**無 refresh token**,過期只能重跑授權 | 需偵測 401 並提示重新授權 |
 | Lossless / Hi-Res | MusicKit JS **不支援**;iOS/tvOS MusicKit 遵循使用者設定但無程式控制 | 高音質只能靠 macOS 的 Music.app |
 | Library playlist 寫入 | 建立/新增曲目可行;**移除與重排能力待驗證** | ⚠️ 見 §9 P0-2,可能影響 push 策略 |
@@ -268,70 +268,47 @@ $ capy auth login spotify
 
 **⚠️ PKCE refresh token 會輪替。** 每次 refresh 都會拿到新的 refresh_token,舊的失效。**兩台裝置共用同一份 refresh token 會互相踢掉。** → token 絕不進 Drive 同步,每台裝置各自授權。
 
-### 4.3 Apple Music:Developer Token 派發 + MusicKit 橋接
+### 4.3 Apple Music:使用者自抓 web token(BYO,非官方)
 
-這是三者中最複雜的。分兩段。
+> **v0.5 定案(附錄 C 決策 8)**:官方路徑(`.p8` 簽 developer token + Cloudflare Worker 派發 + MusicKit JS 橋接取 MUT)需要 Apple Developer Program 會籍與一個由維護者代持簽章的服務;專案開源、憑證全面 BYO 後,改為**使用者自己從 Apple 網頁播放器複製兩個 token**。官方路徑程式碼已移除,完整快照在 commit `3649b7b`,原設計文字保留於附錄 D。
 
-#### (a) Developer Token — Cloudflare Worker 派發
+#### (a) 兩個 token 從哪來
 
-`.p8` 私鑰不能進 binary。用 Worker 當簽發端:
+Apple 的網頁播放器(music.apple.com)自己就是一個 MusicKit 用戶端:每個對 `amp-api.music.apple.com` 的請求都帶
 
-```
-POST https://capy.taislife.work/v1/apple/developer-token
-Body: { "install_id": "<CLI 首次啟動產生的 uuid>" }
+- `authorization: Bearer <Apple 的 web developer token>` —— Apple 自家簽的 ES256 JWT,全球網頁播放器共用同一顆,Apple 會定期輪替(觀察到的 exp 約數月)
+- `media-user-token: <MUT>` —— 使用者登入後的 Music User Token(同時也是 cookie)
 
-→ Worker 用 Secret 裡的 .p8,以 crypto.subtle ECDSA P-256 簽 ES256 JWT
-→ 回 { "token": "eyJ...", "expires_at": 1735689600 }
-```
+使用者登入後開 DevTools → Network → 篩 `amp-api` → 任一請求的 Request Headers,把這兩個值複製出來。**我們只指導這個動作,程式本身絕不自動擷取**(CLAUDE.md 硬約束;唯一例外見 (d))。
 
-> 【定案】Worker 掛 `capy.taislife.work`(沿用既有網域)。此 endpoint 是 binary 內建預設值,**必須可被 config 覆寫**(自架 Worker 或 BYO `.p8` 的人需要)。
-
-JWT 內容:
-```jsonc
-// header
-{ "alg": "ES256", "kid": "<Key ID>" }
-// payload
-{ "iss": "<Team ID>", "iat": <now>, "exp": <now + 12h> }
-```
-
-設計決策:
-- **簽短期 token(12h)而非上限的 6 個月** —— 外洩損害可控
-- **不加 `origin` claim** —— 因為 loopback port 是動態的。MUT 仍需使用者互動授權,風險可接受
-- Worker 做 per-`install_id` rate limit(原生 Rate Limiting binding,見 §8.5.2);不做 per-IP —— 文件建議避 IP,且 client 自選 install_id 的弱點依 R-2 接受
-- 使用者若自備 Apple Developer 帳號,可設 `CAPY_APPLE_P8_PATH` 走本地自簽,完全繞過 Worker
-
-#### (b) Music User Token — loopback + MusicKit JS 橋接
+#### (b) `capy auth login apple` 流程
 
 ```
-CLI                          瀏覽器                        Apple
- │                              │                            │
- ├─ 起 127.0.0.1:{port}         │                            │
- ├─ 取 developer token          │                            │
- ├─ open browser ──────────────>│                            │
- │                              ├─ GET /apple/authorize      │
- │                              │  (獨立靜態 HTML)            │
- │                              ├─ load musickit.js (v3) ───>│
- │                              ├─ MusicKit.configure({dt})  │
- │                              ├─ [使用者點按鈕]             │
- │                              ├─ music.authorize() ───────>│
- │                              │<─── Music User Token ──────┤
- │<── POST /apple/callback ─────┤                            │
- ├─ 驗證 state → 存 keychain    │                            │
- ├─ 關閉 server                 │                            │
+1. 揭露頁(huh Confirm,預設「否」,不可跳過):非 Apple 官方支援、token 屬於 Apple 網頁播放器、
+   Apple 可隨時更換、ToS 風險使用者自負。不同意即結束。
+2. 指引頁:上述 DevTools 步驟。
+3. 貼上 developer token(自動去掉 "Bearer " 與空白)與 media-user-token。
+4. 三段驗證,各給不同訊息,全部通過才落地:
+   ├─ 解析 JWT payload 的 exp(不驗簽)→ 已過期直接擋
+   ├─ GET /v1/storefronts/us(只帶 developer token)→ 401 = developer token 貼錯/失效
+   └─ GET /v1/me/storefront(帶兩者)→ 403 = media-user-token 貼錯/失效;成功即得 storefront
+5. keychain 寫 apple.developer_token(JSON {token, exp})與 apple.music_user_token;config 寫 apple_storefront。
 ```
 
-**授權頁的硬性要求(ToS R2):**
-```html
-<!-- internal/auth/apple/web/authorize.html -->
-<!-- 這個檔案只准載入 musickit.js。不打包、不 bundle、不 import 任何其他 JS。 -->
-<script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" async></script>
-```
+- **非 TTY**:`CAPY_APPLE_DEVELOPER_TOKEN` / `CAPY_APPLE_USER_TOKEN` 環境變數 + `--i-understand`(揭露的非互動替代;缺任一即拒絕)。flag 形式 `--developer-token/--user-token` 也收,但 argv 可被 `ps` 看到,文件註明。
+- **重登(developer token 輪替是常態)**:keychain 已有 user token 時,精靈第一步問「只更新 developer token(保留 user token)?」;非 TTY 只給 developer token 的環境變數即只更新。**這條路徑的成本必須低到像重新登入一樣——它是 R-6 的唯一緩解。**
+- 失效偵測:任何 API 回 401/403 → `friendlyErr` 指向 `capy auth login apple`(訊息帶出 401/403 以分辨是哪個 token);`auth status` 顯示 developer token 到期時間;`doctor --provider apple` 檢查「keychain 有且未過期」。
 
-**已知的坑:**
-- `music.authorize()` **必須由 user gesture 觸發**,不能在 `onload` 自動跑(Safari 會擋)→ 頁面一定要有按鈕
-- `http://127.0.0.1` 屬於 secure context(W3C 定義的 potentially trustworthy origin),MusicKit 可運作
-- MUT 綁 developer team,不綁單一 token → 輪替 developer token 不會使 MUT 失效
-- MUT 無 refresh。收到 401/403 時 → 標記為過期 → 提示 `capy auth login apple`
+#### (c) 已知的坑
+
+- developer token 是**標頭不是 cookie**;media-user-token 兩者皆是。這決定了 (d) 的自動擷取只能靠驅動瀏覽器或攔截流量,讀 cookie 資料庫拿不到 developer token。
+- Apple 輪替 developer token 時,舊 MUT 通常仍有效(MUT 綁帳號不綁 developer token)→ 重登只換前者。
+- DevTools 的欄位名稱與 amp-api 路徑以真實驗收首次觀察為準;本節依社群多年穩定作法寫成。
+- developer token 也寫死在網頁播放器的前端 bundle(首頁 HTML 裡的 `assets/index[~-]*.js`)裡,一個未認證的 GET 就拿得到——`--auto` 不走這條(單一機制,見 (d)),預設路徑更不走(鐵則);記在這裡供日後決策。
+
+#### (d) 隱藏的 `--auto`(未文件化、opt-in、開發者自負)
+
+`capy auth login apple --auto`:`--help` 不列、README 不提。單一機制:用 AppleScript 找 Safari / Google Chrome 裡第一個已登入的 `https://music.apple.com` 分頁,在頁面執行 `MusicKit.getInstance()` 一次讀出 `developerToken` 與 `musicUserToken`(不讀 cookie 資料庫——developer token 本來就不在 cookie 裡,而驅動瀏覽器一次就能拿到兩個)。前提:瀏覽器已開啟「允許來自 Apple 事件的 JavaScript」(Safari:設定 → 進階 → 顯示「開發」選單 → 開發選單;Chrome:View → Developer),首次執行 macOS 會詢問「終端機想控制 Safari」。任一失敗即說明原因並回退到手動貼上;揭露在 `--auto` 下同樣不可跳過(TTY 為 Confirm,非 TTY 為 `--i-understand`)。它是 CLAUDE.md 鐵則的唯一例外,存在不改變預設路徑「絕不自動擷取」。macOS 限定、best-effort、瀏覽器版本相依,預期會壞。
 
 ### 4.4 Google:Authorization Code + PKCE(Desktop app client)
 
@@ -355,8 +332,8 @@ Scopes:
 | Spotify access token | 記憶體 | 1h | refresh token |
 | Spotify refresh token | **OS Keychain** | 長期 / **會輪替** | 每次 refresh 覆寫 |
 | Spotify client_id | config 檔(非機密) | 永久 | 使用者輸入 |
-| Apple developer token | **OS Keychain**(快取 12h;spec 原「記憶體 + 快取檔」收緊為 keychain,符合硬約束) | 12h | 向 Worker 重取 |
-| Apple Music User Token | **OS Keychain** | 長期 / 無 refresh | 過期需重跑 §4.3(b) |
+| Apple developer token | **OS Keychain**(JSON 含 exp;使用者貼上) | 依 Apple 輪替(觀察約數月) | 使用者重貼(`auth login apple`,可只更新此項) |
+| Apple Music User Token | **OS Keychain**(使用者貼上) | 長期 / 無 refresh | 過期需重貼(§4.3(b)) |
 | Google access token | 記憶體 | 1h | refresh token |
 | Google refresh token | **OS Keychain** | 長期 | 標準 refresh |
 
@@ -604,78 +581,59 @@ SQLite 是 **cache + 離線佇列**,不是 source of truth。刪掉整個 db 應
 
 | 條款 | 我們的做法 |
 |---|---|
-| MusicKit JS 不可與其他 JS 重組 | 授權頁是獨立靜態 HTML,只有一個 `<script src>` 指向 Apple CDN。**不 bundle、不 webpack、不 vite。** |
+| MusicKit JS 不可與其他 JS 重組 | v0.5 起不再載入 MusicKit JS(橋接頁已移除),此條無對象 |
+| **Apple 網頁播放器 token 供第三方使用** | **Apple 未授權。** 這是灰色地帶中最深的一項:token 由使用者自己複製、程式只指導不擷取、指令內強制揭露、風險由使用者自負(附錄 C 決策 8)。隱藏的 `--auto` 是明確切出的例外,未文件化 |
 | 不可對 Apple Music 存取收費 | 永久免費 + 開源。這也正是專案初衷。 |
 | MusicKit Content 不可與其他內容 synchronized | ⚠️ 灰色地帶。保守做法:**只同步使用者自建的 library playlist**;不觸碰 Apple 編輯清單/目錄;不把 Apple cover art 用在播放脈絡以外 |
 | 不可下載/修改 MusicKit Content | 我們只碰 metadata,不碰音訊 |
 | Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規 |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
 
-Cloudflare Worker 只做 developer token 簽發,**不經手任何使用者音樂資料**。這點在隱私權政策裡要寫清楚(Google basic verification 會需要隱私權政策 URL;隱私權政策與 Worker 同掛 taislife.work)。
+本專案沒有任何伺服器端元件(v0.5 起 Worker 已移除):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google basic verification 需要的 URL)掛 taislife.work,內容就是這一句。
 
 ---
 
 ## 8.5 營運成本與風險
 
-> 前提:免費對外、無盈利模式、Spotify 採 BYO credential。
+> 前提:免費對外、無盈利模式、憑證全面 BYO(Spotify 自建 app;Apple 自抓 web token)。v0.5 起 Apple Developer Program 與 Cloudflare Worker 均不再需要——本節依此重算,v0.4 的原算式見附錄 D。
 
 ### 8.5.1 固定成本
 
 | 項目 | 年費 | 說明 |
 |---|---|---|
-| **Apple Developer Program** | **US$99** | 唯一無法避免的支出。取得 MusicKit `.p8` 私鑰的門檻 |
-| Cloudflare Workers | $0 | 免費方案:100,000 requests/day、10 ms CPU/invocation |
+| Apple Developer Program | **$0** | v0.5 起不需要(web token BYO)。若要做 macOS notarization 才需 $99,那是分發議題,與 Apple Music 功能脫鉤 |
 | Google Cloud / Drive API | $0 | Drive API 無用量計費;`drive.appdata` 為非敏感 scope,不需 OAuth 審查 |
 | GitHub(repo + Actions + Releases) | $0 | 公開 repo 的標準 GitHub-hosted runner 免費且無分鐘上限,**含 macOS runner**(Free 方案最多 5 個並行 macOS job) |
-| 網域 | $0 | 沿用既有網域 `taislife.work`,邊際成本零 |
+| 網域 | $0 | 沿用既有網域 `taislife.work`(隱私權政策頁),邊際成本零 |
 | Spotify Developer | $0 | BYO Client ID,成本轉嫁使用者 |
-| **合計** | **US$99 / 年** | 約 NT$3,200 |
+| **合計** | **$0 / 年** | 唯一可能的支出是 macOS notarization 的 $99,可獨立決定 |
 
-**附帶綜效:** 這筆 $99 同時提供 macOS 的 Developer ID 憑證與免費 notarization。Apple Music 功能與「macOS binary 不跳 Gatekeeper 警告」是同一筆錢買的。
+**分發備註:** macOS binary 不跳 Gatekeeper 警告需要 Developer ID 憑證與 notarization,即 $99/年的 Apple Developer Program。v0.4 時它與 Apple Music 功能是同一筆錢;v0.5 起兩者脫鉤,notarization 成為純分發決策(先走 Homebrew + 使用者自行允許)。
 
 **測試用訂閱(已具備 ✅):** Apple Music 訂閱與 Spotify Premium 均有效(2026-09-01 確認),邊際成本為零。
 
-### 8.5.2 為什麼 Worker 是 $0 —— 以及必須避開的 KV 陷阱
+### 8.5.2 為什麼 Apple 端是 $0 —— 以及它的真正代價
 
-Apple developer token 的 payload 只有 `{iss, iat, exp}`,**沒有任何 per-user claim**。因此:
-
-- **所有使用者共用同一個 token**
-- 簽章運算:每 12 小時 1 次,而非每位使用者 1 次
-- 請求數:CLI 端快取 token 12h → 每人每天約 2 次
-
-```
-100,000 req/day ÷ 2 req/user/day ≈ 50,000 名日活使用者才觸及免費上限
-超過後:Workers Paid $5/月,含 1,000 萬 requests/月
-```
-
-> **⚠️ 不要用 KV 做 rate limiting。**
-> Workers KV 免費層每天只有 **1,000 次寫入**(讀取 100,000 次)。每請求寫一次 KV,約 500 名使用者就會耗盡 —— 而且耗盡的是寫入配額而非請求配額,失敗訊號不直觀,很難 debug。
->
-> 正確做法:
-> - Token 快取 → **Cache API (`caches.default`)**,不是 KV
-> - 速率限制 → Cloudflare 原生 **Rate Limiting binding**(不消耗 KV 配額)
+每位使用者貼的 developer token 都是 **Apple 網頁播放器全球共用的同一顆**。我們沒有自己的 Team ID、沒有配額、沒有簽章成本——也沒有任何槓桿:Apple 沒有動機為第三方留餘量,改變網頁播放器認證機制時不會通知我們。這不是成本問題,是 §8.5.4 R-6 的存在性風險。v0.4 的 Worker/KV 設計理由保留於附錄 D。
 
 ### 8.5.3 成本 vs. 規模
 
-| 使用者規模 | Apple | Worker | Google | GitHub | 年成本 |
-|---|---|---|---|---|---|
-| 1(自用) | $99 | $0 | $0 | $0 | **$99** |
-| 100 | $99 | $0 | $0 | $0 | **$99** |
-| 1,000 | $99 | $0 | $0 | $0 | **$99** |
-| 10,000 | $99 | $0 | $0 | $0 | **$99** ⚠️ |
-| 50,000+ | $99 | $60 | $0 | $0 | **$159** |
+| 使用者規模 | Apple | Google | GitHub | 年成本 |
+|---|---|---|---|---|
+| 1 ~ 50,000+ | $0 | $0 | $0 | **$0** |
 
-成本近乎與人數無關,因為架構已把所有隨人數成長的資源推給使用者自己(Spotify 用其 credential、Drive 用其空間)。⚠️ 標記處的限制**不是金錢,是配額** —— 見下節。
+成本與人數完全無關:每一項隨人數成長的資源都在使用者自己那邊(Spotify 用其 app、Apple 用 Apple 自家 token、Drive 用其空間)。代價換成了 R-6 的存在性風險——見下節。
 
 ### 8.5.4 非金錢風險(比成本重要)
 
 | # | 風險 | 說明 | 緩解 |
 |---|---|---|---|
-| **R-1** | **Apple API 配額集中於單一 Team ID** | 所有使用者的 catalog / playlist 請求都掛在同一個 developer token 底下。Apple 未公開 rate limit 數字,但配額以 team 為單位計。**會先撞限流,不是先撞帳單** | 重度快取(§5.4 已設計);`.p8` 做成 BYO-able |
-| **R-2** | **developer token 可被擷取** | 這是 MusicKit JS 的固有性質(Apple 自家網頁播放器的 token 長期可從瀏覽器 console 取得)。最壞情況:被濫用導致 Apple 停權,損失不只 $99,而是名下所有 Apple 開發資源 | 短 TTL(12h)、Worker 速率限制、用量監控 |
-| **R-3** | **持續付費的承諾綁定** | 一旦有使用者,停繳 $99 → 所有人的 Apple 功能同時失效。這是免費專案裡少見的「無法隨時停損」結構 | **`.p8` BYO-able 是主要解方**,讓專案在不依賴維護者付費的情況下仍可運作 |
+| **R-1** | ~~Apple API 配額集中於單一 Team ID~~ **→ v0.5 反轉:所有使用者搭在 Apple 自家 web token 的配額上** | 我們不再有 Team ID 可被限流,但也完全沒有槓桿;Apple 對自家網頁播放器 token 的限流政策即是我們的天花板 | 重度快取(§5.4);各使用者的 MUT 分散了 per-user 端點的壓力 |
+| **R-2** | ~~developer token 可被擷取~~ **→ v0.5 反轉:我們沒有 token 可外洩,但 100% 依賴 Apple 不改機制** | 沒有停權風險(不是我們的 Team)、沒有 $99 可損失;風險全部轉成 R-6 | — |
+| **R-3** | ~~持續付費的承諾綁定~~ **→ v0.5 消失** | 沒有任何持續支出,維護者可隨時停損而不影響既有使用者 | — |
 | **R-4** | **平台政策變動頻率高** | Spotify 半年內改兩次:2026-02 使用者上限 25→5 且強制 owner 持有 Premium;2026-07 Client ID 上限 1→25。Apple 亦有非預告的 MusicKit 更新紀錄 | 附錄 B 的監控清單;CI 週期性 API 斷言 |
-| **R-5** | **支援負擔** | BYO Spotify credential 流程必然產生大量「設定不起來」的 issue,最常見是 redirect URI 寫成 `localhost` | `capy doctor` 列為一等公民;錯誤訊息直接指出正確值 |
+| **R-5** | **支援負擔** | BYO 流程(Spotify app、Apple web token)必然產生大量「設定不起來」的 issue,最常見是 redirect URI 寫成 `localhost`、Apple token 貼到過期的 | `capy doctor` 列為一等公民;錯誤訊息直接指出正確值;Apple 登入三段驗證各給不同訊息 |
+| **R-6** | **Apple 單方面改變網頁播放器認證即全體失效,無預警、無替代** | 這是 v0.5 用 $99/年 換來的存在性風險:token 格式、取得位置、amp-api 行為都可能一夜改變;社群工具多年未被封鎖不構成保證 | **唯一緩解是把重登成本壓到像重新登入一樣低**(§4.3(b) 只更新 developer token 的路徑);附錄 B 監控;若 Apple 封鎖,恢復官方路徑的快照在 `3649b7b` |
 
 ### 8.5.5 時間成本(實際上最貴的一項)
 
@@ -713,10 +671,8 @@ Apple developer token 的 payload 只有 `{iss, iat, exp}`,**沒有任何 per-us
 | 決策 | 效益 |
 |---|---|
 | **Windows code signing 憑證跳過不買** | 省 $200–600/年。改走 Scoop / winget 分發,接受 SmartScreen 警告 |
-| **Worker token 快取用 Cache API,不用 KV** | 避開每日 1,000 次寫入的免費層天花板 |
-| **`.p8` 從第一天就做成 BYO-able** | 同時緩解 R-1 / R-2 / R-3 三項風險 |
+| **Apple 改用使用者自抓 web token(v0.5)** | 固定成本 $99 → $0、免會籍、免 Worker;代價是 R-6 與 ToS 灰色地帶(決策 8) |
 | **Google brand verification 去做** | 免費、2–3 個工作天。非敏感 scope 本不強制驗證,但完成後同意畫面才會顯示 app 名稱與 logo。需以 Search Console 驗證網域所有權,並在同一網域(taislife.work)掛隱私權政策 |
-| **Cloudflare 帳號設定 spending limit** | 免費方案本不扣款,但升級後需防止流量異常造成帳單 |
 | **`capy doctor` 列為 P1 而非 nice-to-have** | 直接消化約一半的支援 issue(見 R-5)。已定案進 P1(對外發佈定位) |
 
 ---
@@ -729,21 +685,21 @@ Apple developer token 的 payload 只有 `{iss, iat, exp}`,**沒有任何 per-us
 |---|---|---|
 | **P0-1** | 用 curl 打通 Apple developer token → `GET /v1/catalog/tw/search`,確認 ISRC 有回傳 | ISRC 是整個 resolver 的基礎 |
 | **P0-2** | ⚠️ **驗證 Apple Music API 能否從 library playlist 移除/重排曲目** | 若不行,Apple 端 push 只能用 rebuild 策略,要改 §6.5 |
-| **P0-3** | 驗證 MusicKit JS 在 `http://127.0.0.1:{隨機port}` 能否成功 `authorize()` | 若不行,要改成固定 port 或本地 HTTPS |
+| **P0-3** | ~~驗證 MusicKit JS 在 `http://127.0.0.1:{隨機port}` 能否成功 `authorize()`~~ | ~~若不行,要改成固定 port 或本地 HTTPS~~(v0.5 作廢,見 2026-09-03 排程註記) |
 | **P0-4** | 量測 Spotify Development Mode 的實際 rate limit | 決定同步的併發度與退避策略 |
 | P0-5 | 專案骨架:cobra + config + keychain + loopback server | — |
 
 **P0-2 和 P0-3 是架構風險點,建議會籍生效第一天就打 curl 驗證,不要等到寫完再發現。**
 
-> **排程註記(2026-09-01):** Apple Developer 會籍申請中。P0-1/P0-2/P0-3 全部需要 developer token → **gate 在會籍生效**;P0-4/P0-5 與 P1 先行。就算 P0-2 驗出「不能移除/重排」,§6.5 已備好 rebuild fallback,不會推翻架構。
+> ~~**排程註記(2026-09-01):** Apple Developer 會籍申請中。P0-1/P0-2/P0-3 全部需要 developer token → **gate 在會籍生效**;P0-4/P0-5 與 P1 先行。就算 P0-2 驗出「不能移除/重排」,§6.5 已備好 rebuild fallback,不會推翻架構。~~(v0.5 作廢,見 2026-09-03 排程註記)
 
 ### P1 — Spotify 全鏈路
 `auth login spotify`(BYO client ID,huh 表單精靈)→ `search` → `play/pause/next` via Connect → `pl list/show` → **`doctor`**(定案進 P1,見 §8.5.7)
 
 ### P2 — Apple 全鏈路
-Worker 部署(`capy.taislife.work`)→ `auth login apple`(MusicKit 橋接)→ Apple Music API search → macOS `osascript` 播放
+`auth login apple`(web token BYO 精靈,§4.3)→ Apple Music API search → macOS `osascript` 播放
 
-> **排程註記(2026-09-02):** 程式碼完成(feat/p2-apple 分支);真實驗收 gate 於會籍與 `.p8`,P0-1/P0-3 併入 P2 驗收;macOS 播放機制 A/B 待 C-4 決勝。
+> **排程註記(2026-09-03):** v0.4 版 P2(`.p8` + Worker + MusicKit 橋接)於 PR #5 完成後,依附錄 C 決策 8 改為 web token BYO(`feat/apple-webtoken`)。真實驗收**不再 gate 於會籍**:拿到 web token 即可跑 search / pl / 播放驗收;P0-3(MusicKit 動態 port)隨橋接移除而作廢;P0-1(ISRC)與 macOS 播放機制 A/B 決勝仍待真跑。
 
 ### P3 — Google + Drive
 `auth login google` → appDataFolder 讀寫 → manifest / snapshot 基礎設施
@@ -765,12 +721,13 @@ op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 
 1. **binary 名** — `capy`,不做 `cm` 短別名
 2. **語言** — Go,module `github.com/Tai-ch0802/capy-music`
-3. **Worker 網域** — `capy.taislife.work`(endpoint 預設值可被 config 覆寫)
+3. ~~**Worker 網域** — `capy.taislife.work`~~(v0.5 作廢,Worker 已移除;見附錄 C 決策 8 與本節第 9 項)
 4. **平台** — macOS + Windows 第一天支援;**Linux 非目標**
 5. **TUI** — 第一天進場(charm 全家桶);非 TTY 純文字輸出為鐵則(見 §2)
 6. **發佈定位** — 一開始就對外發佈;`capy doctor` 進 P1
 7. **`--provider` 統一** — 不採附錄 A 的 `play --on`;所有讀/播放命令一致用 `--provider`(預設 `spotify`)
 8. **Apple `pl list/show`** — 納入 P2
+9. **Apple 憑證 = 使用者自抓 web token(BYO,非官方)** — 取代 `.p8`/Worker/MusicKit 橋接;預設路徑絕不自動擷取、指令內強制揭露;隱藏 `--auto` 為唯一例外(2026-09-03,附錄 C 決策 8)
 
 ### 必須寫進 CLAUDE.md 的約束
 
@@ -816,7 +773,7 @@ capy doctor
 |---|---|---|
 | Spotify `external_ids` (ISRC) | 2026-02 曾被移除,2026-03 回復 | CI 每週打一次 API 斷言 ISRC 存在 |
 | Spotify Development Mode 使用者上限 | 一年內從 25 → 5 | 訂閱 Spotify Developer Changelog |
-| Apple MusicKit JS 版本 | Cider 團隊提過「意外的 MusicKit 更新」造成中斷 | 授權頁釘住 v3,並做 smoke test |
+| Apple 網頁播放器認證機制 | web developer token 格式/位置、`media-user-token`、amp-api 行為皆可能無預警改變(R-6) | 定期重跑 `auth login apple` 的手動流程;issue 回報即為監控 |
 | Google `drive.appdata` 敏感度分類 | 目前非敏感,若改分類影響巨大 | 每季檢查 Drive API scopes 文件 |
 | Spotify Lossless over Connect | 目前 Connect 端點只給 320k Ogg | 若開放,遙控播放的音質敘述要更新 |
 
@@ -832,4 +789,97 @@ capy doctor
 | 4 | TUI | 第一天進場(cobra + charm 全家桶) | 「酷炫 CLI」為維護者點名的重點項目;以「非 TTY 必可純文字輸出」鐵則保護 §8.5.6 的自動化價值 |
 | 5 | 語言 | Go(Rust 已評估未採用) | 效能平手(瓶頸在網路 API,兩者皆原生 binary);TUI 生態 charm 全家桶對「酷炫」目標明顯佔優(bubbletea v2 + lipgloss + bubbles + huh vs 較底層的 ratatui);交叉編譯與個人維護成本 Go 較低;Rust 型別系統對同步引擎的小幅優勢改以測試補償 |
 | 6 | 命名 | binary `capy`,不做 `cm` 別名 | 一個名字就夠,使用者自行 alias;少一個安裝器要管的 shim |
-| 7 | Worker 網域 | `capy.taislife.work` | 沿用既有網域;隱私權政策與 Google brand verification 掛同一網域;endpoint 為 binary 預設值但可被 config 覆寫(自架/BYO `.p8` 場景) |
+| 7 | Worker 網域 | `capy.taislife.work` | 沿用既有網域;隱私權政策與 Google brand verification 掛同一網域;endpoint 為 binary 預設值但可被 config 覆寫(自架/BYO `.p8` 場景)。**v0.5 隨決策 8 作廢** |
+| 8 | Apple 憑證(2026-09-03) | 使用者自抓 web token BYO;`.p8`/Worker/MusicKit 橋接全刪(快照 `3649b7b`);隱藏 `--auto` | 會籍審核未決 + 專案開源憑證全面 BYO:官方路徑需維護者代持 `.p8` 與付費,與 BYO 精神相悖。代價是 R-6(完全依賴 Apple 不改機制)與 ToS 灰色地帶,以指令內強制揭露、預設絕不自動擷取(只指導)承擔。`--auto`(AppleScript 驅動已登入的 Safari / Chrome 分頁,不讀 cookie DB,見 §4.3(d))應維護者要求做為未文件化 opt-in、開發者自負,不改變預設路徑鐵則;維護者在充分知悉技術限制(developer token 是標頭非 cookie)與法律面差異後定案 |
+
+## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
+
+> 2026-09-03 依決策 8 移除。完整程式碼快照:commit `3649b7b`(`worker/`、`internal/auth/apple/devtoken*.go`、`internal/auth/apple/authorize.go` 與 `web/authorize.html`、`.github/workflows/ci.yml` 的 worker job、config 的 `install_id`/`apple_token_endpoint`)。若日後取得 Apple Developer 會籍要恢復,從該 commit 還原這些檔案,並把 §4.3 換回下文。
+
+### D.1(原 §4.3)Apple Music:Developer Token 派發 + MusicKit 橋接
+
+這是三者中最複雜的。分兩段。
+
+#### (a) Developer Token — Cloudflare Worker 派發
+
+`.p8` 私鑰不能進 binary。用 Worker 當簽發端:
+
+```
+POST https://capy.taislife.work/v1/apple/developer-token
+Body: { "install_id": "<CLI 首次啟動產生的 uuid>" }
+
+→ Worker 用 Secret 裡的 .p8,以 crypto.subtle ECDSA P-256 簽 ES256 JWT
+→ 回 { "token": "eyJ...", "expires_at": 1735689600 }
+```
+
+> 【定案】Worker 掛 `capy.taislife.work`(沿用既有網域)。此 endpoint 是 binary 內建預設值,**必須可被 config 覆寫**(自架 Worker 或 BYO `.p8` 的人需要)。
+
+JWT 內容:
+```jsonc
+// header
+{ "alg": "ES256", "kid": "<Key ID>" }
+// payload
+{ "iss": "<Team ID>", "iat": <now>, "exp": <now + 12h> }
+```
+
+設計決策:
+- **簽短期 token(12h)而非上限的 6 個月** —— 外洩損害可控
+- **不加 `origin` claim** —— 因為 loopback port 是動態的。MUT 仍需使用者互動授權,風險可接受
+- Worker 做 per-`install_id` rate limit(原生 Rate Limiting binding,見 §8.5.2);不做 per-IP —— 文件建議避 IP,且 client 自選 install_id 的弱點依 R-2 接受
+- 使用者若自備 Apple Developer 帳號,可設 `CAPY_APPLE_P8_PATH` 走本地自簽,完全繞過 Worker
+
+#### (b) Music User Token — loopback + MusicKit JS 橋接
+
+```
+CLI                          瀏覽器                        Apple
+ │                              │                            │
+ ├─ 起 127.0.0.1:{port}         │                            │
+ ├─ 取 developer token          │                            │
+ ├─ open browser ──────────────>│                            │
+ │                              ├─ GET /apple/authorize      │
+ │                              │  (獨立靜態 HTML)            │
+ │                              ├─ load musickit.js (v3) ───>│
+ │                              ├─ MusicKit.configure({dt})  │
+ │                              ├─ [使用者點按鈕]             │
+ │                              ├─ music.authorize() ───────>│
+ │                              │<─── Music User Token ──────┤
+ │<── POST /apple/callback ─────┤                            │
+ ├─ 驗證 state → 存 keychain    │                            │
+ ├─ 關閉 server                 │                            │
+```
+
+**授權頁的硬性要求(ToS R2):**
+```html
+<!-- internal/auth/apple/web/authorize.html -->
+<!-- 這個檔案只准載入 musickit.js。不打包、不 bundle、不 import 任何其他 JS。 -->
+<script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" async></script>
+```
+
+**已知的坑:**
+- `music.authorize()` **必須由 user gesture 觸發**,不能在 `onload` 自動跑(Safari 會擋)→ 頁面一定要有按鈕
+- `http://127.0.0.1` 屬於 secure context(W3C 定義的 potentially trustworthy origin),MusicKit 可運作
+- MUT 綁 developer team,不綁單一 token → 輪替 developer token 不會使 MUT 失效
+- MUT 無 refresh。收到 401/403 時 → 標記為過期 → 提示 `capy auth login apple`
+
+
+### D.2(原 §8.5.2)為什麼 Worker 是 $0 —— 以及必須避開的 KV 陷阱
+
+
+Apple developer token 的 payload 只有 `{iss, iat, exp}`,**沒有任何 per-user claim**。因此:
+
+- **所有使用者共用同一個 token**
+- 簽章運算:每 12 小時 1 次,而非每位使用者 1 次
+- 請求數:CLI 端快取 token 12h → 每人每天約 2 次
+
+```
+100,000 req/day ÷ 2 req/user/day ≈ 50,000 名日活使用者才觸及免費上限
+超過後:Workers Paid $5/月,含 1,000 萬 requests/月
+```
+
+> **⚠️ 不要用 KV 做 rate limiting。**
+> Workers KV 免費層每天只有 **1,000 次寫入**(讀取 100,000 次)。每請求寫一次 KV,約 500 名使用者就會耗盡 —— 而且耗盡的是寫入配額而非請求配額,失敗訊號不直觀,很難 debug。
+>
+> 正確做法:
+> - Token 快取 → **Cache API (`caches.default`)**,不是 KV
+> - 速率限制 → Cloudflare 原生 **Rate Limiting binding**(不消耗 KV 配額)
+

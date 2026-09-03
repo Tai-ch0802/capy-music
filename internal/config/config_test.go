@@ -14,14 +14,14 @@ func setTestDir(t *testing.T) string {
 	return dir
 }
 
-func TestLoadMissingFileReturnsDefaults(t *testing.T) {
+func TestLoadMissingFileReturnsEmpty(t *testing.T) {
 	setTestDir(t)
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.AppleTokenEndpoint != DefaultAppleTokenEndpoint {
-		t.Errorf("預設 endpoint 錯誤:%q", c.AppleTokenEndpoint)
+	if *c != (Config{}) {
+		t.Errorf("檔案不存在應回零值 Config,得到 %+v", c)
 	}
 }
 
@@ -56,29 +56,6 @@ func TestLoadCorruptFileErrors(t *testing.T) {
 	}
 }
 
-func TestSaveDropsDefaultEndpoint(t *testing.T) {
-	dir := setTestDir(t)
-	c, err := Load() // 空設定,withDefaults 會填入預設 endpoint
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.SpotifyClientID = "abc123"
-	if err := Save(c); err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "capy-music", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(b), "apple_token_endpoint") {
-		t.Errorf("預設 endpoint 不應落地,檔案內容:%s", b)
-	}
-	// Save 不應污染呼叫端手上的物件
-	if c.AppleTokenEndpoint != DefaultAppleTokenEndpoint {
-		t.Errorf("Save 改動了呼叫端的 Config:%q", c.AppleTokenEndpoint)
-	}
-}
-
 func TestDirHonorsEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CAPY_CONFIG_DIR", dir)
@@ -91,43 +68,44 @@ func TestDirHonorsEnvOverride(t *testing.T) {
 	}
 }
 
-func TestSaveKeepsCustomEndpoint(t *testing.T) {
+func TestAppleFieldsRoundtrip(t *testing.T) {
 	setTestDir(t)
-	if err := Save(&Config{AppleTokenEndpoint: "https://my-worker.example.com/token"}); err != nil {
+	if err := Save(&Config{AppleStorefront: "tw"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := Load()
+	if err != nil || got.AppleStorefront != "tw" {
+		t.Fatalf("(%+v, %v)", got, err)
+	}
+}
+
+// TestLoadIgnoresLegacyFields:舊使用者升級路徑——config.json 裡殘留已移除的
+// install_id / apple_token_endpoint 欄位,Load 不該報錯;Save 回去後這兩個 key 不該再出現。
+func TestLoadIgnoresLegacyFields(t *testing.T) {
+	dir := setTestDir(t)
+	sub := filepath.Join(dir, "capy-music")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"install_id":"0123456789abcdef0123456789abcdef","apple_token_endpoint":"https://old.example.com","spotify_client_id":"abc123"}`
+	if err := os.WriteFile(filepath.Join(sub, "config.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.AppleTokenEndpoint != "https://my-worker.example.com/token" {
-		t.Errorf("自訂 endpoint 應存活:%q", got.AppleTokenEndpoint)
+	if c.SpotifyClientID != "abc123" {
+		t.Errorf("仍應讀到現有欄位:%+v", c)
 	}
-}
-
-func TestEnsureInstallID(t *testing.T) {
-	c := &Config{}
-	if !EnsureInstallID(c) || len(c.InstallID) != 32 {
-		t.Fatalf("空 InstallID 應產生 32 字元 hex:%q", c.InstallID)
-	}
-	for _, ch := range c.InstallID {
-		if !strings.ContainsRune("0123456789abcdef", ch) {
-			t.Fatalf("非 hex:%q", c.InstallID)
-		}
-	}
-	prev := c.InstallID
-	if EnsureInstallID(c) || c.InstallID != prev {
-		t.Error("已有 InstallID 不應改動")
-	}
-}
-
-func TestAppleFieldsRoundtrip(t *testing.T) {
-	setTestDir(t)
-	if err := Save(&Config{InstallID: "0123456789abcdef0123456789abcdef", AppleStorefront: "tw"}); err != nil {
+	if err := Save(c); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Load()
-	if err != nil || got.InstallID != "0123456789abcdef0123456789abcdef" || got.AppleStorefront != "tw" {
-		t.Fatalf("(%+v, %v)", got, err)
+	b, err := os.ReadFile(filepath.Join(sub, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "install_id") || strings.Contains(string(b), "apple_token_endpoint") {
+		t.Errorf("舊欄位不應在 Save 後留存:%s", b)
 	}
 }

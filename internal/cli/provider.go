@@ -86,35 +86,23 @@ func friendlyErr(providerID string, err error) error {
 	}
 }
 
-// 測試替換點。
-var appleAuthorize = apple.AuthorizeMUT
-
 // appleAPIBase:測試以 CAPY_APPLE_API_BASE 指向 httptest;正式為空(用預設)。
 func appleAPIBase() string { return os.Getenv("CAPY_APPLE_API_BASE") }
 
-func devTokenOptsFromEnv(cfg *config.Config) apple.DevTokenOptions {
-	return apple.DevTokenOptions{
-		P8Path:    os.Getenv("CAPY_APPLE_P8_PATH"),
-		KID:       os.Getenv("CAPY_APPLE_KID"),
-		TeamID:    os.Getenv("CAPY_APPLE_TEAM_ID"),
-		Endpoint:  cfg.AppleTokenEndpoint,
-		InstallID: cfg.InstallID,
-	}
-}
-
-// newAppleProvider:config → dev token(來源鏈)→ MUT(缺 → 提示 login)→ storefront(缺 → 提示 login)。
+// newAppleProvider:keychain 讀 dev token(缺/過期 → 提示 login)→ MUT(缺 → 提示 login)→
+// storefront(缺 → 提示 login)。
 func newAppleProvider(ctx context.Context) (*appleprov.Provider, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
 	}
-	if config.EnsureInstallID(cfg) {
-		if err := config.Save(cfg); err != nil {
-			return nil, err
-		}
-	}
-	dev, _, err := apple.DeveloperToken(ctx, devTokenOptsFromEnv(cfg))
-	if err != nil {
+	dev, exp, err := apple.DeveloperToken(time.Now())
+	switch {
+	case errors.Is(err, secret.ErrNotFound):
+		return nil, errors.New("尚未登入 Apple Music — 先執行 capy auth login apple")
+	case errors.Is(err, apple.ErrDevTokenExpired):
+		return nil, fmt.Errorf("Apple developer token 已於 %s 過期(Apple 定期輪替)— 重新執行 capy auth login apple", exp.Format(time.RFC3339))
+	case err != nil:
 		return nil, err
 	}
 	mut, err := secret.Get(apple.KeyMusicUserToken)

@@ -25,9 +25,42 @@ func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
 	return NewClient(srv.Client(), srv.URL, "DEV", "MUT")
 }
 
+// TestClientSendsWebPlayerHeaders:amp-api(網頁播放器私有 API)要求 Origin 標頭,
+// MUT 標頭名是 Media-User-Token(不是官方 API 文件的舊標頭名——client.go 只設這一個 MUT 標頭,
+// 下面斷言它等於 "MUT" 已隱含排除了舊名;不另外斷言舊標頭名字串,以維持 grep 可歸零)。
+// 同時驗證 NewClient 在 base 空字串時預設到 DefaultAPIBase,且該常數確實指向 amp-api。
+func TestClientSendsWebPlayerHeaders(t *testing.T) {
+	var gotOrigin, gotAuth, gotMUT string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotOrigin = r.Header.Get("Origin")
+		gotAuth = r.Header.Get("Authorization")
+		gotMUT = r.Header.Get("Media-User-Token")
+		w.Write([]byte(`{"data":[{"id":"tw"}]}`))
+	})
+	if _, err := c.Storefront(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotOrigin != "https://music.apple.com" {
+		t.Errorf("Origin = %q", gotOrigin)
+	}
+	if gotAuth != "Bearer DEV" {
+		t.Errorf("Authorization = %q", gotAuth)
+	}
+	if gotMUT != "MUT" {
+		t.Errorf("Media-User-Token = %q", gotMUT)
+	}
+
+	if !strings.Contains(DefaultAPIBase, "amp-api") {
+		t.Fatalf("DefaultAPIBase = %q,應指向 amp-api", DefaultAPIBase)
+	}
+	if def := NewClient(&http.Client{}, "", "DEV", "MUT"); def.base != DefaultAPIBase {
+		t.Errorf("base 空字串應預設 DefaultAPIBase,得到 %q", def.base)
+	}
+}
+
 func TestDoSendsBothTokens(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer DEV" || r.Header.Get("Music-User-Token") != "MUT" {
+		if r.Header.Get("Authorization") != "Bearer DEV" || r.Header.Get("Media-User-Token") != "MUT" {
 			t.Errorf("headers = %v", r.Header)
 		}
 		w.Write([]byte(`{"data":[{"id":"tw"}]}`))
@@ -56,13 +89,14 @@ func TestDoMapsAuthErrors(t *testing.T) {
 
 func TestPreflight(t *testing.T) {
 	cases := []struct {
-		name    string
-		status  int
-		wantErr bool
+		name         string
+		status       int
+		wantVerified bool
+		wantErr      bool
 	}{
-		{"200 通過", 200, false},
-		{"404 視為通過(端點形狀可能異動)", 404, false},
-		{"401 判定 dev token 被拒", 401, true},
+		{"200 通過", 200, true, false},
+		{"404 視為未驗證,不是失敗(端點形狀可能異動)", 404, false, false},
+		{"401 判定 dev token 被拒", 401, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,8 +104,8 @@ func TestPreflight(t *testing.T) {
 				if r.URL.Path != "/storefronts/us" {
 					t.Errorf("path = %s,應打 /storefronts/us", r.URL.Path)
 				}
-				if r.Header.Get("Music-User-Token") != "" {
-					t.Error("preflight 不該帶 Music-User-Token")
+				if r.Header.Get("Media-User-Token") != "" {
+					t.Error("preflight 不該帶 Media-User-Token")
 				}
 				w.WriteHeader(tc.status)
 				if tc.status >= 400 {
@@ -82,17 +116,54 @@ func TestPreflight(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			c := NewClient(srv.Client(), srv.URL, "DEV", "") // preflight 不需 MUT
-			err := c.Preflight(context.Background())
+			verified, err := c.Preflight(context.Background())
 			if tc.wantErr && err == nil {
 				t.Fatal("預期錯誤,得到 nil")
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("預期通過,得到 %v", err)
+				t.Fatalf("預期不回錯誤,得到 %v", err)
+			}
+			if verified != tc.wantVerified {
+				t.Errorf("verified = %v, want %v", verified, tc.wantVerified)
 			}
 			if tc.wantErr && !errors.Is(err, provider.ErrAuthExpired) {
 				t.Errorf("失敗應仍映射 ErrAuthExpired,得到 %v", err)
 			}
+			if tc.wantErr && !strings.Contains(err.Error(), fmt.Sprint(tc.status)) {
+				t.Errorf("錯誤訊息應含狀態碼,得到 %v", err)
+			}
 		})
+	}
+}
+
+// TestPreflight403MentionsDeveloperTokenNotMUT:Preflight 沒帶 MUT,403 只可能是 developer token /
+// Origin 被拒——不該重用 do() 對一般請求 403 的「Music User Token」措辭,否則 applePersist 組出來的
+// 錯誤訊息會自我矛盾(review item 3)。
+func TestPreflight403MentionsDeveloperTokenNotMUT(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Media-User-Token") != "" {
+			t.Error("preflight 不該帶 Media-User-Token")
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"errors":[{"status":"403","title":"Forbidden"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.Client(), srv.URL, "DEV", "") // preflight 不需 MUT
+	verified, err := c.Preflight(context.Background())
+	if err == nil {
+		t.Fatal("預期錯誤,得到 nil")
+	}
+	if verified {
+		t.Error("403 不該視為通過")
+	}
+	if !errors.Is(err, provider.ErrAuthExpired) {
+		t.Errorf("應仍映射 ErrAuthExpired,得到 %v", err)
+	}
+	if !strings.Contains(err.Error(), "developer token") || !strings.Contains(err.Error(), "403") {
+		t.Errorf("錯誤訊息應含 developer token 與 403,得到 %v", err)
+	}
+	if strings.Contains(err.Error(), "Music User Token") {
+		t.Errorf("Preflight 沒帶 MUT,不該提及 Music User Token:%v", err)
 	}
 }
 
