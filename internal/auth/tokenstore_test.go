@@ -387,3 +387,93 @@ func TestTokenSourceRefreshTimeoutReleasesLock(t *testing.T) {
 		t.Fatal("逾時後鎖未釋放")
 	}
 }
+
+// ⭐ 慢路徑必須真的取鎖:測試自己持鎖扮演「另一個 capy」,Token() 在鎖釋放前不得完成。
+// 拿掉 token() 內的 lockFile 呼叫,這個測試必掛。任何時刻只有一個 goroutine 碰 keychain,mock 的裸 map 不會被 -race 抓到。
+func TestTokenSlowPathTakesLock(t *testing.T) {
+	setTokenTest(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at-new", "rt2"))
+	}))
+	defer srv.Close()
+	if err := SaveToken(testKey, staleToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := NewTokenSource(context.Background(), testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockFile(testKey + ".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		if _, err := ts.Token(); err != nil {
+			t.Error(err)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		unlock()
+		t.Fatal("Token() 在別人持鎖時就完成了:慢路徑沒取鎖")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("放鎖後 Token() 仍未完成")
+	}
+}
+
+// ⭐ refresh 送的必須是鎖內重讀到的 RT,不是建構時載進記憶體的:兩個 source 都拿著 rt1。
+// A refresh 後 keychain 是 rt2,但換出的 token 只剩 30s(< 60s 餘裕),逼 B 真的走到 refresh;
+// B 送 rt2 才對,送記憶體裡的 rt1 就是 issue #3 的 invalid_grant。
+func TestTokenSourceRefreshUsesReloadedRefreshToken(t *testing.T) {
+	setTokenTest(t)
+	var mu sync.Mutex
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		defer mu.Unlock()
+		sent = append(sent, r.PostForm.Get("refresh_token"))
+		n := len(sent)
+		w.Header().Set("Content-Type", "application/json")
+		if r.PostForm.Get("refresh_token") != fmt.Sprintf("rt%d", n) {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"access_token":"at%d","token_type":"Bearer","expires_in":30,"refresh_token":"rt%d"}`, n, n+1)
+	}))
+	defer srv.Close()
+	if err := SaveToken(testKey, staleToken("rt1")); err != nil {
+		t.Fatal(err)
+	}
+	ts1, err := NewTokenSource(context.Background(), testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts2, err := NewTokenSource(context.Background(), testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := ts1.Token(); err != nil || tok.AccessToken != "at1" {
+		t.Fatalf("第一個 source:(%v, %v)", tok, err)
+	}
+	if tok, err := ts2.Token(); err != nil || tok.AccessToken != "at2" {
+		t.Fatalf("第二個 source 應送鎖內重讀到的 rt2 並成功:(%v, %v)", tok, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 2 || sent[0] != "rt1" || sent[1] != "rt2" {
+		t.Errorf("送出的 refresh token 應為 [rt1 rt2],實際 %v", sent)
+	}
+	if stored, err := LoadToken(testKey); err != nil || stored.RefreshToken != "rt3" {
+		t.Errorf("keychain 應含 rt3:(%+v, %v)", stored, err)
+	}
+}
