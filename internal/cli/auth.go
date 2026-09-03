@@ -121,8 +121,9 @@ func appleLogin(cmd *cobra.Command) error {
 	if user == "" {
 		user = os.Getenv("CAPY_APPLE_USER_TOKEN")
 	}
-	if auto, _ := cmd.Flags().GetBool("auto"); auto && dev == "" {
+	if auto, _ := cmd.Flags().GetBool("auto"); auto && dev == "" { // dev 非空(flag/env 明確提供)優先於 --auto;有 dev 時本區塊整段略過,--auto 形同未設
 		// 唯一例外(CLAUDE.md):隱藏、opt-in、開發者自負。揭露照樣不可跳過。
+		fmt.Fprintln(cmd.ErrOrStderr(), "--auto:將以 AppleScript 讀取已登入分頁的 MusicKit token(隱藏功能,開發者自負)")
 		if stdinIsTTY() {
 			if err := confirmAppleDisclosure(); err != nil {
 				return err
@@ -249,6 +250,10 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 			return err
 		}
 	}
+	cfg, err := config.Load() // 先讀 config:壞掉的 config.json 不該等 keychain 寫完才發現
+	if err != nil {
+		return err
+	}
 	hc := &http.Client{Timeout: 30 * time.Second}
 	if err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(ctx); err != nil {
 		return fmt.Errorf("developer token 被 Apple 拒絕 — 重新複製 authorization 標頭(Apple 可能已輪替):%w", err)
@@ -267,10 +272,6 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 		if err := secret.Set(apple.KeyMusicUserToken, user); err != nil {
 			return fmt.Errorf("寫入 keychain 失敗:%w", err)
 		}
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
 	}
 	cfg.AppleStorefront = sf
 	if err := config.Save(cfg); err != nil {

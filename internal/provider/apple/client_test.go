@@ -129,6 +129,34 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
+// TestPreflight403MentionsDeveloperTokenNotMUT:Preflight 沒帶 MUT,403 只可能是 developer token /
+// Origin 被拒——不該重用 do() 對一般請求 403 的「Music User Token」措辭,否則 applePersist 組出來的
+// 錯誤訊息會自我矛盾(review item 3)。
+func TestPreflight403MentionsDeveloperTokenNotMUT(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Media-User-Token") != "" {
+			t.Error("preflight 不該帶 Media-User-Token")
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"errors":[{"status":"403","title":"Forbidden"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.Client(), srv.URL, "DEV", "") // preflight 不需 MUT
+	err := c.Preflight(context.Background())
+	if err == nil {
+		t.Fatal("預期錯誤,得到 nil")
+	}
+	if !errors.Is(err, provider.ErrAuthExpired) {
+		t.Errorf("應仍映射 ErrAuthExpired,得到 %v", err)
+	}
+	if !strings.Contains(err.Error(), "developer token") || !strings.Contains(err.Error(), "403") {
+		t.Errorf("錯誤訊息應含 developer token 與 403,得到 %v", err)
+	}
+	if strings.Contains(err.Error(), "Music User Token") {
+		t.Errorf("Preflight 沒帶 MUT,不該提及 Music User Token:%v", err)
+	}
+}
+
 func TestDoParsesAppleError(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)

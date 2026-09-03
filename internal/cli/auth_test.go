@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -345,6 +346,37 @@ func TestAuthLoginAppleStorefront403DoesNotPersistDevToken(t *testing.T) {
 		t.Fatalf("應回 user token 403:%v", err)
 	}
 	assertAppleNotPersisted(t)
+}
+
+// TestAuthLoginAppleCorruptConfigFailsBeforeNetwork:applePersist 應先讀 config 再打網路/寫 keychain——
+// 壞掉的 config.json 不該等 Preflight/Storefront 都過、keychain 都寫完才發現(review item 1:
+// 「失敗不留半殘狀態」的 all-or-nothing 也該蓋到 config 讀取順序)。
+// 不能用 assertAppleNotPersisted:config.Load() 本身就會出錯,cfg 是 nil,那個 helper 會 nil deref panic。
+func TestAuthLoginAppleCorruptConfigFailsBeforeNetwork(t *testing.T) {
+	clearAppleTokens(t)
+	dir := os.Getenv("CAPY_CONFIG_DIR")
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exp := time.Now().Add(24 * time.Hour)
+	dev := fakeJWT(t, exp)
+	hits := appleServer(t, dev, "MUT1")
+	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", dev)
+	t.Setenv("CAPY_APPLE_USER_TOKEN", "MUT1")
+
+	_, err := runCLI(t, "auth", "login", "apple", "--i-understand")
+	if err == nil {
+		t.Fatal("壞 config.json 應導致錯誤")
+	}
+	if n := atomic.LoadInt32(hits); n != 0 {
+		t.Errorf("config 讀取失敗應在任何網路請求之前,hits = %d, want 0", n)
+	}
+	if _, err := secret.Get(apple.KeyDeveloperToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("developer token 不應被寫入:err=%v", err)
+	}
+	if _, err := secret.Get(apple.KeyMusicUserToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Errorf("user token 不應被寫入:err=%v", err)
+	}
 }
 
 func TestAuthLoginAppleOnlyDevTokenKeepsUserToken(t *testing.T) {
@@ -908,6 +940,23 @@ func TestNewAppleProviderNeedsLogin(t *testing.T) {
 	_, err := newProvider(context.Background(), "apple")
 	if err == nil || !strings.Contains(err.Error(), "過期") || !strings.Contains(err.Error(), "capy auth login apple") {
 		t.Fatalf("過期應提示重新登入:%v", err)
+	}
+}
+
+// TestNewAppleProviderSucceedsWithTokens:三個必要條件(dev token 未過期、user token 存在、
+// storefront 已設定)都滿足時應成功回傳 provider——先前只有失敗路徑(上面 TestNewAppleProviderNeedsLogin)
+// 有測試覆蓋,成功路徑沒有(review item 7)。
+func TestNewAppleProviderSucceedsWithTokens(t *testing.T) {
+	setupAppleTokens(t)
+	if err := config.Save(&config.Config{AppleStorefront: "tw"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := newProvider(context.Background(), "apple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil {
+		t.Error("provider 不應為 nil")
 	}
 }
 

@@ -685,13 +685,13 @@ SQLite 是 **cache + 離線佇列**,不是 source of truth。刪掉整個 db 應
 |---|---|---|
 | **P0-1** | 用 curl 打通 Apple developer token → `GET /v1/catalog/tw/search`,確認 ISRC 有回傳 | ISRC 是整個 resolver 的基礎 |
 | **P0-2** | ⚠️ **驗證 Apple Music API 能否從 library playlist 移除/重排曲目** | 若不行,Apple 端 push 只能用 rebuild 策略,要改 §6.5 |
-| **P0-3** | 驗證 MusicKit JS 在 `http://127.0.0.1:{隨機port}` 能否成功 `authorize()` | 若不行,要改成固定 port 或本地 HTTPS |
+| **P0-3** | ~~驗證 MusicKit JS 在 `http://127.0.0.1:{隨機port}` 能否成功 `authorize()`~~ | ~~若不行,要改成固定 port 或本地 HTTPS~~(v0.5 作廢,見 2026-09-03 排程註記) |
 | **P0-4** | 量測 Spotify Development Mode 的實際 rate limit | 決定同步的併發度與退避策略 |
 | P0-5 | 專案骨架:cobra + config + keychain + loopback server | — |
 
 **P0-2 和 P0-3 是架構風險點,建議會籍生效第一天就打 curl 驗證,不要等到寫完再發現。**
 
-> **排程註記(2026-09-01):** Apple Developer 會籍申請中。P0-1/P0-2/P0-3 全部需要 developer token → **gate 在會籍生效**;P0-4/P0-5 與 P1 先行。就算 P0-2 驗出「不能移除/重排」,§6.5 已備好 rebuild fallback,不會推翻架構。
+> ~~**排程註記(2026-09-01):** Apple Developer 會籍申請中。P0-1/P0-2/P0-3 全部需要 developer token → **gate 在會籍生效**;P0-4/P0-5 與 P1 先行。就算 P0-2 驗出「不能移除/重排」,§6.5 已備好 rebuild fallback,不會推翻架構。~~(v0.5 作廢,見 2026-09-03 排程註記)
 
 ### P1 — Spotify 全鏈路
 `auth login spotify`(BYO client ID,huh 表單精靈)→ `search` → `play/pause/next` via Connect → `pl list/show` → **`doctor`**(定案進 P1,見 §8.5.7)
@@ -721,7 +721,7 @@ op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 
 1. **binary 名** — `capy`,不做 `cm` 短別名
 2. **語言** — Go,module `github.com/Tai-ch0802/capy-music`
-3. ~~**Worker 網域** — `capy.taislife.work`~~(v0.5 作廢,Worker 已移除;見決策 9)
+3. ~~**Worker 網域** — `capy.taislife.work`~~(v0.5 作廢,Worker 已移除;見附錄 C 決策 8 與本節第 9 項)
 4. **平台** — macOS + Windows 第一天支援;**Linux 非目標**
 5. **TUI** — 第一天進場(charm 全家桶);非 TTY 純文字輸出為鐵則(見 §2)
 6. **發佈定位** — 一開始就對外發佈;`capy doctor` 進 P1
@@ -790,7 +790,7 @@ capy doctor
 | 5 | 語言 | Go(Rust 已評估未採用) | 效能平手(瓶頸在網路 API,兩者皆原生 binary);TUI 生態 charm 全家桶對「酷炫」目標明顯佔優(bubbletea v2 + lipgloss + bubbles + huh vs 較底層的 ratatui);交叉編譯與個人維護成本 Go 較低;Rust 型別系統對同步引擎的小幅優勢改以測試補償 |
 | 6 | 命名 | binary `capy`,不做 `cm` 別名 | 一個名字就夠,使用者自行 alias;少一個安裝器要管的 shim |
 | 7 | Worker 網域 | `capy.taislife.work` | 沿用既有網域;隱私權政策與 Google brand verification 掛同一網域;endpoint 為 binary 預設值但可被 config 覆寫(自架/BYO `.p8` 場景)。**v0.5 隨決策 8 作廢** |
-| 8 | Apple 憑證(2026-09-03) | 使用者自抓 web token BYO;`.p8`/Worker/MusicKit 橋接全刪(快照 `3649b7b`);隱藏 `--auto` | 會籍審核未決 + 專案開源憑證全面 BYO:官方路徑需維護者代持 `.p8` 與付費,與 BYO 精神相悖。代價是 R-6(完全依賴 Apple 不改機制)與 ToS 灰色地帶,以指令內強制揭露、預設絕不自動擷取(只指導)承擔。`--auto`(讀 cookie DB / 驅動瀏覽器)應維護者要求做為未文件化 opt-in、開發者自負,不改變預設路徑鐵則;維護者在充分知悉技術限制(developer token 是標頭非 cookie)與法律面差異後定案 |
+| 8 | Apple 憑證(2026-09-03) | 使用者自抓 web token BYO;`.p8`/Worker/MusicKit 橋接全刪(快照 `3649b7b`);隱藏 `--auto` | 會籍審核未決 + 專案開源憑證全面 BYO:官方路徑需維護者代持 `.p8` 與付費,與 BYO 精神相悖。代價是 R-6(完全依賴 Apple 不改機制)與 ToS 灰色地帶,以指令內強制揭露、預設絕不自動擷取(只指導)承擔。`--auto`(AppleScript 驅動已登入的 Safari / Chrome 分頁,不讀 cookie DB,見 §4.3(d))應維護者要求做為未文件化 opt-in、開發者自負,不改變預設路徑鐵則;維護者在充分知悉技術限制(developer token 是標頭非 cookie)與法律面差異後定案 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 

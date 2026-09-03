@@ -121,6 +121,9 @@ func (c *Client) Preflight(ctx context.Context) error {
 	if err == nil || status == http.StatusNotFound {
 		return nil
 	}
+	if status == http.StatusForbidden { // 沒帶 MUT,403 只可能是 developer token / Origin——do() 的通用 403 措辭會誤指 MUT
+		return fmt.Errorf("developer token 或 Origin 被拒(403):%w", provider.ErrAuthExpired)
+	}
 	return err
 }
 

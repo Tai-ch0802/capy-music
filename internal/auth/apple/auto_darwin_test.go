@@ -4,9 +4,44 @@ package apple
 
 import (
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+// TestOsaErr:exec.Command(...).Output() 失敗時只回傳 exit code,真正原因(如 TCC 拒絕自動化的
+// -1743)在 stderr——osaErr 把 stderr 抽出來當 error 訊息,讓 AutoWebTokens 的彙總失敗訊息分辨得出
+// 「未授權自動化」與「JavaScript from Apple Events 未開」(review item 2)。
+// runOSA 是套件變數,stub 版測試(stubOSA)繞過真正的 exec.Command,蓋不到這段——故獨立測 osaErr。
+func TestOsaErr(t *testing.T) {
+	t.Run("ExitError 帶 stderr 時抽出 stderr", func(t *testing.T) {
+		// ProcessState 刻意留 nil:osaErr 只讀 Stderr 欄位,不呼叫 ee.Error()(那個才需要 ProcessState)。
+		ee := &exec.ExitError{Stderr: []byte("execution error: Not authorized to send Apple events to Safari. (-1743)\n")}
+		got := osaErr(ee)
+		want := "execution error: Not authorized to send Apple events to Safari. (-1743)"
+		if got == nil || got.Error() != want {
+			t.Errorf("osaErr = %v, want %q", got, want)
+		}
+	})
+	t.Run("nil error 原樣回傳", func(t *testing.T) {
+		if got := osaErr(nil); got != nil {
+			t.Errorf("osaErr(nil) = %v, want nil", got)
+		}
+	})
+	t.Run("非 ExitError 原樣回傳", func(t *testing.T) {
+		orig := errors.New("boom")
+		if got := osaErr(orig); got != orig {
+			t.Errorf("osaErr = %v, want %v(原樣回傳)", got, orig)
+		}
+	})
+	t.Run("ExitError 但 Stderr 為空原樣回傳", func(t *testing.T) {
+		ee := &exec.ExitError{}
+		got := osaErr(ee)
+		if got != error(ee) {
+			t.Errorf("osaErr = %v, want %v(原樣回傳,沒有 stderr 可抽)", got, ee)
+		}
+	})
+}
 
 type osaResult struct {
 	out string
