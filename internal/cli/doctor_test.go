@@ -3,13 +3,18 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/zalando/go-keyring"
+	"golang.org/x/oauth2"
 
+	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
@@ -132,6 +137,76 @@ func TestDoctorAppleChecksKeychainErrorNotReportedAsMissing(t *testing.T) {
 	}
 }
 
+// ⭐ issue #3:一次 doctor 只能輪替一次 refresh token。
+// 修正前 ⑤「Token 換發」自己建 token source 換一次、⑥「Spotify API」走 newProvider 又建一個再換一次,
+// 同一次 doctor 輪替兩次;第二次還可能拿到已失效的舊 RT。假 token 端點只認目前的 RT,舊的回 invalid_grant。
+func TestDoctorRotatesRefreshTokenOnce(t *testing.T) {
+	setCLITestConfig(t)
+	if err := config.Save(&config.Config{SpotifyClientID: "0123456789abcdef0123456789abcdef"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = secret.Delete(auth.KeySpotifyToken)
+		_ = secret.Delete(auth.KeySpotifyRefreshToken)
+	})
+	if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+		t.Fatal(err)
+	}
+	// 起始 token 是新鮮的(1 小時後才到期):⑤ 的強制換發是唯一該打 token 端點的地方。
+	if err := auth.SaveToken(auth.KeySpotifyToken, &oauth2.Token{
+		AccessToken: "at0", TokenType: "Bearer", RefreshToken: "rt0", Expiry: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var refreshes atomic.Int32
+	current := "rt0"
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := refreshes.Add(1)
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		if r.PostForm.Get("refresh_token") != current {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		current = fmt.Sprintf("rt%d", n)
+		fmt.Fprintf(w, `{"access_token":"at%d","token_type":"Bearer","expires_in":3600,"refresh_token":%q}`, n, current)
+	}))
+	defer tokenSrv.Close()
+	origEndpoint := auth.SpotifyEndpoint
+	auth.SpotifyEndpoint.TokenURL = tokenSrv.URL
+	t.Cleanup(func() { auth.SpotifyEndpoint = origEndpoint })
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/me/player/devices" {
+			t.Errorf("非預期 API 路徑:%s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"devices":[]}`)
+	}))
+	defer apiSrv.Close()
+	origBase := spotifyAPIBase
+	spotifyAPIBase = apiSrv.URL
+	t.Cleanup(func() { spotifyAPIBase = origBase })
+
+	buf := &strings.Builder{}
+	runChecks(context.Background(), buf, spotifyChecks())
+	out := buf.String()
+	if !strings.Contains(out, "✅ Token 換發") {
+		t.Errorf("⑤ 應通過:%q", out)
+	}
+	if !strings.Contains(out, "✅ Spotify API") {
+		t.Errorf("⑥ 應通過(用 ⑤ 換好的 token,不再輪替):%q", out)
+	}
+	if n := refreshes.Load(); n != 1 {
+		t.Errorf("一次 doctor 只該輪替 1 次 refresh token,實際 %d 次", n)
+	}
+	stored, err := auth.LoadToken(auth.KeySpotifyToken)
+	if err != nil || stored.RefreshToken != "rt1" {
+		t.Errorf("輪替後的 RT 必須留在 keychain:(%+v, %v)", stored, err)
+	}
+}
+
 // TestDoctorAppleExpiredDevToken:keychain 有 developer token 但已過期 → ❌ 並提示過期。
 func TestDoctorAppleExpiredDevToken(t *testing.T) {
 	clearAppleTokens(t)
@@ -142,5 +217,48 @@ func TestDoctorAppleExpiredDevToken(t *testing.T) {
 	detail, err := checkAppleDevToken(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "過期") {
 		t.Fatalf("過期應回錯並含「過期」:(%q, %v)", detail, err)
+	}
+}
+
+// ⭐ ④⑤ 不得把真正的錯誤吞掉印成「沒有 refresh token」/「需要先通過 refresh token 檢查」:
+// 本分支起 keychain 內容可能是壞掉的 JSON,也可能整個讀不到(被拒絕存取、已鎖定)。
+// 尤其⑤,吞掉後印出的那句會緊接在④的 ✅ 後面自相矛盾,使用者完全無從下手。
+// 把兩處還原成無條件的固定字串,這個測試會掛。
+func TestDoctorReportsCorruptKeychainInsteadOfMissing(t *testing.T) {
+	setCLITestConfig(t)
+	if err := config.Save(&config.Config{SpotifyClientID: "0123456789abcdef0123456789abcdef"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = secret.Delete(auth.KeySpotifyToken)
+		_ = secret.Delete(auth.KeySpotifyRefreshToken)
+	})
+	if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := secret.Set(auth.KeySpotifyToken, "{壞掉的 JSON"); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := checkRefreshToken(context.Background())
+	if err == nil {
+		t.Fatalf("內容毀損應失敗,得到 %q", detail)
+	}
+	if strings.Contains(err.Error(), "沒有 refresh token") {
+		t.Errorf("內容毀損不是「沒有」:%v", err)
+	}
+	if !strings.Contains(err.Error(), "不是有效的 token JSON") {
+		t.Errorf("應帶出真正的原因:%v", err)
+	}
+
+	detail, err = checkTokenRefresh(context.Background())
+	if err == nil {
+		t.Fatalf("內容毀損應失敗,得到 %q", detail)
+	}
+	if strings.Contains(err.Error(), "需要先通過 refresh token 檢查") {
+		t.Errorf("④ 剛印過 ❌ 的真正原因,⑤ 不該改口說是前一項沒過:%v", err)
+	}
+	if !strings.Contains(err.Error(), "不是有效的 token JSON") {
+		t.Errorf("應帶出真正的原因:%v", err)
 	}
 }

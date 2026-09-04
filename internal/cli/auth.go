@@ -265,12 +265,16 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	if err != nil {
 		return err
 	}
+	base, err := appleAPIBase()
+	if err != nil {
+		return err
+	}
 	hc := &http.Client{Timeout: 30 * time.Second}
-	verified, err := appleprov.NewClient(hc, appleAPIBase(), dev, "").Preflight(ctx)
+	verified, err := appleprov.NewClient(hc, base, dev, "").Preflight(ctx)
 	if err != nil {
 		return fmt.Errorf("developer token 被 Apple 拒絕 — 重新複製 authorization 標頭(Apple 可能已輪替):%w", err)
 	}
-	sf, err := appleprov.NewClient(hc, appleAPIBase(), dev, user).Storefront(ctx)
+	sf, err := appleprov.NewClient(hc, base, dev, user).Storefront(ctx)
 	if err != nil {
 		if !verified {
 			err = fmt.Errorf("%w;preflight 回 404,也可能是 API base 或端點形狀不對(CAPY_APPLE_API_BASE,見計畫附錄 A C-0)", err)
@@ -350,7 +354,7 @@ func newAuthStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(w, "  client_id: 未設定")
 			}
-			if _, err := secret.Get(auth.KeySpotifyRefreshToken); err == nil {
+			if err := auth.SpotifyStored(); err == nil { // 新鍵優先,尚未升級的舊鍵也算「已登入」
 				fmt.Fprintln(w, "  refresh token: keychain 存在")
 			} else {
 				fmt.Fprintln(w, "  refresh token: 不存在(執行 capy auth login spotify)")
@@ -392,7 +396,8 @@ func newAuthLogoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "spotify":
-				if err := secret.Delete(auth.KeySpotifyRefreshToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+				// 刪哪幾個鍵、要不要鎖,是 auth package 的內部知識(見 auth.LogoutSpotify)。
+				if err := auth.LogoutSpotify(cmd.Context()); err != nil {
 					return err
 				}
 			case "apple":

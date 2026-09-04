@@ -88,11 +88,16 @@ func checkPort8888(ctx context.Context) (string, error) {
 	return "8888 可用", nil
 }
 
+// checkRefreshToken:「沒有」與「讀不到 / 內容毀損」是不同的病、不同的下一步,不能都印成「沒有」。
 func checkRefreshToken(ctx context.Context) (string, error) {
-	if _, err := secret.Get(auth.KeySpotifyRefreshToken); err != nil {
+	switch err := auth.SpotifyStored(); {
+	case err == nil:
+		return "keychain 存在", nil
+	case errors.Is(err, secret.ErrNotFound):
 		return "", errors.New("keychain 沒有 refresh token — 執行 capy auth login spotify")
+	default:
+		return "", fmt.Errorf("讀取 keychain 失敗(可能被拒絕存取、已鎖定或內容毀損):%w", err)
 	}
-	return "keychain 存在", nil
 }
 
 func checkTokenRefresh(ctx context.Context) (string, error) {
@@ -101,10 +106,18 @@ func checkTokenRefresh(ctx context.Context) (string, error) {
 		return "", errors.New("需要先通過設定檔檢查")
 	}
 	ts, err := auth.SpotifyTokenSource(ctx, cfg.SpotifyClientID)
-	if err != nil {
+	switch {
+	case err == nil:
+	case errors.Is(err, secret.ErrNotFound):
 		return "", errors.New("需要先通過 refresh token 檢查")
+	default:
+		// JSON 毀損、keychain 讀不到、等鎖被中斷、遷移失敗都會走到這。一律印「需要先通過 refresh token
+		// 檢查」的話,會緊接在上一項的 ✅ 後面自相矛盾,而且真正的原因被吞掉。
+		return "", fmt.Errorf("無法建立 token source(keychain 內容毀損、被拒絕存取,或另一個 capy 正持有鎖):%w", err)
 	}
-	if _, err := ts.Token(); err != nil {
+	// 這一項就是要明確驗「refresh token 還活著」,所以強制換發;結果會寫回 keychain,
+	// 後面的 ⑥ Spotify API 直接用這顆新 token,一次 doctor 只輪替一次(issue #3)。
+	if _, err := ts.Refresh(); err != nil {
 		return "", fmt.Errorf("換發失敗(token 可能已被撤銷,重跑 capy auth login spotify):%w", err)
 	}
 	return "access token 換發成功(輪替已依硬約束覆寫)", nil

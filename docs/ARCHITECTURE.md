@@ -1,7 +1,7 @@
 # capy-music — 跨平台音樂 CLI 架構規劃
 
 > 專案名稱 `capy-music`,binary `capy`
-> 文件版本 v0.5 — 2026-09-03(Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
+> 文件版本 v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
 > 本文件為架構基準,所有「已驗證」標記的事實均於 2026-08 查證。
 
 ---
@@ -321,23 +321,34 @@ Scopes:
 
 設定要點:
 - Cloud Console → Credentials → **OAuth client type: Desktop app**
-- Publishing status **必須設為 "In production"**(Testing 模式 refresh token 7 天過期)
+- Publishing status **必須設為 "In production"**(Testing 模式 refresh token 7 天過期)。**`drive.appdata` 不在豁免清單**——只有 `openid` / `userinfo.email` / `userinfo.profile` 豁免——BYO 使用者漏按 Publish app 會在第 7 天莫名被登出;`invalid_grant` 且 token 年齡 < 8 天時,錯誤訊息要把「忘了按 Publish app」列為第一嫌疑
 - 只用非敏感 scope → 只需 basic verification,不會出現「此應用程式未經驗證」畫面
 - `access_type=offline` + `prompt=consent`(首次)才會拿到 refresh_token
+
+**client 歸屬:內建 / BYO 雙路徑(附錄 C 決策 9)**
+- release binary 內建維護者的 Desktop client,client ID / secret 由 `-ldflags -X` 在發行時注入,**絕不 commit 進 repo**(Google 政策明文禁止把 client credential 放進公開 repo)。從原始碼 `go install` 的 binary 沒有注入值 → `auth login google` 自動走 BYO 精靈(建專案 → 啟用 Drive API → Branding → Data Access 只加三個 scope → **Publish app** → 建 Desktop client 並立刻複製 secret,它只顯示一次)。
+- 程式對兩條路徑一視同仁——內建值只是預設常數,不是分支;`--client-id` / `--client-secret`(或 `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`)一律可覆寫。
+- BYO 的 client secret **只進 keychain**(`google.client_secret`),不進 config;client ID 非機密,進 config。這是 CLAUDE.md「憑證只進 keychain」的唯一放寬:內建 secret 會編進 release binary,涵蓋的是 app 自身識別,不是任何使用者憑證。
+- **`client_secret` 是否必送**:Desktop client 會發 secret,但官方文件把 token 交換的 `client_secret` 標 Optional、豁免清單只列 Android / iOS / Chrome,語意矛盾 → **以實測為準**(不帶 secret 打一次 token 端點;計畫 `docs/superpowers/plans/2026-09-03-p3-google-drive.md` §2.1 G-0,T3 前決定);在此之前 BYO 精靈要求使用者複製兩個值。
+- **refresh token 不輪替**:refresh 回應不帶新的 `refresh_token`,不要照抄 Spotify 的輪替覆寫特例(§4.2);但 access token 換了照樣寫回同一筆 keychain 記錄(§4.5)。失效條件:使用者撤銷、6 個月未使用、每帳號每 client 上限 100 個(超過淘汰最舊)——`doctor` 的錯誤訊息要能分辨。
 
 ### 4.5 憑證儲存與生命週期
 
 | 憑證 | 儲存 | 生命週期 | 更新方式 |
 |---|---|---|---|
-| Spotify access token | 記憶體 | 1h | refresh token |
-| Spotify refresh token | **OS Keychain** | 長期 / **會輪替** | 每次 refresh 覆寫 |
+| Spotify access token | **OS Keychain**(與 refresh token 同一筆 JSON 記錄,附錄 C 決策 11) | 1h | refresh token;refresh 路徑加跨程序檔案鎖,鎖內重讀 keychain 後才 refresh |
+| Spotify refresh token | **OS Keychain**(同上一筆記錄) | 長期 / **會輪替** | 每次 refresh 覆寫 |
 | Spotify client_id | config 檔(非機密) | 永久 | 使用者輸入 |
 | Apple developer token | **OS Keychain**(JSON 含 exp;使用者貼上) | 依 Apple 輪替(觀察約數月) | 使用者重貼(`auth login apple`,可只更新此項) |
 | Apple Music User Token | **OS Keychain**(使用者貼上) | 長期 / 無 refresh | 過期需重貼(§4.3(b)) |
-| Google access token | 記憶體 | 1h | refresh token |
-| Google refresh token | **OS Keychain** | 長期 | 標準 refresh |
+| Google access token | **OS Keychain**(與 refresh token 同一筆 JSON 記錄,形狀與 Spotify 相同) | 1h | refresh token;同一把跨程序檔案鎖 |
+| Google refresh token | **OS Keychain**(同上一筆記錄) | 長期 / **不輪替** | 標準 refresh;回應不帶新 refresh_token,寫回同一筆記錄 |
+| Google client_id | config 檔(非機密);內建值為 binary 常數 | 永久 | 使用者輸入或發行時注入(§4.4) |
+| Google client_secret | **OS Keychain**(`google.client_secret`,BYO);內建值編進 release binary(決策 9 的唯一放寬) | 永久 | 使用者輸入或發行時注入(§4.4) |
 
 Keychain 後端【定案】:**macOS Keychain / Windows Credential Manager**(`zalando/go-keyring` 皆支援)。**Linux 非目標,不實作。**
+
+上表的「跨程序檔案鎖」不是一把共用的鎖:鎖檔是 `config.Dir()/<keychain 鍵名>.lock`(Spotify = `spotify.token.lock`,Google 之後 = `google.token.lock`),**每個鍵各一把**,跟著 `CAPY_CONFIG_DIR` 走。鎖檔一律是空檔,憑證只進 keychain(CLAUDE.md 硬約束)。
 
 > 未來若支援 Linux:桌面走 Secret Service (libsecret);headless 無 Secret Service 時需加密檔 fallback(v0.3 曾規劃 `~/.config/capy-music/creds.age`,XChaCha20-Poly1305 + `CAPY_PASSPHRASE`、權限 `0600`)。目前不實作,此段僅留檔備查。
 
@@ -352,9 +363,12 @@ Keychain 後端【定案】:**macOS Keychain / Windows Credential Manager**(`zal
 ### 5.1 三層識別策略
 
 ```
-Layer 1 — ISRC(主鍵)
+Layer 1 — ISRC(候選產生器,不是鍵)
    Spotify: track.external_ids.isrc      (2026-03 已回復 ✅)
    Apple:   attributes.isrc
+   同一 ISRC 可回多首:Apple 的 filter[isrc] 明文可回多筆;Spotify 同一 ISRC
+   也可能對到單曲 / 專輯 / 合輯版本 → 消歧序:專輯名相同 > 時長差最小 > 較早發行
+   正規化:大寫、去連字號、非 12 碼視為缺失
    信心度 0.95
 
 Layer 2 — 正規化模糊鍵
@@ -373,7 +387,7 @@ Layer 3 — 人工釘選(最高優先)
 
 | 陷阱 | 表現 | 對策 |
 |---|---|---|
-| 一首錄音多個 ISRC | 重發、remaster、地區版各有 ISRC | 建 ISRC alias set,任一命中即視為同一 cid |
+| 一首錄音多個 ISRC | 重發、remaster、地區版各有 ISRC | 建 ISRC alias set,任一命中即視為同一錄音。**P3 不解**:`cid` 是決定性 ID(§6.2,`i:<正規化 ISRC>`),alias set 無法收斂成同一個 cid,跨 provider 會產生兩筆 canonical track;收斂是 P4 resolver 的工作 |
 | Apple 部分曲目缺 ISRC | `attributes.isrc` 為空 | 自動降級到 Layer 2 |
 | YouTube Music 完全無 ISRC | — | 未來接入時只能 Layer 2 + 人工 |
 | Live / Remix / Cover 誤配 | 標題相近、時長相近 | 標題含 live/remix/acoustic/cover 關鍵字時提高門檻 |
@@ -401,7 +415,7 @@ $ capy resolve --review
 
 1. **SQLite `resolution_cache`** — cid × provider → provider_id,TTL 30 天
 2. **Negative cache** — 查不到的也要記,TTL 7 天,避免每次同步重打
-3. **Drive `tracks/mappings.json`** — 跨裝置共用解析結果,新裝置首次同步幾乎零 API 呼叫
+3. **Drive `tracks.json`**(扁平命名,§6.3;cid → metadata 與 `{ provider: provider_id }` mapping)— 跨裝置共用解析結果,新裝置首次同步幾乎零 API 呼叫
 
 第 3 點很重要:它讓「換一台電腦」不會重跑幾千次 API。
 
@@ -415,9 +429,10 @@ $ capy resolve --review
 |---|---|
 | `origin` | Google Drive appDataFolder |
 | working tree | 各平台上的實際播放清單 |
-| `git fetch` | `capy pl pull` |
-| `git push` | `capy pl push` |
-| 3-way merge base | `base/<provider>.json` 上次同步快照 |
+| `git fetch`(origin → 本機) | `capy pl pull` 內部的 FETCH 步驟(Drive → 本機,§6.5 步驟 1),**不另立命令** |
+| `git commit` + `git push`(working tree → origin) | `capy pl pull`(**平台 → canonical → Drive**,方向依 §9 P4) |
+| `git checkout`(origin → working tree) | `capy pl push`(canonical → 平台) |
+| 3-way merge base | 各裝置自己的 `dev__<device_id>.json` 內 `base[pid][provider]` 上次同步快照(§6.3) |
 
 **canonical 是 source of truth,各平台是投影 (projection)。**
 
@@ -431,8 +446,9 @@ $ capy resolve --review
   "description": "",
   "updated_at": 1756600000,
   "items": [
-    { "cid": "01J8Y...", "rank": "a0", "added_at": 1756500000 },
-    { "cid": "01J8Z...", "rank": "a1", "added_at": 1756500100 }
+    { "iid": "01J8Y...", "cid": "i:TWA472400123", "rank": "a0", "added_at": 1756500000 },
+    { "iid": "01J8Z...", "cid": "p:apple:i.abc123", "rank": "a1", "added_at": 1756500100 },
+    { "iid": "01J90...", "cid": "i:TWA472400123", "rank": "a2", "added_at": 1756500200 }   // 同曲第二次出現,合法(決策 13)
   ],
   "links": {
     "spotify": "37i9dQZF1DX...",
@@ -442,49 +458,54 @@ $ capy resolve --review
 
 // canonical track
 {
-  "cid": "01J8Y...",
-  "isrc": ["TWA472400123"],       // alias set
+  "cid": "i:TWA472400123",        // 決定性 ID,見下
+  "isrc": ["TWA472400123"],       // alias set(P3 不用它收斂 cid,見 §5.2)
   "title": "派對動物",
   "artists": ["五月天"],
   "album": "自傳",
-  "duration_ms": 227000
+  "duration_ms": 227000,
+  "mappings": {                   // cid → 各平台 id;§7 mappings 表就是這個的鏡像,P3 不帶 confidence/pinned
+    "spotify": "6rqhFg...",
+    "apple":   "i.abc123"
+  },
+  "conflicts": [                  // 同 ISRC 但 title/duration 不符的觀測;P3 只記錄不裁決(見下)
+    { "provider": "spotify", "provider_id": "6rqhFg...", "title": "派對動物 (Live)", "duration_ms": 252000 }
+  ]
 }
 ```
 
 **排序用 fractional index(`rank` 欄位)而非整數位置。** 兩台裝置同時在中間插入時,整數位置一定衝突;字典序 rank 可以無衝突地在 `"a0"` 和 `"a1"` 之間生出 `"a0V"`。參考 `rocicorp/fractional-indexing` 演算法。
 
+**`iid` 是 playlist item 的鍵,`cid` 只是屬性(附錄 C 決策 13)。** 每個 item 有自己的 ULID `iid`,同一首歌在同一個清單裡可以出現多次,不去重——Drive 上的副本是 source of truth,現在去重等於備份永久少掉資訊。
+
+**`cid` 是決定性 ID,不是 ULID。** 有 ISRC → `i:<正規化 ISRC>`(大寫、去連字號、非 12 碼視為缺失);沒有 → `p:<provider>:<provider_id>`。cid 是 Drive 檔案裡的鍵,不能隨「當時觀測到什麼」而變:**不做「同 ISRC 但 metadata 不符就退回 `p:`」的防呆**——那會讓裝置 A(只看到一首)與裝置 B(看到衝突)算出不同的 cid。偵測到衝突時照樣用 `i:` 當鍵,把衝突事實寫進 Drive `tracks.json` 該 cid 的 `conflicts[]`(上方 JSON:另一個 provider 的 `provider_id` 與觀測到的 `title` / `duration_ms`)並在 stderr 印一行警告;**不落 SQLite**(§7,db 只存 Drive 上有的東西)。真正的 review queue 是 P4 的事(§5.3),這裡只把事實記在 source of truth 上——髒 ISRC 會讓兩首不同的歌塌進同一個 cid,只印 stderr 太弱。上傳曲 / 純 library 曲沒有 ISRC 也沒有 catalog id,保留成 `p:` 形式的 provider-only track,**絕不可當成已刪除**。
+
 ### 6.3 Drive appData 佈局
 
 ```
-appDataFolder/
+appDataFolder/                       # 扁平,不建子資料夾(見下)
 ├── manifest.json                    # schema_version, devices[], last_compaction
-├── playlists/
-│   └── <pid>/
-│       ├── meta.json                # name, desc, links
-│       ├── snapshot.json            # 最近一次壓縮後的完整狀態
-│       ├── ops/
-│       │   ├── <device_id>.jsonl    # ⭐ 每台裝置只寫自己的檔
-│       │   └── ...
-│       └── base/
-│           ├── spotify.json         # 上次同步時該平台的狀態快照
-│           └── apple.json
-├── tracks/
-│   ├── index.json                   # cid → 曲目 metadata
-│   └── mappings.json                # cid → { provider: provider_id }
-└── export/
-    └── latest.json                  # 人類可讀的完整匯出(逃生口)
+├── tracks.json                      # cid → 曲目 metadata + { provider: provider_id } mapping + conflicts[](§6.2)
+├── pl__<pid>.json                   # canonical playlist(§6.2:name/desc/links + items[])
+├── pl__<pid>.json
+├── dev__<device_id>.json            # ⭐ 每台裝置只寫自己的檔;含 base[pid][provider] = { snapshot, observed_at }
+└── dev__<device_id>.json
 ```
 
-**⭐ `ops/<device_id>.jsonl` 的分檔是核心設計。**
-Drive 沒有 atomic compare-and-swap,也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會 lost update。**每台裝置只寫自己的 log 檔 → 寫入永不衝突。** 讀取時載入所有 device log,依 HLC 排序 replay。這是無鎖的。
+**扁平檔名 + `appProperties`,不建巢狀資料夾。** Drive **不強制同資料夾內檔名唯一**:v0.5 畫的 `playlists/<pid>/` 巢狀樹在兩台裝置同時 resolve-or-create 時會生出兩個同名資料夾。改為所有檔案平放在 appDataFolder,`appProperties` 放 `kind`(manifest / tracks / playlist / device)、`pid`、`device_id`,用 `files.list` 的 `q` 過濾;`fields` 一定要明列(預設只回四個欄位),`nextPageToken` 一律迴圈。同名檔多份時取 `modifiedTime` 最新者並印警告,不清理(merge 對重複檔無害)。每個檔案頂層有 `schema_version`,讀時忽略未知欄位,版本高於 binary 支援即拒寫。
 
-Compaction(合併 ops → snapshot)需要協調,用 `manifest.json` 裡的 lease:
-```jsonc
-{ "compaction_lease": { "device": "macbook", "expires_at": 1756600300 } }
-```
-過期即可搶佔。Compaction 不是必要路徑,失敗就下次再做。
+**⭐ per-device 檔(`dev__<device_id>.json`)是核心設計。**
+Drive 沒有 atomic compare-and-swap(v3 已移除 `etag`,`files.update` 沒有任何 precondition 參數),也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會靜默 last-write-wins。**每台裝置只寫自己的檔 → 這個檔的寫入永不衝突。** `base` 因此從共享檔移進各裝置自己的 `dev__<device_id>.json`,形狀 `base[pid][provider] = { snapshot, observed_at }`,讀取時合併取 `observed_at` 最大者(LWW register)。
+
+**誠實記下的取捨:** `manifest.json` / `tracks.json` / `pl__<pid>.json` 仍是共享檔,兩台裝置同時寫會 last-write-wins;`version` 欄位只能**事後**偵測 lost update,不能防止。P3 以單裝置為主,接受這個風險;**P5 前必須重審**。真正做到無衝突的只有 `dev__<device_id>.json`。
+
+**op log 與 snapshot 的佈局待 P5 重新設計。** v0.5 的 `ops/<device_id>.jsonl`、`snapshot.json` 與 compaction lease(`manifest.json` 的 `compaction_lease`,過期即可搶佔)在扁平化後**路徑未定**;每台裝置只寫自己的 log 檔、讀取時載入所有 device log 依 HLC 排序 replay 的原則不變(§6.4)。P3 不產生也不上傳 op log(附錄 C 決策 10)。
+
+**`export` 只輸出到 stdout,不回存 Drive。** v0.5 的 `export/latest.json` 已刪:逃生口的價值在於「不依賴 Drive」,把它存回 Drive 沒有意義。`capy export` 直接輸出 Drive 檔的合併形式(不發明第三種 JSON 形狀),見 §6.6 與附錄 A。
 
 ### 6.4 操作紀錄格式
+
+> ⚠️ **P5 重新設計;以下為 v0.5 草案。** 扁平化(§6.3)後 op log 與 snapshot 的 Drive 路徑未定;op 定址要改用 `iid`(決策 13,`cid` 不再是 item 的鍵);HLC、tombstone、compaction 的原則保留。P3 不產生也不上傳 op log(附錄 C 決策 10)。
 
 ```jsonc
 { "op": "add",    "pid": "...", "cid": "...", "rank": "a0V", "hlc": "1756600000:0003:macbook" }
@@ -503,8 +524,8 @@ HLC(Hybrid Logical Clock)= `物理時間:計數器:device_id`,提供全序且對
 capy pl sync 的一輪:
 
 1. FETCH
-   ├─ Drive: 讀 manifest + 所有 ops/*.jsonl + snapshot
-   └─ replay → canonical 狀態 C
+   ├─ Drive: 讀 manifest + tracks.json + pl__*.json + 所有 dev__*.json(§6.3;op log 與 snapshot 待 P5,§6.4)
+   └─ replay → canonical 狀態 C(P3 沒有 op log,C = 直接載入的 pl__* 狀態)
 
 2. OBSERVE
    └─ 對每個已連結的 provider,讀取平台實際狀態 L
@@ -512,13 +533,13 @@ capy pl sync 的一輪:
 
 3. DERIVE
    └─ 平台不會給你 ops,只給你 state。
-       ops_local = diff(base[provider], L)
-       → 轉成 op 追加到本機 ops/<device_id>.jsonl
+       ops_local = diff(base[pid][provider], L)
+       → 轉成 op 追加到本裝置的 op log(佈局待 P5,§6.4)
 
 4. MERGE
    └─ C' = replay(all ops, 依 HLC 排序)
        衝突規則:
-         add  vs add  同 cid   → 去重,取較早的 rank
+         add  vs add  同 iid   → 去重,取較早的 rank(同 cid 不同 iid 是兩筆合法項目,決策 13,不去重)
          remove vs move       → remove 勝(刪除意圖較明確),記錄到 sync log
          rename vs rename     → HLC 較大者勝
          rank 衝突            → HLC 較大者勝
@@ -531,8 +552,8 @@ capy pl sync 的一輪:
           → fallback: 建新清單 + 整批寫入 + 改名 + 刪舊(rebuild 策略)
 
 6. COMMIT
-   ├─ 寫回 base/<provider>.json = 新的平台狀態
-   ├─ 上傳 ops/<device_id>.jsonl
+   ├─ 寫回本裝置 dev__<device_id>.json 的 base[pid][provider] = 新的平台狀態
+   ├─ 上傳本裝置的 op log(ops/<device_id>.jsonl;扁平化後路徑待 P5,§6.4)
    └─ 更新 manifest
 ```
 
@@ -543,15 +564,15 @@ capy pl sync 的一輪:
 | 機制 | 說明 |
 |---|---|
 | Dry-run 預設引導 | 首次 `sync` 自動先跑 `--dry-run` 並要求確認 |
-| 刪除閾值 | 單次 push 刪除 >10 首或 >30% 時中止並要求 `--force` |
-| 快照備份 | 每次 push 前,把該平台狀態存到 `base/`,可用 `capy pl restore` 回滾 |
-| Export 逃生口 | `capy export` 產生完整 JSON,不依賴 Drive |
+| 刪除閾值 | 單次 `pl pull` 或 `pl push` 刪除 >10 首或 >30% 時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push) |
+| 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore` 從它回滾的語意隨扁平化改變(base 不再是共享檔),**P5 再定** |
+| Export 逃生口 | `capy export` 輸出完整 JSON 到 stdout(Drive 檔的合併形式),不依賴 Drive、不回存 Drive;Drive 空 / 404 時的反向路徑是 `capy drive init --from-local`(只重新上傳本機 cache,永不對非空 cache 做 hydrate-empty) |
 
 ---
 
 ## 7. 本機儲存(SQLite)
 
-`~/Library/Application Support/capy-music/state.db`(macOS);Windows 用 `%AppData%\capy-music\state.db`;可用 `CAPY_CONFIG_DIR` 覆寫整個設定目錄
+db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
 CREATE TABLE tracks (
@@ -561,19 +582,22 @@ CREATE TABLE tracks (
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (
   cid TEXT, provider TEXT, provider_id TEXT,
-  confidence REAL, pinned INTEGER DEFAULT 0, updated_at INTEGER,
   PRIMARY KEY (cid, provider)
 );
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updated_at INTEGER);
-CREATE TABLE playlist_items (pid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, cid));
+CREATE TABLE playlist_items (pid TEXT, iid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (pid, provider));
-CREATE TABLE ops (hlc TEXT PRIMARY KEY, pid TEXT, payload TEXT, synced INTEGER DEFAULT 0);
 CREATE TABLE sync_state (provider TEXT, pid TEXT, base_hash TEXT, last_sync_at INTEGER, PRIMARY KEY (provider, pid));
 CREATE TABLE resolution_cache (cid TEXT, provider TEXT, provider_id TEXT, found INTEGER, expires_at INTEGER, PRIMARY KEY (cid, provider));
-CREATE TABLE review_queue (cid TEXT, provider TEXT, candidates TEXT, created_at INTEGER, PRIMARY KEY (cid, provider));
 ```
 
-SQLite 是 **cache + 離線佇列**,不是 source of truth。刪掉整個 db 應該能從 Drive 完整重建。這是設計約束,要寫測試驗證。
+Migration:`PRAGMA user_version` 不符就**整檔丟棄重建**(從 Drive hydrate),不寫 ALTER。
+
+SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive 完整重建。這是設計約束,要寫測試驗證。
+
+**`mappings` 在 P3 只有 `(cid, provider, provider_id)`,沒有 `confidence` / `pinned` / `updated_at`。** 這三欄在 Drive 上沒有來源——`tracks.json` 的 mapping 就是 `{ provider: provider_id }`(§5.4、§6.2、§6.3)——留著就等於「刪 db 可從 Drive 完整重建」這條硬約束在規格層面先天不成立。理由與下一段拒收 ops / review 兩張表**完全相同**:db 裡只能存 Drive 上有的東西。而且 P3 沒有 resolver(§9,resolver 與 review queue 是 P4),沒有任何程式碼會產生信心度或釘選。**P4 做 resolver 時要把這三欄同時加回 `tracks.json` 與本表**(§5.1 Layer 3 的人工釘選是使用者意圖,必須跟著 Drive 走才「永久沿用」);migration policy 是整檔丟棄重建,加欄位不用寫 ALTER,成本為零。只加表不加 Drive 形狀,同一個洞就會在 P4 原樣重現。
+
+**P3 不建 `ops` 離線佇列與 review 佇列兩張表(v0.5 有)。** 理由要讀準:已上傳的 op log **在 Drive 上**(§6.3 的 `ops/<device_id>.jsonl`,§6.5 步驟 6 會上傳它),真正不在 Drive 的只有 `synced = 0` 的離線佇列與使用者尚未裁決的 review 項目——這兩樣一旦進 db,「刪 db 可從 Drive 完整重建」就不成立。P3 為了讓這條硬約束成立而不建這兩張表,**不是否決 §6.4 的 op log 設計**;P5 要做離線佇列時,得連同它的重建策略一起回頭加表。db 裡只能存 Drive 上有的東西(canonical 鏡像、各裝置 `base` 副本)與純快取(`resolution_cache`);不存憑證、不存 provider 原始 JSON。
 
 ---
 
@@ -602,7 +626,7 @@ SQLite 是 **cache + 離線佇列**,不是 source of truth。刪掉整個 db 應
 | 項目 | 年費 | 說明 |
 |---|---|---|
 | Apple Developer Program | **$0** | v0.5 起不需要(web token BYO)。若要做 macOS notarization 才需 $99,那是分發議題,與 Apple Music 功能脫鉤 |
-| Google Cloud / Drive API | $0 | Drive API 無用量計費;`drive.appdata` 為非敏感 scope,不需 OAuth 審查 |
+| Google Cloud / Drive API | $0 | Drive API 採 quota units 計量(2026-09-03 查證):每專案每分鐘 1,000,000 quota units、每使用者每專案每分鐘 325,000;`files.get` 5、`files.list` 100、`files.update` 50、下載 200(`files.create` 文件未單獨列出);單檔上傳上限 5 TB。每專案每日超過 400,000,000 quota units 的用量「planned to incur charges to your Google Cloud billing account later in 2026」,Google 承諾變更前至少 90 天預告——個人用量遠低於此,實際 $0,但已不是「永遠免費」,列入附錄 B。`drive.appdata` 為非敏感 scope,不需 OAuth 審查 |
 | GitHub(repo + Actions + Releases) | $0 | 公開 repo 的標準 GitHub-hosted runner 免費且無分鐘上限,**含 macOS runner**(Free 方案最多 5 個並行 macOS job) |
 | 網域 | $0 | 沿用既有網域 `taislife.work`(隱私權政策頁),邊際成本零 |
 | Spotify Developer | $0 | BYO Client ID,成本轉嫁使用者 |
@@ -702,7 +726,7 @@ SQLite 是 **cache + 離線佇列**,不是 source of truth。刪掉整個 db 應
 > **排程註記(2026-09-03):** v0.4 版 P2(`.p8` + Worker + MusicKit 橋接)於 PR #5 完成後,依附錄 C 決策 8 改為 web token BYO(`feat/apple-webtoken`)。真實驗收**不再 gate 於會籍**:拿到 web token 即可跑 search / pl / 播放驗收;P0-3(MusicKit 動態 port)隨橋接移除而作廢;P0-1(ISRC)與 macOS 播放機制 A/B 決勝仍待真跑。
 
 ### P3 — Google + Drive
-`auth login google` → appDataFolder 讀寫 → manifest / snapshot 基礎設施
+`auth login google` → appDataFolder 讀寫 → manifest / device 註冊基礎設施。**範圍依附錄 C 決策 10 擴為 P3 + P4 前半**:canonical model → `pl pull` → SQLite cache 與重建 → `export` / `drive init --from-local` 逃生口;snapshot 佈局待 P5(§6.4)
 
 ### P4 — 單向同步
 canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→ review queue
@@ -742,7 +766,7 @@ op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 ## 附錄 A:CLI 命令表面(草案)
 
 ```
-capy auth login   <spotify|apple|google>
+capy auth login   <spotify|apple|google>                  # google:P3
 capy auth status
 capy auth logout  <provider>
 
@@ -753,17 +777,20 @@ capy now [--watch]
 
 capy pl list
 capy pl show   <name>
-capy pl link   <name> <provider>:<playlist_id>
-capy pl unlink <name> <provider>
-capy pl diff   <name>
-capy pl pull   [--provider P] [--all]
-capy pl push   [--provider P] [--all] [--dry-run] [--force]
-capy pl sync   [--dry-run]
-capy pl restore <name> --provider P
+capy pl link   <name> <provider>:<playlist_id>            # P3;連結規則(自動配名 vs 僅認明確 link)T7 前定
+capy pl unlink <name> <provider>                          # P3
+capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
+capy pl pull   [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3:平台 → canonical → Drive(§6.1);--yes 跳過確認、--force 才越過刪除閾值,兩者分開
+capy pl push   [--provider P] [--all] [--dry-run] [--force]           # P5
+capy pl sync   [--dry-run]                                # P5
+capy pl restore <name> --provider P                       # P5(語意待定,§6.6)
 
-capy resolve --review
-capy export [--out file.json]
-capy import <file.json>
+capy resolve --review                                     # P4 後半
+capy export                                               # P3:Drive 檔的合併形式輸出到 stdout,不回存 Drive
+capy import <file.json>                                   # 延後;P3 的反向逃生口是 drive init --from-local
+capy drive init --from-local                              # P3:Drive 空 / 404 時唯一允許寫入的命令,只重新上傳本機 cache
+capy device list | capy device forget <device_id>         # 延後;P3 只在 manifest 註冊 device_id;forget 是唯一移除裝置檔的路徑(§6.3),尚未排程
+capy db rebuild                                           # 延後;P3 的重建 = 刪 state.db 後由 hydrate 從 Drive 重建(§7,有測試)
 capy doctor
 ```
 
@@ -775,9 +802,10 @@ capy doctor
 | Spotify Development Mode 使用者上限 | 一年內從 25 → 5 | 訂閱 Spotify Developer Changelog |
 | Apple 網頁播放器認證機制 | web developer token 格式/位置、`media-user-token`、amp-api 行為皆可能無預警改變(R-6) | 定期重跑 `auth login apple` 的手動流程;issue 回報即為監控 |
 | Google `drive.appdata` 敏感度分類 | 目前非敏感,若改分類影響巨大 | 每季檢查 Drive API scopes 文件 |
+| Drive API quota units 計費時程 | 每專案每日 >400,000,000 quota units「planned to incur charges … later in 2026」(§8.5.1),Google 承諾至少 90 天預告;個人用量遠低於門檻,但一旦開始計費,§8.5.3「成本與人數無關」就多一個條件 | 每季對照 developers.google.com/workspace/drive/api/guides/limits;訂閱 Google Workspace 開發者公告 |
 | Spotify Lossless over Connect | 目前 Connect 端點只給 320k Ogg | 若開放,遙控播放的音質敘述要更新 |
 
-## 附錄 C:定案紀錄(2026-09-01)
+## 附錄 C:定案紀錄(2026-09-01;決策 8–13 為 2026-09-03)
 
 與維護者逐項討論後定案。若未來要推翻其中任何一項,先讀對應理由。
 
@@ -791,6 +819,10 @@ capy doctor
 | 6 | 命名 | binary `capy`,不做 `cm` 別名 | 一個名字就夠,使用者自行 alias;少一個安裝器要管的 shim |
 | 7 | Worker 網域 | `capy.taislife.work` | 沿用既有網域;隱私權政策與 Google brand verification 掛同一網域;endpoint 為 binary 預設值但可被 config 覆寫(自架/BYO `.p8` 場景)。**v0.5 隨決策 8 作廢** |
 | 8 | Apple 憑證(2026-09-03) | 使用者自抓 web token BYO;`.p8`/Worker/MusicKit 橋接全刪(快照 `3649b7b`);隱藏 `--auto` | 會籍審核未決 + 專案開源憑證全面 BYO:官方路徑需維護者代持 `.p8` 與付費,與 BYO 精神相悖。代價是 R-6(完全依賴 Apple 不改機制)與 ToS 灰色地帶,以指令內強制揭露、預設絕不自動擷取(只指導)承擔。`--auto`(AppleScript 驅動已登入的 Safari / Chrome 分頁,不讀 cookie DB,見 §4.3(d))應維護者要求做為未文件化 opt-in、開發者自負,不改變預設路徑鐵則;維護者在充分知悉技術限制(developer token 是標頭非 cookie)與法律面差異後定案 |
+| 9 | Google client 歸屬(2026-09-03) | binary 內建維護者的 Google Desktop client,但 client ID / secret **絕不 commit 進 repo**,以 `-ldflags -X` 在發行時注入(新增 GoReleaser 發行流程);`--client-id` / `--client-secret` 一律可覆寫;沒有內建值(`go install`)自動落回 BYO 精靈;BYO 的 secret 只進 keychain `google.client_secret`,client ID 進 config;程式對兩條路徑一視同仁 | Google 政策明文禁止把 client credential commit 進公開 repo。與 Spotify(dev mode 5 人上限)/ Apple(會籍與代持 `.p8`)不同:三個 scope 全是 non-sensitive,不需 verification、無 100 人上限,內建 client 不代持任何**使用者**憑證。**這是放寬 CLAUDE.md「憑證只進 keychain」硬約束**(內建 secret 會編進 release binary,`strings capy` 讀得到),只涵蓋 app 自身識別。RFC 8252 §8.5 明講:散佈給使用者的原生 app,其內嵌 secret 任何使用者都能從自己那份取出,本來就不具機密性——這是已知且被接受的風險模型,不是本專案的疏漏。放寬也**只能**停在這裡:使用者憑證沒有這個性質(拿到的是別人的東西,不是自己那份的複製品),所以這個例外不得被援引到任何使用者憑證上。維護者風險:client 6 個月無人使用會被自動刪除(前 30 天通知);client 被停用時所有 release binary 使用者同時壞,救援路徑 = 改用自己的 client |
+| 10 | 下一階段範圍(2026-09-03) | P3 + P4 前半:Google 登入 → Drive appdata 讀寫 → manifest / device 註冊 → canonical model → `pl pull`(平台 → canonical → Drive)→ SQLite cache 與重建 → `export` / `drive init --from-local` 逃生口。不做:fuzzy resolver 與 review queue(P4 後半)、op log / HLC / 三方合併 / `pl push`(P5) | 原 P3 只有 manifest / snapshot 基礎設施,但 canonical playlist 要 `pl pull` 才誕生:P3 沒東西可寫、使用者拿到的價值是零、「刪 db 可從 Drive 重建」的硬約束也沒東西可測 |
+| 11 | issue #3:token 並行 refresh(2026-09-03) | 兩案並用:(a) access token + expiry 也存進 keychain(與 refresh token 同一筆 JSON 記錄),**加上** (b) refresh 路徑加跨程序檔案鎖,鎖內重讀 keychain 雙重檢查後才 refresh。Google 的 token source 從第一天照同一形狀寫,不留兩套 | 只存 refresh token 時,兩個並行 `capy` 各自 refresh,Spotify 輪替後的 RT 會互相踢掉;Google 雖不輪替,但 access token 換了本來就要寫回,寫回路徑相同 |
+| 13 | playlist item 保真(2026-09-03) | item 以自己的 ULID `iid` 為鍵、`cid` 為屬性,同一首歌可在同一清單重複出現,不去重;`cid` 改為決定性 ID(`i:<正規化 ISRC>` / `p:<provider>:<id>`)。§6.2 `items[]` 加 `iid`,§7 `playlist_items` 鍵改 `(pid, iid)` | Drive 上的副本是 source of truth,現在去重等於備份永久少掉資訊,而且之後要改模型很貴。(決策 12「該 session 只產計畫不寫程式」為流程事項,不列) |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 

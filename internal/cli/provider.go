@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -86,8 +87,34 @@ func friendlyErr(providerID string, err error) error {
 	}
 }
 
-// appleAPIBase:測試以 CAPY_APPLE_API_BASE 指向 httptest;正式為空(用預設)。
-func appleAPIBase() string { return os.Getenv("CAPY_APPLE_API_BASE") }
+// spotifyAPIBase:測試用種子;正式為空(用預設 base)。刻意不吃環境變數:oauth2.Transport 不檢查
+// host 也不檢查 scheme,把 base 指到哪都照樣附上 Bearer,而 Spotify 的 base 沒有 Apple C-0 那種
+// 「正確位址還沒定案」的理由需要逃生口(doctor_test 對 auth.SpotifyEndpoint 也是用套件變數種)。
+var spotifyAPIBase string
+
+// appleAPIBaseSeed:測試用種子(httptest 是 http://,不經過下面的 https 檢查);正式為空。
+var appleAPIBaseSeed string
+
+// appleAPIBase:Apple API base 的覆寫,是驗收步驟 C-0 的逃生口(正確的 host 與端點形狀還沒用真 token
+// 驗過,所以不做白名單——那會把 C-0 本身擋掉)。但一律要求 https:這條路送出的標頭裡有 developer token
+// 與 Media-User-Token(長期有效的帳號憑證),明文連線等於外洩。
+func appleAPIBase() (string, error) {
+	if appleAPIBaseSeed != "" {
+		return appleAPIBaseSeed, nil
+	}
+	raw := os.Getenv("CAPY_APPLE_API_BASE")
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("CAPY_APPLE_API_BASE 不是合法的 URL(%v)— 請改成 https://<主機>/v1 的形式", err)
+	}
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("CAPY_APPLE_API_BASE 必須是 https(目前 %q)— developer token 與 Media-User-Token 會放在標頭送出,明文連線等於把它們交出去;請改成 https://<主機>/v1", raw)
+	}
+	return raw, nil
+}
 
 // newAppleProvider:keychain 讀 dev token(缺/過期 → 提示 login)→ MUT(缺 → 提示 login)→
 // storefront(缺 → 提示 login)。
@@ -115,6 +142,10 @@ func newAppleProvider(ctx context.Context) (*appleprov.Provider, error) {
 	if cfg.AppleStorefront == "" {
 		return nil, errors.New("缺 Apple storefront — 重新執行 capy auth login apple")
 	}
+	base, err := appleAPIBase()
+	if err != nil {
+		return nil, err
+	}
 	hc := &http.Client{Timeout: 30 * time.Second}
-	return appleprov.New(hc, appleAPIBase(), dev, mut, cfg.AppleStorefront), nil
+	return appleprov.New(hc, base, dev, mut, cfg.AppleStorefront), nil
 }
