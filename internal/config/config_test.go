@@ -109,3 +109,14 @@ func TestLoadIgnoresLegacyFields(t *testing.T) {
 		t.Errorf("舊欄位不應在 Save 後留存:%s", b)
 	}
 }
+
+func TestGoogleFieldsAndDeviceIDRoundTrip(t *testing.T) {
+	t.Setenv("CAPY_CONFIG_DIR", t.TempDir())
+	if err := Save(&Config{GoogleClientID: "g.apps.googleusercontent.com", GoogleEmail: "a@b", DeviceID: "01J7ZK3M9X2Y4W6V8T0R1Q3P5N"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil || c.GoogleClientID != "g.apps.googleusercontent.com" || c.GoogleEmail != "a@b" || c.DeviceID != "01J7ZK3M9X2Y4W6V8T0R1Q3P5N" {
+		t.Fatalf("round-trip:%+v %v", c, err)
+	}
+}

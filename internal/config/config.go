@@ -16,6 +16,9 @@ type Config struct {
 	SpotifyClientID string `json:"spotify_client_id,omitempty"`
 	AppleStorefront string `json:"apple_storefront,omitempty"`
 	DefaultProvider string `json:"default_provider,omitempty"` // spotify|apple;空 = spotify
+	GoogleClientID  string `json:"google_client_id,omitempty"` // BYO 才有;內建 client 不落地(決策 9)。secret 只在 keychain
+	GoogleEmail     string `json:"google_email,omitempty"`     // 目前登入的 Google 帳號(非機密;§5「登錯帳號」的唯一偵測手段,Q8 採 A)
+	DeviceID        string `json:"device_id,omitempty"`        // ULID,首次需要時產生;CAPY_CONFIG_DIR 換目錄 = 新裝置(不可沿用已刪的 install_id)
 }
 
 // Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。

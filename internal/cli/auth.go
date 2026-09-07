@@ -41,8 +41,8 @@ func newAuthCmd() *cobra.Command {
 
 func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "login <spotify|apple>",
-		Short: "登入平台(Spotify:自己的 app + PKCE;Apple:自抓 web token)",
+		Use:   "login <spotify|apple|google>",
+		Short: "登入平台(Spotify:自己的 app + PKCE;Apple:自抓 web token;Google:Drive 同步用)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
@@ -52,10 +52,12 @@ func newAuthLoginCmd() *cobra.Command {
 				}
 				defaultProviderHint(cmd, "apple")
 				return nil
+			case "google":
+				return googleLogin(cmd) // 不是音樂 provider,不提示 default_provider
 			case "spotify":
 				// 走下方既有流程。
 			default:
-				return fmt.Errorf("目前支援 spotify、apple(google 於 P3)")
+				return fmt.Errorf("目前支援 spotify、apple、google")
 			}
 			cfg, err := config.Load()
 			if err != nil {
@@ -94,7 +96,8 @@ func newAuthLoginCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().String("client-id", "", "你的 Spotify app Client ID(略過精靈)")
+	cmd.Flags().String("client-id", "", "(spotify / google)你自建 app 的 Client ID(略過精靈);google 等同 CAPY_GOOGLE_CLIENT_ID")
+	cmd.Flags().String("client-secret", "", "(google)自建 client 的 secret;等同 CAPY_GOOGLE_CLIENT_SECRET。argv 可被 ps 看到,建議用環境變數")
 	cmd.Flags().String("developer-token", "", "(apple)developer token;等同 CAPY_APPLE_DEVELOPER_TOKEN。argv 可被 ps 看到,建議用環境變數")
 	cmd.Flags().String("user-token", "", "(apple)media-user-token;等同 CAPY_APPLE_USER_TOKEN")
 	cmd.Flags().Bool("i-understand", false, "(apple)以 flag/環境變數提供 token 時,表示已閱讀「非 Apple 官方支援」聲明")
@@ -364,6 +367,29 @@ func newAuthStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(w, "  refresh token: 不存在(執行 capy auth login spotify)")
 			}
+			fmt.Fprintln(w, "google:")
+			switch {
+			case cfg.GoogleClientID != "":
+				fmt.Fprintf(w, "  client: config(%s)\n", maskGoogleClientID(cfg.GoogleClientID))
+			case auth.BuiltinGoogleClientID != "":
+				fmt.Fprintln(w, "  client: 內建(release binary)")
+			default:
+				fmt.Fprintln(w, "  client: 未設定(執行 capy auth login google)")
+			}
+			switch tok, err := auth.GoogleStored(); {
+			case err == nil:
+				fmt.Fprintf(w, "  token: keychain 存在(access token 到期 %s;refresh token 不輪替)\n", tok.Expiry.Local().Format(time.RFC3339))
+			case errors.Is(err, secret.ErrNotFound):
+				fmt.Fprintln(w, "  token: 不存在(執行 capy auth login google)")
+			default:
+				fmt.Fprintf(w, "  token: 讀取 keychain 失敗:%v\n", err)
+			}
+			if cfg.GoogleEmail != "" {
+				fmt.Fprintf(w, "  email: %s\n", cfg.GoogleEmail)
+			}
+			if cfg.DeviceID != "" {
+				fmt.Fprintf(w, "  device_id: %s\n", cfg.DeviceID)
+			}
 			fmt.Fprintln(w, "apple:")
 			switch _, exp, err := apple.DeveloperToken(time.Now()); {
 			case err == nil:
@@ -395,8 +421,8 @@ func newAuthStatusCmd() *cobra.Command {
 
 func newAuthLogoutCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "logout <spotify|apple>",
-		Short: "登出平台(刪除 keychain 憑證;client_id 保留在 config)",
+		Use:   "logout <spotify|apple|google>",
+		Short: "登出平台(刪除 keychain 憑證;client_id 保留在 config;google 的 BYO client secret 一併刪除)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
@@ -412,8 +438,21 @@ func newAuthLogoutCmd() *cobra.Command {
 				if err := secret.Delete(apple.KeyDeveloperToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
 					return err
 				}
+			case "google":
+				if err := auth.LogoutGoogle(cmd.Context()); err != nil { // token + BYO client secret
+					return err
+				}
+				switch cfg, err := config.Load(); { // 沒登入就不該還顯示 email
+				case err != nil: // keychain 的鍵已經刪了,不讓整個命令失敗,但要講
+					fmt.Fprintf(cmd.ErrOrStderr(), "token 已刪除,但 config 的 google_email 清不掉:%v\n", err)
+				case cfg.GoogleEmail != "":
+					cfg.GoogleEmail = ""
+					if err := config.Save(cfg); err != nil {
+						return err
+					}
+				}
 			default:
-				return fmt.Errorf("目前支援 spotify、apple")
+				return fmt.Errorf("目前支援 spotify、apple、google")
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "已登出 %s\n", args[0])
 			return nil
