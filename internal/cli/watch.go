@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
-	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -23,16 +22,21 @@ import (
 
 const (
 	watchMaxFails     = 5
-	watchPollSpotify  = time.Second
+	watchPollSpotify  = 2 * time.Second // 1s 就是每分鐘 60 次 /me/player,429 門檻不高;進度差一秒沒人看得出來
 	watchPollApple    = 2 * time.Second
 	watchDefaultWidth = 80
 )
 
+// pollTimeout:單次輪詢的上限要蓋得住 429 退避(Backoff 會在請求裡面睡到 MaxBackoff),不然退避一半就被
+// ctx 砍掉、畫面只看到 deadline exceeded、五次後整個 TUI 消失。Ctrl-C 仍能中斷(Wait 吃 ctx)。
+func pollTimeout(interval time.Duration) time.Duration { return interval + provider.MaxBackoff }
+
 type (
 	watchTickMsg  time.Time
 	watchStateMsg struct {
-		st  *provider.PlaybackState
-		err error
+		st      *provider.PlaybackState
+		err     error
+		fromCtl bool // 控制指令(space/n/p)的錯:顯示、但不計入 fails(那個預算是給「連不上」用的)
 	}
 )
 
@@ -55,9 +59,9 @@ func newWatchModel(ctx context.Context, pc provider.PlaybackController, interval
 func (m watchModel) Init() tea.Cmd { return m.poll() }
 
 func (m watchModel) poll() tea.Cmd {
-	ctx, pc := m.ctx, m.pc
+	ctx, pc, interval := m.ctx, m.pc, m.interval
 	return func() tea.Msg {
-		c, cancel := context.WithTimeout(ctx, 5*time.Second)
+		c, cancel := context.WithTimeout(ctx, pollTimeout(interval))
 		defer cancel()
 		st, err := pc.State(c)
 		return watchStateMsg{st: st, err: err}
@@ -74,7 +78,7 @@ func (m watchModel) control(f func(context.Context) error) tea.Cmd {
 	poll := m.poll()
 	return func() tea.Msg {
 		if err := f(ctx); err != nil {
-			return watchStateMsg{err: err}
+			return watchStateMsg{err: err, fromCtl: true}
 		}
 		return poll()
 	}
@@ -86,8 +90,16 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		return m, nil
 	case watchStateMsg:
-		if errors.Is(msg.err, appleprov.ErrNotRunning) { // 狀態,不是失敗:留在畫面上、繼續輪詢,Music 開了畫面就活過來
+		var rl *provider.RateLimitError
+		switch {
+		case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗:留在畫面上、繼續輪詢,app 開了畫面就活過來
 			m.st, m.err, m.fails = nil, msg.err, 0
+			return m, m.tick()
+		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失
+			m.err, m.fails = fmt.Errorf("rate limited,等待中…(%s)", rl.Message), 0
+			return m, m.tick()
+		case msg.fromCtl && msg.err != nil:
+			m.err = msg.err
 			return m, m.tick()
 		}
 		if msg.err != nil {
@@ -159,7 +171,7 @@ func (m watchModel) View() tea.View {
 	} else if m.err != nil {
 		line(fmt.Sprintf("⚠ %v(第 %d 次)", m.err, m.fails))
 	}
-	line("  space 播放/暫停 · n 下一首 · p 上一首 · q 離開")
+	line("  space 播放/暫停 · n 下一首 · p 上一首 · q/esc 離開")
 	return tea.NewView(b.String())
 }
 

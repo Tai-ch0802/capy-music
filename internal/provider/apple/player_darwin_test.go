@@ -144,7 +144,7 @@ func TestPlayPlaylistNotSupportedAndNoOSA(t *testing.T) {
 func TestStateDoesNotLaunchMusicWhenNotRunning(t *testing.T) {
 	stubOSA(t, "not running")
 	st, err := (&Provider{}).State(context.Background())
-	if st != nil || !errors.Is(err, ErrNotRunning) {
+	if st != nil || !errors.Is(err, ErrNotRunning) || !errors.Is(err, provider.ErrPlayerNotRunning) {
 		t.Fatalf("Music 未執行應回 ErrNotRunning:%v %v", st, err)
 	}
 	if i, j := strings.Index(stateScript, `is running`), strings.Index(stateScript, `tell application "Music"`); i < 0 || j < 0 || i > j {

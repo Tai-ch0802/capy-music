@@ -37,6 +37,8 @@ var (
 	ErrRestricted     = errors.New("平台不提供此內容")
 	ErrNotSupported   = errors.New("此平台不支援這個操作")
 	ErrNotFound       = errors.New("找不到資源")
+	// ErrPlayerNotRunning:本機播放器 app 沒開(Apple Music.app)。State 回它而不是把 app 啟動起來;是狀態不是失敗。
+	ErrPlayerNotRunning = errors.New("播放器未執行")
 )
 
 type Track struct {

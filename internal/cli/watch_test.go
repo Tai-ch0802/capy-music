@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
-	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 )
 
 type watchFake struct {
@@ -182,7 +182,7 @@ func TestNowWatchNeedsTTYAndUsesSeam(t *testing.T) {
 }
 
 func TestWatchAppleNotRunningIsStatusNotFailure(t *testing.T) {
-	f := &watchFake{err: appleprov.ErrNotRunning}
+	f := &watchFake{err: fmt.Errorf("Music.app 未執行:%w", provider.ErrPlayerNotRunning)}
 	m := newWatchModel(context.Background(), f, time.Millisecond)
 	var cmd tea.Cmd
 	for i := 0; i < 2*watchMaxFails; i++ {
@@ -200,12 +200,57 @@ func TestWatchAppleNotRunningIsStatusNotFailure(t *testing.T) {
 }
 
 func TestNowSingleShotAppleNotRunningIsExitZero(t *testing.T) {
-	f := &watchFake{err: appleprov.ErrNotRunning}
+	f := &watchFake{err: fmt.Errorf("Music.app 未執行:%w", provider.ErrPlayerNotRunning)}
 	setCLITestConfig(t)
 	f.playFake.fakeProvider = fakeProvider{caps: provider.CapPlaybackControl}
 	swapProviderWith(t, f)
 	out, err := runCLI(t, "now")
 	if err != nil || !strings.Contains(out, "Music.app 未執行") {
 		t.Fatalf("單次 now 遇到 Music 未執行應印訊息並回 0:%v %q", err, out)
+	}
+}
+
+func TestWatchRateLimitIsStatusAndTimeoutCoversBackoff(t *testing.T) {
+	f := &watchFake{err: &provider.RateLimitError{Seconds: 90, Message: "伺服器要求等待 90 秒"}}
+	m := newWatchModel(context.Background(), f, time.Millisecond)
+	var cmd tea.Cmd
+	for i := 0; i < 2*watchMaxFails; i++ {
+		var next tea.Model
+		next, cmd = m.Update(watchStateMsg{err: f.err})
+		m = next.(watchModel)
+	}
+	if m.fatal != nil || m.fails != 0 {
+		t.Fatalf("限流是狀態不是失敗:fatal=%v fails=%d", m.fatal, m.fails)
+	}
+	if _, ok := runCmd(cmd).(watchTickMsg); !ok {
+		t.Fatal("限流後應繼續 tick")
+	}
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "rate limited") {
+		t.Errorf("畫面要說明在等限流:\n%s", v)
+	}
+	if pollTimeout(watchPollSpotify) < provider.MaxBackoff {
+		t.Fatalf("輪詢逾時 %v 必須蓋得住退避上限 %v", pollTimeout(watchPollSpotify), provider.MaxBackoff)
+	}
+}
+
+func TestWatchControlErrorsDoNotCountAsFailures(t *testing.T) {
+	f := &watchFake{st: playingState()}
+	m := newWatchModel(context.Background(), f, time.Millisecond)
+	next, _ := m.Update(watchStateMsg{st: f.st})
+	m = next.(watchModel)
+	var cmd tea.Cmd
+	for i := 0; i < 2*watchMaxFails; i++ { // 播到清單最後一首連按 n
+		var nm tea.Model
+		nm, cmd = m.Update(watchStateMsg{err: provider.ErrNoActiveDevice, fromCtl: true})
+		m = nm.(watchModel)
+	}
+	if m.fatal != nil || m.fails != 0 || m.st == nil {
+		t.Fatalf("控制指令的錯不得吃掉連線失敗的預算、也不得清掉狀態:fatal=%v fails=%d", m.fatal, m.fails)
+	}
+	if _, ok := runCmd(cmd).(watchTickMsg); !ok {
+		t.Fatal("控制失敗後應繼續 tick")
+	}
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, provider.ErrNoActiveDevice.Error()) {
+		t.Errorf("控制錯誤要顯示:\n%s", v)
 	}
 }

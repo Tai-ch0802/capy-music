@@ -12,7 +12,6 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
-	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -277,7 +276,7 @@ func newNowCmd() *cobra.Command {
 			}
 			st, err := pc.State(cmd.Context())
 			w := cmd.OutOrStdout()
-			if errors.Is(err, appleprov.ErrNotRunning) { // 狀態查詢:Music 沒開是一種狀態,不是錯
+			if errors.Is(err, provider.ErrPlayerNotRunning) { // 狀態查詢:播放器沒開是一種狀態,不是錯
 				fmt.Fprintln(w, err.Error())
 				return nil
 			}
@@ -300,7 +299,7 @@ func newNowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("watch", false, "持續顯示(bubbletea 畫面;space 播放/暫停、n/p 上下首、q 離開)")
+	cmd.Flags().Bool("watch", false, "持續顯示(bubbletea 畫面;space 播放/暫停、n/p 上下首、q/esc 離開)")
 	providerFlag(cmd)
 	return cmd
 }
