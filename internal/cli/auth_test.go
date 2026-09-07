@@ -35,6 +35,8 @@ func TestMain(m *testing.M) {
 func setCLITestConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("CAPY_CONFIG_DIR", t.TempDir())
+	resetDefaultProvider() // default_provider 每 process 只讀一次,換目錄要重置
+	t.Cleanup(resetDefaultProvider)
 }
 
 func fakeLoginOK(t *testing.T, wantCID string) func(context.Context, string, func(string) error) (*oauth2.Token, error) {

@@ -71,8 +71,15 @@ func TestConfigGetAndListPlainText(t *testing.T) {
 	if out, _ := runCLI(t, "config", "get", "default_provider"); out != "apple\n" {
 		t.Fatalf("get 非 TTY 應印裸值,得到 %q", out)
 	}
-	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\n" {
-		t.Fatalf("list 非 TTY 應為 key\\tvalue,得到 %q", out)
+	_ = config.Save(&config.Config{DefaultProvider: "apple", SpotifyClientID: "cid", AppleStorefront: "tw"})
+	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nspotify_client_id\tcid\napple_storefront\ttw\n" {
+		t.Fatalf("list 非 TTY 應列出三個非機密欄位 key\\tvalue,得到 %q", out)
+	}
+	if out, _ := runCLI(t, "config", "get", "spotify_client_id"); out != "cid\n" {
+		t.Fatalf("get 應支援三個欄位,得到 %q", out)
+	}
+	if _, err := runCLI(t, "config", "set", "spotify_client_id", "x"); err == nil || !strings.Contains(err.Error(), "auth login spotify") {
+		t.Fatalf("set spotify_client_id 應指向 auth login:%v", err)
 	}
 	if _, err := runCLI(t, "config", "get", "nope"); err == nil {
 		t.Fatal("未知 key 的 get 應報錯")
@@ -92,6 +99,42 @@ func TestBrokenConfigDoesNotBreakHelp(t *testing.T) {
 	}
 	if !strings.Contains(out, `default "spotify"`) {
 		t.Fatalf("config 讀不到時 flag 預設應退回 spotify:%q", out)
+	}
+	_, err = runCLI(t, "config", "set", "default_provider", "apple")
+	if err == nil || !strings.Contains(err.Error(), "刪掉該檔") {
+		t.Fatalf("config 壞掉時 set 的錯誤要告訴人怎麼救:%v", err)
+	}
+}
+
+func TestInvalidDefaultProviderInFileFallsBackToSpotify(t *testing.T) {
+	setCLITestConfig(t)
+	_ = config.Save(&config.Config{DefaultProvider: "tidal"}) // 手改檔案 / 別版 binary 寫進來的值
+	resetDefaultProvider()
+	got := recordProviderID(t)
+	out, err := runCLI(t, "search", "--help")
+	if err != nil || !strings.Contains(out, `default "spotify"`) || strings.Contains(out, "tidal") {
+		t.Fatalf("非法 default_provider 不得成為 flag 預設值:%v %q", err, out)
+	}
+	_, _ = runCLI(t, "search", "x")
+	if *got != "spotify" {
+		t.Fatalf("非法值應退回 spotify,得到 %q", *got)
+	}
+}
+
+func TestDefaultProviderReadOncePerProcess(t *testing.T) {
+	setCLITestConfig(t)
+	_ = config.Save(&config.Config{DefaultProvider: "apple"})
+	resetDefaultProvider()
+	if defaultProvider() != "apple" {
+		t.Fatal("應讀到 apple")
+	}
+	_ = config.Save(&config.Config{DefaultProvider: "spotify"}) // 檔案改了但沒重置 → 仍是快取值
+	if defaultProvider() != "apple" {
+		t.Fatal("同一 process 應只讀一次 config(未重置前維持快取值)")
+	}
+	resetDefaultProvider()
+	if defaultProvider() != "spotify" {
+		t.Fatal("重置後應重讀")
 	}
 }
 
