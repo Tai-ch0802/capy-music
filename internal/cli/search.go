@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
@@ -78,6 +79,10 @@ func newSearchCmd() *cobra.Command {
 			if err != nil {
 				return friendlyErr(p.ID(), err)
 			}
+			q := strings.Join(args, " ")
+			cc := cache.Load() // 補全用的最近搜尋(只是快取,寫失敗靜默)
+			cc.AddRecent(cache.Recent{Provider: p.ID(), Type: cache.TypeQuery, ID: q, Label: q})
+			_ = cc.Save()
 			tty := stdoutIsTTY(cmd)
 			// TSV 欄序(文件化):id, title, artists, album, duration_ms
 			ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "曲名", "藝人", "專輯", "時長"}, trackRows(tracks, tty))

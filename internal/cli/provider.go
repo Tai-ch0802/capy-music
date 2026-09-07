@@ -44,6 +44,7 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 
 func providerFlag(cmd *cobra.Command) {
 	cmd.Flags().String(flagProvider, defaultProvider(), "平台("+strings.Join(providerIDs, "|")+";預設取 config 的 default_provider)")
+	_ = cmd.RegisterFlagCompletionFunc(flagProvider, cobra.FixedCompletions(providerIDs, cobra.ShellCompDirectiveNoFileComp))
 }
 
 // defaultProvider:config 的 default_provider;沒設、config 讀不到、或值不在 providerIDs(手改檔案、別版 binary)

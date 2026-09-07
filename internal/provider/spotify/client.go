@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 
 	"golang.org/x/oauth2"
 
@@ -197,6 +199,72 @@ func (c *Client) SearchTracks(ctx context.Context, text string, limit int) ([]pr
 	return out, nil
 }
 
+// ── artists ──
+
+type artistJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// SearchArtists 只取一頁(挑選器最多列幾個);limit 超過單次上限就截到上限。
+func (c *Client) SearchArtists(ctx context.Context, text string, limit int) ([]provider.Artist, error) {
+	if limit <= 0 || limit > searchPageMax {
+		limit = searchPageMax
+	}
+	q := url.Values{"type": {"artist"}, "q": {text}, "limit": {strconv.Itoa(limit)}}
+	var resp struct {
+		Artists struct {
+			Items []artistJSON `json:"items"`
+		} `json:"artists"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/search", q, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Artist, len(resp.Artists.Items))
+	for i, a := range resp.Artists.Items {
+		out[i] = provider.Artist{ProviderID: a.ID, Name: a.Name}
+	}
+	return out, nil
+}
+
+// ArtistTopTracks:先打 /artists/{id}/top-tracks(market=from_token)。開發模式 app 會被 403
+// (2026-09-07 實測:from_token / TW / 不帶 / country= 全部 403,不是 market 問題),此時退回
+// search q=artist:"<name>" type=track——Spotify 搜尋依熱門度排序,是「熱門歌曲」的可用近似。
+func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]provider.Track, error) {
+	var resp struct {
+		Tracks []trackJSON `json:"tracks"`
+	}
+	path := "/artists/" + url.PathEscape(a.ProviderID) + "/top-tracks"
+	_, err := c.do(ctx, http.MethodGet, path, url.Values{"market": {"from_token"}}, nil, &resp)
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status == http.StatusForbidden && a.Name != "" {
+		// 留下痕跡:403 也可能是 scope 被撤或地區限制,不能讓人永遠只看到「播了一些歌」。
+		fmt.Fprintf(provider.BackoffStderr, "Spotify:top-tracks 回 403(開發模式 app 拿不到),改用 artist:%q 搜尋近似\n", a.Name)
+		// 引號包起來就是字面詞組(AND/OR/NOT 與 artist: 這類語法在引號內不解析),只需去掉名稱裡自己的引號。
+		name := strings.ReplaceAll(a.Name, `"`, "")
+		ts, err := c.SearchTracks(ctx, `artist:"`+name+`"`, searchPageMax)
+		if err != nil {
+			return nil, err
+		}
+		// 只留藝人欄真的含這個名字的曲目:同名藝人與翻唱帳號會混進搜尋結果,使用者挑的是具體那一個。
+		out := ts[:0]
+		for _, t := range ts {
+			if slices.ContainsFunc(t.Artists, func(n string) bool { return strings.EqualFold(n, a.Name) || strings.EqualFold(n, name) }) {
+				out = append(out, t)
+			}
+		}
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Track, len(resp.Tracks))
+	for i := range resp.Tracks {
+		out[i] = resp.Tracks[i].toTrack()
+	}
+	return out, nil
+}
+
 // ── player ──
 
 // mapPlayerErr:player 端點的 404 + NO_ACTIVE_DEVICE 是語意,不是 URL 打錯。
@@ -258,6 +326,13 @@ func (c *Client) Play(ctx context.Context, uris []string, deviceID string) error
 	if len(uris) > 0 {
 		body = map[string]any{"uris": uris}
 	}
+	_, err := c.do(ctx, http.MethodPut, "/me/player/play", deviceQuery(deviceID), body, nil)
+	return mapPlayerErr(err)
+}
+
+// PlayContext:以 context_uri(播放清單、專輯)播放。
+func (c *Client) PlayContext(ctx context.Context, contextURI, deviceID string) error {
+	body := map[string]any{"context_uri": contextURI}
 	_, err := c.do(ctx, http.MethodPut, "/me/player/play", deviceQuery(deviceID), body, nil)
 	return mapPlayerErr(err)
 }

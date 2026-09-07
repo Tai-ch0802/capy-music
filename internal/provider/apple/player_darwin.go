@@ -47,7 +47,10 @@ func (p *Provider) Devices(context.Context) ([]provider.Device, error) {
 // 時長/進度在 AppleScript 端先算成整數毫秒(而非 "as text" 後在 Go 端乘 1000)——
 // 避開 macOS 非 en-US locale(如 de/fr)把小數點印成 "," 導致 Go 端解析失敗的問題
 // (review finding 1;"," 不是合法 Go float,且原本錯誤被 "_" 吞掉,靜默變 0)。
-const stateScript = `tell application "Music"
+// 先用 `application "Music" is running` 判斷(不進 tell 區塊就不會把沒開的 Music.app 啟動起來;
+// now --watch 每 2 秒輪詢一次,若每次都啟動 app 會很糟)。
+const stateScript = `if not (application "Music" is running) then return "not running"
+tell application "Music"
 	if player state is stopped then return "stopped"
 	set t to current track
 	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer)
@@ -57,6 +60,9 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 	out, err := runOSA(stateScript)
 	if err != nil {
 		return nil, fmt.Errorf("osascript 失敗(Music.app 未安裝或未授權自動化?):%w", err)
+	}
+	if out == "not running" {
+		return nil, ErrNotRunning
 	}
 	if out == "stopped" || out == "" {
 		return nil, nil
@@ -83,6 +89,9 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 // 機制 A(預設)AppleScript open location;機制 B(CAPY_APPLE_PLAY_MECHANISM=open)shell open。
 // 兩者何者可靠由附錄 C-4 真實驗收決定,之後再硬編。
 func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
+	if req.PlaylistID != "" { // R4:不自創 music:// 清單 URL
+		return fmt.Errorf("Apple Music 暫不支援直接播放清單 — 用 capy pl show 取曲目後 play --id:%w", provider.ErrNotSupported)
+	}
 	if len(req.TrackIDs) == 0 {
 		_, err := runOSA(`tell application "Music" to play`)
 		return err

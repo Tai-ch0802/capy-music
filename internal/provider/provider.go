@@ -22,6 +22,9 @@ const (
 	CapLibraryRead
 	CapLibraryWrite
 	CapPlaybackControl
+	CapArtistSearch // SearchArtists + ArtistTopTracks(UX 計畫 T3)
+	CapPlayPlaylist // PlayRequest.PlaylistID
+	CapPlayQueue    // Play 會把 TrackIDs 全部排進佇列;沒有此能力的 provider 只播第一首
 )
 
 // Has 回報 c 是否包含 want 的全部能力位。
@@ -34,6 +37,8 @@ var (
 	ErrRestricted     = errors.New("平台不提供此內容")
 	ErrNotSupported   = errors.New("此平台不支援這個操作")
 	ErrNotFound       = errors.New("找不到資源")
+	// ErrPlayerNotRunning:本機播放器 app 沒開(Apple Music.app)。State 回它而不是把 app 啟動起來;是狀態不是失敗。
+	ErrPlayerNotRunning = errors.New("播放器未執行")
 )
 
 type Track struct {
@@ -45,6 +50,12 @@ type Track struct {
 	DurationMS int
 	Explicit   bool
 	Raw        json.RawMessage
+}
+
+// Artist:藝人;熱門歌曲以 ArtistTopTracks 另取。
+type Artist struct {
+	ProviderID string
+	Name       string
 }
 
 type Query struct {
@@ -68,8 +79,9 @@ type PlaybackState struct {
 }
 
 type PlayRequest struct {
-	TrackIDs []string // provider 內部 ID;空 = 恢復播放
-	DeviceID string   // 空 = 目前作用中裝置
+	TrackIDs   []string // provider 內部 ID;空 = 恢復播放
+	DeviceID   string   // 空 = 目前作用中裝置
+	PlaylistID string   // 非空 = 以播放清單為 context 播放;與 TrackIDs 互斥(需 CapPlayPlaylist)
 }
 
 type PlaylistRef struct {
@@ -88,6 +100,14 @@ type Provider interface {
 
 type Searcher interface {
 	Search(ctx context.Context, q Query) ([]Track, error)
+}
+
+// ArtistSearcher:藝人搜尋與熱門歌曲(CapArtistSearch)。
+// ArtistTopTracks 的實作可以回近似值(例如平台不開放熱門歌曲端點時,改用依熱門度排序的搜尋結果),
+// 呼叫端不要把它當精確的「官方熱門榜」。
+type ArtistSearcher interface {
+	SearchArtists(ctx context.Context, q Query) ([]Artist, error)
+	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 的備案要用名稱
 }
 
 type PlaylistReader interface {

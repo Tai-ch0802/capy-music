@@ -343,3 +343,27 @@ func TestLibraryPaginationStopsOnEmptyPageWithNext(t *testing.T) {
 		t.Errorf("應只呼叫一次,得到 %d 次", calls)
 	}
 }
+
+func TestSearchArtistsAndTopSongs(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/catalog/tw/search":
+			if q := r.URL.Query(); q.Get("types") != "artists" || q.Get("term") != "五月天" || q.Get("limit") != "5" {
+				t.Errorf("artist search 查詢錯誤:%s", r.URL.RawQuery)
+			}
+			w.Write([]byte(`{"results":{"artists":{"data":[{"id":"a1","attributes":{"name":"五月天"}}]}}}`))
+		case "/catalog/tw/artists/a1/view/top-songs":
+			w.Write([]byte(`{"data":[` + songJSONFx("s1") + `]}`))
+		default:
+			t.Errorf("非預期路徑 %s", r.URL.Path)
+		}
+	})
+	artists, err := c.SearchArtists(context.Background(), "tw", "五月天", 5)
+	if err != nil || len(artists) != 1 || artists[0].ProviderID != "a1" || artists[0].Name != "五月天" {
+		t.Fatalf("SearchArtists = %+v, %v", artists, err)
+	}
+	tracks, err := c.ArtistTopSongs(context.Background(), "tw", "a1")
+	if err != nil || len(tracks) != 1 || tracks[0].ProviderID != "s1" {
+		t.Fatalf("ArtistTopSongs = %+v, %v", tracks, err)
+	}
+}

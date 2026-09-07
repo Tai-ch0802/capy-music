@@ -36,13 +36,30 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 
 ```
 capy search 派對動物 [--provider apple]
-capy play 派對動物 [--provider apple]   ·   capy pause / next / prev / now / devices
+capy play 派對動物                      # 統一搜尋:曲目、藝人熱門歌曲、我的播放清單;歧義時開挑選器
+capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify 開發模式 app 拿不到 top-tracks,退回依熱門度排序的搜尋);清單名完全相符 = 播清單(先 capy pl list 一次)
+capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
+capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
+capy pause / next / prev / now / devices
 capy pl list / capy pl show <名稱|ID>
 capy doctor [--provider apple]
 capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
 ```
 
-所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
+所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
+
+## Shell 補全(TAB 列出播放清單名與最近搜尋)
+
+```
+# zsh(放進 ~/.zshrc)
+source <(capy completion zsh)
+# bash
+source <(capy completion bash)
+# fish
+capy completion fish | source
+```
+
+候選只來自本機快取(`cache.json`):先跑過 `capy pl list` 才有清單名;`capy search` / `capy play` 會累積最近項目,`capy history clear` 清空。補全不會打網路、不會碰 keychain,所以按 TAB 不會卡。
 
 ## 憑證與資料
 
