@@ -190,14 +190,12 @@ func TestWatchAppleNotRunningIsStatusNotFailure(t *testing.T) {
 		next, cmd = m.Update(watchStateMsg{err: f.err})
 		m = next.(watchModel)
 	}
-	if m.fatal != nil || isQuit(cmd) || m.fails != 0 {
-		t.Fatalf("Music 未執行應持續輪詢、不算失敗:fatal=%v fails=%d", m.fatal, m.fails)
+	msg := runCmd(cmd) // tea.Tick 的 cmd 只能執行一次(timer 建立時就啟動,第二次會永遠等)
+	if _, ok := msg.(watchTickMsg); !ok || m.fatal != nil || m.fails != 0 {
+		t.Fatalf("Music 未執行應持續 tick、不算失敗:msg=%T fatal=%v fails=%d", msg, m.fatal, m.fails)
 	}
 	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "Music.app 未執行") || strings.Contains(v, "第 ") {
 		t.Errorf("畫面應顯示未執行、不帶失敗次數:\n%s", v)
-	}
-	if _, ok := runCmd(cmd).(watchTickMsg); !ok {
-		t.Error("之後應繼續 tick")
 	}
 }
 
