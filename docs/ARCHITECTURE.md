@@ -40,7 +40,7 @@
 | 播放清單端點改名 | `/tracks` → `/items`,欄位 `tracks` → `items` | 直接用新名 |
 | `GET /me` | 移除 `country`、`email`、`product` | **無法從 API 判斷是否 Premium 或所在市場** |
 | Player 端點 | 全部保留(play/pause/next/seek/volume/devices/transfer/queue) | 遙控設計成立 ✅ |
-| `GET /artists/{id}/top-tracks` | 開發模式 app **一律 403**(2026-09-07 實測:`market=from_token`、`TW`、不帶、`country=` 全部一樣) | 「藝人熱門歌曲」改用 `GET /search?q=artist:"<name>"&type=track`(依熱門度排序)當備案,程式在 403 時自動退回 |
+| `GET /artists/{id}/top-tracks` | 開發模式 app **一律 403**(2026-09-07 實測:`market=from_token`、`TW`、不帶、`country=` 全部一樣) | 「藝人熱門歌曲」改用 `GET /search?q=artist:"<name>"&type=track`(依熱門度排序)當備案,程式在 403 時自動退回;Spotify-owned / 他人的編輯清單 `items` 也拿不到(2026-09-07 實測 29 個清單 9 個回「平台不提供此內容」),`pl pull` 只涵蓋 app 讀得到的清單 |
 
 ### 1.2 Apple Music
 
@@ -708,7 +708,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 
 | # | 任務 | 為什麼是 P0 |
 |---|---|---|
-| **P0-1** | 用 curl 打通 Apple developer token → `GET /v1/catalog/tw/search`,確認 ISRC 有回傳 | ISRC 是整個 resolver 的基礎 |
+| **P0-1** | 用 curl 打通 Apple developer token → `GET /v1/catalog/tw/search`,確認 ISRC 有回傳 | ISRC 是整個 resolver 的基礎(2026-09-07:Spotify 半邊以真帳號驗過 160/160 有 ISRC;Apple 半邊仍待 web token,本項未勾)|
 | **P0-2** | ⚠️ **驗證 Apple Music API 能否從 library playlist 移除/重排曲目** | 若不行,Apple 端 push 只能用 rebuild 策略,要改 §6.5 |
 | **P0-3** | ~~驗證 MusicKit JS 在 `http://127.0.0.1:{隨機port}` 能否成功 `authorize()`~~ | ~~若不行,要改成固定 port 或本地 HTTPS~~(v0.5 作廢,見 2026-09-03 排程註記) |
 | **P0-4** | 量測 Spotify Development Mode 的實際 rate limit | 決定同步的併發度與退避策略 |

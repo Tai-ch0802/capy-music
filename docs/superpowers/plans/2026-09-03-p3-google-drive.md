@@ -274,7 +274,7 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 
 ### T5 — canonical model + Drive 佈局
 
-**產出**:`internal/canon/`。**前置**:`scripts/p0/p0-1-isrc.sh` 要先跑過(見下)。
+**產出**:`internal/canon/`。**前置**:`scripts/p0/p0-1-isrc.sh` 要先跑過(見下)。**2026-09-07:Spotify 半邊以真帳號驗過(160/160 有 ISRC),T5 據此開工;Apple 半邊等 web token,P0-1 腳本本身是 Apple 的。**
 
 - **`cid` 的決定性**(這裡有一個必須守住的性質:cid 是 Drive 檔案裡的鍵,不能隨「當時觀測到什麼」而變):
   - 有 ISRC → `i:<正規化 ISRC>`(大寫、去連字號、非 12 碼視為缺失);沒有 → `p:<provider>:<id>`。
@@ -313,6 +313,7 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 - **位置序列 → `iid` 的對齊**。provider 回傳的是有序曲目位置;canonical 是 `iid` 為鍵、允許重複(決策 13)。同一首歌出現在第 5 位,是「既有 iid 移動了」還是「新的 add」?沒有這條規則就寫不出 DERIVE。建議:以 `(cid, 出現序號)` 對齊(第 n 次出現的同一 cid 對到既有的第 n 個 iid),多出來的算 add、少掉的算 remove。
 - **`remove` 只計算「該 provider 有 mapping 的 cid」**。否則 cid 在某 provider 沒有 mapping 時會被讀成「使用者刪除」,每輪 add/remove 抖動。
 - 輸出:一個純資料的變更集(add / remove / move / rename),不碰 IO。
+- **開發模式 app 讀不到 Spotify 官方/編輯清單**(2026-09-07 真帳號實測:29 個清單有 9 個回「平台不提供此內容」,全是 Spotify-owned 或他人清單):`pl pull` 只涵蓋 app 讀得到的清單;UX 的 `markUnplayablePlaylists` 已會分類,pull 對這類清單要明確跳過並說明,**不可當成「平台端清單消失」**(否則會走 Q6 的 unlink 路徑)。
 
 **測試**:fixture 驅動的 table test —— 空 base、首次 pull、重複曲目、只換順序、平台端刪一首、平台端清單消失、cid 無 mapping。全部是純函式,沒有網路也沒有 Drive。
 
@@ -365,7 +366,7 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 | Q4 | `ops` 離線佇列與 `review_queue` 兩張表 | A 從 spec §7 刪掉(它們不在 Drive,存在就違反硬約束)/ B 保留但明示「未上傳的 ops 隨 db 遺失」 | A | **T0 前** |
 | Q5 | 平台清單 ↔ `pid` 的連結 | A 自動連結(名稱相符)+ `pl link` 覆寫 / B 只認明確 `pl link` | B(猜錯會寫進 source of truth) | **T7 前** |
 | Q6 | 平台端清單被使用者刪除時 | A 傳播刪除 / B 自動 unlink + 警告 / C 下次 push 重建 | B | T7 前 |
-| Q7 | P0-1 若驗出 library 曲目普遍無 ISRC | 決定性 cid 幾乎全退成 `p:` 形式,跨 provider 收斂價值歸零 | 屆時重議 T5 的 cid 設計 | **T5 前** |
+| Q7 | P0-1 若驗出 library 曲目普遍無 ISRC | 決定性 cid 幾乎全退成 `p:` 形式,跨 provider 收斂價值歸零 | 屆時重議 T5 的 cid 設計。**2026-09-07 Spotify 半邊已用真帳號驗過:使用者自有 3 個清單 160/160 首有 ISRC、`is_local` 0,設計成立;Apple 半邊待 web token(C-0)** | **T5 前**(Spotify 半邊已過,T5 據此開工) |
 | Q8 | `auth status` 要不要顯示 Google email | A 顯示(email 進 config,非機密)/ B 不顯示(那就別從 id_token 取) | A(§5 的「登錯帳號」風險沒有其他偵測手段) | T3 前 |
 | Q9 | P5 的引擎 / 順序合併 | op log + HLC vs state 三方合併 | 延到 P5,用 Drive 是否真的沒有 precondition 的實測結果決定 | P5 |
 
