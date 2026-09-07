@@ -10,6 +10,8 @@ go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 
 (release 分發規劃中:macOS Homebrew、Windows Scoop/winget。)
 
+更新:`capy update --dev` 會抓 main 分支最新 commit、用 `go install` 重建並覆蓋目前這顆 binary(需要 Go toolchain,第一次約 20 秒)。正式版發行後 `capy update`(不帶 `--dev`)才會有作用。
+
 ## Spotify:自建 app(免費,約 2 分鐘)
 
 Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用你自己的 app:
