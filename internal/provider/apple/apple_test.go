@@ -37,3 +37,13 @@ func TestProviderSearchUsesStorefront(t *testing.T) {
 		t.Fatalf("(%d, %v)", len(ts), err)
 	}
 }
+
+func TestCapsArtistSearchButNoPlaylistPlay(t *testing.T) {
+	caps := New(nil, "https://x", "d", "u", "tw").Caps()
+	if !caps.Has(provider.CapArtistSearch) {
+		t.Error("Apple 應宣告 CapArtistSearch")
+	}
+	if caps.Has(provider.CapPlayPlaylist) {
+		t.Error("Apple 不得宣告 CapPlayPlaylist(R4:清單播放 URL 未驗證)")
+	}
+}

@@ -16,6 +16,7 @@ type Provider struct {
 var (
 	_ provider.Provider           = (*Provider)(nil)
 	_ provider.Searcher           = (*Provider)(nil)
+	_ provider.ArtistSearcher     = (*Provider)(nil)
 	_ provider.PlaylistReader     = (*Provider)(nil)
 	_ provider.PlaybackController = (*Provider)(nil)
 )
@@ -28,7 +29,8 @@ func (p *Provider) ID() string          { return "apple" }
 func (p *Provider) DisplayName() string { return "Apple Music" }
 
 func (p *Provider) Caps() provider.Capability {
-	caps := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead
+	caps := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapArtistSearch
+	// 不宣告 CapPlayPlaylist:library 清單沒有 catalog URL,music:// 播放清單未驗證(UX 計畫 R4)。
 	if playbackSupported {
 		caps |= provider.CapPlaybackControl
 	}
@@ -43,6 +45,14 @@ func (p *Provider) Health(ctx context.Context) error {
 
 func (p *Provider) Search(ctx context.Context, q provider.Query) ([]provider.Track, error) {
 	return p.c.SearchSongs(ctx, p.storefront, q.Text, q.Limit)
+}
+
+func (p *Provider) SearchArtists(ctx context.Context, q provider.Query) ([]provider.Artist, error) {
+	return p.c.SearchArtists(ctx, p.storefront, q.Text, q.Limit)
+}
+
+func (p *Provider) ArtistTopTracks(ctx context.Context, artistID string) ([]provider.Track, error) {
+	return p.c.ArtistTopSongs(ctx, p.storefront, artistID)
 }
 
 func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {

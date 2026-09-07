@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -16,6 +17,7 @@ type Provider struct {
 var (
 	_ provider.Provider           = (*Provider)(nil)
 	_ provider.Searcher           = (*Provider)(nil)
+	_ provider.ArtistSearcher     = (*Provider)(nil)
 	_ provider.PlaylistReader     = (*Provider)(nil)
 	_ provider.PlaybackController = (*Provider)(nil)
 )
@@ -29,7 +31,8 @@ func (p *Provider) DisplayName() string { return "Spotify" }
 
 func (p *Provider) Caps() provider.Capability {
 	// 寫入能力(playlist modify)於 P4/P5 實作 ApplyOps 時再宣告
-	return provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaybackControl
+	return provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaybackControl |
+		provider.CapArtistSearch | provider.CapPlayPlaylist
 }
 
 // Health:devices 是最便宜的授權+連線驗證(doctor 用)。
@@ -40,6 +43,14 @@ func (p *Provider) Health(ctx context.Context) error {
 
 func (p *Provider) Search(ctx context.Context, q provider.Query) ([]provider.Track, error) {
 	return p.c.SearchTracks(ctx, q.Text, q.Limit)
+}
+
+func (p *Provider) SearchArtists(ctx context.Context, q provider.Query) ([]provider.Artist, error) {
+	return p.c.SearchArtists(ctx, q.Text, q.Limit)
+}
+
+func (p *Provider) ArtistTopTracks(ctx context.Context, artistID string) ([]provider.Track, error) {
+	return p.c.ArtistTopTracks(ctx, artistID)
 }
 
 func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
@@ -56,6 +67,12 @@ func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
 }
 
 func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
+	if req.PlaylistID != "" {
+		if len(req.TrackIDs) > 0 {
+			return errors.New("PlaylistID 與 TrackIDs 擇一")
+		}
+		return p.c.PlayContext(ctx, "spotify:playlist:"+req.PlaylistID, req.DeviceID)
+	}
 	uris := make([]string, len(req.TrackIDs))
 	for i, id := range req.TrackIDs {
 		uris[i] = "spotify:track:" + id

@@ -201,6 +201,52 @@ func (c *Client) SearchSongs(ctx context.Context, storefront, term string, limit
 	return out, nil
 }
 
+type artistJSON struct {
+	ID         string `json:"id"`
+	Attributes struct {
+		Name string `json:"name"`
+	} `json:"attributes"`
+}
+
+// SearchArtists 只取一頁(挑選器最多列幾個)。
+func (c *Client) SearchArtists(ctx context.Context, storefront, term string, limit int) ([]provider.Artist, error) {
+	if limit <= 0 || limit > searchPageMax {
+		limit = searchPageMax
+	}
+	q := url.Values{"types": {"artists"}, "term": {term}, "limit": {strconv.Itoa(limit)}}
+	var resp struct {
+		Results struct {
+			Artists struct {
+				Data []artistJSON `json:"data"`
+			} `json:"artists"`
+		} `json:"results"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/search", q, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Artist, len(resp.Results.Artists.Data))
+	for i, a := range resp.Results.Artists.Data {
+		out[i] = provider.Artist{ProviderID: a.ID, Name: a.Attributes.Name}
+	}
+	return out, nil
+}
+
+// ArtistTopSongs:GET /catalog/{sf}/artists/{id}/view/top-songs。
+func (c *Client) ArtistTopSongs(ctx context.Context, storefront, id string) ([]provider.Track, error) {
+	var resp struct {
+		Data []songJSON `json:"data"`
+	}
+	path := "/catalog/" + url.PathEscape(storefront) + "/artists/" + url.PathEscape(id) + "/view/top-songs"
+	if _, err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Track, len(resp.Data))
+	for i := range resp.Data {
+		out[i] = resp.Data[i].toTrack()
+	}
+	return out, nil
+}
+
 // Song 取單曲(含 attributes.url,macOS 播放用;不自己拼 URL)。
 func (c *Client) Song(ctx context.Context, storefront, id string) (provider.Track, string, error) {
 	var resp struct {

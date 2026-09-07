@@ -4,6 +4,7 @@ package apple
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -126,5 +127,16 @@ func TestPlayTrackQuotesURLSafely(t *testing.T) {
 	want := `open location "music://music.apple.com/tw/x?i=1&q=a\"b"`
 	if len(*scripts) != 1 || !strings.Contains((*scripts)[0], want) {
 		t.Errorf("script = %v, want contains %q", *scripts, want)
+	}
+}
+
+func TestPlayPlaylistNotSupportedAndNoOSA(t *testing.T) {
+	scripts := stubOSA(t, "")
+	err := (&Provider{}).Play(context.Background(), provider.PlayRequest{PlaylistID: "p.abc"})
+	if !errors.Is(err, provider.ErrNotSupported) || !strings.Contains(err.Error(), "pl show") {
+		t.Fatalf("清單播放應回 ErrNotSupported 且指向 pl show:%v", err)
+	}
+	if len(*scripts) != 0 {
+		t.Errorf("不得執行任何 AppleScript:%v", *scripts)
 	}
 }

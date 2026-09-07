@@ -197,6 +197,51 @@ func (c *Client) SearchTracks(ctx context.Context, text string, limit int) ([]pr
 	return out, nil
 }
 
+// ── artists ──
+
+type artistJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// SearchArtists 只取一頁(挑選器最多列幾個);limit 超過單次上限就截到上限。
+func (c *Client) SearchArtists(ctx context.Context, text string, limit int) ([]provider.Artist, error) {
+	if limit <= 0 || limit > searchPageMax {
+		limit = searchPageMax
+	}
+	q := url.Values{"type": {"artist"}, "q": {text}, "limit": {strconv.Itoa(limit)}}
+	var resp struct {
+		Artists struct {
+			Items []artistJSON `json:"items"`
+		} `json:"artists"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/search", q, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Artist, len(resp.Artists.Items))
+	for i, a := range resp.Artists.Items {
+		out[i] = provider.Artist{ProviderID: a.ID, Name: a.Name}
+	}
+	return out, nil
+}
+
+// ArtistTopTracks:market=from_token(依使用者帳號國家)。Spotify 若拒絕 from_token,
+// 備案是 GET /me 取 country(UX 計畫 T3,驗收 U-3 決定要不要做)。
+func (c *Client) ArtistTopTracks(ctx context.Context, artistID string) ([]provider.Track, error) {
+	var resp struct {
+		Tracks []trackJSON `json:"tracks"`
+	}
+	path := "/artists/" + url.PathEscape(artistID) + "/top-tracks"
+	if _, err := c.do(ctx, http.MethodGet, path, url.Values{"market": {"from_token"}}, nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Track, len(resp.Tracks))
+	for i := range resp.Tracks {
+		out[i] = resp.Tracks[i].toTrack()
+	}
+	return out, nil
+}
+
 // ── player ──
 
 // mapPlayerErr:player 端點的 404 + NO_ACTIVE_DEVICE 是語意,不是 URL 打錯。
@@ -258,6 +303,13 @@ func (c *Client) Play(ctx context.Context, uris []string, deviceID string) error
 	if len(uris) > 0 {
 		body = map[string]any{"uris": uris}
 	}
+	_, err := c.do(ctx, http.MethodPut, "/me/player/play", deviceQuery(deviceID), body, nil)
+	return mapPlayerErr(err)
+}
+
+// PlayContext:以 context_uri(播放清單、專輯)播放。
+func (c *Client) PlayContext(ctx context.Context, contextURI, deviceID string) error {
+	body := map[string]any{"context_uri": contextURI}
 	_, err := c.do(ctx, http.MethodPut, "/me/player/play", deviceQuery(deviceID), body, nil)
 	return mapPlayerErr(err)
 }

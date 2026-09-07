@@ -83,6 +83,9 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 // 機制 A(預設)AppleScript open location;機制 B(CAPY_APPLE_PLAY_MECHANISM=open)shell open。
 // 兩者何者可靠由附錄 C-4 真實驗收決定,之後再硬編。
 func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
+	if req.PlaylistID != "" { // R4:不自創 music:// 清單 URL
+		return fmt.Errorf("Apple Music 暫不支援直接播放清單 — 用 capy pl show 取曲目後 play --id:%w", provider.ErrNotSupported)
+	}
 	if len(req.TrackIDs) == 0 {
 		_, err := runOSA(`tell application "Music" to play`)
 		return err

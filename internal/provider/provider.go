@@ -22,6 +22,8 @@ const (
 	CapLibraryRead
 	CapLibraryWrite
 	CapPlaybackControl
+	CapArtistSearch // SearchArtists + ArtistTopTracks(UX 計畫 T3)
+	CapPlayPlaylist // PlayRequest.PlaylistID
 )
 
 // Has 回報 c 是否包含 want 的全部能力位。
@@ -47,6 +49,12 @@ type Track struct {
 	Raw        json.RawMessage
 }
 
+// Artist:藝人;熱門歌曲以 ArtistTopTracks 另取。
+type Artist struct {
+	ProviderID string
+	Name       string
+}
+
 type Query struct {
 	Text  string
 	Limit int // 想要的總數;provider 自行處理單次上限與分頁
@@ -68,8 +76,9 @@ type PlaybackState struct {
 }
 
 type PlayRequest struct {
-	TrackIDs []string // provider 內部 ID;空 = 恢復播放
-	DeviceID string   // 空 = 目前作用中裝置
+	TrackIDs   []string // provider 內部 ID;空 = 恢復播放
+	DeviceID   string   // 空 = 目前作用中裝置
+	PlaylistID string   // 非空 = 以播放清單為 context 播放;與 TrackIDs 互斥(需 CapPlayPlaylist)
 }
 
 type PlaylistRef struct {
@@ -88,6 +97,12 @@ type Provider interface {
 
 type Searcher interface {
 	Search(ctx context.Context, q Query) ([]Track, error)
+}
+
+// ArtistSearcher:藝人搜尋與熱門歌曲(CapArtistSearch)。
+type ArtistSearcher interface {
+	SearchArtists(ctx context.Context, q Query) ([]Artist, error)
+	ArtistTopTracks(ctx context.Context, artistID string) ([]Track, error)
 }
 
 type PlaylistReader interface {
