@@ -20,8 +20,9 @@ import (
 
 // 測試替換點。
 var (
-	googleLoginFn func(context.Context, auth.GoogleClient, func(string) error) (*oauth2.Token, string, error) = auth.LoginGoogle
-	googleWizard                                                                                              = runGoogleClientWizard
+	googleLoginFn      func(context.Context, auth.GoogleClient, func(string) error) (*oauth2.Token, string, error) = auth.LoginGoogle
+	googleWizard                                                                                                   = runGoogleClientWizard
+	googleSecretPrompt                                                                                             = runGoogleSecretPrompt
 )
 
 // googleClientSource:這次登入的 client 從哪來(auth status 也要能講)。
@@ -93,6 +94,20 @@ func runGoogleClientWizard() (id, sec string, err error) {
 	return strings.TrimSpace(id), strings.TrimSpace(sec), nil
 }
 
+// runGoogleSecretPrompt:config 有 client id、但 secret 不在 keychain 也沒從 flag/env 來(logout 會刪掉 secret)
+// 的互動路徑——只問 secret,不重跑整個精靈;Enter 留空 = 試試看不帶 secret(Q1 未定)。
+func runGoogleSecretPrompt(clientID string) (string, error) {
+	var sec string
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewNote().Title("找不到這個 client 的 secret").Description("client id "+maskGoogleClientID(clientID)+" 還在 config,但 secret 不在 keychain(capy auth logout google 會刪掉它)。\n貼上 secret;直接 Enter 留空則試試看不帶 secret(Desktop client 是否必須帶 secret 由 G-0 驗收決定)。"),
+		huh.NewInput().Title("Client secret").EchoMode(huh.EchoModePassword).Value(&sec),
+	))
+	if err := form.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(sec), nil
+}
+
 func googleLogin(cmd *cobra.Command) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -112,6 +127,13 @@ func googleLogin(cmd *cobra.Command) error {
 		}
 		client, source = auth.GoogleClient{ID: id, Secret: sec}, googleFromWizard
 	}
+	if source == googleFromConfig && client.Secret == "" && stdinIsTTY() { // logout 之後:互動使用者要有路重貼 secret
+		sec, err := googleSecretPrompt(client.ID)
+		if err != nil {
+			return err
+		}
+		client.Secret = sec
+	}
 	fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成 Google 授權…(180s 內;請勾選全部三個權限)")
 	ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
 	defer cancel()
@@ -120,11 +142,13 @@ func googleLogin(cmd *cobra.Command) error {
 		return err
 	}
 	// 授權成功後才落地 client 與帳號資訊(失敗不留半殘 config)。BYO 的 secret 只進 keychain;內建的不落地。
+	// 這三個寫入沒有交易性:token 已在 keychain,之後任何一步失敗都要講明「授權其實已成功」,否則使用者會以為要重登。
+	const authOK = "Google 授權已成功、token 已入 keychain,但"
 	if !client.Builtin {
 		cfg.GoogleClientID = client.ID
 		if client.Secret != "" {
 			if err := secret.Set(auth.KeyGoogleClientSecret, client.Secret); err != nil {
-				return fmt.Errorf("寫入 keychain 的 google.client_secret:%w", err)
+				return fmt.Errorf("%s寫入 keychain 的 google.client_secret 失敗(下次 login 用 --client-secret 補):%w", authOK, err)
 			}
 		}
 	}
@@ -133,7 +157,7 @@ func googleLogin(cmd *cobra.Command) error {
 		cfg.DeviceID = ulid.New()
 	}
 	if err := config.Save(cfg); err != nil {
-		return err
+		return fmt.Errorf("%s寫 config 失敗(client id / email / device_id 沒落地,修好後重跑 login 即可):%w", authOK, err)
 	}
 	who := email
 	if who == "" {

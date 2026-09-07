@@ -442,7 +442,10 @@ func newAuthLogoutCmd() *cobra.Command {
 				if err := auth.LogoutGoogle(cmd.Context()); err != nil { // token + BYO client secret
 					return err
 				}
-				if cfg, err := config.Load(); err == nil && cfg.GoogleEmail != "" { // 沒登入就不該還顯示 email
+				switch cfg, err := config.Load(); { // 沒登入就不該還顯示 email
+				case err != nil: // keychain 的鍵已經刪了,不讓整個命令失敗,但要講
+					fmt.Fprintf(cmd.ErrOrStderr(), "token 已刪除,但 config 的 google_email 清不掉:%v\n", err)
+				case cfg.GoogleEmail != "":
 					cfg.GoogleEmail = ""
 					if err := config.Save(cfg); err != nil {
 						return err

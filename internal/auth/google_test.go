@@ -213,3 +213,35 @@ func TestEmailFromIDTokenIsLenient(t *testing.T) {
 		t.Error("壞 JWT 應回空,不 panic")
 	}
 }
+
+func TestLoginGoogleExplainsInvalidClient(t *testing.T) {
+	setTokenTest(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"invalid_client","error_description":"Unauthorized"}`))
+	}))
+	t.Cleanup(srv.Close)
+	swapGoogleTokenURL(t, srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := LoginGoogle(ctx, GoogleClient{ID: "cid"}, fakeAuthBrowser(t, "c"))
+	if !errors.Is(err, ErrGoogleClient) || !strings.Contains(err.Error(), "--client-secret") {
+		t.Fatalf("invalid_client 要講下一步:%v", err)
+	}
+	if _, err := secret.Get(KeyGoogleToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Fatal("失敗不得落地")
+	}
+	// refresh 路徑同樣要歸因(secret 輪替後 refresh 也會 invalid_client)
+	e := explainGoogleGrant(&oauth2.RetrieveError{ErrorCode: "invalid_client"}, time.Time{})
+	if !errors.Is(e, ErrGoogleClient) {
+		t.Fatalf("explainGoogleGrant 應把 invalid_client 交給 explainGoogleClient:%v", e)
+	}
+}
+
+func TestExplainGoogleGrantZeroIssuedAt(t *testing.T) {
+	e := explainGoogleGrant(&oauth2.RetrieveError{ErrorCode: "invalid_grant", ErrorDescription: "x"}, time.Time{})
+	if !errors.Is(e, ErrGoogleGrant) || strings.Contains(e.Error(), "0001") || strings.Contains(e.Error(), "Publish app") {
+		t.Fatalf("issued_at 零值不得印成 0001 年、也不該猜 Publish:%v", e)
+	}
+}

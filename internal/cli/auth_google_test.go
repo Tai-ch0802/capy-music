@@ -3,6 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +190,76 @@ func TestGoogleWizardSourceLabel(t *testing.T) {
 	googleLoginFn = fakeGoogleLogin(t, "wiz", "", "w@x")
 	if out, err := runCLI(t, "auth", "login", "google"); err != nil || !strings.Contains(out, "來源:精靈") {
 		t.Fatalf("精靈路徑的來源標籤應是精靈:%v %q", err, out)
+	}
+}
+
+// logout 刪了 secret 但 client id 留在 config:互動使用者要有路重貼 secret,不能靜默帶空 secret 去登入。
+func TestGoogleLoginAfterLogoutPromptsForSecretOnTTY(t *testing.T) {
+	setGoogleTest(t)
+	_ = config.Save(&config.Config{GoogleClientID: "byo.apps.googleusercontent.com"})
+	stdinIsTTY = func() bool { return true }
+	wizardRan, promptRan := false, false
+	googleWizard = func() (string, string, error) { wizardRan = true; return "", "", errors.New("不該跑完整精靈") }
+	origPrompt := googleSecretPrompt
+	googleSecretPrompt = func(id string) (string, error) {
+		promptRan = true
+		if id != "byo.apps.googleusercontent.com" {
+			t.Errorf("提示應帶 config 的 client id,得到 %q", id)
+		}
+		return "re-pasted", nil
+	}
+	t.Cleanup(func() { googleSecretPrompt = origPrompt })
+	googleLoginFn = fakeGoogleLogin(t, "byo.apps.googleusercontent.com", "re-pasted", "a@b")
+	if _, err := runCLI(t, "auth", "login", "google"); err != nil || !promptRan || wizardRan {
+		t.Fatalf("應只問 secret:%v prompt=%v wizard=%v", err, promptRan, wizardRan)
+	}
+	if s, _ := secret.Get(auth.KeyGoogleClientSecret); s != "re-pasted" {
+		t.Fatalf("重貼的 secret 應進 keychain:%q", s)
+	}
+	// 非 TTY:不問、帶空 secret 去試(Q1 未定);invalid_client 的歸因在 auth 套件測
+	stdinIsTTY = func() bool { return false }
+	googleSecretPrompt = func(string) (string, error) { t.Fatal("非 TTY 不得跑提示"); return "", nil }
+	_ = secret.Delete(auth.KeyGoogleClientSecret)
+	googleLoginFn = fakeGoogleLogin(t, "byo.apps.googleusercontent.com", "", "a@b")
+	if _, err := runCLI(t, "auth", "login", "google"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGoogleLoginConfigSaveFailureSaysAuthSucceeded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("唯讀目錄在 Windows 擋不住建檔")
+	}
+	setGoogleTest(t)
+	dir, _ := config.Dir()
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.Chmod(dir, 0o500) // Load 讀不到檔案 = 零值 config(正常);Save 寫 tmp 檔會失敗
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	googleLoginFn = fakeGoogleLogin(t, "x", "s", "a@b")
+	_, err := runCLI(t, "auth", "login", "google", "--client-id", "x", "--client-secret", "s")
+	if err == nil || !strings.Contains(err.Error(), "授權已成功") || !strings.Contains(err.Error(), "token 已入 keychain") {
+		t.Fatalf("config 寫失敗要講明授權其實已成功:%v", err)
+	}
+	if _, err := auth.GoogleStored(); err != nil {
+		t.Fatal("token 應仍在 keychain")
+	}
+}
+
+func TestGoogleLogoutWarnsWhenConfigUnreadable(t *testing.T) {
+	setGoogleTest(t)
+	googleLoginFn = fakeGoogleLogin(t, "x", "s", "who@x")
+	if _, err := runCLI(t, "auth", "login", "google", "--client-id", "x", "--client-secret", "s"); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := config.Dir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, "auth", "logout", "google")
+	if err != nil || !strings.Contains(out, "已登出 google") || !strings.Contains(out, "google_email 清不掉") {
+		t.Fatalf("config 讀不到時仍應登出並提醒:%v %q", err, out)
+	}
+	if _, err := secret.Get(auth.KeyGoogleToken); !errors.Is(err, secret.ErrNotFound) {
+		t.Fatal("token 應已刪除")
 	}
 }

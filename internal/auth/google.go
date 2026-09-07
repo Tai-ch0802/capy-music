@@ -107,7 +107,7 @@ func LoginGoogle(ctx context.Context, c GoogleClient, openBrowser func(string) e
 	}
 	tok, err := conf.Exchange(ctx, vals.Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
-		return nil, "", fmt.Errorf("token 交換失敗:%w", err)
+		return nil, "", fmt.Errorf("token 交換失敗:%w", explainGoogleClient(err))
 	}
 	if tok.RefreshToken == "" {
 		return nil, "", errors.New("Google 未回傳 refresh token(通常是缺 access_type=offline / prompt=consent;若你曾撤銷過存取,請到 https://myaccount.google.com/permissions 移除 capy 後重登)")
@@ -157,17 +157,34 @@ func emailFromIDToken(tok *oauth2.Token) string {
 	return claims.Email
 }
 
-// explainGoogleGrant:invalid_grant 依 refresh token 年齡歸因。Testing 狀態的 client 發的 RT 7 天過期,
+// ErrGoogleClient:client id / secret 不符(invalid_client)。精靈允許 secret 留空、logout 會刪 secret、
+// Cloud Console 也能重新產生 secret——這三條路都會走到這裡,原始訊息完全看不出下一步。
+var ErrGoogleClient = errors.New("Google 不認這組 client id / secret(invalid_client)")
+
+// explainGoogleClient:invalid_client → 講明下一步;其他錯誤原樣回傳。
+func explainGoogleClient(err error) error {
+	var re *oauth2.RetrieveError
+	if !errors.As(err, &re) || re.ErrorCode != "invalid_client" {
+		return err
+	}
+	return fmt.Errorf("%w:Desktop client 換 token 需要 secret——請用 --client-secret / CAPY_GOOGLE_CLIENT_SECRET 重新提供(logout 會刪掉 keychain 裡的 secret;若在 Cloud Console 重新產生過,舊的已作廢)。原始錯誤:%s", ErrGoogleClient, re.ErrorDescription)
+}
+
+// explainGoogleGrant:invalid_grant 依 refresh token 年齡歸因(invalid_client 交給 explainGoogleClient)。Testing 狀態的 client 發的 RT 7 天過期,
 // 而且 drive.appdata 不在豁免清單——BYO 使用者漏按 Publish app 就會在第 7 天莫名被登出,列為第一嫌疑。
 func explainGoogleGrant(err error, issuedAt time.Time) error {
 	var re *oauth2.RetrieveError
 	if !errors.As(err, &re) || re.ErrorCode != "invalid_grant" {
-		return err
+		return explainGoogleClient(err)
 	}
 	if !issuedAt.IsZero() && now().Sub(issuedAt) < 8*24*time.Hour {
 		return fmt.Errorf("%w(發放才 %s):最常見原因是 Google Cloud Console 的 OAuth 同意畫面停在 Testing——Testing 狀態的 refresh token 7 天就過期,請到 Google Auth platform → Audience 按 Publish app,再重新 capy auth login google。其他可能:你在 https://myaccount.google.com/permissions 撤銷了 capy、或同一 client 超過 100 顆 token(最舊的被淘汰)。原始錯誤:%s", ErrGoogleGrant, now().Sub(issuedAt).Round(time.Hour), re.ErrorDescription)
 	}
-	return fmt.Errorf("%w(發放於 %s):可能是 6 個月未使用被 Google 回收、或你撤銷了存取——重新 capy auth login google。原始錯誤:%s", ErrGoogleGrant, issuedAt.Format("2006-01-02"), re.ErrorDescription)
+	when := "" // 掛鉤是 provider-neutral 的:舊格式或別的 provider 可能沒有 issued_at,零值不要印成 0001-01-01
+	if !issuedAt.IsZero() {
+		when = "(發放於 " + issuedAt.Format("2006-01-02") + ")"
+	}
+	return fmt.Errorf("%w%s:可能是 6 個月未使用被 Google 回收、或你撤銷了存取——重新 capy auth login google。原始錯誤:%s", ErrGoogleGrant, when, re.ErrorDescription)
 }
 
 // GoogleTokenSource:keychain 為後盾的 token source(跨程序檔案鎖,與 Spotify 同一套)。
