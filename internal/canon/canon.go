@@ -206,6 +206,7 @@ func (d *DeviceState) SetBase(pid, provider string, s Snapshot) {
 type normalizer interface{ normalize() }
 
 // Encode:緊湊 JSON 加換行。encoding/json 對 map 鍵排序、struct 欄位序固定,所以同一狀態永遠同一串位元組。
+// 會**原地** normalize 傳進來的物件(補空容器、items 依 rank 排):要驗某個順序,得在 Encode 之前看。
 func Encode(v any) ([]byte, error) {
 	if n, ok := v.(normalizer); ok {
 		n.normalize()
