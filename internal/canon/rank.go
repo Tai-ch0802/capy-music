@@ -10,11 +10,21 @@ const rankDigits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 
 // RankBetween 回一個字典序嚴格落在 a 與 b 之間的 rank(fractional index,spec §6.2);a == "" 表示最前、
 // b == "" 表示最後。產出永不以 '0' 結尾,否則 "x" 與 "x0" 之間插不進東西。
+// 輸入來自 Drive 上的檔(別台裝置、未來版本、手改過的),所以要驗:非 base62 字元回錯;尾端的 '0' 不改變值
+// (spec §6.2 的範例鍵 "a0" 就有),比較前先去掉,於是 ("a", "a0") 這種中間沒有空間的組合會回錯而不是回出界的值。
 // ponytail: 尾端連續 Append 大約每 6 筆長 1 字,首次匯入用 Ranks(n) 均分;鍵真的長到礙眼再換
 // rocicorp 那套帶整數部分長度前綴的演算法。
 func RankBetween(a, b string) (string, error) {
-	if b != "" && a >= b {
-		return "", fmt.Errorf("rank 順序錯:%q 不在 %q 之前", a, b)
+	for _, s := range []string{a, b} {
+		if strings.Trim(s, rankDigits) != "" {
+			return "", fmt.Errorf("rank 含非 base62 字元:%q", s)
+		}
+	}
+	a = strings.TrimRight(a, "0")
+	if b != "" {
+		if b = strings.TrimRight(b, "0"); b == "" || a >= b {
+			return "", fmt.Errorf("rank 順序錯或中間沒有空間:%q 與 %q", a, b)
+		}
 	}
 	n := len(rankDigits)
 	digit := func(s string, i, def int) int {

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Tai-ch0802/capy-music/internal/ulid"
@@ -40,6 +42,7 @@ func NewManifest() *Manifest { return &Manifest{SchemaVersion: SchemaVersion, De
 
 // Touch 註冊或更新裝置(last_seen = Now);回傳是否為新裝置。裝置只能由使用者用 device forget 移除,這裡不刪。
 func (m *Manifest) Touch(id, name string) bool {
+	defer m.normalize()
 	now := Now().Unix()
 	for i := range m.Devices {
 		if m.Devices[i].ID == id {
@@ -51,6 +54,14 @@ func (m *Manifest) Touch(id, name string) bool {
 	return true
 }
 
+// normalize:devices 依 ID 排序——manifest 是共用檔,兩台裝置註冊順序不同不能得到不同位元組。
+func (m *Manifest) normalize() {
+	if m.Devices == nil {
+		m.Devices = []Device{}
+	}
+	slices.SortFunc(m.Devices, func(a, b Device) int { return strings.Compare(a.ID, b.ID) })
+}
+
 // Tracks:tracks.json,cid → 曲目。
 type Tracks struct {
 	SchemaVersion int              `json:"schema_version"`
@@ -59,10 +70,16 @@ type Tracks struct {
 
 func NewTracks() *Tracks { return &Tracks{SchemaVersion: SchemaVersion, Tracks: map[string]Track{}} }
 
+func (t *Tracks) normalize() {
+	if t.Tracks == nil {
+		t.Tracks = map[string]Track{}
+	}
+}
+
 // Track:canonical 曲目(spec §6.2)。Mappings 是 provider → provider_id,P3 不帶 confidence / pinned。
 type Track struct {
 	CID        string            `json:"cid"`
-	ISRC       []string          `json:"isrc,omitempty"`
+	ISRC       []string          `json:"isrc,omitempty"` // alias set 的形狀,但 P3 只會有 0 或 1 個:觀測只帶一個 ISRC,不同 ISRC 落到不同 cid;合併同曲不同 ISRC 是 P4 resolver 的事
 	Title      string            `json:"title"`
 	Artists    []string          `json:"artists"`
 	Album      string            `json:"album,omitempty"`
@@ -99,6 +116,15 @@ type Item struct {
 
 func NewPlaylist(name string) *Playlist {
 	return &Playlist{SchemaVersion: SchemaVersion, PID: NewULID(), Name: name, UpdatedAt: Now().Unix(), Items: []Item{}, Links: map[string]string{}}
+}
+
+func (p *Playlist) normalize() {
+	if p.Items == nil {
+		p.Items = []Item{}
+	}
+	if p.Links == nil {
+		p.Links = map[string]string{}
+	}
 }
 
 // Append 在最後一筆之後加一個 item(rank 取現有最大者之後,不假設 Items 已排序)。
@@ -144,8 +170,15 @@ func NewDeviceState(deviceID string) *DeviceState {
 	return &DeviceState{SchemaVersion: SchemaVersion, DeviceID: deviceID, Base: map[string]map[string]Base{}}
 }
 
+func (d *DeviceState) normalize() {
+	if d.Base == nil {
+		d.Base = map[string]map[string]Base{}
+	}
+}
+
 // SetBase 記下本裝置對 (pid, provider) 的最新觀測。
 func (d *DeviceState) SetBase(pid, provider string, s Snapshot) {
+	d.normalize()
 	if d.Base[pid] == nil {
 		d.Base[pid] = map[string]Base{}
 	}
@@ -155,8 +188,15 @@ func (d *DeviceState) SetBase(pid, provider string, s Snapshot) {
 	d.Base[pid][provider] = Base{Snapshot: s, ObservedAt: Now().Unix()}
 }
 
+// normalizer:Decode 收尾與 Encode 開頭都會呼叫——缺欄位 / null 補成空容器(舊版或手改的檔不能讓下一次賦值 panic),
+// 可排序的欄位排成決定性順序。
+type normalizer interface{ normalize() }
+
 // Encode:緊湊 JSON 加換行。encoding/json 對 map 鍵排序、struct 欄位序固定,所以同一狀態永遠同一串位元組。
 func Encode(v any) ([]byte, error) {
+	if n, ok := v.(normalizer); ok {
+		n.normalize()
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -182,6 +222,9 @@ func Decode[T any](b []byte) (*T, error) {
 	v := new(T)
 	if err := json.Unmarshal(b, v); err != nil {
 		return nil, err
+	}
+	if n, ok := any(v).(normalizer); ok {
+		n.normalize()
 	}
 	return v, nil
 }

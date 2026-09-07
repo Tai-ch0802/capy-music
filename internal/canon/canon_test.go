@@ -118,10 +118,13 @@ func TestRankBetween(t *testing.T) {
 			t.Errorf("RankBetween(%q,%q) = %q %v,要 %q", c.a, c.b, got, err, c.want)
 		}
 	}
-	for _, c := range [][2]string{{"b", "a"}, {"a", "a"}} {
+	for _, c := range [][2]string{{"b", "a"}, {"a", "a"}, {"a", "a0"}, {"a", "a00"}, {"", "0"}, {"a-b", "a-c"}, {"a", "b-"}, {"é", ""}} {
 		if _, err := canon.RankBetween(c[0], c[1]); err == nil {
-			t.Errorf("RankBetween(%q,%q) 應報錯", c[0], c[1])
+			t.Errorf("RankBetween(%q,%q) 應報錯(壞資料要看得見,不能 panic 或回出界的值)", c[0], c[1])
 		}
+	}
+	if got, err := canon.RankBetween("a0", ""); err != nil || got <= "a0" {
+		t.Errorf("尾端 0 是合法的 spec 鍵,之後仍要能插:%q %v", got, err)
 	}
 	// 性質:隨機在鄰居之間插入 500 次,序列永遠嚴格遞增、沒有 rank 以 '0' 結尾
 	rng := rand.New(rand.NewSource(1))
@@ -265,6 +268,62 @@ func enc(v any, err error) ([]byte, error) {
 		return nil, err
 	}
 	return canon.Encode(v)
+}
+
+func TestDecodeFillsMissingContainers(t *testing.T) {
+	tr, err := canon.Decode[canon.Tracks]([]byte(`{"schema_version":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.Tracks["c"] = canon.Track{} // 不可 panic
+	dev, err := canon.Decode[canon.DeviceState]([]byte(`{"schema_version":1,"device_id":"d","base":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev.SetBase("p", "spotify", canon.Snapshot{})
+	pl, err := canon.Decode[canon.Playlist]([]byte(`{"schema_version":1,"pid":"p","name":"n","updated_at":1}`))
+	if err != nil || pl.Items == nil {
+		t.Fatalf("缺 items 要補成空 slice:%v %+v", err, pl)
+	}
+	pl.Links["spotify"] = "x"
+	m, err := canon.Decode[canon.Manifest]([]byte(`{"schema_version":1}`))
+	if err != nil || m.Devices == nil || !m.Touch("d", "n") {
+		t.Fatalf("缺 devices 要補成空 slice:%v %+v", err, m)
+	}
+	var zero canon.DeviceState
+	zero.SetBase("p", "apple", canon.Snapshot{}) // 零值也不可 panic
+	if b, _ := canon.Encode(&canon.Playlist{SchemaVersion: 1}); !strings.Contains(string(b), `"items":[]`) || !strings.Contains(string(b), `"links":{}`) {
+		t.Fatalf("Encode 也要補齊容器:%s", b)
+	}
+}
+
+func TestManifestDeviceOrderIsDeterministic(t *testing.T) {
+	orig := canon.Now
+	canon.Now = func() time.Time { return time.Unix(1_756_600_000, 0) }
+	t.Cleanup(func() { canon.Now = orig })
+	m1, m2 := canon.NewManifest(), canon.NewManifest()
+	m1.Touch("A", "a")
+	m1.Touch("B", "b")
+	m2.Touch("B", "b")
+	m2.Touch("A", "a")
+	b1, _ := canon.Encode(m1)
+	b2, _ := canon.Encode(m2)
+	if !bytes.Equal(b1, b2) {
+		t.Fatalf("manifest 是共用檔,註冊順序不同不能得到不同位元組:
+%s%s", b1, b2)
+	}
+	if !strings.Contains(string(b1), `"devices":[{"id":"A"`) {
+		t.Fatalf("devices 應依 ID 排序:%s", b1)
+	}
+}
+
+func TestMergeBaseDoesNotAliasInput(t *testing.T) {
+	d := canon.DeviceState{DeviceID: "A", Base: map[string]map[string]canon.Base{"p1": {"spotify": {Snapshot: canon.Snapshot{Items: []string{"t1"}}, ObservedAt: 1}}}}
+	merged := canon.MergeBase([]canon.DeviceState{d})
+	merged["p1"]["spotify"].Snapshot.Items[0] = "MUTATED"
+	if d.Base["p1"]["spotify"].Snapshot.Items[0] != "t1" {
+		t.Fatal("合併結果不可與輸入共用底層陣列")
+	}
 }
 
 func TestLayout(t *testing.T) {
