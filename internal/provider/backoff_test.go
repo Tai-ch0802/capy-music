@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -80,5 +82,22 @@ func TestRetryAfterSecondsFallback(t *testing.T) {
 	}
 	if got := RetryAfterSeconds(resp429("abc"), 1); got != 1 {
 		t.Errorf("非數字應用 fallback:%d", got)
+	}
+}
+
+func TestBackoffExponentialFallback(t *testing.T) {
+	var got []time.Duration
+	orig, origErr := Wait, BackoffStderr
+	Wait = func(_ context.Context, d time.Duration) error { got = append(got, d); return nil }
+	BackoffStderr = io.Discard
+	t.Cleanup(func() { Wait, BackoffStderr = orig, origErr })
+	for attempt := 0; attempt < MaxRetries; attempt++ {
+		if err := Backoff(context.Background(), resp429(""), attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("無 Retry-After 應指數退避 %v,得 %v", want, got)
 	}
 }

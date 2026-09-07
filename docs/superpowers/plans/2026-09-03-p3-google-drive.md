@@ -260,14 +260,14 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 
 ### T4 — Drive appdata client
 
-**產出**:`internal/drive/`(新套件)。相依:`google.golang.org/api/drive/v3`。
+**產出**:`internal/drive/`(新套件)。相依:**無新相依**,stdlib `net/http` + `mime/multipart` 手寫——2026-09-07 量過 `google.golang.org/api/drive/v3` v0.297.0:binary 9,717,666 → 17,282,050 bytes(+78%)、`go mod graph` 192 → 469 行、go.mod 相依 29 → 57 行,換五個端點不划算。假 Drive 在 `internal/drive/drivetest/`。
 
-- **先量相依成本**(這是成本檢查,不是重設計):`go get` 後比對 `go build` 產出大小與 `go mod graph | wc -l`,結果記進本任務的報告。目前只有 6 個直接相依。
+- ~~先量相依成本~~ 已量(見上),結論:手寫。
 - **扁平命名 + `appProperties`**:`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`;`appProperties` 放 `kind` / `pid` / `device_id`,用 `q` 過濾。**不要建巢狀資料夾**——Drive 不保證同資料夾內檔名唯一,兩台裝置同時 resolve-or-create 會生出兩個同名資料夾。
 - `files.list` 一定要 `Fields("nextPageToken,files(id,name,version,md5Checksum,modifiedTime,appProperties)")`(預設只回四個欄位),一律迴圈 `nextPageToken`。
 - 同名檔多份:**取 `modifiedTime` 最新者並印警告**,不要清理(merge 對重複檔無害;寫進註解,免得後人又加 list-before-create)。
 - 錯誤映射:HTTP 401 **與** transport 層的 `*oauth2.RetrieveError`(refresh 失敗)都要 → `provider.ErrAuthExpired`,否則 cron 收到的是裸 `oauth2: cannot fetch token`;403 `storageQuotaExceeded` → 唯讀哨兵(可讀可 dry-run,拒絕上傳並明示);403 `accessNotConfigured` → 訊息印啟用 Drive API 的連結;403 `userRateLimitExceeded` 與 429 → 指數退避(**現有 `provider.Backoff` 只在 429 觸發,要擴充**)。
-- 沒有樂觀鎖:v3 移除 `etag`,`files.update` 無 precondition → **不要設計成依賴 CAS**;`version` 只能事後偵測。
+- 沒有樂觀鎖:v3 移除 `etag`,`files.update` 無 precondition → **不要設計成依賴 CAS**;`version` 只能事後偵測。**2026-09-07 真帳號實測:一次 multipart update 讓 `version` 從 1 跳到 3(metadata 與內容各記一次)——只能判「變了沒」,不能當計數。**
 - **cli 層測試替換點**:`newDriveClient` 為 package var(對照 `provider.go` 的 `newProvider`),否則 T6/T8 的 e2e 接不上 fake Drive。
 
 **測試**:`httptest` 假 Drive,要實作 **multipart upload 解析**(`/upload/drive/v3/files` 與 list 不同 base path——這是本任務最大的一塊工):create → download → update → download 的 round-trip;分頁走完;`appProperties` 過濾;同名多份取最新並警告;五種錯誤各自映射;退避有被呼叫。
