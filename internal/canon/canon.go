@@ -74,6 +74,12 @@ func (t *Tracks) normalize() {
 	if t.Tracks == nil {
 		t.Tracks = map[string]Track{}
 	}
+	for cid, tr := range t.Tracks {
+		if tr.Artists == nil { // "artists":null 與 [] 是兩串不同位元組
+			tr.Artists = []string{}
+			t.Tracks[cid] = tr
+		}
+	}
 }
 
 // Track:canonical 曲目(spec §6.2)。Mappings 是 provider → provider_id,P3 不帶 confidence / pinned。
@@ -118,6 +124,7 @@ func NewPlaylist(name string) *Playlist {
 	return &Playlist{SchemaVersion: SchemaVersion, PID: NewULID(), Name: name, UpdatedAt: Now().Unix(), Items: []Item{}, Links: map[string]string{}}
 }
 
+// normalize:items 依 (rank, iid) 排序——順序就是 rank(spec §6.2),檔案與 SQLite 鏡像(store.Dump)才會逐位元一致。
 func (p *Playlist) normalize() {
 	if p.Items == nil {
 		p.Items = []Item{}
@@ -125,6 +132,12 @@ func (p *Playlist) normalize() {
 	if p.Links == nil {
 		p.Links = map[string]string{}
 	}
+	slices.SortStableFunc(p.Items, func(a, b Item) int {
+		if c := strings.Compare(a.Rank, b.Rank); c != 0 {
+			return c
+		}
+		return strings.Compare(a.IID, b.IID)
+	})
 }
 
 // Append 在最後一筆之後加一個 item(rank 取現有最大者之後,不假設 Items 已排序)。

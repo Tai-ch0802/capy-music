@@ -57,16 +57,46 @@ func TestAddRecentDedupesNewestFirstAndCaps(t *testing.T) {
 	}
 }
 
-func TestBrokenOrMismatchedFileIsEmpty(t *testing.T) {
+func TestUnusableDBIsEmptyAndLegacyFileRemoved(t *testing.T) {
 	d := setDir(t)
-	for _, body := range []string{"{not json", `{"schema_version":99,"recent":[{"id":"x"}]}`} {
-		if err := os.WriteFile(filepath.Join(d, fileName), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		c := Load()
-		if len(c.Recent) != 0 || c.Playlists == nil || c.SchemaVersion != schemaVersion {
-			t.Fatalf("%q 應視同空快取:%+v", body, c)
-		}
+	legacy := filepath.Join(d, legacyFile)
+	if err := os.WriteFile(legacy, []byte(`{"schema_version":1,"recent":[{"id":"x"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := Load()
+	if len(c.Recent) != 0 || c.Playlists == nil {
+		t.Fatalf("舊 cache.json 不搬內容,Load 應為空:%+v", c)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatal("舊 cache.json 應在首次 Load 被刪")
+	}
+	// db 路徑被一個檔案佔住(config dir 是檔案)→ 開不了 → 一樣回空,不報錯、不 panic
+	f := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPY_CONFIG_DIR", f)
+	if c := Load(); len(c.Recent) != 0 || c.Playlists == nil {
+		t.Fatalf("db 開不了應視同空快取:%+v", c)
+	}
+	if err := (&Cache{Playlists: map[string][]Playlist{}}).Save(); err == nil {
+		t.Fatal("Save 在 db 開不了時要回錯(呼叫端自己決定要不要靜默)")
+	}
+}
+
+func TestRecentOrderIsPositionNotTimestamp(t *testing.T) {
+	setDir(t)
+	c := Load()
+	for _, r := range []Recent{{At: 3, ID: "a"}, {At: 1, ID: "b"}, {At: 2, ID: "c"}} { // at 與加入順序故意不同
+		r.Provider, r.Type, r.Label = "spotify", TypeTrack, r.ID
+		c.AddRecent(r)
+	}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got := Load()
+	if len(got.Recent) != 3 || got.Recent[0].ID != "c" || got.Recent[1].ID != "b" || got.Recent[2].ID != "a" {
+		t.Fatalf("順序要靠 position 保住(最新加入在前),不能靠 at 排:%+v", got.Recent)
 	}
 }
 

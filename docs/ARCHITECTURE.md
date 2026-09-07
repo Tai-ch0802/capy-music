@@ -576,21 +576,21 @@ capy pl sync 的一輪:
 db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
-CREATE TABLE tracks (
-  cid TEXT PRIMARY KEY, title TEXT, artists TEXT, album TEXT,
-  duration_ms INTEGER, updated_at INTEGER
-);
+-- schema v1(PRAGMA user_version = 1;2026-09-07 T6 實作,與 v0.5 草案的差異見下段)
+CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT, artists TEXT /* JSON [] */, album TEXT, duration_ms INTEGER, conflicts TEXT /* JSON [],§6.2 */);
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
-CREATE TABLE mappings (
-  cid TEXT, provider TEXT, provider_id TEXT,
-  PRIMARY KEY (cid, provider)
-);
+CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (cid, provider));
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updated_at INTEGER);
 CREATE TABLE playlist_items (pid TEXT, iid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (pid, provider));
-CREATE TABLE sync_state (provider TEXT, pid TEXT, base_hash TEXT, last_sync_at INTEGER, PRIMARY KEY (provider, pid));
-CREATE TABLE resolution_cache (cid TEXT, provider TEXT, provider_id TEXT, found INTEGER, expires_at INTEGER, PRIMARY KEY (cid, provider));
+CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT, last_seen INTEGER, registered INTEGER /* 在 manifest.devices */, has_state INTEGER /* 有 dev__<id>.json */);
+CREATE TABLE device_base (device_id TEXT, pid TEXT, provider TEXT, name TEXT, items TEXT /* JSON,平台順序的 provider id */, observed_at INTEGER, PRIMARY KEY (device_id, pid, provider));
+-- 純快取(原 cache.json,附錄 C 決策 17):順序存 position,「最新在前、去重、上限 50」在 internal/cache 的記憶體邏輯
+CREATE TABLE provider_playlists (provider TEXT, position INTEGER, id TEXT, name TEXT, total INTEGER, PRIMARY KEY (provider, position));
+CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER, provider TEXT, type TEXT, id TEXT, label TEXT, detail TEXT);
 ```
+
+**與 v0.5 草案的差異(2026-09-07,T6)**:`tracks` 多 `artists` / `conflicts`、少 `updated_at`——canon(§6.2)有前兩者、沒有後者,鏡像要無損(`store.Dump` 的輸出必須與 Drive 檔逐位元相同,`TestRebuildFromDrive`)。`device_base` 取代 `sync_state`:每台裝置的 base 是**有序的 provider id 清單**(§6.3),不是一個 hash;`base_hash` 若 T8 需要可由它導出。`devices` 鏡像 `manifest.devices` 並記「有沒有 dev 檔」,否則 base 全空的裝置檔重建時會消失。**不建 `sync_state` 與 `resolution_cache`**:P3 沒有寫入者(resolver 是 P4),migration 政策是整檔丟棄重建,之後加表只是 bump `user_version`。`store.Hydrate` 整批取代、`store.Dump` 整批讀出(items 依 `(rank, iid)`,與 canon 的 normalize 同序),P3 沒有 upsert。
 
 Migration:`PRAGMA user_version` 不符就**整檔丟棄重建**(從 Drive hydrate),不寫 ALTER。
 
@@ -797,7 +797,7 @@ capy drive init --from-local                              # P3:Drive 空 / 404 �
 capy device list | capy device forget <device_id>         # 延後;P3 只在 manifest 註冊 device_id;forget 是唯一移除裝置檔的路徑(§6.3),尚未排程
 capy db rebuild                                           # 延後;P3 的重建 = 刪 state.db 後由 hydrate 從 Drive 重建(§7,有測試)
 capy config get|set|list       # 目前只有 default_provider
-capy history clear             # 清空 cache.json 的最近搜尋
+capy history clear             # 清空本機快取(state.db)的最近搜尋
 capy update --dev              # 從 main 最新節點 go install 重建並覆蓋自己(需 Go toolchain);正式版更新等 T10
 capy completion <shell>        # cobra 內建;候選只讀本機快取
 capy doctor
@@ -835,7 +835,7 @@ capy doctor
 | 14 | 補全機制(2026-09-04) | 兩者都做:CLI 內建挑選器為主(不需 shell 設定);shell tab 補全為輔,**只讀本機 `cache.json`、絕不打網路、絕不取鎖** | 每按一次 TAB 就跑一次;PR #8 之後建構 provider 會取檔案鎖並讀 keychain,補全若打網路會卡住整個 shell |
 | 15 | `play` 語意(2026-09-04) | 統一搜尋(曲目 + 藝人 + 我的播放清單);TTY 下唯一明確命中(清單名完全相符 → 藝人名完全相符 → 曲目恰一筆)直接播,否則挑選器;**非 TTY 一律確定性**:`--type`/前綴,歧義回 exit 2 與 TSV 候選;藝人 = 熱門歌曲;無參數維持恢復播放 | 「記得清單名、記不得 ID」是真實使用情境;可腳本化鐵則要求非 TTY 絕不互動 |
 | 16 | 播放器畫面(2026-09-04) | 先做 `now --watch`(bubbletea,Spotify 與 Apple 皆支援,Apple 端不得啟動未執行的 Music.app);無參數 `capy` 儀表板留到之後 | 範圍可控、獨立可測;儀表板依賴同一套元件,之後疊 |
-| 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除 | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
+| 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除(2026-09-07 T6 已併入 `state.db`,`internal/cache` 留作門面,舊檔首次 Load 時刪除) | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 

@@ -70,7 +70,7 @@ source <(capy completion bash)
 capy completion fish | source
 ```
 
-候選只來自本機快取(`cache.json`):先跑過 `capy pl list` 才有清單名;`capy search` / `capy play` 會累積最近項目,`capy history clear` 清空。補全不會打網路、不會碰 keychain,所以按 TAB 不會卡。
+候選只來自本機快取(`state.db`,不打網路):先跑過 `capy pl list` 才有清單名;`capy search` / `capy play` 會累積最近項目,`capy history clear` 清空。補全不會打網路、不會碰 keychain,所以按 TAB 不會卡。
 
 ## 憑證與資料
 
