@@ -18,6 +18,7 @@ func newDebugCmd() *cobra.Command {
 		Hidden: true,
 	}
 	cmd.AddCommand(newDebugAppleTokenCmd())
+	cmd.AddCommand(newDebugDriveLsCmd())
 	return cmd
 }
 

@@ -54,19 +54,7 @@ func resolveGoogleClient(cmd *cobra.Command, cfg *config.Config) (auth.GoogleCli
 		}
 		return auth.GoogleClient{ID: cfg.GoogleClientID, Secret: strings.TrimSpace(sec)}, googleFromFlags, nil
 	}
-	if cfg.GoogleClientID != "" {
-		switch s, err := secret.Get(auth.KeyGoogleClientSecret); {
-		case err == nil:
-			sec = s
-		case !errors.Is(err, secret.ErrNotFound):
-			return auth.GoogleClient{}, "", fmt.Errorf("讀取 keychain 的 google.client_secret:%w", err)
-		}
-		return auth.GoogleClient{ID: cfg.GoogleClientID, Secret: sec}, googleFromConfig, nil
-	}
-	if auth.BuiltinGoogleClientID != "" {
-		return auth.GoogleClient{ID: auth.BuiltinGoogleClientID, Secret: auth.BuiltinGoogleClientSecret, Builtin: true}, googleFromBuiltin, nil
-	}
-	return auth.GoogleClient{}, "", nil
+	return googleClientFromConfig(cfg)
 }
 
 const googleGuide = `建立你自己的 Google OAuth client(免費,約 5 分鐘)——這個 binary 沒有內建 client(go install 建的都沒有):
