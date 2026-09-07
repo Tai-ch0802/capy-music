@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -84,6 +86,10 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		return m, nil
 	case watchStateMsg:
+		if errors.Is(msg.err, appleprov.ErrNotRunning) { // 狀態,不是失敗:留在畫面上、繼續輪詢,Music 開了畫面就活過來
+			m.st, m.err, m.fails = nil, msg.err, 0
+			return m, m.tick()
+		}
 		if msg.err != nil {
 			m.err, m.fails = msg.err, m.fails+1
 			if m.fails >= watchMaxFails {
@@ -148,7 +154,9 @@ func (m watchModel) View() tea.View {
 			line(dev)
 		}
 	}
-	if m.err != nil {
+	if m.err != nil && m.fails == 0 {
+		line("⚠ " + m.err.Error())
+	} else if m.err != nil {
 		line(fmt.Sprintf("⚠ %v(第 %d 次)", m.err, m.fails))
 	}
 	line("  space 播放/暫停 · n 下一首 · p 上一首 · q 離開")
@@ -162,8 +170,11 @@ var runWatch = func(cmd *cobra.Command, p provider.Provider, pc provider.Playbac
 		interval = watchPollApple
 	}
 	m := newWatchModel(cmd.Context(), pc, interval)
+	origStderr := provider.BackoffStderr // 429 退避的提示不能印進 TUI 畫面
+	provider.BackoffStderr = io.Discard
+	defer func() { provider.BackoffStderr = origStderr }()
 	final, err := tea.NewProgram(m, tea.WithContext(cmd.Context()), tea.WithOutput(cmd.OutOrStdout())).Run()
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
 		return err
 	}
 	if fm, ok := final.(watchModel); ok && fm.fatal != nil {

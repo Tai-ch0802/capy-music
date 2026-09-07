@@ -2,6 +2,7 @@ package apple
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -20,6 +21,10 @@ var (
 	_ provider.PlaylistReader     = (*Provider)(nil)
 	_ provider.PlaybackController = (*Provider)(nil)
 )
+
+// ErrNotRunning:Music.app 沒開。State 不會替使用者把它啟動起來(Play 會)。
+// 放在無 build tag 的檔案,cli 套件在 Windows 也能引用(watch 把它當狀態、不當失敗)。
+var ErrNotRunning = errors.New("Music.app 未執行(capy play 會把它啟動)")
 
 func New(hc *http.Client, base, devToken, userToken, storefront string) *Provider {
 	return &Provider{c: NewClient(hc, base, devToken, userToken), storefront: storefront}

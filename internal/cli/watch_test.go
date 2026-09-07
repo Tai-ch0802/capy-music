@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 )
 
 type watchFake struct {
@@ -177,5 +178,36 @@ func TestNowWatchNeedsTTYAndUsesSeam(t *testing.T) {
 	t.Cleanup(func() { runWatch = origRun })
 	if _, err := runCLI(t, "now", "--watch"); err != nil || !called {
 		t.Fatalf("互動時應進入 watch:%v called=%v", err, called)
+	}
+}
+
+func TestWatchAppleNotRunningIsStatusNotFailure(t *testing.T) {
+	f := &watchFake{err: appleprov.ErrNotRunning}
+	m := newWatchModel(context.Background(), f, time.Millisecond)
+	var cmd tea.Cmd
+	for i := 0; i < 2*watchMaxFails; i++ {
+		var next tea.Model
+		next, cmd = m.Update(watchStateMsg{err: f.err})
+		m = next.(watchModel)
+	}
+	if m.fatal != nil || isQuit(cmd) || m.fails != 0 {
+		t.Fatalf("Music 未執行應持續輪詢、不算失敗:fatal=%v fails=%d", m.fatal, m.fails)
+	}
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "Music.app 未執行") || strings.Contains(v, "第 ") {
+		t.Errorf("畫面應顯示未執行、不帶失敗次數:\n%s", v)
+	}
+	if _, ok := runCmd(cmd).(watchTickMsg); !ok {
+		t.Error("之後應繼續 tick")
+	}
+}
+
+func TestNowSingleShotAppleNotRunningIsExitZero(t *testing.T) {
+	f := &watchFake{err: appleprov.ErrNotRunning}
+	setCLITestConfig(t)
+	f.playFake.fakeProvider = fakeProvider{caps: provider.CapPlaybackControl}
+	swapProviderWith(t, f)
+	out, err := runCLI(t, "now")
+	if err != nil || !strings.Contains(out, "Music.app 未執行") {
+		t.Fatalf("單次 now 遇到 Music 未執行應印訊息並回 0:%v %q", err, out)
 	}
 }

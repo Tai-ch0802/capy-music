@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -262,10 +263,14 @@ func newNowCmd() *cobra.Command {
 				return runWatch(cmd, p, pc)
 			}
 			st, err := pc.State(cmd.Context())
+			w := cmd.OutOrStdout()
+			if errors.Is(err, appleprov.ErrNotRunning) { // 狀態查詢:Music 沒開是一種狀態,不是錯
+				fmt.Fprintln(w, err.Error())
+				return nil
+			}
 			if err != nil {
 				return friendlyErr(p.ID(), err)
 			}
-			w := cmd.OutOrStdout()
 			if st == nil || st.Track == nil {
 				fmt.Fprintln(w, "目前沒有播放內容")
 				return nil

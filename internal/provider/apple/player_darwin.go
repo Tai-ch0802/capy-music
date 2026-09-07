@@ -27,9 +27,6 @@ var (
 
 const musicDevice = "music.app"
 
-// ErrNotRunning:Music.app 沒開。State 不會替使用者把它啟動起來(Play 會)。
-var ErrNotRunning = errors.New("Music.app 未執行(capy play 會把它啟動)")
-
 // StubOSAForTest 把 runOSA 換成記錄器(僅供測試;darwin 專用)。
 // 跨套件測試鉤子不能放 _test.go(cli 套件的測試需要呼叫它,但 _test.go 的匯出只在同套件內可見),
 // 故放在一般檔案裡,以 *ForTest 命名清楚標示用途(同 P1 SetTestDir 討論;若未來認為應避免,
