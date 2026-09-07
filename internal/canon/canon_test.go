@@ -309,8 +309,7 @@ func TestManifestDeviceOrderIsDeterministic(t *testing.T) {
 	b1, _ := canon.Encode(m1)
 	b2, _ := canon.Encode(m2)
 	if !bytes.Equal(b1, b2) {
-		t.Fatalf("manifest 是共用檔,註冊順序不同不能得到不同位元組:
-%s%s", b1, b2)
+		t.Fatalf("manifest 是共用檔,註冊順序不同不能得到不同位元組:\n%s%s", b1, b2)
 	}
 	if !strings.Contains(string(b1), `"devices":[{"id":"A"`) {
 		t.Fatalf("devices 應依 ID 排序:%s", b1)
