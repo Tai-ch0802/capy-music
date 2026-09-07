@@ -47,7 +47,11 @@ func newAuthLoginCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "apple":
-				return appleLogin(cmd)
+				if err := appleLogin(cmd); err != nil {
+					return err
+				}
+				defaultProviderHint(cmd, "apple")
+				return nil
 			case "spotify":
 				// 走下方既有流程。
 			default:
@@ -86,6 +90,7 @@ func newAuthLoginCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "✅ Spotify 授權完成(refresh token 已入 keychain)")
+			defaultProviderHint(cmd, "spotify")
 			return nil
 		},
 	}
