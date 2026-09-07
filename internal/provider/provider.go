@@ -102,7 +102,7 @@ type Searcher interface {
 // ArtistSearcher:藝人搜尋與熱門歌曲(CapArtistSearch)。
 type ArtistSearcher interface {
 	SearchArtists(ctx context.Context, q Query) ([]Artist, error)
-	ArtistTopTracks(ctx context.Context, artistID string) ([]Track, error)
+	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 的備案要用名稱
 }
 
 type PlaylistReader interface {

@@ -37,7 +37,7 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 ```
 capy search 派對動物 [--provider apple]
 capy play 派對動物                      # 統一搜尋:曲目、藝人熱門歌曲、我的播放清單;歧義時開挑選器
-capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲;清單名完全相符 = 播清單(先 capy pl list 一次)
+capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify 開發模式 app 拿不到 top-tracks,退回依熱門度排序的搜尋);清單名完全相符 = 播清單(先 capy pl list 一次)
 capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
 capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
 capy pause / next / prev / now / devices

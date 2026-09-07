@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"golang.org/x/oauth2"
 
@@ -225,14 +226,20 @@ func (c *Client) SearchArtists(ctx context.Context, text string, limit int) ([]p
 	return out, nil
 }
 
-// ArtistTopTracks:market=from_token(依使用者帳號國家)。Spotify 若拒絕 from_token,
-// 備案是 GET /me 取 country(UX 計畫 T3,驗收 U-3 決定要不要做)。
-func (c *Client) ArtistTopTracks(ctx context.Context, artistID string) ([]provider.Track, error) {
+// ArtistTopTracks:先打 /artists/{id}/top-tracks(market=from_token)。開發模式 app 會被 403
+// (2026-09-07 實測:from_token / TW / 不帶 / country= 全部 403,不是 market 問題),此時退回
+// search q=artist:"<name>" type=track——Spotify 搜尋依熱門度排序,是「熱門歌曲」的可用近似。
+func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]provider.Track, error) {
 	var resp struct {
 		Tracks []trackJSON `json:"tracks"`
 	}
-	path := "/artists/" + url.PathEscape(artistID) + "/top-tracks"
-	if _, err := c.do(ctx, http.MethodGet, path, url.Values{"market": {"from_token"}}, nil, &resp); err != nil {
+	path := "/artists/" + url.PathEscape(a.ProviderID) + "/top-tracks"
+	_, err := c.do(ctx, http.MethodGet, path, url.Values{"market": {"from_token"}}, nil, &resp)
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status == http.StatusForbidden && a.Name != "" {
+		return c.SearchTracks(ctx, `artist:"`+strings.ReplaceAll(a.Name, `"`, "")+`"`, searchPageMax)
+	}
+	if err != nil {
 		return nil, err
 	}
 	out := make([]provider.Track, len(resp.Tracks))

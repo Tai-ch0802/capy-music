@@ -51,8 +51,8 @@ func (p *Provider) SearchArtists(ctx context.Context, q provider.Query) ([]provi
 	return p.c.SearchArtists(ctx, p.storefront, q.Text, q.Limit)
 }
 
-func (p *Provider) ArtistTopTracks(ctx context.Context, artistID string) ([]provider.Track, error) {
-	return p.c.ArtistTopSongs(ctx, p.storefront, artistID)
+func (p *Provider) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]provider.Track, error) {
+	return p.c.ArtistTopSongs(ctx, p.storefront, a.ProviderID)
 }
 
 func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {

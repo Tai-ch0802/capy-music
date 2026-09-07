@@ -179,7 +179,7 @@ func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (prov
 		if !ok || !p.Caps().Has(provider.CapArtistSearch) {
 			return provider.PlayRequest{}, "", notSupported(p, "藝人熱門歌曲")
 		}
-		tracks, err := a.ArtistTopTracks(ctx, c.ID)
+		tracks, err := a.ArtistTopTracks(ctx, provider.Artist{ProviderID: c.ID, Name: c.Label})
 		if err != nil {
 			return provider.PlayRequest{}, "", err
 		}

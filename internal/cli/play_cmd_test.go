@@ -31,7 +31,7 @@ func (f *playFake) Search(_ context.Context, q provider.Query) ([]provider.Track
 func (f *playFake) SearchArtists(context.Context, provider.Query) ([]provider.Artist, error) {
 	return f.artists, nil
 }
-func (f *playFake) ArtistTopTracks(context.Context, string) ([]provider.Track, error) {
+func (f *playFake) ArtistTopTracks(context.Context, provider.Artist) ([]provider.Track, error) {
 	return f.top, nil
 }
 func (f *playFake) Devices(context.Context) ([]provider.Device, error)     { return nil, nil }
