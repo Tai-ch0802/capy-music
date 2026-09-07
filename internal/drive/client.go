@@ -275,11 +275,16 @@ func (c *Client) do(ctx context.Context, method, u, contentType string, body []b
 // transportErr:oauth2 refresh 失敗會以 *oauth2.RetrieveError 出現在 hc.Do 的錯誤鏈;經 auth 的 explain
 // 歸因後鏈上只剩 ErrGoogleGrant / ErrGoogleClient(它不 %w 包原錯誤),兩種都要認,否則 explain 被丟掉。
 func transportErr(err error) error {
-	var rerr *oauth2.RetrieveError
-	if errors.As(err, &rerr) || errors.Is(err, auth.ErrGoogleGrant) || errors.Is(err, auth.ErrGoogleClient) {
-		return fmt.Errorf("%w:%w", provider.ErrAuthExpired, err) // 兩個 %w:哨兵與原鏈都要留
+	inner := err
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		inner = uerr.Err // 去掉 Get "https://…?fields=…" 那段噪音(cron log 會看);鏈上的 RetrieveError / ErrGoogleGrant 都還在
 	}
-	return err
+	var rerr *oauth2.RetrieveError
+	if errors.As(inner, &rerr) || errors.Is(inner, auth.ErrGoogleGrant) || errors.Is(inner, auth.ErrGoogleClient) {
+		return fmt.Errorf("%w:%w", provider.ErrAuthExpired, inner) // 兩個 %w:哨兵與原鏈都要留
+	}
+	return err // 純網路錯誤保留 URL,dial 失敗時知道是打哪裡
 }
 
 // readAPIError 讀完並關閉 body。Google 的 reason 在 error.errors[0].reason。

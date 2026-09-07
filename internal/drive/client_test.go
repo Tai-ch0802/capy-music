@@ -273,6 +273,9 @@ func TestTransportRefreshErrorIsAuthExpired(t *testing.T) {
 	if !errors.Is(err, provider.ErrAuthExpired) || !errors.As(err, &rerr) {
 		t.Fatalf("得 %v", err)
 	}
+	if strings.Contains(err.Error(), "/drive/v3/files") {
+		t.Fatalf("授權錯誤不該帶整串請求 URL:%v", err)
+	}
 }
 
 // 經 auth.GoogleTokenSource 的 refresh 失敗:explain 把 RetrieveError 換成 ErrGoogleGrant,
@@ -296,5 +299,19 @@ func TestTransportRefreshErrorKeepsExplain(t *testing.T) {
 	_, err = c.List(ctx, "")
 	if !errors.Is(err, provider.ErrAuthExpired) || !errors.Is(err, auth.ErrGoogleGrant) || !strings.Contains(err.Error(), "Publish app") {
 		t.Fatalf("explain 歸因被丟掉:%v", err)
+	}
+	if strings.Contains(err.Error(), "/drive/v3/files") {
+		t.Fatalf("授權錯誤不該帶整串請求 URL:%v", err)
+	}
+}
+
+// 純網路錯誤不映射、且保留 URL(dial 失敗要知道是打哪裡)。
+func TestTransportNetworkErrorKeepsURL(t *testing.T) {
+	srv := drivetest.New(t)
+	dead := srv.URL
+	srv.Close()
+	_, err := drive.New(srv.Client(), dead).List(ctx, "")
+	if err == nil || errors.Is(err, provider.ErrAuthExpired) || !strings.Contains(err.Error(), "/drive/v3/files") {
+		t.Fatalf("得 %v", err)
 	}
 }
