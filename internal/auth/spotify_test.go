@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,12 +20,31 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
+	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
 func TestMain(m *testing.M) {
 	keyring.MockInit()
-	os.Exit(m.Run())
+	// 全域隔離:鎖檔在 config.Dir() 底下,沒設 CAPY_CONFIG_DIR 的測試會把 *.lock 寫進使用者真實目錄。
+	dir, err := os.MkdirTemp("", "capy-auth-test-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("CAPY_CONFIG_DIR", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func TestConfigDirIsIsolatedFromUser(t *testing.T) {
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real, err := os.UserConfigDir(); err == nil && strings.HasPrefix(dir, filepath.Join(real, "capy-music")) {
+		t.Fatalf("測試的設定目錄指到使用者真實目錄 %s;TestMain 必須設 CAPY_CONFIG_DIR", dir)
+	}
 }
 
 func swapTokenURL(t *testing.T, tokenURL string) {

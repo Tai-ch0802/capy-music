@@ -29,7 +29,27 @@ import (
 // 以 TestMain 統一 MockInit(P0 debug_test.go 內的 inline MockInit 冪等,不衝突)。
 func TestMain(m *testing.M) {
 	keyring.MockInit()
-	os.Exit(m.Run())
+	// 全域隔離:任何測試(含沒呼叫 setCLITestConfig 的)都不得碰使用者真實的設定目錄——
+	// UX-2 之後 search / play / pl list 會寫 cache.json,曾經真的把維護者的快取蓋成 pl_test 的夾具。
+	dir, err := os.MkdirTemp("", "capy-cli-test-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("CAPY_CONFIG_DIR", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// TestConfigDirIsIsolatedFromUser:沒有 TestMain 的全域隔離時,config.Dir() 就是使用者真實目錄——這個測試會 fail。
+func TestConfigDirIsIsolatedFromUser(t *testing.T) {
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real, err := os.UserConfigDir(); err == nil && strings.HasPrefix(dir, filepath.Join(real, "capy-music")) {
+		t.Fatalf("測試的設定目錄指到使用者真實目錄 %s;TestMain 必須設 CAPY_CONFIG_DIR", dir)
+	}
 }
 
 func setCLITestConfig(t *testing.T) {
