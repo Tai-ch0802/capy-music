@@ -18,6 +18,7 @@ type candidate struct {
 	ID     string
 	Label  string // 曲名 / 藝人名 / 清單名
 	Detail string // 曲目:藝人 · 專輯;藝人:熱門歌曲;清單:N 首
+	Note   string // 只給人看的附註(例如「暫不支援清單播放」);不進快取
 	Total  int
 }
 
@@ -83,11 +84,25 @@ func uniqueExact(cs []candidate, q string) *candidate {
 	return hit
 }
 
+// relevant:候選的可搜尋文字含 query 的任一 token(小寫、trim)。平台的搜尋是模糊比對,「派對動物」會回一串
+// 無關藝人;不過濾的話規則 (d) 永遠不成立、挑選器塞滿雜訊。任一 token 命中而不是整串,才吃得下多字查詢。
+func relevant(text, q string) bool {
+	text = strings.ToLower(text)
+	for _, tok := range strings.Fields(strings.ToLower(q)) {
+		if strings.Contains(text, tok) {
+			return true
+		}
+	}
+	return false
+}
+
 // resolvePlay 依 UX 計畫 T5 的規則回傳唯一命中,否則回傳候選(len ≥ 2 = 歧義;0 = 找不到)。
 //
 //	指定類型:playlist → 名稱完全相符,否則子字串命中恰一;artist / track → 平台第一筆(平台排序即決定性,
 //	       腳本 `play --type track X` 才能像舊的 `play X`)。
-//	未指定:a. 快取清單名完全相符 → b. 藝人名完全相符 → c. 曲名完全相符 → d. 沒有清單/藝人候選且曲目恰一 → 否則歧義。
+//	未指定:a. 快取清單名完全相符(不打網路)→ 藝人與曲目各搜 5 筆並過濾相關性(藝人:名稱相關、或出現在任一
+//	       回傳曲目的藝人欄——Spotify 對「五月天」回英文名 Mayday,靠曲目接得上;全部濾光就退回平台原始結果)
+//	       → b. 藝人名完全相符 → c. 曲名完全相符 → d. 全部候選恰一 → 否則歧義。
 func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidate, []candidate, error) {
 	if q == "" {
 		return nil, nil, errors.New("缺搜尋詞")
@@ -109,23 +124,25 @@ func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidat
 		}
 		return nil, pls, nil
 	}
-	var artists []candidate
+	if hit := uniqueExact(pls, q); hit != nil { // 3a:資料全在本機,確定命中就不付兩次網路來回(斷線也能播)
+		return hit, nil, nil
+	}
+	var rawArtists []provider.Artist
 	if (typ == "" || typ == cache.TypeArtist) && src.artists != nil {
 		as, err := src.artists(ctx, q, resolveLimit)
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, a := range as {
-			artists = append(artists, artistCandidate(a))
-		}
+		rawArtists = as
 	}
 	if typ == cache.TypeArtist {
-		if len(artists) == 0 {
+		if len(rawArtists) == 0 {
 			return nil, nil, nil
 		}
-		return &artists[0], nil, nil
+		c := artistCandidate(rawArtists[0])
+		return &c, nil, nil
 	}
-	var tracks []candidate
+	var rawTracks []provider.Track
 	if src.tracks != nil {
 		limit := resolveLimit
 		if typ == cache.TypeTrack {
@@ -135,36 +152,62 @@ func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidat
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, t := range ts {
-			tracks = append(tracks, trackCandidate(t))
-		}
+		rawTracks = ts
 	}
 	if typ == cache.TypeTrack {
-		if len(tracks) == 0 {
+		if len(rawTracks) == 0 {
 			return nil, nil, nil
 		}
-		return &tracks[0], nil, nil
+		c := trackCandidate(rawTracks[0])
+		return &c, nil, nil
 	}
-	if hit := uniqueExact(pls, q); hit != nil {
-		return hit, nil, nil
-	}
+	artists, tracks := filterRelevant(rawArtists, rawTracks, q)
 	if hit := uniqueExact(artists, q); hit != nil {
 		return hit, nil, nil
 	}
 	if hit := uniqueExact(tracks, q); hit != nil {
 		return hit, nil, nil
 	}
-	if len(pls) == 0 && len(artists) == 0 && len(tracks) == 1 {
-		return &tracks[0], nil, nil
-	}
 	all := append(append(pls, artists...), tracks...)
+	if len(all) == 1 {
+		return &all[0], nil, nil
+	}
 	return nil, all, nil
+}
+
+// filterRelevant:把平台模糊搜尋的雜訊濾掉(見 relevant);全部濾光就退回原始結果,不比平台更差。
+func filterRelevant(rawArtists []provider.Artist, rawTracks []provider.Track, q string) (artists, tracks []candidate) {
+	inTracks := map[string]bool{}
+	for _, t := range rawTracks {
+		for _, n := range t.Artists {
+			inTracks[strings.ToLower(n)] = true
+		}
+	}
+	for _, a := range rawArtists {
+		if relevant(a.Name, q) || inTracks[strings.ToLower(a.Name)] {
+			artists = append(artists, artistCandidate(a))
+		}
+	}
+	for _, t := range rawTracks {
+		if relevant(t.Title+" "+strings.Join(t.Artists, " ")+" "+t.Album, q) {
+			tracks = append(tracks, trackCandidate(t))
+		}
+	}
+	if len(artists) == 0 && len(tracks) == 0 {
+		for _, a := range rawArtists {
+			artists = append(artists, artistCandidate(a))
+		}
+		for _, t := range rawTracks {
+			tracks = append(tracks, trackCandidate(t))
+		}
+	}
+	return artists, tracks
 }
 
 var typeNames = map[string]string{cache.TypePlaylist: "清單", cache.TypeArtist: "藝人", cache.TypeTrack: "曲目", cache.TypeQuery: "搜尋"}
 
 func pickerLabel(c candidate) string {
-	return fmt.Sprintf("[%s] %s — %s", typeNames[c.Type], c.Label, c.Detail)
+	return fmt.Sprintf("[%s] %s — %s%s", typeNames[c.Type], c.Label, c.Detail, c.Note)
 }
 
 // runPlayPicker:TTY 挑選器(/ 進入過濾)。Esc 在 huh 裡是清除過濾,不綁成取消;取消用 Ctrl-C。測試替換點。
@@ -184,17 +227,27 @@ var runPlayPicker = func(cands []candidate) (*candidate, error) {
 	return &cands[idx], nil
 }
 
-// cacheCandidates:--pick 用,全部來自本機快取(清單 + 最近項目),不打網路。
-func cacheCandidates(c *cache.Cache, providerID string) []candidate {
+// cacheCandidates:--pick 用,全部來自本機快取(清單 + 最近項目),不打網路;q 非空時只留相關的。
+// 同 type+id 只列一次(播過的清單同時在 Playlists 與 Recent 裡),清單那份先,資料比較新。
+func cacheCandidates(c *cache.Cache, providerID, q string) []candidate {
 	var out []candidate
+	seen := map[string]bool{}
+	add := func(cand candidate) {
+		k := cand.Type + "\x00" + cand.ID
+		if seen[k] || (q != "" && !relevant(cand.Label+" "+cand.Detail, q)) {
+			return
+		}
+		seen[k] = true
+		out = append(out, cand)
+	}
 	for _, p := range c.Playlists[providerID] {
-		out = append(out, plCandidate(p))
+		add(plCandidate(p))
 	}
 	for _, r := range c.Recent {
 		if r.Provider != providerID || r.Type == cache.TypeQuery {
 			continue
 		}
-		out = append(out, candidate{Type: r.Type, ID: r.ID, Label: r.Label, Detail: r.Detail})
+		add(candidate{Type: r.Type, ID: r.ID, Label: r.Label, Detail: r.Detail})
 	}
 	return out
 }

@@ -64,9 +64,13 @@ func newPlayCmd() *cobra.Command {
 			req := provider.PlayRequest{}
 			var label string
 			var chosen *candidate
+			// 旗標互斥(--id/--pick、--id/--type 由 cobra 擋);其餘會靜默吃掉輸入的組合在這裡明講,不猜。
+			isRef := len(args) == 1 && (spotifyTrackURIRe.MatchString(args[0]) || spotifyBase62IDRe.MatchString(args[0]))
 			switch {
 			case id != "" && len(args) > 0:
 				return fmt.Errorf("--id 與搜尋詞擇一")
+			case typ != "" && (len(args) == 0 || isRef):
+				return errors.New("--type 只用在搜尋詞上(無參數是恢復播放;URI / track ID 不需要類型)")
 			case id != "":
 				req.TrackIDs = []string{id}
 				label = id
@@ -74,7 +78,11 @@ func newPlayCmd() *cobra.Command {
 				if !interactive {
 					return errors.New("--pick 需要終端機;非互動環境請直接給搜尋詞並用 --type 或前綴指定類型")
 				}
-				cands := markUnplayablePlaylists(p, cacheCandidates(cache.Load(), p.ID()))
+				q := strings.TrimSpace(strings.Join(args, " ")) // --pick <query>:query 是快取候選的前置過濾
+				cands := markUnplayablePlaylists(p, cacheCandidates(cache.Load(), p.ID(), q))
+				if len(cands) == 0 && q != "" {
+					return fmt.Errorf("本機快取裡沒有符合 %q 的清單或最近項目;不帶搜尋詞的 --pick 會列出全部", q)
+				}
 				if len(cands) == 0 {
 					return errors.New("本機快取是空的:先跑 capy pl list,或先用 capy play <query> 播過幾次")
 				}
@@ -111,8 +119,8 @@ func newPlayCmd() *cobra.Command {
 						return err
 					}
 				default:
-					for _, c := range cands { // TSV 候選到 stdout;exit 2 由 main 決定
-						fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", c.Type, c.ID, tsvCell(c.Label), tsvCell(c.Detail))
+					for _, c := range cands { // TSV 候選到 stdout;exit 2 與原因(stderr)由 main 決定
+						fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", c.Type, c.ID, tsvCell(c.Label), tsvCell(c.Detail+c.Note))
 					}
 					return &AmbiguousError{Candidates: cands}
 				}
@@ -142,6 +150,8 @@ func newPlayCmd() *cobra.Command {
 	cmd.Flags().String("type", "", "只搜這一類:track|artist|playlist(前綴 artist: / pl: / track: 同義)")
 	cmd.Flags().Bool("pick", false, "直接開挑選器(本機快取的清單與最近項目;需要終端機)")
 	providerFlag(cmd)
+	cmd.MarkFlagsMutuallyExclusive("id", "pick")
+	cmd.MarkFlagsMutuallyExclusive("id", "type")
 	cmd.ValidArgsFunction = playCompletion
 	_ = cmd.RegisterFlagCompletionFunc("type", cobra.FixedCompletions([]string{"track", "artist", "playlist"}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
@@ -191,6 +201,9 @@ func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (prov
 		for i, t := range tracks {
 			ids[i] = t.ProviderID
 		}
+		if len(ids) > 1 && !p.Caps().Has(provider.CapPlayQueue) { // 不能排佇列的平台只播第一首,標籤別說謊
+			return provider.PlayRequest{TrackIDs: ids}, fmt.Sprintf("%s:%s(%s 一次只播一首,佇列待 P4)", c.Label, tracks[0].Title, p.DisplayName()), nil
+		}
 		return provider.PlayRequest{TrackIDs: ids}, fmt.Sprintf("%s 的熱門歌曲(%d 首)", c.Label, len(ids)), nil
 	default:
 		return provider.PlayRequest{TrackIDs: []string{c.ID}}, c.Label + " — " + strings.SplitN(c.Detail, " · ", 2)[0], nil
@@ -205,7 +218,7 @@ func markUnplayablePlaylists(p provider.Provider, cands []candidate) []candidate
 	}
 	for i := range cands {
 		if cands[i].Type == cache.TypePlaylist {
-			cands[i].Detail += "(" + p.DisplayName() + " 暫不支援清單播放,用 capy pl show)"
+			cands[i].Note = "(" + p.DisplayName() + " 暫不支援清單播放,用 capy pl show)" // Note 不進快取
 		}
 	}
 	return cands

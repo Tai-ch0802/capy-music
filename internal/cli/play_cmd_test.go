@@ -48,7 +48,7 @@ func newPlayFake(t *testing.T) *playFake {
 	t.Helper()
 	setCLITestConfig(t)
 	f := &playFake{
-		fakeProvider: fakeProvider{caps: provider.CapSearch | provider.CapArtistSearch | provider.CapPlaybackControl | provider.CapPlayPlaylist},
+		fakeProvider: fakeProvider{caps: provider.CapSearch | provider.CapArtistSearch | provider.CapPlaybackControl | provider.CapPlayPlaylist | provider.CapPlayQueue},
 		artists:      []provider.Artist{{ProviderID: "a1", Name: "五月天"}},
 		tracks: []provider.Track{
 			{ProviderID: "t1", Title: "派對動物", Artists: []string{"五月天"}, Album: "自傳"},
@@ -177,5 +177,57 @@ func TestPlaylistCandidatesMarkedWhenProviderCannotPlayThem(t *testing.T) {
 	out, _ = runCLI(t, "play", "通")
 	if !strings.Contains(out, "playlist\tp1\t通勤\t23 首(Fake 暫不支援清單播放,用 capy pl show)") {
 		t.Fatalf("無 CapPlayPlaylist 時清單候選應標明不可播:%q", out)
+	}
+}
+
+func TestPlayFlagCombosAreRejectedNotIgnored(t *testing.T) {
+	f := newPlayFake(t)
+	for _, args := range [][]string{
+		{"play", "--id", "t1", "--pick"},
+		{"play", "--id", "t1", "--type", "track"},
+		{"play", "--type", "track"},
+		{"play", "spotify:track:0123456789abcdefABCDEF", "--type", "artist"},
+	} {
+		f.played = nil
+		if _, err := runCLI(t, args...); err == nil || len(f.played) != 0 {
+			t.Errorf("%v 應報錯且不播:err=%v played=%+v", args, err, f.played)
+		}
+	}
+}
+
+func TestPlayPickWithQueryPrefiltersCache(t *testing.T) {
+	f := newPlayFake(t)
+	orig := isInteractive
+	isInteractive = func(*cobra.Command) bool { return true }
+	t.Cleanup(func() { isInteractive = orig })
+	origPicker := runPlayPicker
+	var offered []candidate
+	runPlayPicker = func(cs []candidate) (*candidate, error) { offered = cs; return &cs[0], nil }
+	t.Cleanup(func() { runPlayPicker = origPicker })
+
+	c := cache.Load()
+	c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypeArtist, ID: "a1", Label: "五月天", Detail: "熱門歌曲"})
+	c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypePlaylist, ID: "p1", Label: "通勤", Detail: "舊的曲數"}) // 與清單快取同一筆
+	_ = c.Save()
+
+	if _, err := runCLI(t, "play", "--pick", "通"); err != nil || len(offered) != 1 || offered[0].ID != "p1" || offered[0].Detail != "23 首" {
+		t.Fatalf("--pick <query> 應只列相關候選、同 type+id 去重且以清單快取那份為準:%v %+v", err, offered)
+	}
+	if _, err := runCLI(t, "play", "--pick", "zzz"); err == nil || !strings.Contains(err.Error(), "zzz") {
+		t.Fatalf("--pick 過濾後沒東西應報錯而不是靜默丟掉搜尋詞:%v", err)
+	}
+	f.played = nil
+	if _, err := runCLI(t, "play", "--pick"); err != nil || len(offered) != 2 {
+		t.Fatalf("不帶搜尋詞列全部(去重後 2 筆):%v %+v", err, offered)
+	}
+}
+
+func TestArtistLabelHonestWhenProviderCannotQueue(t *testing.T) {
+	f := newPlayFake(t)
+	f.caps &^= provider.CapPlayQueue
+	f.top = []provider.Track{{ProviderID: "h1", Title: "知足"}, {ProviderID: "h2", Title: "乾杯"}}
+	out, err := runCLI(t, "play", "artist:五月天")
+	if err != nil || !strings.Contains(out, "五月天:知足(Fake 一次只播一首") || strings.Contains(out, "2 首") {
+		t.Fatalf("不能排佇列的平台,標籤不得說「N 首」:%v %q", err, out)
 	}
 }

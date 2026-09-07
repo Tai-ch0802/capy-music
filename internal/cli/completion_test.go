@@ -68,3 +68,19 @@ func TestCompletionEmptyCacheIsQuiet(t *testing.T) {
 		t.Fatalf("空快取應回空候選與 NoFileComp:%v %q", err, out)
 	}
 }
+
+func TestCompletionEscapesTabAndNewline(t *testing.T) {
+	setCLITestConfig(t)
+	forbidProvider(t)
+	c := cache.Load()
+	c.SetPlaylists("spotify", []cache.Playlist{{ID: "p1", Name: "通\t勤"}, {ID: "p2", Name: "早\n安"}})
+	_ = c.Save()
+	out, _ := runCLI(t, "__complete", "play", "")
+	if !strings.Contains(out, "通 勤\t播放清單\n") || !strings.Contains(out, "早 安\t播放清單\n") {
+		t.Fatalf("名稱裡的 tab/換行要換成空白,否則弄壞 cobra 的補全協定:%q", out)
+	}
+	out, _ = runCLI(t, "__complete", "play", "通 ")
+	if !strings.Contains(out, "通 勤\t播放清單") {
+		t.Fatalf("前綴過濾要用跳脫後的名稱比:%q", out)
+	}
+}

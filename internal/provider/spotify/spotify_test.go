@@ -17,7 +17,7 @@ func TestProviderIdentityAndCaps(t *testing.T) {
 		t.Errorf("identity:(%s, %s)", p.ID(), p.DisplayName())
 	}
 	want := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaybackControl |
-		provider.CapArtistSearch | provider.CapPlayPlaylist
+		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue
 	if p.Caps() != want {
 		t.Errorf("Caps = %b, want %b", p.Caps(), want)
 	}

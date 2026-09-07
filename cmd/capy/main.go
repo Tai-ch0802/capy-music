@@ -16,6 +16,7 @@ func main() {
 	}
 	var amb *cli.AmbiguousError
 	if errors.As(err, &amb) {
+		fmt.Fprintln(os.Stderr, err) // 候選在 stdout(TSV 不受影響),原因給人看
 		os.Exit(2)
 	}
 	fmt.Fprintln(os.Stderr, "Error:", err)

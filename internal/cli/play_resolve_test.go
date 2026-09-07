@@ -63,7 +63,10 @@ func TestResolvePlayRules(t *testing.T) {
 		{"3c 曲名完全相符恰一", srcFx(nil, []provider.Artist{mayday}, []provider.Track{party, partyLive}), "派對動物", "", "t1", 0},
 		{"3c 曲名完全相符兩筆 → 歧義", srcFx(nil, nil, []provider.Track{party, {ProviderID: "t3", Title: "派對動物", Artists: []string{"MxG"}}}), "派對動物", "", "", 2},
 		{"3d 無清單無藝人、曲目恰一", srcFx(nil, nil, []provider.Track{partyLive}), "life live", "", "t2", 0},
-		{"歧義:清單子字串 2 + 藝人 1 + 曲目 2 全列", srcFx(pls, []provider.Artist{mayday}, []provider.Track{party, partyLive}), "通", "", "", 5},
+		{"歧義:清單子字串 2 + 藝人 1(靠曲目藝人欄接上)+ 曲目 0(與「通」無關被濾掉)", srcFx(pls, []provider.Artist{mayday}, []provider.Track{party, partyLive}), "通", "", "", 3},
+		{"無關藝人被濾掉、曲目恰一 → 播", srcFx(nil, []provider.Artist{{ProviderID: "x1", Name: "Patrick Brasca"}, {ProviderID: "x2", Name: "neu"}}, []provider.Track{partyLive}), "life live", "", "t2", 0},
+		{"五月天 → Spotify 回英文名 Mayday:靠曲目的藝人欄留下,曲目濾光 → 唯一候選直接播", srcFx(nil, []provider.Artist{{ProviderID: "m", Name: "Mayday"}}, []provider.Track{{ProviderID: "t7", Title: "知足", Artists: []string{"Mayday"}, Album: "自傳"}}), "五月天", "", "m", 0},
+		{"全部濾光就退回平台原始結果(不比平台更差)", srcFx(nil, []provider.Artist{{ProviderID: "x1", Name: "Patrick Brasca"}}, []provider.Track{{ProviderID: "t8", Title: "Nothing", Artists: []string{"Nobody"}}}), "zzz", "", "", 2},
 		{"找不到", srcFx(nil, nil, nil), "zzz", "", "", 0},
 		{"--type track = 平台第一筆", srcFx(pls, []provider.Artist{mayday}, []provider.Track{partyLive, party}), "派對動物", cache.TypeTrack, "t2", 0},
 		{"--type artist = 平台第一筆", srcFx(nil, []provider.Artist{{ProviderID: "a2", Name: "五月天 Mayday"}, mayday}, nil), "五月天", cache.TypeArtist, "a2", 0},
@@ -97,5 +100,31 @@ func TestResolvePlaySurfacesSearchError(t *testing.T) {
 	src.tracks = func(context.Context, string, int) ([]provider.Track, error) { return nil, provider.ErrAuthExpired }
 	if _, _, err := resolvePlay(context.Background(), src, "x", ""); !errors.Is(err, provider.ErrAuthExpired) {
 		t.Fatalf("搜尋錯誤要往上傳(不可吞成找不到):%v", err)
+	}
+}
+
+func TestResolvePlayPlaylistExactHitSkipsNetwork(t *testing.T) {
+	src := playSources{
+		playlists: func() []cache.Playlist { return []cache.Playlist{{ID: "p1", Name: "通勤"}} },
+		artists: func(context.Context, string, int) ([]provider.Artist, error) {
+			t.Fatal("清單名完全相符不得搜尋藝人")
+			return nil, nil
+		},
+		tracks: func(context.Context, string, int) ([]provider.Track, error) {
+			t.Fatal("清單名完全相符不得搜尋曲目")
+			return nil, nil
+		},
+	}
+	hit, _, err := resolvePlay(context.Background(), src, "通勤", "")
+	if err != nil || hit == nil || hit.ID != "p1" {
+		t.Fatalf("3a 應在打網路前命中:%v %v", hit, err)
+	}
+}
+
+func TestRememberRecentDropsNote(t *testing.T) {
+	setCLITestConfig(t)
+	rememberRecent("spotify", candidate{Type: cache.TypePlaylist, ID: "p1", Label: "通勤", Detail: "23 首", Note: "(Apple 暫不支援清單播放)"})
+	if r := cache.Load().Recent; len(r) != 1 || r[0].Detail != "23 首" {
+		t.Fatalf("Note 不得進快取:%+v", r)
 	}
 }
