@@ -767,7 +767,7 @@ op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 ## 附錄 A:CLI 命令表面(草案)
 
 ```
-capy auth login   <spotify|apple|google>                  # google:P3
+capy auth login   <spotify|apple|google>                  # google:BYO client 或內建(release binary);--client-id/--client-secret 或 CAPY_GOOGLE_CLIENT_*
 capy auth status
 capy auth logout  <provider>
 

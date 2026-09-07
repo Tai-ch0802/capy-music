@@ -152,6 +152,9 @@ type TokenSource struct {
 	ctx  context.Context
 	conf *oauth2.Config
 	key  string
+	// explain:refresh 失敗時的錯誤歸因(收原錯誤與 refresh token 的發放時間);nil = 原樣回傳。
+	// Google 用它把 invalid_grant 依 token 年齡解讀成「忘了 Publish app」等(T3)。
+	explain func(err error, issuedAt time.Time) error
 
 	mu  sync.Mutex
 	tok *oauth2.Token
@@ -193,10 +196,11 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	}
 	defer unlock()
 	// 鎖內重讀:另一個 process 可能已經 refresh 並寫回,直接用它的、不再打 token 端點(issue #3)。
-	cur, err := LoadToken(s.key)
+	st, err := loadStored(s.key)
 	if err != nil {
 		return nil, err
 	}
+	cur := &oauth2.Token{AccessToken: st.AccessToken, TokenType: st.TokenType, RefreshToken: st.RefreshToken, Expiry: st.Expiry}
 	if !force && fresh(cur) {
 		s.tok = cur
 		return cur, nil
@@ -209,6 +213,9 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	// 只帶 RT 進去:oauth2 視為無效 token,立刻打 refresh。
 	tok, err := s.conf.TokenSource(rctx, &oauth2.Token{RefreshToken: cur.RefreshToken}).Token()
 	if err != nil {
+		if s.explain != nil {
+			err = s.explain(err, st.IssuedAt)
+		}
 		return nil, err
 	}
 	if tok.RefreshToken == "" {

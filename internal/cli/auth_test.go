@@ -223,8 +223,13 @@ func TestAuthLoginNonTTYWithoutFlagErrors(t *testing.T) {
 // 故不支援清單改測 google(P3 才進場)。
 func TestAuthLoginUnsupportedProvider(t *testing.T) {
 	setCLITestConfig(t)
-	if _, err := runCLI(t, "auth", "login", "google"); err == nil || !strings.Contains(err.Error(), "P3") {
-		t.Fatalf("google 應提示 P3:%v", err)
+	_, err := runCLI(t, "auth", "login", "tidal")
+	if err == nil || !strings.Contains(err.Error(), "spotify") || !strings.Contains(err.Error(), "google") {
+		t.Fatalf("未知平台應列出支援的三個:%v", err)
+	}
+	_, err = runCLI(t, "auth", "logout", "tidal")
+	if err == nil || !strings.Contains(err.Error(), "google") {
+		t.Fatalf("logout 同理:%v", err)
 	}
 }
 

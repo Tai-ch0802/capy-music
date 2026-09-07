@@ -32,6 +32,15 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 
 需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app);搜尋與播放清單在 macOS / Windows 皆可用。
 
+## Google Drive 同步(選用):登入 Google
+
+`capy auth login google` 之後,播放清單會同步到你 Google Drive 的應用程式資料夾(其他 app 與你自己都看不到內容,只佔你的 Drive 空間)。只索取三個權限:`openid`、`userinfo.email`、`drive.appdata`。
+
+- **從 GitHub Releases 下載的 binary**:內建專案自己的 Google client,直接執行就好。
+- **`go install` 或自己 build 的**:沒有內建 client,`auth login google` 會用精靈引導你建自己的 OAuth client(Desktop app 類型;**記得按 Publish app**,停在 Testing 的話 refresh token 7 天過期)。非互動環境用 `--client-id` / `--client-secret` 或 `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`。
+
+`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。
+
 ## 常用命令
 
 ```
