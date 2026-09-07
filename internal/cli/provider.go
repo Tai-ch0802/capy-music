@@ -35,6 +35,7 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 
 func providerFlag(cmd *cobra.Command) {
 	cmd.Flags().String(flagProvider, defaultProvider(), "平台(spotify|apple;預設取 config 的 default_provider)")
+	_ = cmd.RegisterFlagCompletionFunc(flagProvider, cobra.FixedCompletions([]string{"spotify", "apple"}, cobra.ShellCompDirectiveNoFileComp))
 }
 
 // defaultProvider:config 的 default_provider,沒設或 config 讀不到就 spotify——

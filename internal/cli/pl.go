@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -44,6 +45,13 @@ func newPlListCmd() *cobra.Command {
 				rows[i] = []string{ref.ID, ref.Name, total, ref.Owner}
 			}
 			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "名稱", "曲數", "擁有者"}, rows)
+			cc := cache.Load() // 補全與 play 的清單來源(只是快取,寫失敗靜默)
+			pls := make([]cache.Playlist, len(refs))
+			for i, ref := range refs {
+				pls[i] = cache.Playlist{ID: ref.ID, Name: ref.Name, Total: ref.Total}
+			}
+			cc.SetPlaylists(p.ID(), pls)
+			_ = cc.Save()
 			return nil
 		},
 	}
@@ -90,6 +98,7 @@ func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, provider
 func newPlShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "show <name|playlist ID>", Short: "顯示清單內容", Args: cobra.ExactArgs(1),
+		ValidArgsFunction: plShowCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			p, err := getProvider(cmd)

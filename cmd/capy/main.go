@@ -1,13 +1,23 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/Tai-ch0802/capy-music/internal/cli"
 )
 
+// exit code:0 成功、1 錯誤、2 需要人介入(候選已印在 stdout,不再印訊息)。
 func main() {
-	if err := cli.Execute(); err != nil {
-		os.Exit(1)
+	err := cli.Execute()
+	if err == nil {
+		return
 	}
+	var amb *cli.AmbiguousError
+	if errors.As(err, &amb) {
+		os.Exit(2)
+	}
+	fmt.Fprintln(os.Stderr, "Error:", err)
+	os.Exit(1)
 }

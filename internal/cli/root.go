@@ -16,10 +16,11 @@ var version = "dev"
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "capy",
-		Short:        "跨平台音樂 CLI:搜尋、播放遙控、播放清單同步",
-		Version:      version,
-		SilenceUsage: true,
+		Use:           "capy",
+		Short:         "跨平台音樂 CLI:搜尋、播放遙控、播放清單同步",
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true, // main 負責印錯與 exit code(歧義 = 2,見 AmbiguousError)
 	}
 	cmd.AddCommand(newDebugCmd())
 	cmd.AddCommand(newAuthCmd())
@@ -33,7 +34,7 @@ func newRootCmd() *cobra.Command {
 	)
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
 	cmd.AddCommand(newDoctorCmd())
-	cmd.AddCommand(newConfigCmd())
+	cmd.AddCommand(newConfigCmd(), newHistoryCmd())
 	return cmd
 }
 
