@@ -74,7 +74,7 @@ func newPlayCmd() *cobra.Command {
 				if !interactive {
 					return errors.New("--pick 需要終端機;非互動環境請直接給搜尋詞並用 --type 或前綴指定類型")
 				}
-				cands := cacheCandidates(cache.Load(), p.ID())
+				cands := markUnplayablePlaylists(p, cacheCandidates(cache.Load(), p.ID()))
 				if len(cands) == 0 {
 					return errors.New("本機快取是空的:先跑 capy pl list,或先用 capy play <query> 播過幾次")
 				}
@@ -100,6 +100,7 @@ func newPlayCmd() *cobra.Command {
 				if err != nil {
 					return friendlyErr(p.ID(), err)
 				}
+				cands = markUnplayablePlaylists(p, cands)
 				switch {
 				case hit != nil:
 					chosen = hit
@@ -194,6 +195,20 @@ func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (prov
 	default:
 		return provider.PlayRequest{TrackIDs: []string{c.ID}}, c.Label + " — " + strings.SplitN(c.Detail, " · ", 2)[0], nil
 	}
+}
+
+// markUnplayablePlaylists:provider 沒有 CapPlayPlaylist(Apple,R4)時,挑選器與 TSV 裡的清單候選標明不可播,
+// 讓人在選之前就知道,而不是選了才吃錯誤。
+func markUnplayablePlaylists(p provider.Provider, cands []candidate) []candidate {
+	if p.Caps().Has(provider.CapPlayPlaylist) {
+		return cands
+	}
+	for i := range cands {
+		if cands[i].Type == cache.TypePlaylist {
+			cands[i].Detail += "(" + p.DisplayName() + " 暫不支援清單播放,用 capy pl show)"
+		}
+	}
+	return cands
 }
 
 // rememberRecent:成功播放後記到快取(失敗靜默——它只是快取)。

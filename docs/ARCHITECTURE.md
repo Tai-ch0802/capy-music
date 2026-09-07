@@ -40,6 +40,7 @@
 | 播放清單端點改名 | `/tracks` → `/items`,欄位 `tracks` → `items` | 直接用新名 |
 | `GET /me` | 移除 `country`、`email`、`product` | **無法從 API 判斷是否 Premium 或所在市場** |
 | Player 端點 | 全部保留(play/pause/next/seek/volume/devices/transfer/queue) | 遙控設計成立 ✅ |
+| `GET /artists/{id}/top-tracks` | 開發模式 app **一律 403**(2026-09-07 實測:`market=from_token`、`TW`、不帶、`country=` 全部一樣) | 「藝人熱門歌曲」改用 `GET /search?q=artist:"<name>"&type=track`(依熱門度排序)當備案,程式在 403 時自動退回 |
 
 ### 1.2 Apple Music
 

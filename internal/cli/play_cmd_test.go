@@ -166,3 +166,16 @@ func TestHistoryClear(t *testing.T) {
 		t.Fatalf("clear 只清 recent、清單保留:%+v", c)
 	}
 }
+
+func TestPlaylistCandidatesMarkedWhenProviderCannotPlayThem(t *testing.T) {
+	f := newPlayFake(t)
+	out, _ := runCLI(t, "play", "通") // 清單子字串 + 藝人/曲目 → 歧義 TSV
+	if strings.Contains(out, "暫不支援清單播放") {
+		t.Fatalf("有 CapPlayPlaylist 的 provider 不該標記:%q", out)
+	}
+	f.caps &^= provider.CapPlayPlaylist
+	out, _ = runCLI(t, "play", "通")
+	if !strings.Contains(out, "playlist\tp1\t通勤\t23 首(Fake 暫不支援清單播放,用 capy pl show)") {
+		t.Fatalf("無 CapPlayPlaylist 時清單候選應標明不可播:%q", out)
+	}
+}

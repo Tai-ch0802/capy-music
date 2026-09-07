@@ -167,14 +167,14 @@ func pickerLabel(c candidate) string {
 	return fmt.Sprintf("[%s] %s — %s", typeNames[c.Type], c.Label, c.Detail)
 }
 
-// runPlayPicker:TTY 挑選器(可打字過濾)。測試替換點。
+// runPlayPicker:TTY 挑選器(/ 進入過濾)。Esc 在 huh 裡是清除過濾,不綁成取消;取消用 Ctrl-C。測試替換點。
 var runPlayPicker = func(cands []candidate) (*candidate, error) {
 	opts := make([]huh.Option[int], len(cands))
 	for i, c := range cands {
 		opts[i] = huh.NewOption(pickerLabel(c), i)
 	}
 	idx := 0
-	sel := huh.NewSelect[int]().Title("選一個播放(輸入文字可過濾,Esc 取消)").Options(opts...).Filtering(true).Height(12).Value(&idx)
+	sel := huh.NewSelect[int]().Title("選一個播放(/ 過濾,Ctrl-C 取消)").Options(opts...).Filtering(true).Height(12).Value(&idx)
 	if err := huh.NewForm(huh.NewGroup(sel)).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return nil, errors.New("已取消")
