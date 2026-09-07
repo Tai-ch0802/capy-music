@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,6 +23,12 @@ import (
 
 const flagProvider = "provider"
 
+// providerIDs:合法 provider 的唯一清單(flag 說明、newProvider 的錯誤、config set 的驗證、default_provider
+// 的讀取都用它;加第三個 provider 只改這裡)。
+var providerIDs = []string{"spotify", "apple"}
+
+func isProviderID(id string) bool { return slices.Contains(providerIDs, id) }
+
 // newProvider 依 id 建構 provider;是所有讀 API 命令的共用入口,測試以假 API 替換。
 // 不做 registry:兩個 provider 用 switch 就夠(P6 接 local provider 時再評估)。
 var newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
@@ -29,19 +38,25 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 	case "apple":
 		return newAppleProvider(ctx)
 	default:
-		return nil, fmt.Errorf("未知的 provider %q(可用:spotify、apple)", id)
+		return nil, fmt.Errorf("未知的 provider %q(可用:%s)", id, strings.Join(providerIDs, "、"))
 	}
 }
 
 func providerFlag(cmd *cobra.Command) {
-	cmd.Flags().String(flagProvider, defaultProvider(), "平台(spotify|apple;預設取 config 的 default_provider)")
-	_ = cmd.RegisterFlagCompletionFunc(flagProvider, cobra.FixedCompletions([]string{"spotify", "apple"}, cobra.ShellCompDirectiveNoFileComp))
+	cmd.Flags().String(flagProvider, defaultProvider(), "平台("+strings.Join(providerIDs, "|")+";預設取 config 的 default_provider)")
+	_ = cmd.RegisterFlagCompletionFunc(flagProvider, cobra.FixedCompletions(providerIDs, cobra.ShellCompDirectiveNoFileComp))
 }
 
-// defaultProvider:config 的 default_provider,沒設或 config 讀不到就 spotify——
-// 這在建構命令時就要決定(cobra flag 預設值),--help 不得因 config 壞掉而失敗。
-func defaultProvider() string {
-	if c, err := config.Load(); err == nil && c.DefaultProvider != "" {
+// defaultProvider:config 的 default_provider;沒設、config 讀不到、或值不在 providerIDs(手改檔案、別版 binary)
+// 都退回 spotify——這在建構命令時就要決定(cobra flag 預設值),--help 不得因 config 壞掉而失敗或自相矛盾。
+// 每個 process 只讀一次 config(8 個子命令都掛 --provider,不然一次 capy --help 就讀 8 次);
+// config set 與測試用 resetDefaultProvider 重置。
+var defaultProvider = sync.OnceValue(loadDefaultProvider)
+
+func resetDefaultProvider() { defaultProvider = sync.OnceValue(loadDefaultProvider) }
+
+func loadDefaultProvider() string {
+	if c, err := config.Load(); err == nil && isProviderID(c.DefaultProvider) {
 		return c.DefaultProvider
 	}
 	return "spotify"

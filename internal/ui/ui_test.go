@@ -135,3 +135,18 @@ func TestTableTTYIDNotFirstColumn(t *testing.T) {
 		t.Errorf("ID 在最後一欄也應先縮、名稱保留:%q", line)
 	}
 }
+
+func TestTableTTYRowsLongerThanHeaderAndNoHeader(t *testing.T) {
+	withWidth(t, 80)
+	buf := &bytes.Buffer{}
+	Table(buf, true, []string{"A", "B"}, [][]string{{"1", "2", "3"}})
+	if line := strings.Split(buf.String(), "\n")[1]; !strings.Contains(line, "3") {
+		t.Errorf("列比標題長時多出來的欄不得靜默丟掉:%q", buf.String())
+	}
+	buf.Reset()
+	Table(buf, true, nil, [][]string{{"a", "b"}})
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[1], "a") || !strings.Contains(lines[1], "b") {
+		t.Errorf("無標題時列仍要印出來(標題列為空):%q", buf.String())
+	}
+}
