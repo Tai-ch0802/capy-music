@@ -476,13 +476,20 @@ func TestArtistTopTracksFallsBackToArtistSearchOn403(t *testing.T) {
 			if r.URL.Query().Get("type") != "track" {
 				t.Errorf("備案應搜曲目:%s", r.URL.RawQuery)
 			}
-			w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"name":"Mayday"}],"album":{"name":"自傳"}}],"total":1}}`))
+			w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"name":"Mayday"}],"album":{"name":"自傳"}},{"id":"t9","name":"翻唱","artists":[{"name":"Mayday Cover Band"}],"album":{"name":"x"}}],"total":2}}`))
 		}
 	}))
 	t.Cleanup(srv.Close)
+	var notice bytes.Buffer
+	origStderr := provider.BackoffStderr
+	provider.BackoffStderr = &notice
+	t.Cleanup(func() { provider.BackoffStderr = origStderr })
 	tracks, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: `May"day`})
 	if err != nil || len(tracks) != 1 || tracks[0].ProviderID != "t1" {
-		t.Fatalf("403 應退回搜尋:%+v %v", tracks, err)
+		t.Fatalf("403 應退回搜尋且只留藝人欄相符的曲目(同名/翻唱帳號要濾掉):%+v %v", tracks, err)
+	}
+	if !strings.Contains(notice.String(), "403") {
+		t.Errorf("退回時要留一行提示:%q", notice.String())
 	}
 	if searchQ != `artist:"Mayday"` {
 		t.Errorf("備案查詢應為 artist:\"<name>\"(名稱裡的引號去掉):%q", searchQ)

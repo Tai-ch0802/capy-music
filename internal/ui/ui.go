@@ -57,11 +57,17 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 		}
 		return
 	}
-	n := len(header)
+	n := len(header) // 欄數 = 標題與最長的列取大者:列多出來的欄用空標題,絕不靜默丟資料(非 TTY 路徑本來就全印)
+	for _, r := range rows {
+		n = max(n, len(r))
+	}
 	widths := make([]int, n)
 	measure := func(r []string) { // 量的必須是渲染的那個字串(跳脫後);\n 是零寬、換成的空白是 1
 		for i, c := range r {
-			if w := ansi.StringWidth(tsvEscaper.Replace(c)); i < n && w > widths[i] {
+			if i >= n {
+				break
+			}
+			if w := ansi.StringWidth(tsvEscaper.Replace(c)); w > widths[i] {
 				widths[i] = w
 			}
 		}
@@ -98,6 +104,9 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 // fitWidths 把欄寬縮到 total 以內。順序寫死(UX 計畫 R2):標題為 ID 的欄先縮(最少留
 // minIDWidth),再從最右欄往左,第一個非 ID 欄(曲名/名稱)最後。終端窄到連底線都放不下就放棄,
 // 讓終端機自己折行。
+//
+// 假設(靠位置、不靠語意):「最該保留的欄 = 第一個標題不是 ID 的欄」。目前四張表都成立;之後若在
+// 前面插一個窄欄(例如 # 或 平台),被保護的會變成那個窄欄——屆時把它改成明確指定,別靠這個推斷。
 func fitWidths(widths []int, header []string, total int) {
 	n := len(widths)
 	if n == 0 {
@@ -136,6 +145,7 @@ func fitWidths(widths []int, header []string, total int) {
 	}
 }
 
+// FormatDuration: ms → m:ss。
 func FormatDuration(ms int) string {
 	s := ms / 1000
 	return fmt.Sprintf("%d:%02d", s/60, s%60)

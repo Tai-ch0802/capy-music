@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -237,7 +238,22 @@ func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]prov
 	_, err := c.do(ctx, http.MethodGet, path, url.Values{"market": {"from_token"}}, nil, &resp)
 	var ae *apiError
 	if errors.As(err, &ae) && ae.Status == http.StatusForbidden && a.Name != "" {
-		return c.SearchTracks(ctx, `artist:"`+strings.ReplaceAll(a.Name, `"`, "")+`"`, searchPageMax)
+		// 留下痕跡:403 也可能是 scope 被撤或地區限制,不能讓人永遠只看到「播了一些歌」。
+		fmt.Fprintf(provider.BackoffStderr, "Spotify:top-tracks 回 403(開發模式 app 拿不到),改用 artist:%q 搜尋近似\n", a.Name)
+		// 引號包起來就是字面詞組(AND/OR/NOT 與 artist: 這類語法在引號內不解析),只需去掉名稱裡自己的引號。
+		name := strings.ReplaceAll(a.Name, `"`, "")
+		ts, err := c.SearchTracks(ctx, `artist:"`+name+`"`, searchPageMax)
+		if err != nil {
+			return nil, err
+		}
+		// 只留藝人欄真的含這個名字的曲目:同名藝人與翻唱帳號會混進搜尋結果,使用者挑的是具體那一個。
+		out := ts[:0]
+		for _, t := range ts {
+			if slices.ContainsFunc(t.Artists, func(n string) bool { return strings.EqualFold(n, a.Name) || strings.EqualFold(n, name) }) {
+				out = append(out, t)
+			}
+		}
+		return out, nil
 	}
 	if err != nil {
 		return nil, err

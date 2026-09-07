@@ -24,6 +24,7 @@ const (
 	CapPlaybackControl
 	CapArtistSearch // SearchArtists + ArtistTopTracks(UX 計畫 T3)
 	CapPlayPlaylist // PlayRequest.PlaylistID
+	CapPlayQueue    // Play 會把 TrackIDs 全部排進佇列;沒有此能力的 provider 只播第一首
 )
 
 // Has 回報 c 是否包含 want 的全部能力位。
@@ -100,6 +101,8 @@ type Searcher interface {
 }
 
 // ArtistSearcher:藝人搜尋與熱門歌曲(CapArtistSearch)。
+// ArtistTopTracks 的實作可以回近似值(例如平台不開放熱門歌曲端點時,改用依熱門度排序的搜尋結果),
+// 呼叫端不要把它當精確的「官方熱門榜」。
 type ArtistSearcher interface {
 	SearchArtists(ctx context.Context, q Query) ([]Artist, error)
 	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 的備案要用名稱

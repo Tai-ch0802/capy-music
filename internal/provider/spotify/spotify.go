@@ -32,7 +32,7 @@ func (p *Provider) DisplayName() string { return "Spotify" }
 func (p *Provider) Caps() provider.Capability {
 	// 寫入能力(playlist modify)於 P4/P5 實作 ApplyOps 時再宣告
 	return provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaybackControl |
-		provider.CapArtistSearch | provider.CapPlayPlaylist
+		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue
 }
 
 // Health:devices 是最便宜的授權+連線驗證(doctor 用)。

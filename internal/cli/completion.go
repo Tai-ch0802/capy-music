@@ -17,6 +17,7 @@ func completeFromCache(cmd *cobra.Command, toComplete string, playlists, recent 
 	var out []string
 	seen := map[string]bool{}
 	add := func(name, desc string) {
+		name, desc = tsvCell(name), tsvCell(desc) // cobra 的補全協定是「一行一個候選、\t 後接說明」,名稱裡的 tab/換行會弄壞它
 		if name == "" || seen[name] || !strings.HasPrefix(strings.ToLower(name), strings.ToLower(toComplete)) {
 			return
 		}
