@@ -244,8 +244,12 @@ func simpleCtl(use, short, done string, call func(ctx context.Context, pc provid
 
 func newNowCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "now", Short: "目前播放狀態", Args: cobra.NoArgs,
+		Use: "now", Short: "目前播放狀態(--watch 持續顯示,含進度條與鍵位控制)", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			watch, _ := cmd.Flags().GetBool("watch")
+			if watch && !isInteractive(cmd) {
+				return errors.New("--watch 需要終端機;非互動環境請用 capy now(單次純文字)")
+			}
 			p, err := getProvider(cmd)
 			if err != nil {
 				return err
@@ -253,6 +257,9 @@ func newNowCmd() *cobra.Command {
 			pc, err := asPlayback(p)
 			if err != nil {
 				return err
+			}
+			if watch {
+				return runWatch(cmd, p, pc)
 			}
 			st, err := pc.State(cmd.Context())
 			if err != nil {
@@ -275,6 +282,7 @@ func newNowCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Bool("watch", false, "持續顯示(bubbletea 畫面;space 播放/暫停、n/p 上下首、q 離開)")
 	providerFlag(cmd)
 	return cmd
 }

@@ -27,6 +27,9 @@ var (
 
 const musicDevice = "music.app"
 
+// ErrNotRunning:Music.app 沒開。State 不會替使用者把它啟動起來(Play 會)。
+var ErrNotRunning = errors.New("Music.app 未執行(capy play 會把它啟動)")
+
 // StubOSAForTest 把 runOSA 換成記錄器(僅供測試;darwin 專用)。
 // 跨套件測試鉤子不能放 _test.go(cli 套件的測試需要呼叫它,但 _test.go 的匯出只在同套件內可見),
 // 故放在一般檔案裡,以 *ForTest 命名清楚標示用途(同 P1 SetTestDir 討論;若未來認為應避免,
@@ -47,7 +50,10 @@ func (p *Provider) Devices(context.Context) ([]provider.Device, error) {
 // 時長/進度在 AppleScript 端先算成整數毫秒(而非 "as text" 後在 Go 端乘 1000)——
 // 避開 macOS 非 en-US locale(如 de/fr)把小數點印成 "," 導致 Go 端解析失敗的問題
 // (review finding 1;"," 不是合法 Go float,且原本錯誤被 "_" 吞掉,靜默變 0)。
-const stateScript = `tell application "Music"
+// 先用 `application "Music" is running` 判斷(不進 tell 區塊就不會把沒開的 Music.app 啟動起來;
+// now --watch 每 2 秒輪詢一次,若每次都啟動 app 會很糟)。
+const stateScript = `if not (application "Music" is running) then return "not running"
+tell application "Music"
 	if player state is stopped then return "stopped"
 	set t to current track
 	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer)
@@ -57,6 +63,9 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 	out, err := runOSA(stateScript)
 	if err != nil {
 		return nil, fmt.Errorf("osascript 失敗(Music.app 未安裝或未授權自動化?):%w", err)
+	}
+	if out == "not running" {
+		return nil, ErrNotRunning
 	}
 	if out == "stopped" || out == "" {
 		return nil, nil

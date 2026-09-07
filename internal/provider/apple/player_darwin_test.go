@@ -140,3 +140,14 @@ func TestPlayPlaylistNotSupportedAndNoOSA(t *testing.T) {
 		t.Errorf("不得執行任何 AppleScript:%v", *scripts)
 	}
 }
+
+func TestStateDoesNotLaunchMusicWhenNotRunning(t *testing.T) {
+	stubOSA(t, "not running")
+	st, err := (&Provider{}).State(context.Background())
+	if st != nil || !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Music 未執行應回 ErrNotRunning:%v %v", st, err)
+	}
+	if i, j := strings.Index(stateScript, `is running`), strings.Index(stateScript, `tell application "Music"`); i < 0 || j < 0 || i > j {
+		t.Fatalf("stateScript 必須在進 tell 區塊前先檢查 is running(否則會啟動 Music.app):%q", stateScript)
+	}
+}
