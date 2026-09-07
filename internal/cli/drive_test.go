@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -51,13 +52,13 @@ func TestNewDriveClientNotLoggedIn(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("CAPY_CONFIG_DIR", t.TempDir())
 	ctx := context.Background()
-	if _, err := newDriveClient(ctx); err == nil || !strings.Contains(err.Error(), "auth login google") {
+	if _, err := newDriveClient(ctx); !errors.Is(err, errNotLoggedInGoogle) {
 		t.Fatalf("沒有 client 也沒 token 應提示登入:%v", err)
 	}
 	if err := config.Save(&config.Config{GoogleClientID: "cid"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newDriveClient(ctx); err == nil || !strings.Contains(err.Error(), "auth login google") {
+	if _, err := newDriveClient(ctx); !errors.Is(err, errNotLoggedInGoogle) {
 		t.Fatalf("有 client id 但 keychain 沒 token 應提示登入:%v", err)
 	}
 	if _, err := runCLI(t, "debug", "drive-ls"); err == nil || !strings.Contains(err.Error(), "auth login google") {

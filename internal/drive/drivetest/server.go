@@ -138,6 +138,10 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list 沒帶 fields=(真 Drive 會只回四個欄位)")
 		return
 	}
+	if !strings.HasPrefix(q.Get("q"), "trashed = false") {
+		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list 沒帶 trashed = false(v3 預設會回垃圾桶裡的檔)")
+		return
+	}
 	match, err := parseQuery(q.Get("q"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
@@ -276,17 +280,20 @@ func propsOf(meta map[string]any) map[string]string {
 }
 
 var (
-	reName = regexp.MustCompile(`^name = '((?:[^'\\]|\\.)*)'`)
-	reProp = regexp.MustCompile(`^appProperties has \{ key='((?:[^'\\]|\\.)*)' and value='((?:[^'\\]|\\.)*)' \}`)
+	reTrashed = regexp.MustCompile(`^trashed = false`)
+	reName    = regexp.MustCompile(`^name = '((?:[^'\\]|\\.)*)'`)
+	reProp    = regexp.MustCompile(`^appProperties has \{ key='((?:[^'\\]|\\.)*)' and value='((?:[^'\\]|\\.)*)' \}`)
 )
 
 func unescape(s string) string { return strings.NewReplacer(`\'`, `'`, `\\`, `\`).Replace(s) }
 
-// parseQuery 只認 name = '…' 與 appProperties has { key='…' and value='…' },用 and 串;其他語法回錯。
+// parseQuery 只認 trashed = false、name = '…' 與 appProperties has { key='…' and value='…' },用 and 串;其他語法回錯。
 func parseQuery(q string) (func(*file) bool, error) {
 	var preds []func(*file) bool
 	for rest := q; rest != ""; {
-		if m := reName.FindStringSubmatch(rest); m != nil {
+		if m := reTrashed.FindString(rest); m != "" { // 假 Drive 沒有垃圾桶,子句只需能解析
+			rest = rest[len(m):]
+		} else if m := reName.FindStringSubmatch(rest); m != nil {
 			name := unescape(m[1])
 			preds = append(preds, func(f *file) bool { return f.name == name })
 			rest = rest[len(m[0]):]

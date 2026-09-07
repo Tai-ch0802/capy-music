@@ -160,6 +160,37 @@ func TestFindDuplicatesPicksNewestAndWarns(t *testing.T) {
 	}
 }
 
+// 同一毫秒建的兩份:files.list 沒有 orderBy,要用 ID 決勝,所有裝置才會挑同一份。
+func TestFindDuplicatesSameTimeTiebreakByID(t *testing.T) {
+	c, _ := newClient(t)
+	orig := drive.Stderr
+	drive.Stderr = io.Discard
+	t.Cleanup(func() { drive.Stderr = orig })
+	a := mustCreate(t, c, "manifest.json", nil, "a")
+	b := mustCreate(t, c, "manifest.json", nil, "b")
+	if a.ModifiedTime != b.ModifiedTime || b.ID <= a.ID {
+		t.Fatalf("測試前提:同時刻、b 的 ID 較大:%+v %+v", a, b)
+	}
+	f, err := c.Find(ctx, "manifest.json", nil)
+	if err != nil || f.ID != b.ID {
+		t.Fatalf("modifiedTime 相同應取 ID 較大者 %s,得 %+v %v", b.ID, f, err)
+	}
+}
+
+// content 為空會把 Drive 上的 source of truth 清成 0 byte,必須擋在 client。
+func TestUpdateRejectsEmptyContent(t *testing.T) {
+	c, _ := newClient(t)
+	f := mustCreate(t, c, "manifest.json", nil, `{"v":1}`)
+	for _, content := range [][]byte{nil, {}} {
+		if _, err := c.Update(ctx, f.ID, map[string]string{"pid": "x"}, content); err == nil || !strings.Contains(err.Error(), "清空") {
+			t.Fatalf("空內容應被擋:%v", err)
+		}
+	}
+	if b, _ := c.Download(ctx, f.ID); string(b) != `{"v":1}` {
+		t.Fatalf("被擋的 Update 不可動到內容:%q", b)
+	}
+}
+
 func TestErrorMapping(t *testing.T) {
 	t.Run("401 → ErrAuthExpired", func(t *testing.T) {
 		c, srv := newClient(t)
@@ -226,6 +257,31 @@ func TestErrorMapping(t *testing.T) {
 		var ae *drive.APIError
 		if _, err := c.List(ctx, ""); !errors.As(err, &ae) || ae.Status != 403 || ae.Reason != "dailyLimitExceeded" || len(*waits) != 0 {
 			t.Fatalf("得 %v,等待 %v", err, *waits)
+		}
+	})
+	t.Run("403 insufficientPermissions → ErrAuthExpired 提到 scope", func(t *testing.T) {
+		c, srv := newClient(t)
+		srv.Fail(1, http.StatusForbidden, "insufficientPermissions", "")
+		_, err := c.List(ctx, "")
+		if !errors.Is(err, provider.ErrAuthExpired) || !strings.Contains(err.Error(), "drive.appdata") {
+			t.Fatalf("得 %v", err)
+		}
+	})
+	t.Run("非 JSON 錯誤頁只留 300 字", func(t *testing.T) {
+		page := strings.Repeat("<html>錯誤頁 ", 500)
+		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, page)
+		}))
+		t.Cleanup(bad.Close)
+		var ae *drive.APIError
+		_, err := drive.New(bad.Client(), bad.URL).List(ctx, "")
+		if !errors.As(err, &ae) || ae.Status != 502 || !strings.HasPrefix(ae.Message, "<html>錯誤頁") {
+			t.Fatalf("得 %v", err)
+		}
+		if n := len([]rune(ae.Message)); n > 301 {
+			t.Fatalf("訊息應截到 300 字,得 %d", n)
 		}
 	})
 	t.Run("500 → APIError", func(t *testing.T) {

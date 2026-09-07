@@ -17,6 +17,8 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
+var errNotLoggedInGoogle = errors.New("尚未登入 Google — 先執行 capy auth login google")
+
 // newDriveClient:測試替換點(對照 provider.go 的 newProvider),e2e 用 drivetest 假 Drive 接進來。
 var newDriveClient = func(ctx context.Context) (*drive.Client, error) {
 	cfg, err := config.Load()
@@ -27,12 +29,12 @@ var newDriveClient = func(ctx context.Context) (*drive.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	var ts *auth.TokenSource
-	if src != "" {
-		ts, err = auth.GoogleTokenSource(ctx, gc)
+	if src == "" {
+		return nil, errNotLoggedInGoogle
 	}
-	if src == "" || errors.Is(err, secret.ErrNotFound) {
-		return nil, errors.New("尚未登入 Google — 先執行 capy auth login google")
+	ts, err := auth.GoogleTokenSource(ctx, gc)
+	if errors.Is(err, secret.ErrNotFound) {
+		return nil, errNotLoggedInGoogle
 	}
 	if err != nil {
 		return nil, err

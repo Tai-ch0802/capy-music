@@ -101,12 +101,15 @@ func Query(name string, props map[string]string) string {
 func escape(s string) string { return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) }
 
 // List 列出 appDataFolder 內符合 q 的檔案(q 空 = 全部),自動走完 nextPageToken。
+// 一律加 trashed = false:2026-09-07 真帳號實測,appdata 檔可以被 PATCH 成 trashed=true,而 v3 的
+// files.list 預設會把垃圾桶裡的檔一起回(連 appProperties 過濾也照回)。capy 自己從不 trash,但這是一行保險。
 func (c *Client) List(ctx context.Context, q string) ([]File, error) {
 	var out []File
 	for token := ""; ; {
 		v := url.Values{"spaces": {"appDataFolder"}, "fields": {"nextPageToken,files(" + fileFields + ")"}, "pageSize": {pageSize}}
+		v.Set("q", "trashed = false")
 		if q != "" {
-			v.Set("q", q)
+			v.Set("q", "trashed = false and "+q)
 		}
 		if token != "" {
 			v.Set("pageToken", token)
@@ -134,7 +137,8 @@ func (c *Client) Find(ctx context.Context, name string, props map[string]string)
 	}
 	newest := fs[0]
 	for _, f := range fs[1:] {
-		if f.ModifiedTime.After(newest.ModifiedTime) {
+		// 同一毫秒用 ID 決勝:files.list 沒有 orderBy,順序未定義;沒有決定性 tiebreak 兩台裝置會各認一份、永不收斂。
+		if f.ModifiedTime.After(newest.ModifiedTime) || (f.ModifiedTime.Equal(newest.ModifiedTime) && f.ID > newest.ID) {
 			newest = f
 		}
 	}
@@ -154,7 +158,12 @@ func (c *Client) Create(ctx context.Context, name string, props map[string]strin
 }
 
 // Update 覆寫內容;props 非 nil 時併入 appProperties(Drive 語意是 merge,不是取代)。
+// content 不可為空:multipart 會把 Drive 上的檔(source of truth)清成 0 byte,SQLite 那份救不回來。
+// 只改 metadata 的路(PATCH {base}/files/{id},不走 upload)等 T7 真的需要再加 UpdateMeta。
 func (c *Client) Update(ctx context.Context, id string, props map[string]string, content []byte) (*File, error) {
+	if len(content) == 0 {
+		return nil, errors.New("drive.Update 需要內容:空內容會把 Drive 上的檔清空")
+	}
 	meta := map[string]any{}
 	if props != nil {
 		meta["appProperties"] = props
@@ -267,6 +276,9 @@ func (c *Client) do(ctx context.Context, method, u, contentType string, body []b
 			return nil, fmt.Errorf("%w:%s", ErrStorageQuota, apiErr.Message)
 		case resp.StatusCode == http.StatusForbidden && apiErr.Reason == "accessNotConfigured":
 			return nil, fmt.Errorf("%w:%s", ErrAPINotEnabled, apiErr.Message)
+		case resp.StatusCode == http.StatusForbidden && apiErr.Reason == "insufficientPermissions":
+			// 登入時的 scope 檢查(auth.ErrGoogleScope)擋不到事後部分撤銷或 BYO 改 client scope:token 還在、refresh 照過,只有 Drive 回 403。
+			return nil, fmt.Errorf("%w:Drive 授權缺 drive.appdata scope(%s),重新登入時記得勾「查看及管理應用程式自己的設定資料」", provider.ErrAuthExpired, apiErr.Message)
 		}
 		return nil, apiErr
 	}
@@ -304,8 +316,15 @@ func readAPIError(resp *http.Response) *APIError {
 	if len(eb.Error.Errors) > 0 {
 		e.Reason = eb.Error.Errors[0].Reason
 	}
-	if e.Message == "" { // 非 JSON 的錯誤頁(proxy、HTML)也留點線索
-		e.Message = strings.TrimSpace(string(raw))
+	if e.Message == "" { // 非 JSON 的錯誤頁(proxy、HTML)留幾百字線索就夠,整頁灌進 cron log 會把有用的那行推走
+		e.Message = truncate(strings.TrimSpace(string(raw)), 300)
 	}
 	return e
+}
+
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
