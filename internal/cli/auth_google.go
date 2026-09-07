@@ -29,6 +29,7 @@ type googleClientSource string
 
 const (
 	googleFromFlags   googleClientSource = "flag/env"
+	googleFromWizard  googleClientSource = "精靈"
 	googleFromConfig  googleClientSource = "config"
 	googleFromBuiltin googleClientSource = "builtin"
 )
@@ -45,6 +46,12 @@ func resolveGoogleClient(cmd *cobra.Command, cfg *config.Config) (auth.GoogleCli
 	}
 	if id != "" {
 		return auth.GoogleClient{ID: strings.TrimSpace(id), Secret: strings.TrimSpace(sec)}, googleFromFlags, nil
+	}
+	if sec != "" { // 只給 secret:配 config 裡的 client id;沒有就報錯,不能靜默丟掉使用者給的東西
+		if cfg.GoogleClientID == "" {
+			return auth.GoogleClient{}, "", errors.New("給了 client secret 但沒有 client ID(--client-id / CAPY_GOOGLE_CLIENT_ID,或先登入過一次讓它進 config)")
+		}
+		return auth.GoogleClient{ID: cfg.GoogleClientID, Secret: strings.TrimSpace(sec)}, googleFromFlags, nil
 	}
 	if cfg.GoogleClientID != "" {
 		switch s, err := secret.Get(auth.KeyGoogleClientSecret); {
@@ -103,7 +110,7 @@ func googleLogin(cmd *cobra.Command) error {
 		if err != nil {
 			return err
 		}
-		client, source = auth.GoogleClient{ID: id, Secret: sec}, googleFromFlags
+		client, source = auth.GoogleClient{ID: id, Secret: sec}, googleFromWizard
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成 Google 授權…(180s 內;請勾選全部三個權限)")
 	ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)

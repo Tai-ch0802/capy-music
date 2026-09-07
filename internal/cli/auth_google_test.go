@@ -163,3 +163,29 @@ func TestGoogleClientEnvVars(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGoogleSecretWithoutIDIsNotSilentlyDropped(t *testing.T) {
+	setGoogleTest(t)
+	_, err := runCLI(t, "auth", "login", "google", "--client-secret", "s")
+	if err == nil || !strings.Contains(err.Error(), "client ID") {
+		t.Fatalf("只給 secret 沒有任何 client id 應報錯:%v", err)
+	}
+	_ = config.Save(&config.Config{GoogleClientID: "cfg.apps.googleusercontent.com"})
+	googleLoginFn = fakeGoogleLogin(t, "cfg.apps.googleusercontent.com", "newsec", "a@b")
+	if _, err := runCLI(t, "auth", "login", "google", "--client-secret", "newsec"); err != nil {
+		t.Fatalf("只給 secret 應配 config 的 client id:%v", err)
+	}
+	if s, _ := secret.Get(auth.KeyGoogleClientSecret); s != "newsec" {
+		t.Fatalf("新 secret 應寫進 keychain:%q", s)
+	}
+}
+
+func TestGoogleWizardSourceLabel(t *testing.T) {
+	setGoogleTest(t)
+	stdinIsTTY = func() bool { return true }
+	googleWizard = func() (string, string, error) { return "wiz", "", nil }
+	googleLoginFn = fakeGoogleLogin(t, "wiz", "", "w@x")
+	if out, err := runCLI(t, "auth", "login", "google"); err != nil || !strings.Contains(out, "來源:精靈") {
+		t.Fatalf("精靈路徑的來源標籤應是精靈:%v %q", err, out)
+	}
+}
