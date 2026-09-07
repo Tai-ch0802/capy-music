@@ -87,7 +87,7 @@ type Playlist struct {
 	Description   string            `json:"description,omitempty"`
 	UpdatedAt     int64             `json:"updated_at"`
 	Items         []Item            `json:"items"`
-	Links         map[string]string `json:"links,omitempty"`
+	Links         map[string]string `json:"links"` // 不 omitempty:空清單解回來會是 nil map,第一次 Links[p] = id 就 panic
 }
 
 type Item struct {

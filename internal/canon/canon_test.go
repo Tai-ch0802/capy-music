@@ -249,9 +249,15 @@ func TestRoundTripBitEqual(t *testing.T) {
 		!strings.Contains(dev, `"spotify":{"snapshot":{"name":"通勤","items":["6rq","other","6rq"]},"observed_at":`) {
 		t.Fatalf("device 形狀:%s", dev)
 	}
-	if b, _ := canon.Encode(canon.NewPlaylist("空")); !strings.Contains(string(b), `"items":[]`) {
-		t.Fatalf("空清單要寫 items: [] 而非 null:%s", b)
+	b, _ := canon.Encode(canon.NewPlaylist("空"))
+	if !strings.Contains(string(b), `"items":[]`) || !strings.Contains(string(b), `"links":{}`) {
+		t.Fatalf("空清單要寫 items: [] 與 links: {} 而非省略/null:%s", b)
 	}
+	empty, err := canon.Decode[canon.Playlist](b)
+	if err != nil || empty.Links == nil || empty.Items == nil {
+		t.Fatalf("空清單解回來 Links / Items 不可為 nil(T7 會直接賦值):%v %+v", err, empty)
+	}
+	empty.Links["spotify"] = "x" // 不可 panic
 }
 
 func enc(v any, err error) ([]byte, error) {
