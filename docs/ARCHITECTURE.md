@@ -771,7 +771,11 @@ capy auth status
 capy auth logout  <provider>
 
 capy search <query> [--provider all|spotify|apple] [--limit N]
-capy play   <query|uri> [--on spotify|apple] [--device NAME]
+capy play                      # 恢復播放
+capy play <query...> [--provider P] [--device NAME] [--type track|artist|playlist]
+capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;歧義:TTY 挑選器 / 非 TTY exit 2 + TSV
+capy play --pick               # 直接開挑選器(TTY 限定)
+capy play --id <track id>
 capy pause | capy next | capy prev | capy seek <mm:ss> | capy vol <0-100>
 capy now [--watch]
 
@@ -791,6 +795,9 @@ capy import <file.json>                                   # 延後;P3 的反向�
 capy drive init --from-local                              # P3:Drive 空 / 404 時唯一允許寫入的命令,只重新上傳本機 cache
 capy device list | capy device forget <device_id>         # 延後;P3 只在 manifest 註冊 device_id;forget 是唯一移除裝置檔的路徑(§6.3),尚未排程
 capy db rebuild                                           # 延後;P3 的重建 = 刪 state.db 後由 hydrate 從 Drive 重建(§7,有測試)
+capy config get|set|list       # 目前只有 default_provider
+capy history clear             # 清空 cache.json 的最近搜尋
+capy completion <shell>        # cobra 內建;候選只讀本機快取
 capy doctor
 ```
 
@@ -823,6 +830,10 @@ capy doctor
 | 10 | 下一階段範圍(2026-09-03) | P3 + P4 前半:Google 登入 → Drive appdata 讀寫 → manifest / device 註冊 → canonical model → `pl pull`(平台 → canonical → Drive)→ SQLite cache 與重建 → `export` / `drive init --from-local` 逃生口。不做:fuzzy resolver 與 review queue(P4 後半)、op log / HLC / 三方合併 / `pl push`(P5) | 原 P3 只有 manifest / snapshot 基礎設施,但 canonical playlist 要 `pl pull` 才誕生:P3 沒東西可寫、使用者拿到的價值是零、「刪 db 可從 Drive 重建」的硬約束也沒東西可測 |
 | 11 | issue #3:token 並行 refresh(2026-09-03) | 兩案並用:(a) access token + expiry 也存進 keychain(與 refresh token 同一筆 JSON 記錄),**加上** (b) refresh 路徑加跨程序檔案鎖,鎖內重讀 keychain 雙重檢查後才 refresh。Google 的 token source 從第一天照同一形狀寫,不留兩套 | 只存 refresh token 時,兩個並行 `capy` 各自 refresh,Spotify 輪替後的 RT 會互相踢掉;Google 雖不輪替,但 access token 換了本來就要寫回,寫回路徑相同 |
 | 13 | playlist item 保真(2026-09-03) | item 以自己的 ULID `iid` 為鍵、`cid` 為屬性,同一首歌可在同一清單重複出現,不去重;`cid` 改為決定性 ID(`i:<正規化 ISRC>` / `p:<provider>:<id>`)。§6.2 `items[]` 加 `iid`,§7 `playlist_items` 鍵改 `(pid, iid)` | Drive 上的副本是 source of truth,現在去重等於備份永久少掉資訊,而且之後要改模型很貴。(決策 12「該 session 只產計畫不寫程式」為流程事項,不列) |
+| 14 | 補全機制(2026-09-04) | 兩者都做:CLI 內建挑選器為主(不需 shell 設定);shell tab 補全為輔,**只讀本機 `cache.json`、絕不打網路、絕不取鎖** | 每按一次 TAB 就跑一次;PR #8 之後建構 provider 會取檔案鎖並讀 keychain,補全若打網路會卡住整個 shell |
+| 15 | `play` 語意(2026-09-04) | 統一搜尋(曲目 + 藝人 + 我的播放清單);TTY 下唯一明確命中(清單名完全相符 → 藝人名完全相符 → 曲目恰一筆)直接播,否則挑選器;**非 TTY 一律確定性**:`--type`/前綴,歧義回 exit 2 與 TSV 候選;藝人 = 熱門歌曲;無參數維持恢復播放 | 「記得清單名、記不得 ID」是真實使用情境;可腳本化鐵則要求非 TTY 絕不互動 |
+| 16 | 播放器畫面(2026-09-04) | 先做 `now --watch`(bubbletea,Spotify 與 Apple 皆支援,Apple 端不得啟動未執行的 Music.app);無參數 `capy` 儀表板留到之後 | 範圍可控、獨立可測;儀表板依賴同一套元件,之後疊 |
+| 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除 | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 

@@ -15,6 +15,7 @@ const dirName = "capy-music"
 type Config struct {
 	SpotifyClientID string `json:"spotify_client_id,omitempty"`
 	AppleStorefront string `json:"apple_storefront,omitempty"`
+	DefaultProvider string `json:"default_provider,omitempty"` // spotify|apple;空 = spotify
 }
 
 // Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。

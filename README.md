@@ -39,9 +39,10 @@ capy search 派對動物 [--provider apple]
 capy play 派對動物 [--provider apple]   ·   capy pause / next / prev / now / devices
 capy pl list / capy pl show <名稱|ID>
 capy doctor [--provider apple]
+capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
 ```
 
-所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
+所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
 
 ## 憑證與資料
 

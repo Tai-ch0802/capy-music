@@ -33,6 +33,7 @@ func newRootCmd() *cobra.Command {
 	)
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
 	cmd.AddCommand(newDoctorCmd())
+	cmd.AddCommand(newConfigCmd())
 	return cmd
 }
 
