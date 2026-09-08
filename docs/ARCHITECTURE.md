@@ -496,7 +496,7 @@ appDataFolder/                       # 扁平,不建子資料夾(見下)
 **扁平檔名 + `appProperties`,不建巢狀資料夾。** Drive **不強制同資料夾內檔名唯一**:v0.5 畫的 `playlists/<pid>/` 巢狀樹在兩台裝置同時 resolve-or-create 時會生出兩個同名資料夾。改為所有檔案平放在 appDataFolder,`appProperties` 放 `kind`(manifest / tracks / playlist / device)、`pid`、`device_id`,用 `files.list` 的 `q` 過濾;`fields` 一定要明列(預設只回四個欄位),`nextPageToken` 一律迴圈。同名檔多份時取 `modifiedTime` 最新者並印警告,不清理(merge 對重複檔無害)。每個檔案頂層有 `schema_version`,讀時忽略未知欄位,版本高於 binary 支援即拒寫。
 
 **⭐ per-device 檔(`dev__<device_id>.json`)是核心設計。**
-Drive 沒有 atomic compare-and-swap(v3 已移除 `etag`,`files.update` 沒有任何 precondition 參數),也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會靜默 last-write-wins。**每台裝置只寫自己的檔 → 這個檔的寫入永不衝突。** `base` 因此從共享檔移進各裝置自己的 `dev__<device_id>.json`,形狀 `base[pid][provider] = { snapshot, observed_at }`,讀取時合併取 `observed_at` 最大者(LWW register)。
+Drive 沒有 atomic compare-and-swap(v3 已移除 `etag`,`files.update` 沒有任何 precondition 參數),也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會靜默 last-write-wins。**每台裝置只寫自己的檔 → 這個檔的寫入永不衝突。** `base` 因此從共享檔移進各裝置自己的 `dev__<device_id>.json`,形狀 `base[pid][provider] = { snapshot, observed_at }`,`snapshot = { name, items, cids }`(items = 依平台順序的 provider id,cids = 觀測當時依 §6.2 算出的 cid、與 items 對齊、不隨 mapping 變;2026-09-08 T7 加),讀取時合併取 `observed_at` 最大者(LWW register)。
 
 **誠實記下的取捨:** `manifest.json` / `tracks.json` / `pl__<pid>.json` 仍是共享檔,兩台裝置同時寫會 last-write-wins;`version` 欄位只能**事後**偵測 lost update,不能防止。P3 以單裝置為主,接受這個風險;**P5 前必須重審**。真正做到無衝突的只有 `dev__<device_id>.json`。
 
@@ -560,6 +560,22 @@ capy pl sync 的一輪:
 
 **`--dry-run` 必須是一等公民。** 這種工具最可怕的失敗是靜默刪掉使用者幾百首歌。預設對「刪除 > 10 首」的操作要求確認。
 
+#### 6.5.1 P3 的 DERIVE 規則(2026-09-08 定案,T7;`internal/canon/derive.go`)
+
+純函式、不碰 IO、不改動傳入的物件。輸入:canonical 清單 C(items 依 `(rank, iid)`)、`tracks.json` 的 cid → track(只讀)、本裝置上次觀測 base = `base[pid][provider]`(可能沒有)、平台現況 L(名稱 + 依平台順序的曲目,含 ISRC)。
+
+1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §6.2 算 cid;base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
+2. **配對由 LCS 決定,不是「第 n 次出現」。** 以 cid 序列(C 依 rank、L 依位置,重複照算)求最長共同子序列,對上的 item 留在原位;L 裡沒對上的出現,依 L 順序拿同 cid 剩下的 C item(rank 序最前者)配對並搬動;沒有剩下的才是新增。盲配「第 n 次出現」會在重複曲目換序時這輪搬這份、下輪搬那份,永遠多報一筆 move(2026-09-08 PR #19 review 抓到)。配對不看 mapping——別的 provider 建的 cid 在這個 provider 第一次被觀測到時要能配上(見第 3 點),否則每次 pull 都會多一份。
+3. **觀測寫回 tracks**:L 的每首都 `Observe`:`tracks` 沒有這個 cid → 新建 track(含這個 provider 的 mapping);有 cid 但沒這個 provider 的 mapping → 加 mapping(metadata 不符則記 `conflicts[]`,§6.2);已有 mapping → 不動(mapping 不抖動)。
+4. **新增**:L 裡配對不到的出現 → add,插在它在 L 的前一個元素所配對的 C 位置之後;`iid` = 新 ULID、`added_at` = 現在。C 全空(首次 pull)時 rank 用 `Ranks(n)` 均分,其餘用 `RankBetween`。
+5. **移除**:**只在 base 存在時**發生:某 cid 在 base 出現 b 次、在 L 出現 l 次、b > l,才把 C 裡配對不到的該 cid 出現**依 rank 由後往前**移除至多 b − l 個。沒有 base(首次 pull)永不移除。這條同時保護「在 Apple 加入、經 ISRC 對到 Spotify id、但從沒 push 到 Spotify」的曲目:它不在 Spotify 的 base 裡,所以不會被讀成「Spotify 刪了它」。
+6. **換序**:配對成功的 item 依 L 的順序排列;LCS 對上的留在原位,其餘配對的 item 搬動並只給它們新 rank(`RankBetween` 於最終整體順序的鄰居之間,鄰居可以是沒配對的 item),其餘 rank 不動;LCS 多解時偏好 C 中較前者。沒配對的 item 留在原 rank。LCS 用 Hunt–Szymanski(對配對點求 LIS):時間 O((n + r) log n)、記憶體 O(n + r),萬首清單(Spotify 單一清單上限)不會像 O(n·m) 的 DP 吃掉 855 MB。P3 沒有 HLC,順序以最後一次 pull 的 provider 為準。
+7. **改名**:base 存在且 `L.name ≠ base.name` → `C.name := L.name`(C 已經是那個名字就不算變更);首次 pull 不改名,C 的名字由建立者決定。
+8. **清單消失**:平台回 404 / 不在清單列表 → 回 gone、零 item 變更;T8 依 Q6(B)自動 unlink 並警告。開發模式讀不到的清單(Spotify 編輯清單)從不會被連結,pull 直接跳過並說明,**不是 gone**。
+9. **輸出**:變更集(add / remove / move / rename / unlink,欄位對齊 T8 的 TSV:`action pos cid provider_id title artists reason`)、套用後的 C、新建或更新的 tracks、新的 base 快照(= L 的 provider id 原文與觀測當時的 cid)、變更前該 provider **可見**的 item 數(cid 有該 provider mapping 的數量,Q3 的閾值分母)。
+10. **無變更時 C 逐位元不變**(`updated_at` 不動),T8 的 exit 0「無變更」才不會說謊。rank 資料髒掉(兩個 item 同 rank 又需要插入)→ 回錯,不靜默重排。
+
+
 ### 6.6 安全網
 
 | 機制 | 說明 |
@@ -576,7 +592,7 @@ capy pl sync 的一輪:
 db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
--- schema v1(PRAGMA user_version = 1;2026-09-07 T6 實作,與 v0.5 草案的差異見下段)
+-- schema v2(PRAGMA user_version = 2;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids;與 v0.5 草案的差異見下段)
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT, artists TEXT /* JSON [] */, album TEXT, duration_ms INTEGER, conflicts TEXT /* JSON [],§6.2 */);
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (cid, provider));
@@ -584,7 +600,7 @@ CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updat
 CREATE TABLE playlist_items (pid TEXT, iid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (pid, provider));
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT, last_seen INTEGER, registered INTEGER /* 在 manifest.devices */, has_state INTEGER /* 有 dev__<id>.json */);
-CREATE TABLE device_base (device_id TEXT, pid TEXT, provider TEXT, name TEXT, items TEXT /* JSON,平台順序的 provider id */, observed_at INTEGER, PRIMARY KEY (device_id, pid, provider));
+CREATE TABLE device_base (device_id TEXT, pid TEXT, provider TEXT, name TEXT, items TEXT /* JSON,平台順序的 provider id */, cids TEXT /* JSON,觀測當時的 cid,與 items 對齊 */, observed_at INTEGER, PRIMARY KEY (device_id, pid, provider));
 -- 純快取(原 cache.json,附錄 C 決策 17):順序存 position,「最新在前、去重、上限 50」在 internal/cache 的記憶體邏輯
 CREATE TABLE provider_playlists (provider TEXT, position INTEGER, id TEXT, name TEXT, total INTEGER, PRIMARY KEY (provider, position));
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER, provider TEXT, type TEXT, id TEXT, label TEXT, detail TEXT);

@@ -82,8 +82,8 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 		}
 		for pid, byProv := range d.Base {
 			for prov, b := range byProv {
-				if _, err = tx.Exec("INSERT INTO device_base (device_id, pid, provider, name, items, observed_at) VALUES (?, ?, ?, ?, ?, ?)",
-					d.DeviceID, pid, prov, b.Snapshot.Name, mustJSON(nonNil(b.Snapshot.Items)), b.ObservedAt); err != nil {
+				if _, err = tx.Exec("INSERT INTO device_base (device_id, pid, provider, name, items, cids, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+					d.DeviceID, pid, prov, b.Snapshot.Name, mustJSON(nonNil(b.Snapshot.Items)), mustJSON(nonNil(b.Snapshot.CIDs)), b.ObservedAt); err != nil {
 					return err
 				}
 			}
@@ -206,16 +206,19 @@ func (s *Store) Dump() (Canonical, error) {
 	for i := range c.Devices {
 		byDev[c.Devices[i].DeviceID] = &c.Devices[i]
 	}
-	if err := s.query("SELECT device_id, pid, provider, name, items, observed_at FROM device_base", func(r *sql.Rows) error {
-		var dev, pid, prov, items string
+	if err := s.query("SELECT device_id, pid, provider, name, items, cids, observed_at FROM device_base", func(r *sql.Rows) error {
+		var dev, pid, prov, items, cids string
 		var b canon.Base
-		if err := r.Scan(&dev, &pid, &prov, &b.Snapshot.Name, &items, &b.ObservedAt); err != nil {
+		if err := r.Scan(&dev, &pid, &prov, &b.Snapshot.Name, &items, &cids, &b.ObservedAt); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(items), &b.Snapshot.Items); err != nil {
 			return err
 		}
-		b.Snapshot.Items = nonNil(b.Snapshot.Items)
+		if err := json.Unmarshal([]byte(cids), &b.Snapshot.CIDs); err != nil {
+			return err
+		}
+		b.Snapshot.Items, b.Snapshot.CIDs = nonNil(b.Snapshot.Items), nonNil(b.Snapshot.CIDs)
 		d, ok := byDev[dev]
 		if !ok {
 			return fmt.Errorf("device_base 有 devices 沒有的裝置 %s(db 不一致,刪掉重建)", dev)

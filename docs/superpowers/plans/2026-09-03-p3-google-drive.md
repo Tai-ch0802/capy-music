@@ -307,6 +307,8 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 
 **產出**:`internal/sync/`(或 `internal/canon/derive.go`)。這是整個階段唯一沒有規格的演算法,**必須先寫清楚再寫程式**。
 
+**2026-09-08:規則已定案並寫進 spec §6.5.1,程式在 `internal/canon/derive.go`。與下面原本的考量有一處不同:對齊鍵是 cid(base 快照同時記觀測當時的 cid,不經 mapping 反查),不是 provider id——同一錄音換版本才會是零變更,重新連結後再刪除也刪得掉;配對由 LCS 決定而不是「第 n 次出現」,重複曲目換序才會一輪就穩。本節其餘為當時的考量,留作紀錄。**
+
 要定義的東西:
 
 - **平台清單 ↔ `pid` 的連結規則**。spec 附錄 A 有 `pl link/unlink` 但計畫原本沒排。二選一並寫進 T0 的附錄 A 修訂:(a) 自動連結(依清單名稱正規化後相符)+ `pl link` 手動覆寫;(b) 只有 `pl link` 明確連結,`pull` 對未連結的清單不動作。**建議 (b)**:自動連結一旦猜錯,寫進 source of truth 就很難回頭。

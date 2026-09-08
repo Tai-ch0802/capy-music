@@ -7,11 +7,14 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
-var isrcRe = regexp.MustCompile(`^[A-Z0-9]{12}$`)
+var (
+	isrcRe    = regexp.MustCompile(`^[A-Z0-9]{12}$`)
+	isrcStrip = strings.NewReplacer("-", "", " ", "") // 每次 NewReplacer 配置 6 KB 的替換表,萬首清單就是 60 MB
+)
 
 // NormalizeISRC:大寫、去連字號與空白;非 12 碼視為缺失(回空字串)。
 func NormalizeISRC(s string) string {
-	s = strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(strings.TrimSpace(s)))
+	s = strings.ToUpper(isrcStrip.Replace(strings.TrimSpace(s)))
 	if !isrcRe.MatchString(s) {
 		return ""
 	}
