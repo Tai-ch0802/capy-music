@@ -1,7 +1,7 @@
 # capy-music — 跨平台音樂 CLI 架構規劃
 
 > 專案名稱 `capy-music`,binary `capy`
-> 文件版本 v0.7 — 2026-09-08(P4 後半對齊:§5.1 觀測 cid 三段式身分規則、mapping 物件化與 schema 2(T2b 的 merged 再跳 3)、§5.3 review queue 契約、§6.5.1 base 只經 tombstone 重導、§7 schema v5、附錄 C 決策 19–25;計畫在 docs/superpowers/plans/2026-09-08-p4-resolver.md;v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
+> 文件版本 v0.8 — 2026-09-08(P5 對齊:不建 op log / HLC(§6.4 改寫、附錄 C 決策 26),DERIVE 規則 4′(§6.5.1),`pl push` / `pl sync` 契約(§6.5.2、附錄 A),共享檔版本守衛(§6.3、§6.6),Apple 寫入 gate 與 append-only fallback(決策 30);計畫在 docs/superpowers/plans/2026-09-08-p5-sync.md);v0.7 — 2026-09-08(P4 後半對齊:§5.1 觀測 cid 三段式身分規則、mapping 物件化與 schema 2(T2b 的 merged 再跳 3)、§5.3 review queue 契約、§6.5.1 base 只經 tombstone 重導、§7 schema v5、附錄 C 決策 19–25;計畫在 docs/superpowers/plans/2026-09-08-p4-resolver.md;v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
 > 本文件為架構基準,所有「已驗證」標記的事實均於 2026-08 查證。
 
 ---
@@ -50,7 +50,7 @@
 | Music User Token | 官方只能經 MusicKit `authorize()` 取得;**本專案改由使用者從網頁播放器的 `media-user-token` 標頭/cookie 複製** | 不需 MusicKit JS 橋接;與 developer token 一起貼入 `auth login apple` |
 | MUT 生命週期 | 長期有效,**無 refresh token**,過期只能重跑授權 | 需偵測 401 並提示重新授權 |
 | Lossless / Hi-Res | MusicKit JS **不支援**;iOS/tvOS MusicKit 遵循使用者設定但無程式控制 | 高音質只能靠 macOS 的 Music.app |
-| Library playlist 寫入 | 建立/新增曲目可行;**移除與重排能力待驗證** | ⚠️ 見 §9 P0-2,可能影響 push 策略 |
+| Library playlist 寫入 | 建立/新增曲目可行;**移除與重排能力待驗證** | ⚠️ 見 §9 P0-2;P5 決策 30:gate 在維護者的寫入探測(計畫 R-8),預期 append-only,不採 rebuild |
 | ToS | 禁止與其他 JS 重組、禁止對存取收費、內容不可與其他內容 synchronized | 見 §8 |
 
 ### 1.3 Google(Drive appData)
@@ -169,10 +169,18 @@ type PlaylistReader interface {
     GetPlaylistItems(ctx context.Context, id string) ([]Track, error)
 }
 
+// PlaylistOp(2026-09-08 P5 T0 定形):位置語意是依序套用、每個 Pos / From 指的是前面 ops 套完後的狀態。
+type PlaylistOp struct {
+    Kind       string // add | remove | move | rename
+    ProviderID string // add / remove / move 的曲目 id(Apple 只收 catalog id)
+    Pos, From  int    // add:插入位置;remove:位置;move:From → Pos
+    Name       string // rename
+}
+
 type PlaylistWriter interface {
     CreatePlaylist(ctx context.Context, name, desc string) (string, error)
     // ApplyOps 一次套用一批操作,由 provider 決定用什麼端點實現。
-    // 不支援的操作回 ErrCapability,SyncEngine 會 fallback 到 rebuild 策略。
+    // 不支援的 Kind 回 ErrCapability(先把支援的做完再回),呼叫端把那些列成 manual;P5 不做 rebuild fallback(決策 30)。
     ApplyOps(ctx context.Context, playlistID string, ops []PlaylistOp) error
 }
 
@@ -200,7 +208,7 @@ type Track struct {
 }
 ```
 
-**`ApplyOps` 而非細顆粒方法**是刻意的:讓 provider 自己決定「逐條 API 呼叫」還是「整批 replace」。Spotify 有 `PUT /playlists/{id}/items` 可整批取代;Apple 可能只能重建。這個抽象讓兩者都塞得下。
+**`ApplyOps` 而非細顆粒方法**是刻意的:讓 provider 自己決定「逐條 API 呼叫」還是「整批 replace」。Spotify 有 `PUT /playlists/{id}/items` 可整批取代(P5 決策 28:任何 add / remove / move 都走整批取代,前 100 首 `PUT`、其後每批 100 `POST`);Apple 預期只能 append(決策 30:remove / move / rename 回 `ErrCapability`,不重建)。這個抽象讓兩者都塞得下。
 
 ---
 
@@ -506,7 +514,7 @@ $ capy resolve --review
 
 ```
 appDataFolder/                       # 扁平,不建子資料夾(見下)
-├── manifest.json                    # schema_version, devices[], playlists[](pid;2026-09-08 T8 加,pull 的閘用它偵測部分遺失), last_compaction 待 P5
+├── manifest.json                    # schema_version, devices[], playlists[](pid;2026-09-08 T8 加,pull 的閘用它偵測部分遺失)
 ├── tracks.json                      # cid → 曲目 metadata + mapping 物件 + conflicts[](§6.2);merged{敗者 cid → 勝者 cid}(P4 決策 21 的 tombstone)
 ├── pl__<pid>.json                   # canonical playlist(§6.2:name/desc/links + items[])
 ├── pl__<pid>.json
@@ -519,67 +527,57 @@ appDataFolder/                       # 扁平,不建子資料夾(見下)
 **⭐ per-device 檔(`dev__<device_id>.json`)是核心設計。**
 Drive 沒有 atomic compare-and-swap(v3 已移除 `etag`,`files.update` 沒有任何 precondition 參數),也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會靜默 last-write-wins。**每台裝置只寫自己的檔 → 這個檔的寫入永不衝突。** `base` 因此從共享檔移進各裝置自己的 `dev__<device_id>.json`,形狀 `base[pid][provider] = { snapshot, observed_at }`,`snapshot = { id, name, items, cids }`(id = 被觀測的平台清單 id,base 只對目前連結的那個平台清單有效,unlink 後改連別的清單,舊 base 不算數,2026-09-08 T8 加;items = 依平台順序的 provider id;cids = 觀測當時依 §6.2 算出的 cid、與 items 對齊、不隨 mapping 變;2026-09-08 T7 加),讀取時合併取 `observed_at` 最大者(LWW register)。
 
-**誠實記下的取捨:** `manifest.json` / `tracks.json` / `pl__<pid>.json` 仍是共享檔,兩台裝置同時寫會 last-write-wins;`version` 欄位只能**事後**偵測 lost update,不能防止。P3 以單裝置為主,接受這個風險;**P5 前必須重審**。真正做到無衝突的只有 `dev__<device_id>.json`。
+**共享檔的取捨與版本守衛(2026-09-08 P5 重審,附錄 C 決策 29)。** `manifest.json` / `tracks.json` / `pl__<pid>.json` 仍是共享檔,兩台裝置同時寫會 last-write-wins,Drive 沒有 CAS 可以防止。危險的不是互蓋本身,是**互蓋之後對方的變更再也不會被 derive**:A 在 FETCH 與 COMMIT 之間被 B 蓋掉 `pl__`,A 的 `dev__` base 卻已前進,A 下次 pull 看平台與 base 一致、C 卻少了 B 那份。所以 COMMIT 前**再跑一次 FETCH 用的 `files.list`**(`fields` 已含 `version`),對每個要上傳的檔比對 FETCH 時記下的 `version`,以及同名檔的份數(別台裝置在我們 FETCH 之後 Create 的算變動);任一不同 → 一個檔都不傳、本機不動、exit 1、訊息叫使用者重跑(重跑 = 重新 FETCH 到對方的結果再 derive 一次,delta 自然疊上去)。殘餘窗口只剩上傳序列本身(tracks → pl__ → dev__ → manifest,秒級)。守衛住在 `withCanonical` 的 COMMIT,`pl pull` / `resolve` / `pl push` / `pl sync` 一體適用。真正做到無衝突的仍只有 `dev__<device_id>.json`。
 
-**op log 與 snapshot 的佈局待 P5 重新設計。** v0.5 的 `ops/<device_id>.jsonl`、`snapshot.json` 與 compaction lease(`manifest.json` 的 `compaction_lease`,過期即可搶佔)在扁平化後**路徑未定**;每台裝置只寫自己的 log 檔、讀取時載入所有 device log 依 HLC 排序 replay 的原則不變(§6.4)。P3 不產生也不上傳 op log(附錄 C 決策 10)。
+**沒有 op log、沒有 snapshot 檔(2026-09-08 P5 定案,附錄 C 決策 26)。** v0.5 的 `ops/<device_id>.jsonl`、`snapshot.json`、compaction lease 全部不做:per-device base 已經是「本裝置上次跟這個平台對齊時看到的狀態」,DERIVE 對最新的 C 算 delta 就是三方合併(§6.4);而且沒有本機編輯命令,op log 沒有東西可記。
 
 **`export` 只輸出到 stdout,不回存 Drive。** v0.5 的 `export/latest.json` 已刪:逃生口的價值在於「不依賴 Drive」,把它存回 Drive 沒有意義。`capy export` 直接輸出 Drive 檔的合併形式(不發明第三種 JSON 形狀),見 §6.6 與附錄 A。
 
-### 6.4 操作紀錄格式
+### 6.4 變更的來源與合併語意(2026-09-08 P5 定案;取代 v0.5 的 op log 草案)
 
-> ⚠️ **P5 重新設計;以下為 v0.5 草案。** 扁平化(§6.3)後 op log 與 snapshot 的 Drive 路徑未定;op 定址要改用 `iid`(決策 13,`cid` 不再是 item 的鍵);HLC、tombstone、compaction 的原則保留。P3 不產生也不上傳 op log(附錄 C 決策 10)。
+> v0.5 在這裡畫的是 op log(add / remove / move / rename 各帶 HLC、tombstone 保留 30 天、compaction)。P5 定案**不建 op log、不做 HLC**(附錄 C 決策 26)。本節寫新模型;v0.5 原文在 git 歷史(v0.7 之前的版本)。
 
-```jsonc
-{ "op": "add",    "pid": "...", "cid": "...", "rank": "a0V", "hlc": "1756600000:0003:macbook" }
-{ "op": "remove", "pid": "...", "cid": "...",                "hlc": "..." }
-{ "op": "move",   "pid": "...", "cid": "...", "rank": "b2",  "hlc": "..." }
-{ "op": "rename", "pid": "...", "name": "通勤 2026",          "hlc": "..." }
-```
+**變更只有一種來源:觀測。** 沒有本機編輯命令,每一筆 canonical 變更都是「平台現況 L 跟本裝置的 base 不同」,由 DERIVE(§6.5.1)算出來套在**最新的** C 上。觀測是可重做的:這次沒 COMMIT 成,下次 pull 再算一次就是了——這就是為什麼不需要把 op 記下來,也不需要離線佇列(pull / push 都要 Drive,離線就是失敗、下次再跑)。
 
-HLC(Hybrid Logical Clock)= `物理時間:計數器:device_id`,提供全序且對時鐘偏移有容忍度。
+**三方合併 = per-device base + 對稱的計數規則。** 每台裝置對每個 (清單, 平台) 都有自己的 base(§6.3),DERIVE 用「某 cid 在 base 出現 b 次、在 L 出現 l 次、在 C 配得到幾次」決定:b > l 才移除(規則 5)、l > b 才新增(規則 4′,P5 加;決策 27)。兩台裝置各從不同平台 pull,只要 COMMIT 序列化(版本守衛,§6.3),delta 自然疊加:A 先 commit C+ΔS,B FETCH 到它再疊 ΔA。v0.5 的 tombstone 要擋的「A 刪掉、B 的舊快照加回去」在這裡由規則 4′ 擋住——B 的 base 裡有那首,L 也有,l = b,不算新增;唯一沒涵蓋的是 **B 對那個平台沒有 base**(新裝置、剛連結)的 bootstrap 情境,接受並文件化(計畫 Q15;任一裝置 sync 一次即關窗口,而且復活會以 `add` 列出現在輸出裡)。
 
-**Tombstone 必須保留。** 否則裝置 A 刪除的曲目,會被裝置 B 的舊快照重新加回去。Tombstone 在 compaction 時保留 30 天再清除。
+**沒有 HLC 可比的衝突:後 COMMIT 者勝。** 改名(規則 7:平台名 ≠ base 名才改 C)與順序(規則 6:以最後一次 pull 的平台為準)兩台裝置各自從兩個平台拉到不同結果時,版本守衛保證後者是看著前者的結果做決定的,不是盲蓋。
+
+**如果將來加 `pl add / remove / move`:** 它們直接改 C,走同一個 `withCanonical`(FETCH → 改 → 版本守衛 → COMMIT),仍然不需要 op log;要做離線編輯佇列時才回頭看 §7 的重建策略(那時 db 裡會出現 Drive 上沒有的東西)。
 
 ### 6.5 同步流程
 
 ```
-capy pl sync 的一輪:
+capy pl sync 的一輪(pl pull 只有 1–3 + 6;pl push 只有 1–2 + 4–6;2026-09-08 P5 定案):
 
 1. FETCH
-   ├─ Drive: 讀 manifest + tracks.json + pl__*.json + 所有 dev__*.json(§6.3;op log 與 snapshot 待 P5,§6.4)
-   └─ replay → canonical 狀態 C(P3 沒有 op log,C = 直接載入的 pl__* 狀態)
+   └─ Drive: 讀 manifest + tracks.json + pl__*.json + 所有 dev__*.json(§6.3),記下每個檔的 version
+       → canonical 狀態 C(item cid 經 merged tombstone 重導);本裝置的 base[pid][provider]
 
 2. OBSERVE
-   └─ 對每個已連結的 provider,讀取平台實際狀態 L
-       (Spotify: GET /playlists/{id}/items,注意分頁)
+   └─ 對每個已連結的 provider,讀取平台實際狀態 L(Spotify: GET /playlists/{id}/items,注意分頁),
+       每首依 §5.1 身分規則算 cid,Observe 寫回 tracks(mapping / conflicts)
 
-3. DERIVE
-   └─ 平台不會給你 ops,只給你 state。
-       ops_local = diff(base[pid][provider], L)
-       → 轉成 op 追加到本裝置的 op log(佈局待 P5,§6.4)
+3. DERIVE(§6.5.1;pull)
+   └─ 平台不會給你 ops,只給你 state:C' = C + diff(base[pid][provider], L)
+       三方語意:移除只在 b > l、新增只在 l > b(規則 4′ / 5);沒有 base = bootstrap(全新增、永不移除)
 
-4. MERGE
-   └─ C' = replay(all ops, 依 HLC 排序)
-       衝突規則:
-         add  vs add  同 iid   → 去重,取較早的 rank(同 cid 不同 iid 是兩筆合法項目,決策 13,不去重)
-         remove vs move       → remove 勝(刪除意圖較明確),記錄到 sync log
-         rename vs rename     → HLC 較大者勝
-         rank 衝突            → HLC 較大者勝
+4. PROJECT + PUSH(§6.5.2;push)
+   ├─ 前提:base 存在,且 Derive(base, L) 是空的(平台沒有未 pull 的變更)——否則 exit 3
+   ├─ ops = diff(L, project(C', provider))(LCS 配對,remove / add / move / rename;缺 mapping 的 item 列 skip)
+   ├─ 刪除閾值(決策 18)、--dry-run、確認
+   └─ provider.ApplyOps(ops);provider 不支援的 op 回 ErrCapability → 列成 manual(Apple 的 remove / move,決策 30)
 
-5. PROJECT
-   └─ 對每個 provider:
-       ops_push = diff(L, project(C', provider))
-       provider.ApplyOps(ops_push)
-       ⚠️ 若 provider 缺 CapPlaylistRemove/Reorder
-          → fallback: 建新清單 + 整批寫入 + 改名 + 刪舊(rebuild 策略)
+5. VERIFY
+   └─ 重讀 L′,與投影不同只警告;base[pid][provider] := L′ 的快照(Observe 同一條路)
 
-6. COMMIT
-   ├─ 寫回本裝置 dev__<device_id>.json 的 base[pid][provider] = 新的平台狀態
-   ├─ 上傳本裝置的 op log(ops/<device_id>.jsonl;扁平化後路徑待 P5,§6.4)
-   └─ 更新 manifest
+6. COMMIT(版本守衛 → 上傳 → SQLite)
+   ├─ 再 list 一次比對每個要傳的檔的 version(§6.3);不符 → 零上傳、exit 1、重跑
+   ├─ 上傳位元組有變的檔:tracks → pl__ → 本裝置 dev__ → manifest
+   └─ Hydrate 本機 state.db
 ```
 
-**`--dry-run` 必須是一等公民。** 這種工具最可怕的失敗是靜默刪掉使用者幾百首歌。預設對「刪除 > 10 首」的操作要求確認。
+**`--dry-run` 必須是一等公民。** 這種工具最可怕的失敗是靜默刪掉使用者幾百首歌。pull / push / sync 都先印完整變更集(非 TTY 是 TSV)再確認,`--dry-run` 只印、不碰平台也不碰 Drive;會刪曲目的路徑一律過決策 18 的閾值。
 
 #### 6.5.1 P3 的 DERIVE 規則(2026-09-08 定案,T7;`internal/canon/derive.go`)
 
@@ -588,7 +586,7 @@ capy pl sync 的一輪:
 1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §5.1 的身分規則算 cid(P4 起:先看 `tracks` 的 mapping、再看 alias set、最後才是 §6.2 公式;**base 快照裡的 cid 在計數前只經 `merged` tombstone 重導**(不查 mapping、不落公式,都不是就保留快照原本的 cid),否則合併後緊接的平台刪除永遠刪不掉、P5 push 會把它加回去——決策 19);base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
 2. **配對由 LCS 決定,不是「第 n 次出現」。** 以 cid 序列(C 依 rank、L 依位置,重複照算)求最長共同子序列,對上的 item 留在原位;L 裡沒對上的出現,依 L 順序拿同 cid 剩下的 C item(rank 序最前者)配對並搬動;沒有剩下的才是新增。盲配「第 n 次出現」會在重複曲目換序時這輪搬這份、下輪搬那份,永遠多報一筆 move(2026-09-08 PR #19 review 抓到)。配對不看 mapping——別的 provider 建的 cid 在這個 provider 第一次被觀測到時要能配上(見第 3 點),否則每次 pull 都會多一份。
 3. **觀測寫回 tracks**:L 的每首都 `Observe`:`tracks` 沒有這個 cid → 新建 track(含這個 provider 的 mapping);有 cid 但沒這個 provider 的 mapping → 加 mapping(metadata 不符則記 `conflicts[]`,§6.2);已有 mapping → pinned 或 observed 不動(mapping 不抖動);P4 起非 pinned 的 `isrc` / `fuzzy` mapping 會被觀測到的真實 id 覆寫(決策 20 的優先序 pinned > observed > isrc / fuzzy)。
-4. **新增**:L 裡配對不到的出現 → add,插在它在 L 的前一個元素所配對的 C 位置之後;`iid` = 新 ULID、`added_at` = 現在。C 全空(首次 pull)時 rank 用 `Ranks(n)` 均分,其餘用 `RankBetween`。
+4. **新增(P5 起是 4′,決策 27)**:L 裡配對不到的出現 → add,插在它在 L 的前一個元素所配對的 C 位置之後;`iid` = 新 ULID、`added_at` = 現在。C 全空(首次 pull)時 rank 用 `Ranks(n)` 均分,其餘用 `RankBetween`。**base 存在時只有超出 base 計數的部分才是新增**:某 cid 在 L 出現 l 次、在 base 出現 b 次,l > b 才 add、至多 add l − b 個,取 L 順序最後的那幾個(平台新增通常在尾端;鏡像規則 5 的「由後往前移除」);其餘配不到的出現是「平台還沒跟上 C 的移除」,留給 push。沒有 base 全部 add(bootstrap)。沒有這條,使用者在 Spotify 刪的歌會被 Apple 的下一次 pull 加回 C,刪除意圖丟失。**P5 T3 與 push(T4)相鄰出貨**:只有 pull 的世界裡這條會讓 C 與平台脫節而沒有東西去對齊。
 5. **移除**:**只在 base 存在時**發生:某 cid 在 base 出現 b 次、在 L 出現 l 次、b > l,才把 C 裡配對不到的該 cid 出現**依 rank 由後往前**移除至多 b − l 個。沒有 base(首次 pull)永不移除。這條同時保護「在 Apple 加入、經 ISRC 對到 Spotify id、但從沒 push 到 Spotify」的曲目:它不在 Spotify 的 base 裡,所以不會被讀成「Spotify 刪了它」。
 6. **換序**:配對成功的 item 依 L 的順序排列;LCS 對上的留在原位,其餘配對的 item 搬動並只給它們新 rank(`RankBetween` 於最終整體順序的鄰居之間,鄰居可以是沒配對的 item),其餘 rank 不動;LCS 多解時偏好 C 中較前者。沒配對的 item 留在原 rank。LCS 用 Hunt–Szymanski(對配對點求 LIS):時間 O((n + r) log n)、記憶體 O(n + r),萬首清單(Spotify 單一清單上限)不會像 O(n·m) 的 DP 吃掉 855 MB。P3 沒有 HLC,順序以最後一次 pull 的 provider 為準。
 7. **改名**:base 存在且 `L.name ≠ base.name` → `C.name := L.name`(C 已經是那個名字就不算變更);首次 pull 不改名,C 的名字由建立者決定。
@@ -596,15 +594,27 @@ capy pl sync 的一輪:
 9. **輸出**:變更集(add / remove / move / rename / unlink,欄位對齊 T8 的 TSV:`action pos cid provider_id title artists reason`)、套用後的 C、新建或更新的 tracks、新的 base 快照(= 平台清單 id、L 的 provider id 原文與觀測當時的 cid;§6.3)、變更前該 provider **可見**的 item 數(cid 有該 provider mapping 的數量,Q3 的閾值分母)。
 10. **無變更時 C 逐位元不變**(`updated_at` 不動),T8 的 exit 0「無變更」才不會說謊。rank 資料髒掉(兩個 item 同 rank 又需要插入)→ 回錯,不靜默重排。
 
+#### 6.5.2 P5 的 PUSH 規則(2026-09-08 定案,附錄 C 決策 28;`internal/canon/project.go`、`internal/cli/push.go`)
+
+1. **前提一:base 存在。** 本裝置對這個 (清單, 平台) 沒 pull 過 → exit 3、零寫入,訊息「先 `capy pl pull`」。不然 diff(L, project(C)) 會把平台上所有不在 C 的曲目刪光——「首次 pull 永不移除」的 push 版。
+2. **前提二:平台沒有未 pull 的變更。** 先跑 Derive(base, L),變更集非空 → exit 3,訊息指向 `pl pull` 或 `pl sync`。push 蓋掉使用者剛在平台改的東西不可接受;`pl sync` 先 pull 後 push,兩個前提由建構保證。
+3. **投影**:C 的 items 依 rank,每個取 `tracks[cid].mappings[provider].id`;pinned 不可得、沒有 mapping、Apple 的 library id(`i.` 開頭,只有 catalog id 能寫)→ 跳過並列成 `skip`(reason 指向 `capy resolve`),不阻擋其他曲目。
+4. **變更集**:diff(L 的 provider id 序列, 投影)以 LCS 配對(重複照算,與規則 2 同一套)→ `remove`(L 位置,由後往前)、`add`(投影位置)、`move`、`rename`(C.name ≠ L.name 且 provider 支援);位置語意是**依序套用、每個位置指的是前面 ops 套完後的狀態**。TSV 欄位同 pull(`action pos cid provider_id title artists reason`)再加 `skip` / `manual`。
+5. **安全網**:`remove` 數過決策 18 的閾值(分母 = L 的長度)→ exit 3、`--force` 才越過且只能配單一清單;`--dry-run` 只印、有變更 exit 2、不碰平台不碰 Drive;非 TTY 沒 `--yes` → exit 2;TTY 確認。
+6. **套用**:`provider.ApplyOps`;provider 對某類 op 回 `ErrCapability` → 那些列標成 `manual`(Apple 的 remove / move / rename,決策 30),其餘照做。Spotify:任何 add / remove / move → 整批取代(`PUT /playlists/{id}/items` 前 100 首 + `POST …?position=` 其後每批 100),`rename` → `PUT /playlists/{id}`;只有自己或協作的清單可寫,403 → 友善訊息。
+7. **驗證與前進 base**:重讀 L′,L′ ≠ 投影(平台拒收、順序被正規化)→ stderr 警告不算錯;base[pid][provider] := L′ 的快照(與 pull 同一條 Observe 路,順便補 mapping / conflicts);**C 不變**(push 不改 canonical)。
+8. **COMMIT** 走 `withCanonical`。平台已改、Drive 上傳失敗 → base 沒前進,下次 pull 把剛 push 的東西當平台變更再 derive:LCS 對同 cid 配上、零變更,不會重複。
 
 ### 6.6 安全網
 
 | 機制 | 說明 |
 |---|---|
-| Dry-run 預設引導 | 首次 `sync` 自動先跑 `--dry-run` 並要求確認 |
-| 刪除閾值 | 單一 (清單, provider) 在一次 `pl pull` 或 `pl push` 要刪除 **>10 首,或 >30% 且 >3 首**(分母是該 provider 可見的曲數;Q3 採 B,2026-09-08 T8,附錄 C 決策 18)時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push)。`--force` 只越過閾值,不放行「Drive 不完整」(下一列) |
+| 變更集先於寫入 | pull / push / sync 都先印完整變更集(非 TTY 是 TSV)再確認;非 TTY 沒 `--yes` → exit 2、零寫入;`--dry-run` 只印(2026-09-08 P5:取代 v0.5「首次 sync 自動先跑 dry-run」——每一次都等於先 dry-run 過) |
+| push 的兩個前提 | (清單, provider) 沒有 base(本裝置沒 pull 過)、或平台有未 pull 的變更(Derive(base, L) 非空)→ `pl push` exit 3、零寫入,`--yes` / `--force` 都不放行;出口是 `pl pull` 或 `pl sync`(§6.5.2,決策 28) |
+| 共享檔版本守衛 | COMMIT 前再 list 一次,任一要上傳的檔 `version` 變了或同名多了一份 → 零上傳、本機不動、exit 1、重跑(§6.3,決策 29);pull / resolve / push / sync 一體適用 |
+| 刪除閾值 | 單一 (清單, provider) 在一次 `pl pull` 或 `pl push` 要刪除 **>10 首,或 >30% 且 >3 首**(分母是該 provider 可見的曲數;Q3 採 B,2026-09-08 T8,附錄 C 決策 18)時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push;P5 的 `pl push` 走同一個 `removalBlocked`,分母是平台清單 L 的長度)。`--force` 只越過閾值,不放行「Drive 不完整」(下一列) |
 | Drive 不完整的閘 | `manifest.playlists` 宣告、或本機 `state.db` 記得的檔在 Drive 取不到(全空只是特例)→ `pl pull` / `pl link` 一律 exit 3、零寫入,`--yes` / `--force` 都不放行;出口是 `capy drive init --from-local`(2026-09-08 T9 已實作:只建 Drive 缺的檔、不覆寫還在的檔(Drive 為準)、不動本機 cache、不代為上傳別台裝置的 `dev__` 檔;沒缺就零寫入;manifest 宣告但兩邊都沒有的清單補不回,訊息講明只能清空 appdata 重建)。任何檔 `schema_version` 高於 binary 支援 → exit 1、零寫入 |
-| 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore` 從它回滾的語意隨扁平化改變(base 不再是共享檔),**P5 再定** |
+| 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore`:base 是 per-device 的觀測快照,「從它回滾」= 把上次看到的平台狀態 push 回去,與 `pl push` 重疊,**延後到有人要為止**(2026-09-08 P5,計畫 Q18) |
 | Export 逃生口 | `capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain;用 `store.OpenReadOnly`:壞檔不刪、版本不符不改名、不建檔,`Dump` 整批在一個 read transaction 裡所以是一致快照),輸出 Drive 檔的合併形式到 stdout——鍵是檔名、值是該檔內容的縮排形式,壓回 compact 後與 Drive 上逐位元相同(2026-09-08 T9;`import` 就是它的反向);本機沒資料 exit 1、stdout 不印,找得到升版保留的 `state.db.v<n>` 就指出來。反向路徑是 `capy drive init --from-local`(上一列;同一個唯讀開法,永不寫本機;上傳順序 manifest 最後;Drive 上還在的每個檔都先檢 schema) |
 
 ---
@@ -638,7 +648,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 
 **P4 後半(2026-09-08,決策 20)已把 `confidence` / `pinned` / `updated_at`(外加 `source`)同時加回 `tracks.json` 與本表;下一段是 P3 當時的理由,留作紀錄。** `mappings` 在 P3 只有 `(cid, provider, provider_id)`,沒有 `confidence` / `pinned` / `updated_at`。 這三欄在 Drive 上沒有來源——`tracks.json` 的 mapping 就是 `{ provider: provider_id }`(§5.4、§6.2、§6.3)——留著就等於「刪 db 可從 Drive 完整重建」這條硬約束在規格層面先天不成立。理由與下一段拒收 ops / review 兩張表**完全相同**:db 裡只能存 Drive 上有的東西。而且 P3 沒有 resolver(§9,resolver 與 review queue 是 P4),沒有任何程式碼會產生信心度或釘選。**P4 做 resolver 時要把這三欄同時加回 `tracks.json` 與本表**(§5.1 Layer 3 的人工釘選是使用者意圖,必須跟著 Drive 走才「永久沿用」);migration policy 是整檔丟棄重建,加欄位不用寫 ALTER,成本為零。只加表不加 Drive 形狀,同一個洞就會在 P4 原樣重現。
 
-**P3 不建 `ops` 離線佇列與 review 佇列兩張表(v0.5 有)。** 理由要讀準:已上傳的 op log **在 Drive 上**(§6.3 的 `ops/<device_id>.jsonl`,§6.5 步驟 6 會上傳它),真正不在 Drive 的只有 `synced = 0` 的離線佇列與使用者尚未裁決的 review 項目——這兩樣一旦進 db,「刪 db 可從 Drive 完整重建」就不成立。P3 為了讓這條硬約束成立而不建這兩張表,**不是否決 §6.4 的 op log 設計**;P5 要做離線佇列時,得連同它的重建策略一起回頭加表。db 裡只能存 Drive 上有的東西(canonical 鏡像、各裝置 `base` 副本)與純快取(`resolution_cache`);不存憑證、不存 provider 原始 JSON。
+**P3 不建 `ops` 離線佇列與 review 佇列兩張表(v0.5 有)。** 理由要讀準:已上傳的 op log **在 Drive 上**(v0.5 §6.3 的 `ops/<device_id>.jsonl`,當時 §6.5 步驟 6 會上傳它),真正不在 Drive 的只有 `synced = 0` 的離線佇列與使用者尚未裁決的 review 項目——這兩樣一旦進 db,「刪 db 可從 Drive 完整重建」就不成立。P3 為了讓這條硬約束成立而不建這兩張表,當時**不是否決 §6.4 的 op log 設計**。**2026-09-08 P5 定案:不建 op log、沒有離線佇列(附錄 C 決策 26),db 不加任何表**——`pl push` 只把 base 前進、寫回本裝置的 `dev__`,刪 db 仍可從 Drive 完整重建;要做離線編輯佇列時才回頭連同重建策略一起加表。db 裡只能存 Drive 上有的東西(canonical 鏡像、各裝置 `base` 副本)與純快取(`resolution_cache`);不存憑證、不存 provider 原始 JSON。
 
 ---
 
@@ -767,15 +777,15 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 > **排程註記(2026-09-03):** v0.4 版 P2(`.p8` + Worker + MusicKit 橋接)於 PR #5 完成後,依附錄 C 決策 8 改為 web token BYO(`feat/apple-webtoken`)。真實驗收**不再 gate 於會籍**:拿到 web token 即可跑 search / pl / 播放驗收;P0-3(MusicKit 動態 port)隨橋接移除而作廢;P0-1(ISRC)與 macOS 播放機制 A/B 決勝仍待真跑。
 
 ### P3 — Google + Drive
-`auth login google` → appDataFolder 讀寫 → manifest / device 註冊基礎設施。**範圍依附錄 C 決策 10 擴為 P3 + P4 前半**:canonical model → `pl pull` → SQLite cache 與重建 → `export` / `drive init --from-local` 逃生口;snapshot 佈局待 P5(§6.4)
+`auth login google` → appDataFolder 讀寫 → manifest / device 註冊基礎設施。**範圍依附錄 C 決策 10 擴為 P3 + P4 前半**:canonical model → `pl pull` → SQLite cache 與重建 → `export` / `drive init --from-local` 逃生口;snapshot / op log 於 P5 定案不做(§6.4,決策 26)
 
 ### P4 — 單向同步
 canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→ review queue
 
 > **排程註記(2026-09-08):** 前半(canonical model → `pl pull`)已隨 P3 完成(附錄 C 決策 10);後半(resolver + review queue)依 [docs/superpowers/plans/2026-09-08-p4-resolver.md](superpowers/plans/2026-09-08-p4-resolver.md) 執行(決策 19–25;真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553)。
 
-### P5 — 雙向同步
-op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
+### P5 — 雙向同步(2026-09-08 計畫:docs/superpowers/plans/2026-09-08-p5-sync.md)
+**不建 op log / HLC**(決策 26):`PlaylistWriter` SPI + Spotify 寫入 → 共享檔版本守衛 → 投影 / push 變更集 / DERIVE 規則 4′ → `pl push` → `pl sync` → Apple 寫入(gate P0-2,預期 append-only)→ 真帳號驗收
 
 ### P6 — 抽象驗證
 接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。
@@ -828,9 +838,9 @@ capy pl link   <name|pid> <provider>:<playlist_id|name>   # P3(2026-09-08 T8 已
 capy pl unlink <name|pid> <provider>                      # P3(已實作);canonical 內容不動
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
 capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義
-capy pl push   [--provider P] [--all] [--dry-run] [--force]           # P5
-capy pl sync   [--dry-run]                                # P5
-capy pl restore <name> --provider P                       # P5(語意待定,§6.6)
+capy pl push   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(§6.5.2,決策 28):canonical → 平台;exit 同 pull(0/1/2/3);前提:base 存在且平台無未 pull 變更,否則 exit 3;缺 mapping 的 item 列 skip;provider 不支援的 op 列 manual;push 後 base := 重讀的平台狀態,C 不變
+capy pl sync   [name|pid] [--all] [--dry-run] [--yes] [--force]                  # P5(決策 31):同一把鎖裡每個清單先 pull 各平台再 push 各平台;一張表、一次確認;--dry-run 的 push 半邊用套用後的 C
+capy pl restore <name> --provider P                       # 延後(決策 31,計畫 Q18):= 把 base 快照 push 回平台,與 pl push 重疊
 
 capy resolve [<name|pid>] [--provider P] [--dry-run] [--yes]   # P4 後半 T4(已實作,決策 22):預設全部已連結清單;缺 mapping 的 cid → ISRC 反查(95)→ fuzzy(0–100);≥85 自動寫入(Drive 先 SQLite 後,不動 alias set),其餘印 review 佇列 TSV(候選已屬另一 cid、或同一輪已配給別的 cid 也進佇列);exit 0 無事/已寫入(佇列有東西仍 0)、1 錯誤、2 待寫入未確認;--dry-run 永不寫入(連 FETCH 自癒的殘留也不上傳);單次 >200 次 API 在 stderr 提醒(決策 24)
 capy resolve --review                                     # P4 後半 T4(已實作):TTY 逐筆 accept / skip / manual search / not available / keep(conflict 列);決定寫 pinned / 100 / review;accept 對到已屬另一 cid 的 id → 確認後合併,不同意當略過;非 TTY 印佇列 TSV、exit 2
@@ -889,6 +899,13 @@ capy doctor
 | 23 | Layer 1 / 2 規則(2026-09-08) | ISRC 反查候選只留 ISRC 相同者,多筆消歧:專輯名同 > 時長差最小 > id 字典序;fuzzy = 60·JW(title) + 25·JW(primary artist) + 15·時長項(≤3 s 滿分、≥30 s 零、線性),live/remix/acoustic/cover/demo/instrumental/karaoke 只在一邊 → 上限 84;時長差 >3 s → 上限 84;`floor` 取整;<60 不列;`norm()` 手刻全形轉半形,不引入 `x/text`;artist alias 表延後 | 真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553,fuzzy 只補 ~1%;`Track` 沒有發行日所以拿掉「較早發行」 |
 | 24 | negative cache 延後(2026-09-08) | 每次 resolve 重查未解 cid;cron 的 `resolve --yes` 是支援用法;觸發條件只留單次 >200 次 API(T4 超過時 stderr 提醒)→ 加純快取表(不進 `Dump`) | §7 本就允許純快取;這是成本判斷不是約束判斷;cron 若同時是支援用法又是觸發條件,延後就變成一上線就欠(PR #24 review) |
 | 25 | P4 T0 只產計畫與 spec(2026-09-08) | 等維護者 review 後開 T1 | 與 P3 決策 12 同模式 |
+| 26 | P5 不建 op log / HLC(2026-09-08,P5 T0) | 同步模型 = per-device base + 三方語意的 DERIVE(規則 4′ / 5)+ 共享檔版本守衛(決策 29);v0.5 §6.4 的 op log、snapshot、compaction 全部不做;沒有離線佇列 | v0.5 的 op log 是在「所有裝置寫同一份狀態」的前提下設計的;P3 把 base 搬進 `dev__` 後,每台裝置對每個平台都有「上次對齊狀態」,DERIVE 對最新 C 算 delta 就是三方合併;沒有本機編輯命令,op log 沒有東西可記。**代價**:沒有 base 的裝置(新裝置、剛連結的平台)bootstrap 時會復活別台裝置刪掉、尚未 push 到這個平台的曲目(計畫 Q15,接受並文件化;任一裝置 sync 一次即關窗口、復活以 `add` 列可見);改名 / 順序衝突後 COMMIT 者勝、無 HLC |
+| 27 | DERIVE 規則 4 改 base-aware(2026-09-08) | base 存在時某 cid 在 L 出現 l 次、base 出現 b 次,l > b 才新增、至多 l − b 個、取 L 順序最後的;沒有 base 全部新增;與 push 相鄰出貨 | 規則 5 早就是三方語意,規則 4 不是:Spotify 刪的歌會被 Apple 的下一次 pull 加回 C、刪除意圖丟失、`pl sync` 結果取決於先 pull 哪邊;這是 v0.5 tombstone 要擋的情境。只有 pull 的世界裡這條會讓 C 與平台脫節,所以必須跟 push 一起 |
+| 28 | `pl push` 契約(2026-09-08) | 形狀與 exit 鏡像 pull;前提一 base 存在、前提二 Derive(base, L) 為空,否則 exit 3;投影缺 mapping 列 skip;diff 以 LCS;閾值同決策 18(分母 = L 長度);provider 不支援的 op 列 manual;push 後重讀 L′、base := L′、C 不變;Spotify 用整批取代(`PUT` 100 + `POST` 分批)、`rename` 走 `PUT /playlists/{id}` | 沒有 base 的 push 會把平台清單刪光;蓋掉未 pull 的平台變更不可接受;整批取代簡單且決定性,代價是 Spotify 端 `added_at` / `added_by`(計畫 Q19,升級路徑 = 最小操作 + `snapshot_id`) |
+| 29 | 共享檔版本守衛(2026-09-08) | COMMIT 前再 list 一次比對每個要上傳檔的 `version` 與同名份數,任一不符 → 零上傳、本機不動、exit 1、重跑;所有走 `withCanonical` 的命令一體適用 | lost update 的真正危害是「base 前進了、C 卻少了對方的變更 → 永遠不再 derive」;Drive 無 CAS,一次 list 涵蓋所有檔是能做到的上限(殘餘窗口 = 上傳序列,秒級);exit 1 讓 cron 看得到兩台裝置常撞在一起 |
+| 30 | Apple 寫入策略(2026-09-08) | gate 在 P0-2 寫入探測(維護者在拋棄式 library 清單上跑,計畫 R-8);預期 remove / reorder / rename 無文件化端點 → **append-only**:`add` 用 `POST …/tracks`(catalog id),其餘回 `ErrCapability` 列 manual;**不採 rebuild**;只寫使用者自建的 library 清單 | rebuild 需要刪清單(同樣未驗證)、清單 id 會變、Apple 端封面 / 描述會丟、中途失敗留兩份;append-only 配規則 4′ 不會讓未刪的曲目回流到 C;ToS「不可 synchronized」灰色地帶只寫自建清單 |
+| 31 | `pl sync` 與 `pl restore`(2026-09-08) | `sync` = 同一把鎖裡每個清單先 pull 各平台再 push 各平台,一張表、一次確認、閾值各算;`restore` 延後 | 兩個 push 前提由「先 pull 後 push」建構保證;restore 在 per-device base 下等於 push base 快照,與 push 重疊 |
+| 32 | P5 T0 只產計畫與 spec(2026-09-08) | 等維護者 review 後開 T1 | 與決策 12 / 25 同模式;特別因為決策 26 推翻了 v0.5 核可過的 op log 設計 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 
