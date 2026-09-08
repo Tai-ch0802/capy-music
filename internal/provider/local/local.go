@@ -370,7 +370,7 @@ func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, err
 		return p.track(lib, rel, "", 0), nil
 	}
 	if underRoot(rel) {
-		if _, err := os.Stat(p.fsPath(rel)); err == nil {
+		if st, err := os.Stat(p.fsPath(rel)); err == nil && !st.IsDir() { // 目錄不是曲目
 			return p.track(lib, rel, "", 0), nil
 		}
 	}
@@ -378,9 +378,41 @@ func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, err
 }
 
 // Pushable:本機的 id、而且曲庫有或檔案在 root 底下(同 GetTrack 的認定);foreign 一律 false(決策 36)。
+// Pushable:路徑在曲庫或檔案在 root 底下(同 GetTrack 的認定);track id 不帶 device,所以這裡不做 Foreign 判斷(PR #37)。
+// 含換行的檔名寫不進 M3U(沒有跳脫機制),也不算。
 func (p *Provider) Pushable(id string) bool {
+	if strings.ContainsAny(id, "\r\n") {
+		return false
+	}
 	_, err := p.GetTrack(context.Background(), id)
 	return err == nil
+}
+
+// diskNames:寫回時每個路徑用磁碟上實際的拼法(NFC / NFD 依目錄裡的項目)——清單檔是跟別的播放器共用的,NTFS / ext4 分 NFC / NFD,
+// 改寫路徑的位元組形式會讓 VLC / foobar 開不到檔(PR #38 review)。只解最後一段(同 fsPath);找不到就原字串,那本來就是推不出去的曲目。
+func (p *Provider) diskNames(ids []string) []string {
+	cache := map[string][]os.DirEntry{}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id
+		if !underRoot(id) {
+			continue
+		}
+		dir, base := path.Split(id)
+		ents, ok := cache[dir]
+		if !ok {
+			ents, _ = os.ReadDir(filepath.Join(p.root, filepath.FromSlash(dir)))
+			cache[dir] = ents
+		}
+		want := norm.NFC.String(base)
+		for _, e := range ents {
+			if norm.NFC.String(e.Name()) == want {
+				out[i] = dir + e.Name()
+				break
+			}
+		}
+	}
+	return out
 }
 
 // ApplyOps(決策 36):用 ApplyPlaylistOps 算目標序列,整檔重寫(#EXTM3U + 每首一行相對路徑;**別的工具寫的 #EXTINF 與註解會被丟掉**),
@@ -390,6 +422,9 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	name, err := p.relOf(id)
 	if err != nil {
 		return nil, err
+	}
+	if !underRoot(name) || !isPlaylistFile(name) { // 唯一會覆寫使用者磁碟檔案的路徑:id 是 Drive 同步來的資料,不假設它乾淨(PR #38 review:../ 能覆寫 root 外的檔、library.json 會被寫成 M3U)
+		return nil, fmt.Errorf("清單 %s 不在 local_root 底下或不是清單檔:%w", name, provider.ErrNotFound)
 	}
 	var doable []provider.PlaylistOp
 	for _, op := range ops {
@@ -407,24 +442,42 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		return skipped, nil
 	}
 	target := p.fsPath(name) // NTFS 分 NFC / NFD:寫回目錄裡實際的那個檔
-	if _, err := os.Stat(target); err != nil {
+	st, err := os.Stat(target)
+	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("清單 %s 不存在:%w", name, provider.ErrNotFound)
 		}
 		return nil, err
 	}
+	if real, err := filepath.EvalSymlinks(target); err == nil {
+		target = real // 清單是從別處 symlink 進 local_root 的:寫它指到的檔,不把 symlink 換成一般檔
+	}
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
-	for _, tid := range want { // track id 就是路徑(不帶 device);推不出去的(檔不在這台)Pushable 已經擋在 add 之前,配對上的原樣寫回
-		b.WriteString(tid)
+	for _, line := range p.diskNames(want) { // track id 就是路徑(不帶 device);推不出去的(檔不在這台)Pushable 已經擋在 add 之前,配對上的原樣寫回
+		if strings.ContainsAny(line, "\r\n") {
+			return nil, fmt.Errorf("%q 含換行,M3U 沒有跳脫機制,整批不寫", line)
+		}
+		if !isAbsAny(line) && strings.HasPrefix(line, "#") {
+			line = "./" + line // 不然下一輪被讀成註解:那首無聲消失,再被當成使用者刪了歌推到別的平台
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	tmp, err := os.CreateTemp(p.root, ".capy-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".capy-*.tmp") // 與目標同目錄(rename 要同一個檔案系統)
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmp.Name()) // rename 成功後這行是 no-op;失敗時不留暫存檔
+	defer os.Remove(tmp.Name())                         // rename 成功後這行是 no-op;失敗時不留暫存檔
+	if err := tmp.Chmod(st.Mode().Perm()); err != nil { // CreateTemp 是 0600:共用目錄(NAS)的清單不能 push 一次就變成只有自己讀得到
+		tmp.Close()
+		return nil, err
+	}
 	if _, err := tmp.WriteString(b.String()); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Sync(); err != nil { // rename 只保證 name → inode 的切換是原子的,內容要先落地,不然斷電後是長度對、內容零的檔
 		tmp.Close()
 		return nil, err
 	}

@@ -195,6 +195,9 @@ func TestPlLocalRenameDoesNotFlipBack(t *testing.T) {
 	if !slices.Contains(dirActions(out), "pull rename spotify") || slices.Contains(dirActions(out), "push rename local") || strings.Contains(errs, "手動") {
 		t.Fatalf("改名進 C、不排給 local、也沒有「手動」列:%s%s", out, errs)
 	}
+	if !strings.Contains(errs, "提示:通勤 改名為 通勤2,但 local 不支援改名,它那邊仍叫 通勤") { // 改名落地的這一輪說一次
+		t.Fatalf("要提示 local 不會跟著改名:%s", errs)
+	}
 	if drivePlaylistNamed(t, dc, "通勤2") == nil {
 		t.Fatal("C 要改名成 通勤2")
 	}
@@ -202,8 +205,8 @@ func TestPlLocalRenameDoesNotFlipBack(t *testing.T) {
 		t.Fatalf("local 的檔還是 通勤.m3u8,base 不能記成新名字:%+v", b)
 	}
 	out, errs = mustPull(t, "pl", "sync", "通勤2", "--yes")
-	if strings.Contains(out, "rename") || !strings.Contains(errs, "無變更") {
-		t.Fatalf("下一輪不能把改名撤銷:%s%s", out, errs)
+	if strings.Contains(out, "rename") || !strings.Contains(errs, "無變更") || strings.Contains(errs, "提示:") {
+		t.Fatalf("下一輪不能把改名撤銷、也不再提示:%s%s", out, errs)
 	}
 	if drivePlaylistNamed(t, dc, "通勤2") == nil || !strings.Contains(mustPullOut(t, "pl", "list", "--provider", "spotify"), "通勤2") {
 		t.Fatal("C 與 Spotify 都要還是 通勤2")
