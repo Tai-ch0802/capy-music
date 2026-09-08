@@ -490,7 +490,12 @@ func newPlLinkCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "建立 canonical 清單 %s(%s)\n", pl.Name, pl.PID)
 				}
 				if cur, ok := pl.Links[prov]; ok && cur != id {
-					return fmt.Errorf("%s(%s)已連結 %s:%s,先 capy pl unlink %s %s", pl.Name, pl.PID, prov, cur, pl.Name, prov)
+					if !foreignLink(p, cur) {
+						return fmt.Errorf("%s(%s)已連結 %s:%s,先 capy pl unlink %s %s", pl.Name, pl.PID, prov, cur, pl.Name, prov)
+					}
+					// 決策 33 / Q30:撞到別台裝置的本機清單 → 接管(重灌後 device_id 變了也靠這條接回來);原裝置下一輪起變 foreign
+					fmt.Fprintf(cmd.OutOrStdout(), "%s(%s)原本連到裝置 %s 的 %s,已改為本機;那台之後會跳過這個清單\n", pl.Name, pl.PID, deviceName(s, cur), prov)
+					delete(s.mine().Base[pl.PID], prov) // 舊 base 是別台的觀測,對本機的檔沒意義
 				}
 				if pl.Links[prov] != id {
 					pl.Links[prov] = id
@@ -678,11 +683,19 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			if only != "" && prov != only {
 				continue
 			}
-			r, refs, err := pf.reader(prov)
+			p, err := pf.provider(prov)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			link := pl.Links[prov]
+			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單——不是 gone、不動 base、不 unlink
+				fmt.Fprintf(stderr, "跳過 %s 的 %s:%s 屬於裝置 %s(要在這台接手:capy pl link %s %s:<檔名>)\n", pl.Name, prov, link, deviceName(s, link), pl.Name, prov)
+				continue
+			}
+			r, refs, err := pf.reader(prov)
+			if err != nil {
+				return nil, nil, nil, err
+			}
 			in := canon.DeriveInput{Provider: prov, Playlist: *pl, Tracks: s.tracks.Tracks, Merged: s.tracks.Merged}
 			if b, ok := merged[pl.PID][prov]; ok && b.Snapshot.ID == link { // 別的平台清單留下的 base 不算數
 				in.Base = &b.Snapshot
@@ -735,6 +748,17 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 		}
 	}
 	return rows, blocked, lives, nil
+}
+
+// deviceName:綁裝置的 id(<device_id>/…)的擁有裝置名(manifest 的 hostname),沒有就印 id。
+func deviceName(s *canonState, id string) string {
+	dev, _, _ := strings.Cut(id, "/")
+	for _, d := range s.manifest.Devices {
+		if d.ID == dev && d.Name != "" {
+			return d.Name + "(" + dev + ")"
+		}
+	}
+	return dev
 }
 
 func snapshotEqual(a, b canon.Snapshot) bool {

@@ -30,7 +30,14 @@ const (
 	CapPlayPlaylist // PlayRequest.PlaylistID
 	CapPlayQueue    // Play 會把 TrackIDs 全部排進佇列;沒有此能力的 provider 只播第一首
 	CapPlaylistRename
+	CapDeviceBound // P6 決策 33(bit 15):id 只在本裝置有意義;實作者同時實作 DeviceScoped
 )
+
+// DeviceScoped(P6 決策 33):綁裝置的 provider 告訴 CLI 某個 id 是不是別台裝置的——是的話 pull / push / sync 一律跳過,
+// 不算 gone、不算 refused、不動 base;pl link 只能連本機的、撞到別台的 link 就接管。
+type DeviceScoped interface {
+	Foreign(id string) bool
+}
 
 // Has 回報 c 是否包含 want 的全部能力位。
 func (c Capability) Has(want Capability) bool { return c&want == want }

@@ -56,6 +56,8 @@ func newAuthLoginCmd() *cobra.Command {
 				return googleLogin(cmd) // 不是音樂 provider,不提示 default_provider
 			case "spotify":
 				// 走下方既有流程。
+			case "local":
+				return errors.New("local 沒有憑證(計畫 §2 A8):capy config set local_root <目錄> 就能用")
 			default:
 				return fmt.Errorf("目前支援 spotify、apple、google")
 			}

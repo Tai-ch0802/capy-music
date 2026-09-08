@@ -70,8 +70,8 @@ func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, provider
 	if err != nil {
 		return "", friendlyErr(providerID, err)
 	}
-	for _, r := range refs { // provider 自己的 ID 格式(Apple 是 p.xxx)不進 base62 快速路徑,先比 ID
-		if r.ID == arg {
+	for _, r := range refs { // provider 自己的 ID 格式(Apple 是 p.xxx)不進 base62 快速路徑,先比 ID;
+		if r.ID == arg || strings.HasSuffix(r.ID, "/"+arg) { // local 的 id 是 <device_id>/<檔名>,使用者只打檔名(決策 33)
 			return r.ID, nil
 		}
 	}
