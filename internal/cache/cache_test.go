@@ -79,8 +79,27 @@ func TestUnusableDBIsEmptyAndLegacyFileRemoved(t *testing.T) {
 	if c := Load(); len(c.Recent) != 0 || c.Playlists == nil {
 		t.Fatalf("db 開不了應視同空快取:%+v", c)
 	}
-	if err := (&Cache{Playlists: map[string][]Playlist{}}).Save(); err == nil {
-		t.Fatal("Save 在 db 開不了時要回錯(呼叫端自己決定要不要靜默)")
+	if err := (&Cache{Playlists: map[string][]Playlist{}}).Save(); err != nil {
+		t.Fatalf("Load 沒成功的 Cache,Save 應是 no-op:%v", err)
+	}
+}
+
+func TestSaveAfterFailedLoadDoesNotWipe(t *testing.T) {
+	setDir(t)
+	c := Load()
+	c.SetPlaylists("spotify", []Playlist{{ID: "p1", Name: "通勤"}})
+	c.AddRecent(Recent{Provider: "spotify", Type: TypeQuery, ID: "q", Label: "q"})
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	stale := &Cache{Playlists: map[string][]Playlist{}} // 模擬 Load 失敗回來的空快取(loaded = false)
+	stale.AddRecent(Recent{Provider: "spotify", Type: TypeQuery, ID: "x", Label: "x"})
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got := Load()
+	if len(got.Playlists["spotify"]) != 1 || len(got.Recent) != 1 || got.Recent[0].ID != "q" {
+		t.Fatalf("讀失敗後的 Save 不可把既有快取蓋成空的:%+v", got)
 	}
 }
 

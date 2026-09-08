@@ -17,7 +17,8 @@ type Canonical struct {
 	Devices   []canon.DeviceState
 }
 
-// Hydrate 用 c 取代所有 canonical 鏡像表(一筆交易)。ponytail: 沒有 upsert,T8 需要再加;個人曲庫的量整批寫也只是毫秒級。
+// Hydrate 用 c 取代所有 canonical 鏡像表(一筆交易)。沒有 upsert,T8 需要再加;個人曲庫的量整批寫也只是毫秒級
+// (真的上萬列時 tx.Prepare 一次、迴圈重用會差很多)。
 func (s *Store) Hydrate(c Canonical) (err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -118,7 +119,10 @@ func (s *Store) Dump() (Canonical, error) {
 		if err := r.Scan(&cid, &isrc); err != nil {
 			return err
 		}
-		t := c.Tracks.Tracks[cid]
+		t, ok := c.Tracks.Tracks[cid]
+		if !ok {
+			return fmt.Errorf("isrcs 有 tracks 沒有的 cid %s(db 不一致,刪掉重建)", cid)
+		}
 		t.ISRC = append(t.ISRC, isrc)
 		c.Tracks.Tracks[cid] = t
 		return nil
@@ -130,7 +134,11 @@ func (s *Store) Dump() (Canonical, error) {
 		if err := r.Scan(&cid, &prov, &id); err != nil {
 			return err
 		}
-		c.Tracks.Tracks[cid].Mappings[prov] = id
+		t, ok := c.Tracks.Tracks[cid]
+		if !ok {
+			return fmt.Errorf("mappings 有 tracks 沒有的 cid %s(db 不一致,刪掉重建)", cid)
+		}
+		t.Mappings[prov] = id
 		return nil
 	}); err != nil {
 		return c, err
@@ -155,7 +163,11 @@ func (s *Store) Dump() (Canonical, error) {
 		if err := r.Scan(&pid, &it.IID, &it.CID, &it.Rank, &it.AddedAt); err != nil {
 			return err
 		}
-		byPID[pid].Items = append(byPID[pid].Items, it)
+		p, ok := byPID[pid]
+		if !ok {
+			return fmt.Errorf("playlist_items 有 playlists 沒有的 pid %s(db 不一致,刪掉重建)", pid)
+		}
+		p.Items = append(p.Items, it)
 		return nil
 	}); err != nil {
 		return c, err
@@ -165,7 +177,11 @@ func (s *Store) Dump() (Canonical, error) {
 		if err := r.Scan(&pid, &prov, &id); err != nil {
 			return err
 		}
-		byPID[pid].Links[prov] = id
+		p, ok := byPID[pid]
+		if !ok {
+			return fmt.Errorf("playlist_links 有 playlists 沒有的 pid %s(db 不一致,刪掉重建)", pid)
+		}
+		p.Links[prov] = id
 		return nil
 	}); err != nil {
 		return c, err
@@ -202,7 +218,7 @@ func (s *Store) Dump() (Canonical, error) {
 		b.Snapshot.Items = nonNil(b.Snapshot.Items)
 		d, ok := byDev[dev]
 		if !ok {
-			return fmt.Errorf("device_base 有 devices 沒有的裝置 %s", dev)
+			return fmt.Errorf("device_base 有 devices 沒有的裝置 %s(db 不一致,刪掉重建)", dev)
 		}
 		if d.Base[pid] == nil {
 			d.Base[pid] = map[string]canon.Base{}

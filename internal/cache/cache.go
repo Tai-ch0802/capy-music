@@ -36,6 +36,7 @@ type (
 type Cache struct {
 	Playlists map[string][]Playlist // key = provider id
 	Recent    []Recent              // 最新在前
+	loaded    bool                  // Load 成功才 true;false 時 Save 是 no-op——讀不到就不能拿空的去蓋掉別人的(它只是快取)
 }
 
 // Now 是測試替換點。
@@ -56,11 +57,15 @@ func Load() *Cache {
 	if err != nil {
 		return empty
 	}
-	return &Cache{Playlists: pls, Recent: recent}
+	return &Cache{Playlists: pls, Recent: recent, loaded: true}
 }
 
-// Save 寫穿到 state.db(一筆交易)。
+// Save 寫穿到 state.db(一筆交易)。Load 沒成功的 Cache 直接回 nil 不寫:一次暫時性的讀失敗(200 ms 內等不到鎖)
+// 不能變成整批取代成空的永久遺失。
 func (c *Cache) Save() error {
+	if !c.loaded {
+		return nil
+	}
 	s, err := store.Open(busy)
 	if err != nil {
 		return err

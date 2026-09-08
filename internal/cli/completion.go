@@ -8,8 +8,9 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 )
 
-// shell 補全(決策 14)。鐵則:只讀 cache.json——TAB 每按一次就跑一次,而建構 provider 會取檔案鎖、
-// 讀 keychain、打網路;這裡絕不呼叫 newProvider。候選要先跑過 capy pl list / play 才會有。
+// shell 補全(決策 14)。鐵則:只讀本機快取(state.db,等鎖上限 200 ms、逾時視同空)、絕不打網路、絕不碰 keychain——
+// TAB 每按一次就跑一次,而建構 provider 會取檔案鎖、讀 keychain、打網路;這裡絕不呼叫 newProvider。
+// 候選要先跑過 capy pl list / play 才會有。
 
 func completeFromCache(cmd *cobra.Command, toComplete string, playlists, recent bool) ([]string, cobra.ShellCompDirective) {
 	pid, _ := cmd.Flags().GetString(flagProvider)

@@ -3,7 +3,9 @@ package store
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,8 +180,61 @@ func TestMismatchedSchemaVersionIsDropped(t *testing.T) {
 		t.Fatalf("版本不符應整檔丟棄重建(不寫 ALTER):%v %+v", err, out.Tracks)
 	}
 	var v int
-	if s.db.QueryRow("PRAGMA user_version").Scan(&v); v != schemaVersion {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v != schemaVersion {
 		t.Fatalf("重建後 user_version 應為 %d,得 %d", schemaVersion, v)
+	}
+}
+
+// 壞掉的 state.db 要自癒:它是 cache,政策允許我們自己刪;否則補全會永遠靜默回空、canonical 路徑每次同一個錯。
+func TestCorruptDBIsRebuilt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	if err := os.WriteFile(path, []byte("this is not a sqlite database at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenAt(path, time.Second)
+	if err != nil {
+		t.Fatalf("壞檔應刪掉重建而不是報錯:%v", err)
+	}
+	defer s.Close()
+	out, err := s.Dump()
+	if err != nil || len(out.Tracks.Tracks) != 0 {
+		t.Fatalf("重建後應為空:%v", err)
+	}
+	if err := s.Hydrate(fixture(t)); err != nil {
+		t.Fatalf("重建後要寫得進去:%v", err)
+	}
+}
+
+func TestPathWithQuestionMarkRejected(t *testing.T) {
+	_, err := OpenAt(filepath.Join(t.TempDir(), "q?mark", "state.db"), time.Second)
+	if err == nil || !strings.Contains(err.Error(), "?") {
+		t.Fatalf("含 ? 的路徑會被 driver 切開、db 靜默開到別處,要直接拒絕:%v", err)
+	}
+}
+
+// 孤兒列(T8 的 upsert 順序錯、檔案部分損壞)要回錯讓上層刪檔重建,不能 panic。
+func TestDumpRejectsOrphanRows(t *testing.T) {
+	for _, c := range []struct{ table, insert string }{
+		{"isrcs", "INSERT INTO isrcs (cid, isrc) VALUES ('ghost', 'X')"},
+		{"mappings", "INSERT INTO mappings (cid, provider, provider_id) VALUES ('ghost', 'spotify', 'x')"},
+		{"playlist_items", "INSERT INTO playlist_items (pid, iid, cid, rank, added_at) VALUES ('ghost', 'i', 'c', 'V', 0)"},
+		{"playlist_links", "INSERT INTO playlist_links (pid, provider, provider_id) VALUES ('ghost', 'spotify', 'x')"},
+		{"device_base", "INSERT INTO device_base (device_id, pid, provider, name, items, observed_at) VALUES ('ghost', 'p', 'spotify', '', '[]', 0)"},
+	} {
+		s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(c.insert); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Dump(); err == nil || !strings.Contains(err.Error(), c.table) {
+			t.Fatalf("%s 的孤兒列應回錯並點名該表:%v", c.table, err)
+		}
+		s.Close()
 	}
 }
 

@@ -11,9 +11,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // 純 Go、無 cgo(spec §2)
+	sqlite "modernc.org/sqlite" // 純 Go、無 cgo(spec §2)
 
 	"github.com/Tai-ch0802/capy-music/internal/config"
 )
@@ -62,25 +63,36 @@ func Open(busyTimeout time.Duration) (*Store, error) {
 	return OpenAt(p, busyTimeout)
 }
 
-// OpenAt:user_version 不是目前版本(含全新的 0)就關閉、刪檔、重建。
+// OpenAt:user_version 不是目前版本(含全新的 0)、或檔案本身壞掉(SQLITE_NOTADB / SQLITE_CORRUPT),就關閉、刪檔、重建——
+// 它是 cache,政策本來就允許我們自己刪。「暫時打不開」(SQLITE_BUSY、權限)照樣往上丟,不刪。
+// ponytail: 路徑含 ? 直接拒絕——driver 在第一個 ? 切開 DSN,會把 db 靜默開到別的檔;真要支援再改 file: URI 加跳脫。
 func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
+	if strings.Contains(path, "?") {
+		return nil, fmt.Errorf("db 路徑不可含 ?(CAPY_CONFIG_DIR 換一個目錄):%s", path)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	s, err := open(path, busyTimeout)
-	if err != nil {
-		return nil, err
-	}
-	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
-		s.Close()
-		return nil, err
-	}
-	if v == schemaVersion {
-		return s, nil
-	}
-	if err := s.Remove(); err != nil {
-		return nil, err
+	if err == nil {
+		var v int
+		if err = s.db.QueryRow("PRAGMA user_version").Scan(&v); err == nil && v == schemaVersion {
+			return s, nil
+		}
+		if err != nil && !corrupt(err) {
+			s.Close()
+			return nil, err
+		}
+		if err := s.Remove(); err != nil { // 版本不符或壞檔
+			return nil, err
+		}
+	} else {
+		if !corrupt(err) {
+			return nil, err
+		}
+		if err := (&Store{path: path}).Remove(); err != nil {
+			return nil, err
+		}
 	}
 	if s, err = open(path, busyTimeout); err != nil {
 		return nil, err
@@ -90,6 +102,16 @@ func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 		return nil, fmt.Errorf("建 schema:%w", err)
 	}
 	return s, nil
+}
+
+// corrupt:檔案本身壞掉(斷電、寫一半、磁碟壞塊)。SQLITE_NOTADB = 26、SQLITE_CORRUPT = 11;取低 8 位是主碼。
+func corrupt(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	code := se.Code() & 0xff
+	return code == 26 || code == 11
 }
 
 func open(path string, busy time.Duration) (*Store, error) {
