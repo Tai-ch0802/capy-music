@@ -49,6 +49,7 @@ jobs:
         run: |
           ls -l dist/
           ls dist/capy_*_darwin_amd64.tar.gz dist/capy_*_darwin_arm64.tar.gz dist/capy_*_windows_amd64.zip dist/capy_*_windows_arm64.zip dist/checksums.txt
+          tar tzf dist/capy_*_darwin_arm64.tar.gz | grep -qx LICENSE # 壓縮檔要附授權(GoReleaser 預設抓 LICENSE*,檔名改了會靜靜掉出去)
           bin=$(find dist -type f -name capy -path '*darwin_arm64*')
           test -n "$bin"
           "$bin" --version
