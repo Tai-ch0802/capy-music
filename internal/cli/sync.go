@@ -26,7 +26,8 @@ func newPlSyncCmd() *cobra.Command {
 --dry-run 的 push 半邊是用 pull 套用後的 canonical 投影的,看得到完整一輪。閾值對每個 (清單, 平台) 各算,exit code 同 pl pull / pl push。
 push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完平台才寫 Drive,Drive 那邊沒寫成時訊息會講明平台已經改了。
 --provider 指到還寫不了的平台(Apple,P0-2 前)時只 pull 不 push,stderr 會說;某個清單的某個平台推不了(含 local file)也一樣只跳過那一格的 push 半邊,
-不擋整輪(cron 的 sync --all 不會被一個清單綁死)。刪除閾值仍擋整輪。`,
+不擋整輪(cron 的 sync --all 不會被一個清單綁死)。刪除閾值仍擋整輪;--force 放行時,pull 半邊吸收進來的刪除會在同一個指令裡
+推到這個清單連結的每一個平台——先 --dry-run 看清楚。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
@@ -91,7 +92,11 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 					if !bothTTY(cmd) {
 						return &PendingError{N: n}
 					}
-					ok, err := confirmWrite(fmt.Sprintf("套用以上 %d 筆變更(pull %d 筆到 Drive、push %d 筆到平台)?", n, len(pullRows), ops))
+					prompt := fmt.Sprintf("套用以上 %d 筆變更(pull %d 筆到 Drive、push %d 筆到平台)?", n, len(pullRows), ops)
+					if force {
+						prompt = "--force:刪除會傳播到這個清單連結的每一個平台。" + prompt
+					}
+					ok, err := confirmWrite(prompt)
 					if err != nil {
 						return err
 					}
@@ -116,6 +121,6 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 	cmd.Flags().StringVar(&prov, "provider", "", "只走這個 provider 的一輪(預設:清單連結的全部 provider)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出整輪的變更,不碰平台也不碰 Drive(有變更時 exit 2)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用)")
-	cmd.Flags().BoolVar(&force, "force", false, "越過刪除閾值(pull 與 push 各算);只能配單一清單、不能配 --all")
+	cmd.Flags().BoolVar(&force, "force", false, "越過刪除閾值(pull 與 push 各算);會連帶把這些刪除推到清單連結的其他平台,先 --dry-run;只能配單一清單、不能配 --all")
 	return cmd
 }

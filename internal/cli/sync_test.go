@@ -234,6 +234,15 @@ func TestPlSyncRefusedPairOnlySkipsThatPush(t *testing.T) {
 	}
 }
 
+// --force 的爆炸半徑比 pull / push 大(同一個指令先吸收再推到每個平台):help 要直說(PR #36 review)。
+func TestPlSyncForceHelpSaysDeletionsPropagate(t *testing.T) {
+	pullWorld(t)
+	out, _, err := runPull(t, "pl", "sync", "--help")
+	if err != nil || !strings.Contains(out, "推到清單連結的其他平台") {
+		t.Fatalf("--force 的 help 要講刪除會傳播:%v\n%s", err, out)
+	}
+}
+
 func TestPlSyncArgs(t *testing.T) {
 	pullWorld(t)
 	for _, args := range [][]string{{"pl", "sync"}, {"pl", "sync", "x", "--all"}, {"pl", "sync", "x", "--provider", "nope"}} {
