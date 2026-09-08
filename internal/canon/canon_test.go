@@ -42,22 +42,22 @@ func TestCIDDeterministicAcrossDevices(t *testing.T) {
 
 	a := canon.NewTrack("spotify", x) // 裝置 A 只看到一首
 	b := canon.NewTrack("spotify", x) // 裝置 B 還看到衝突的一首
-	if added := b.Observe("apple", live); !added {
+	if _, conflict := b.Observe("apple", live); !conflict {
 		t.Fatal("時長差 25s 應記衝突")
 	}
 	if a.CID != "i:TWA472400123" || b.CID != a.CID {
 		t.Fatalf("兩台裝置的 cid 必須相同且不因衝突退回 p::%s / %s", a.CID, b.CID)
 	}
-	if len(b.Conflicts) != 1 || b.Conflicts[0].ProviderID != "i.abc" || b.Mappings["apple"] != "i.abc" {
+	if len(b.Conflicts) != 1 || b.Conflicts[0].ProviderID != "i.abc" || b.Mappings["apple"].ID != "i.abc" {
 		t.Fatalf("衝突要記事實、mapping 照加:%+v", b)
 	}
-	if b.Observe("apple", live) || len(b.Conflicts) != 1 {
+	if _, c := b.Observe("apple", live); c || len(b.Conflicts) != 1 {
 		t.Fatal("同一筆衝突再觀測一次不可重複記錄(每輪 pull 都會再看到)")
 	}
-	if b.Observe("spotify", provider.Track{ProviderID: "album-ver", ISRC: "TWA472400123", Title: " 派對動物", DurationMS: 229000}) {
+	if _, c := b.Observe("spotify", provider.Track{ProviderID: "album-ver", ISRC: "TWA472400123", Title: " 派對動物", DurationMS: 229000}); c {
 		t.Fatal("同 provider 另一個版本、metadata 相符不算衝突")
 	}
-	if b.Mappings["spotify"] != "6rq" || len(b.Conflicts) != 1 {
+	if b.Mappings["spotify"].ID != "6rq" || len(b.Conflicts) != 1 {
 		t.Fatalf("mapping 要留第一個,不可抖動:%+v", b.Mappings)
 	}
 	if !reflect.DeepEqual(a.ISRC, []string{"TWA472400123"}) || a.Artists == nil {
@@ -65,7 +65,7 @@ func TestCIDDeterministicAcrossDevices(t *testing.T) {
 	}
 
 	up := canon.NewTrack("apple", provider.Track{ProviderID: "i.lib1", Title: "上傳曲"})
-	if up.CID != "p:apple:i.lib1" || up.ISRC != nil || up.Mappings["apple"] != "i.lib1" {
+	if up.CID != "p:apple:i.lib1" || up.ISRC != nil || up.Mappings["apple"].ID != "i.lib1" {
 		t.Fatalf("沒有 ISRC 要保留成 provider-only:%+v", up)
 	}
 	if canon.CID("spotify", "x", "TWA47240012") != "p:spotify:x" {
@@ -74,7 +74,7 @@ func TestCIDDeterministicAcrossDevices(t *testing.T) {
 }
 
 func TestDecodeSchemaVersion(t *testing.T) {
-	if _, err := canon.Decode[canon.Manifest]([]byte(`{"schema_version":2,"devices":[]}`)); !errors.Is(err, canon.ErrSchemaTooNew) {
+	if _, err := canon.Decode[canon.Manifest]([]byte(`{"schema_version":99,"devices":[]}`)); !errors.Is(err, canon.ErrSchemaTooNew) {
 		t.Fatalf("高於支援版本應拒絕:%v", err)
 	}
 	if _, err := canon.Decode[canon.Manifest]([]byte(`{"devices":[]}`)); err == nil {
@@ -234,16 +234,18 @@ func TestRoundTripBitEqual(t *testing.T) {
 		}
 	}
 	m, tr, pl, dev := string(first[0]), string(first[1]), string(first[2]), string(first[3])
-	for _, want := range []string{`{"schema_version":1,"devices":[{"id":"dev1","name":"mac-renamed","last_seen":1756600002}],"playlists":[]}`} {
+	for _, want := range []string{`{"schema_version":2,"devices":[{"id":"dev1","name":"mac-renamed","last_seen":1756600002}],"playlists":[]}`} {
 		if !strings.Contains(m, want) {
 			t.Fatalf("manifest 形狀:%s", m)
 		}
 	}
-	if !strings.Contains(tr, `"i:TWA472400123":{"cid":"i:TWA472400123","isrc":["TWA472400123"],"title":"派對動物","artists":["五月天"],"album":"自傳","duration_ms":227000,"mappings":{"apple":"i.abc","spotify":"6rq"},"conflicts":[{"provider":"apple","provider_id":"i.abc","title":"派對動物 (Live)","duration_ms":252000}]}`) ||
-		!strings.Contains(tr, `"p:apple:i.lib1":{"cid":"p:apple:i.lib1","title":"上傳曲","artists":[],"duration_ms":0,"mappings":{"apple":"i.lib1"}}`) {
-		t.Fatalf("tracks 形狀(spec §6.2):%s", tr)
+	if !strings.Contains(tr, `"i:TWA472400123":{"cid":"i:TWA472400123","isrc":["TWA472400123"],"title":"派對動物","artists":["五月天"],"album":"自傳","duration_ms":227000,"mappings":{"apple":{"id":"i.abc","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
+		!strings.Contains(tr, `,"spotify":{"id":"6rq","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
+		!strings.Contains(tr, `"conflicts":[{"provider":"apple","provider_id":"i.abc","title":"派對動物 (Live)","duration_ms":252000}]}`) ||
+		!strings.Contains(tr, `"p:apple:i.lib1":{"cid":"p:apple:i.lib1","title":"上傳曲","artists":[],"duration_ms":0,"mappings":{"apple":{"id":"i.lib1","confidence":100,"pinned":false,"source":"observed","updated_at":`) {
+		t.Fatalf("tracks 形狀(spec §6.2,決策 20 的 mapping 物件):%s", tr)
 	}
-	if !strings.HasPrefix(pl, `{"schema_version":1,"pid":"01TESTULID0000000000000001","name":"通勤","description":"上班聽","updated_at":`) ||
+	if !strings.HasPrefix(pl, `{"schema_version":2,"pid":"01TESTULID0000000000000001","name":"通勤","description":"上班聽","updated_at":`) ||
 		!strings.Contains(pl, `"items":[{"iid":"01TESTULID0000000000000002","cid":"i:TWA472400123","rank":"V","added_at":`) ||
 		!strings.Contains(pl, `"rank":"k"`) || !strings.Contains(pl, `"rank":"s"`) || !strings.HasSuffix(pl, `"links":{"spotify":"37i9"}}`+"\n") {
 		t.Fatalf("playlist 形狀:%s", pl)
@@ -336,7 +338,7 @@ func TestPlaylistItemsSortedByRankOnEncode(t *testing.T) {
 		t.Fatalf("items 應依 (rank, iid) 排序:%s", b)
 	}
 	tr := canon.NewTracks()
-	tr.Tracks["p:x:1"] = canon.Track{CID: "p:x:1", Mappings: map[string]string{"x": "1"}}
+	tr.Tracks["p:x:1"] = canon.Track{CID: "p:x:1", Mappings: map[string]canon.Mapping{"x": {ID: "1"}}}
 	if b, _ := canon.Encode(tr); !strings.Contains(string(b), `"artists":[]`) {
 		t.Fatalf("artists nil 要寫成 []:%s", b)
 	}

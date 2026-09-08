@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -619,5 +620,30 @@ func TestPlPullNeedsGoogleLogin(t *testing.T) {
 	keyring.MockInit()
 	if _, _, err := runPull(t, "pl", "pull", "--all"); !errors.Is(err, errNotLoggedInGoogle) {
 		t.Fatalf("沒登入 Google(沒有 device_id)要指路:%v", err)
+	}
+}
+
+// TestPlPullSecondRunUploadsNothing:平台無變化的第二次 pull 零上傳——mapping 的 updated_at 若每次觀測都刷新,
+// tracks.json 位元組會變、每次 pull 都重傳整份(PR #24 review 第 5 則)。
+func TestPlPullSecondRunUploadsNothing(t *testing.T) {
+	fs, dc, srv := pullWorld(t)
+	fs.set("p1", "通勤", "t1", "t2")
+	origNow := canon.Now
+	t.Cleanup(func() { canon.Now = origNow })
+	canon.Now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	before := driveFiles(t, dc)
+	canon.Now = func() time.Time { return time.Unix(1_700_000_060, 0) } // 時鐘往前走:updated_at 若每次觀測都刷新,這裡就會露餡
+	writes := 0
+	srv.FailOn(func(r *http.Request) bool {
+		if r.Method == http.MethodPost || r.Method == http.MethodPatch {
+			writes++
+		}
+		return false // 只計數,不失敗
+	}, 0, "")
+	out, errs := mustPull(t, "pl", "pull", "通勤", "--yes")
+	if writes != 0 || out != "" || !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatalf("第二次 pull 要零上傳、零變更:writes=%d out=%q errs=%q", writes, out, errs)
 	}
 }

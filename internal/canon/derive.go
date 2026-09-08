@@ -56,7 +56,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	c.normalize()
 	res := DeriveResult{Playlist: c, Tracks: map[string]Track{}}
 	for _, it := range c.Items {
-		if tr, ok := in.Tracks[it.CID]; ok && tr.Mappings[prov] != "" {
+		if tr, ok := in.Tracks[it.CID]; ok && tr.Mappings[prov].ID != "" {
 			res.VisibleCount++
 		}
 	}
@@ -86,8 +86,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 			continue
 		}
 		cp := cloneTrack(tr)
-		hadMap := cp.Mappings[prov] != ""
-		if conflict := cp.Observe(prov, t); conflict || !hadMap {
+		if changed, conflict := cp.Observe(prov, t); changed || conflict { // 決策 20:isrc / fuzzy 被觀測覆寫也要寫回
 			res.Tracks[cid] = cp
 		}
 	}
@@ -216,7 +215,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 			t, a := title(it.CID)
 			pid := ""
 			if tr, ok := lookup(it.CID); ok {
-				pid = tr.Mappings[prov]
+				pid = tr.Mappings[prov].ID
 			}
 			changes = append(changes, Change{Action: "remove", Pos: i, IID: it.IID, CID: it.CID, ProviderID: pid, Title: t, Artists: a, Reason: "平台已移除"})
 		}

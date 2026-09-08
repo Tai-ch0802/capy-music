@@ -32,6 +32,8 @@ func fixture(t *testing.T) Canonical {
 	m.Touch("devA", "mac")
 	tr := canon.NewTracks()
 	x := canon.NewTrack("spotify", provider.Track{ProviderID: "6rq", ISRC: "TWA472400123", Title: "派對動物", Artists: []string{"五月天"}, Album: "自傳", DurationMS: 227000})
+	x.Mappings["tidal"] = canon.Mapping{ID: "t1", Confidence: 72, Source: canon.SourceFuzzy, UpdatedAt: 8}                 // 四個新欄都要能無損來回(決策 20)
+	x.Mappings["youtube"] = canon.Mapping{ID: "", Confidence: 100, Pinned: true, Source: canon.SourceReview, UpdatedAt: 9} // 釘成「不可得」
 	x.Observe("apple", provider.Track{ProviderID: "i.abc", ISRC: "TWA472400123", Title: "派對動物 (Live)", DurationMS: 252000})
 	tr.Tracks[x.CID] = x
 	up := canon.NewTrack("apple", provider.Track{ProviderID: "i.lib1", Title: "上傳曲"})
@@ -252,7 +254,7 @@ func TestPathWithQuestionMarkRejected(t *testing.T) {
 func TestDumpRejectsOrphanRows(t *testing.T) {
 	for _, c := range []struct{ table, insert string }{
 		{"isrcs", "INSERT INTO isrcs (cid, isrc) VALUES ('ghost', 'X')"},
-		{"mappings", "INSERT INTO mappings (cid, provider, provider_id) VALUES ('ghost', 'spotify', 'x')"},
+		{"mappings", "INSERT INTO mappings (cid, provider, provider_id, confidence, pinned, source, updated_at) VALUES ('ghost', 'spotify', 'x', 100, 0, 'observed', 0)"},
 		{"playlist_items", "INSERT INTO playlist_items (pid, iid, cid, rank, added_at) VALUES ('ghost', 'i', 'c', 'V', 0)"},
 		{"playlist_links", "INSERT INTO playlist_links (pid, provider, provider_id) VALUES ('ghost', 'spotify', 'x')"},
 		{"device_base", "INSERT INTO device_base (device_id, pid, provider, playlist_id, name, items, cids, observed_at) VALUES ('ghost', 'p', 'spotify', '', '', '[]', '[]', 0)"},
