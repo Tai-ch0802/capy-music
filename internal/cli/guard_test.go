@@ -7,7 +7,6 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/config"
-	"github.com/Tai-ch0802/capy-music/internal/drive"
 )
 
 // once:hook 只觸發一次(pull 期間會打好幾個平台請求)。
@@ -30,15 +29,20 @@ func TestVersionGuardBlocksLostUpdate(t *testing.T) {
 	fs.set("p1", "通勤", "a", "b") // 這次 pull 要傳 pl__ / dev__ / tracks
 	exportBefore, _ := mustPull(t, "export")
 	var afterOther map[string][]byte
-	fs.setHook(once(func() {
+	fs.setHook(once(func() { // 別台裝置改了 pl__ 與 tracks.json 兩個檔
 		pl := decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__")
 		pl.Links["apple"] = "ap1"
 		putPlaylist(t, dc, pl)
+		tr := driveTracks(t, dc)
+		ta := tr.Tracks[fakeCID("a")]
+		ta.Conflicts = append(ta.Conflicts, canon.Conflict{Provider: "spotify", ProviderID: "a2", Title: "song-a", DurationMS: 1})
+		tr.Tracks[fakeCID("a")] = ta
+		putTracks(t, dc, tr)
 		afterOther = driveFiles(t, dc)
 	}))
 	_, _, err := runPull(t, "pl", "pull", "通勤", "--yes")
-	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "pl__") || !strings.Contains(err.Error(), "被別台裝置改過") {
-		t.Fatalf("守衛要 exit 1 並點名檔案:%v", err)
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "pl__") || !strings.Contains(err.Error(), "tracks.json 被別台裝置改過") || !strings.Contains(err.Error(), "零寫入,重跑一次") {
+		t.Fatalf("守衛要 exit 1 並列出全部不符的檔:%v", err)
 	}
 	if afterOther == nil || !sameFiles(afterOther, driveFiles(t, dc)) {
 		t.Fatal("零上傳:Drive 要停在對方寫完的樣子")
@@ -97,7 +101,7 @@ func TestVersionGuardRefusesDuplicateCreate(t *testing.T) {
 		}
 	}))
 	_, _, err := runPull(t, "pl", "pull", "通勤", "--yes")
-	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), ref.Name) {
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), ref.Name+" 被別台裝置建立") {
 		t.Fatalf("FETCH 後才出現的檔不能再建一份:%v", err)
 	}
 	n := 0
@@ -130,8 +134,6 @@ func TestVersionGuardToleratesPreexistingDuplicates(t *testing.T) {
 	}
 }
 
-var _ = drive.Newest
-
 // 同名檔在這次執行期間多了一份(別台裝置 Create 了第二份 tracks.json)也算變動:version 沒變、份數變了。
 func TestVersionGuardCountsSameNameFiles(t *testing.T) {
 	fs, dc, _ := pullWorld(t)
@@ -149,7 +151,51 @@ func TestVersionGuardCountsSameNameFiles(t *testing.T) {
 			t.Error(err)
 		}
 	}))
-	if _, _, err := runPull(t, "pl", "pull", "通勤", "--yes"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "tracks.json") {
+	if _, _, err := runPull(t, "pl", "pull", "通勤", "--yes"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "tracks.json 多了一份") {
 		t.Fatalf("份數變了也擋:%v", err)
+	}
+}
+
+// 同名多份時守衛比的是整個 (ID, Version) 集合:FETCH 選中 A,別台裝置改到 B → 也擋(不然我們寫 A、下次讀到較新的 B,寫入就消失了)。
+func TestVersionGuardWatchesEveryDuplicate(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	tr := driveTracks(t, dc)
+	body, err := canon.Encode(tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := dc.Create(context.Background(), "tracks.json", canon.TracksFile().Props, body) // 第二份,比較新 → FETCH 會選它
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := dc.List(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older string
+	for _, f := range files {
+		if f.Name == "tracks.json" && f.ID != other.ID {
+			older = f.ID
+		}
+	}
+	fs.set("p1", "通勤", "a", "b")
+	fs.setHook(once(func() { // 別台裝置改的是「另一份」(我們沒選中的那份)
+		ta := tr.Tracks[fakeCID("a")]
+		ta.Conflicts = append(ta.Conflicts, canon.Conflict{Provider: "spotify", ProviderID: "a2", Title: "song-a", DurationMS: 1})
+		tr.Tracks[fakeCID("a")] = ta
+		b, err := canon.Encode(tr)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := dc.Update(context.Background(), older, canon.TracksFile().Props, b); err != nil {
+			t.Error(err)
+		}
+	}))
+	if _, _, err := runPull(t, "pl", "pull", "通勤", "--yes"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "tracks.json 多了一份(或另一份被改過)") {
+		t.Fatalf("另一份被改也擋:%v", err)
 	}
 }
