@@ -850,7 +850,7 @@ capy pl unlink <name|pid> <provider>                      # P3(已實作);canoni
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
 capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義
 capy pl push   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(§6.5.2,決策 28):canonical → 平台;exit 同 pull(0/1/2/3);前提:base 存在且平台無未 pull 變更(比快照),否則 exit 3;對齊鍵是 cid,add 缺 mapping 的 item 列 skip;含 local file 的 Spotify 清單 exit 3;provider 不支援的 op 列 manual;push 後(成功或失敗)base := 重讀的平台狀態,pl__ 不變
-capy pl sync   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(決策 31):同一把鎖裡每個清單先 pull 各平台再 push 各平台(--provider 只走一個);一張表、一次確認;--dry-run 的 push 半邊用套用後的 C
+capy pl sync   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(決策 31;T5 實作於 internal/cli/sync.go):同一把鎖裡每個清單先 pull 各平台再 push 各平台(provider 字典序;--provider 只走一個);一張表(TSV 最前面多一欄 dir = pull / push)、一次確認;--dry-run 的 push 半邊用套用後的 C;push 半邊重用 pull 的 L
 capy pl restore <name> --provider P                       # 延後(決策 31,計畫 Q18):= 把 base 快照 push 回平台,與 pl push 重疊
 
 capy resolve [<name|pid>] [--provider P] [--dry-run] [--yes]   # P4 後半 T4(已實作,決策 22):預設全部已連結清單;缺 mapping 的 cid → ISRC 反查(95)→ fuzzy(0–100);≥85 自動寫入(Drive 先 SQLite 後,不動 alias set),其餘印 review 佇列 TSV(候選已屬另一 cid、或同一輪已配給別的 cid 也進佇列);exit 0 無事/已寫入(佇列有東西仍 0)、1 錯誤、2 待寫入未確認;--dry-run 永不寫入(連 FETCH 自癒的殘留也不上傳);單次 >200 次 API 在 stderr 提醒(決策 24)

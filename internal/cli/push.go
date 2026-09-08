@@ -130,8 +130,8 @@ type pushPlan struct {
 
 // planPush:對每個目標 (清單, provider) 做 OBSERVE、兩個前提、PushPlan、閾值,產出計畫與 TSV 列。
 // refused 是 --force 也不放行的(前提、local file、清單消失);blocked 是刪除閾值(--force 越過)。
-func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
-	pf := newPlatforms(ctx)
+// lives 非 nil 時該 (清單, provider) 的 L 直接用它(pl sync 的 push 半邊重用 pull 半邊剛讀的 L,決策 31)。
+func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]canon.Observed) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
 	merged := mergedBase(s)
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
@@ -165,17 +165,21 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				refused = append(refused, fmt.Sprintf("%s 的 %s 還沒 pull 過(沒有 base),先 capy pl pull %s", pl.Name, prov, pl.Name))
 				continue
 			}
-			tracks, err := r.GetPlaylistItems(ctx, link)
-			switch {
-			case errors.Is(err, provider.ErrRestricted):
-				fmt.Fprintf(stderr, "跳過 %s 的 %s:%s(開發模式 app 讀不到 Spotify 官方 / 他人的清單,也寫不了)\n", pl.Name, prov, link)
-				continue
-			case errors.Is(err, provider.ErrNotFound):
-				tracks = nil
-			case err != nil:
-				return nil, nil, nil, nil, fmt.Errorf("讀取 %s 的 %s:%s:%w", pl.Name, prov, link, friendlyErr(prov, err))
+			live, reused := lives[liveKey{pl.PID, prov}]
+			if !reused {
+				tracks, err := r.GetPlaylistItems(ctx, link)
+				switch {
+				case errors.Is(err, provider.ErrRestricted):
+					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s(開發模式 app 讀不到 Spotify 官方 / 他人的清單,也寫不了)\n", pl.Name, prov, link)
+					continue
+				case errors.Is(err, provider.ErrNotFound):
+					tracks = nil
+				case err != nil:
+					return nil, nil, nil, nil, fmt.Errorf("讀取 %s 的 %s:%s:%w", pl.Name, prov, link, friendlyErr(prov, err))
+				}
+				live = canon.Observed{ID: link, Name: ref.Name, Tracks: tracks}
 			}
-			live := canon.Observed{ID: link, Name: ref.Name, Tracks: tracks}
+			tracks := live.Tracks
 			lcid, snap := observeLive(s, prov, live)
 			if !liveUnchanged(b.Snapshot, snap) { // 前提二
 				refused = append(refused, fmt.Sprintf("%s 在 %s 有未 pull 的變更,先 capy pl pull %s(或 capy pl sync)", pl.Name, prov, pl.Name))
@@ -328,6 +332,56 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 	return n, touched, false, werr
 }
 
+// applyPlans:逐清單 apply;回傳套了幾個 op、平台有沒有被改到、要在 COMMIT 之後才回的錯(ApplyOps 失敗 exit 1 蓋過「確認期間變了」exit 3)。
+func applyPlans(ctx context.Context, s *canonState, plans []*pushPlan, stderr io.Writer) (applied int, touched bool, deferred error) {
+	var stale []string
+	for _, p := range plans {
+		k, hit, isStale, err := p.apply(ctx, s, stderr)
+		applied, touched = applied+k, touched || hit
+		switch {
+		case isStale:
+			why := "於確認期間變了"
+			if err != nil {
+				why = "套用前重讀失敗:" + err.Error()
+			}
+			fmt.Fprintf(stderr, "%s 在 %s %s,這份不寫\n", p.pl.Name, p.prov, why)
+			stale = append(stale, p.pl.Name+" 在 "+p.prov)
+		case err != nil:
+			fmt.Fprintf(stderr, "寫入 %s 的 %s 失敗:%v\n", p.pl.Name, p.prov, err)
+			if deferred == nil {
+				deferred = err
+			}
+		}
+	}
+	if deferred == nil && len(stale) > 0 {
+		deferred = &BlockedError{Msg: strings.Join(stale, "、") + " 在確認期間有變動,那幾份零寫入;先 capy pl pull 再 push"}
+	}
+	return applied, touched, deferred
+}
+
+// finishPush:withCanonical 回來之後的收尾。COMMIT 失敗而平台已經被改到:版本守衛那句「零寫入」只對 Drive 成立,改口;
+// 半截寫入 + Drive 沒寫成兩件事都要講——那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
+func finishPush(err error, applied int, touched bool, deferred error) error {
+	var ge *guardError
+	var driveMsg string
+	switch {
+	case err == nil:
+	case !touched:
+		return err
+	case errors.As(err, &ge):
+		driveMsg = "Drive 上的檔在這次執行期間變了(" + ge.Files + ")"
+	default:
+		driveMsg = "Drive 沒寫成:" + err.Error()
+	}
+	switch {
+	case driveMsg != "" && deferred != nil:
+		return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),再 pull、再 push", deferred, driveMsg)
+	case driveMsg != "":
+		return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):先 capy pl pull 再 capy pl push", applied, driveMsg)
+	}
+	return deferred
+}
+
 func newPlPushCmd() *cobra.Command {
 	var all, dryRun, yes, force bool
 	var prov string
@@ -359,7 +413,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				if err != nil {
 					return err
 				}
-				plans, rows, blocked, refused, err := planPush(ctx, s, targets, prov, stderr)
+				plans, rows, blocked, refused, err := planPush(ctx, s, targets, prov, stderr, newPlatforms(ctx), nil)
 				if err != nil {
 					return err
 				}
@@ -399,53 +453,13 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 						return &PendingError{N: n}
 					}
 				}
-				var stale []string
-				for _, p := range plans {
-					k, hit, isStale, err := p.apply(ctx, s, stderr)
-					applied, touched = applied+k, touched || hit
-					switch {
-					case isStale:
-						why := "於確認期間變了"
-						if err != nil {
-							why = "套用前重讀失敗:" + err.Error()
-						}
-						fmt.Fprintf(stderr, "%s 在 %s %s,這份不寫\n", p.pl.Name, p.prov, why)
-						stale = append(stale, p.pl.Name+" 在 "+p.prov)
-					case err != nil:
-						fmt.Fprintf(stderr, "寫入 %s 的 %s 失敗:%v\n", p.pl.Name, p.prov, err)
-						if deferred == nil {
-							deferred = err
-						}
-					}
-				}
+				applied, touched, deferred = applyPlans(ctx, s, plans, stderr)
 				if applied > 0 {
 					fmt.Fprintf(stderr, "已推送 %d 筆變更\n", applied)
 				}
-				if deferred == nil && len(stale) > 0 {
-					deferred = &BlockedError{Msg: strings.Join(stale, "、") + " 在確認期間有變動,那幾份零寫入;先 capy pl pull 再 push"}
-				}
 				return nil
 			})
-			// COMMIT 失敗而平台已經被改到:版本守衛那句「零寫入」只對 Drive 成立,改口;半截寫入 + Drive 沒寫成兩件事都要講——
-			// 那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
-			var ge *guardError
-			var driveMsg string
-			switch {
-			case err == nil:
-			case !touched:
-				return err
-			case errors.As(err, &ge):
-				driveMsg = "Drive 上的檔在這次執行期間變了(" + ge.Files + ")"
-			default:
-				driveMsg = "Drive 沒寫成:" + err.Error()
-			}
-			switch {
-			case driveMsg != "" && deferred != nil:
-				return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),再 pull、再 push", deferred, driveMsg)
-			case driveMsg != "":
-				return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):先 capy pl pull 再 capy pl push", applied, driveMsg)
-			}
-			return deferred
+			return finishPush(err, applied, touched, deferred)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "推全部已連結的清單")
