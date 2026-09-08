@@ -295,7 +295,7 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		t := s.tracks.Tracks[sk.CID]
 		reason, id := sk.Reason, ""
 		if m := t.Mappings[plan.prov]; m.ID != "" { // 有 mapping 但推不出去:resolve 修不了,提示也不會算它
-			reason, id = "有 mapping 但推不出去(local file / library-only),只能在平台手動加", m.ID
+			reason, id = "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加", m.ID // ponytail: Pushable 只回 bool,理由三選一由使用者看平台判斷;第三個平台時讓 Pushable 回原因(P6 §2 A10)
 		}
 		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
 	}

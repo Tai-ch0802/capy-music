@@ -74,7 +74,7 @@
 | 項目 | 現況 | 影響 |
 |---|---|---|
 | 資料來源 | `local_root` 下的 `*.m3u8` / `*.m3u` 是清單,`library.json` 是曲庫(title / artists / album / duration_ms / isrc);不讀音訊 tag、不加相依 | 幾乎沒有 ISRC → 跟其他平台的對應靠 resolver Layer 2,`Search` 必做 |
-| **綁裝置** | 曲庫只在一台機器上,但 `pl__.Links` 是共享檔(一個 provider 一格) | 決策 33:id 帶 device id、SPI 加 `CapDeviceBound` + `DeviceScoped.Foreign`;別台裝置的 pull / push / sync 對它只跳過,不算 gone、不 unlink;**一個 canonical 清單同時只連一台裝置的 M3U**,`pl link` 撞到別台的 link 就接管(重灌後 device_id 變了也靠這條接回來) |
+| **綁裝置** | 曲庫只在一台機器上,但 `pl__.Links` 是共享檔(一個 provider 一格) | 決策 33:playlist id 帶 device id(track id 不帶,cid 才撐得過重灌)、SPI 加 `CapDeviceBound` + `DeviceScoped.Foreign`;別台裝置的 pull / push / sync 對它只跳過,不算 gone、不 unlink;**一個 canonical 清單同時只連一台裝置的 M3U**,`pl link` 撞到別台的 link 就接管(重灌後 device_id 變了也靠這條接回來) |
 | id | 正規化相對路徑(forward slash、NFC);改名 / 搬家 = remove + add | 升級路徑 = 內容 hash(`capy local scan`) |
 | 寫入 | 整檔改寫 + 原子 rename,`#EXTINF` 與註解會被丟掉;全部 ops 都支援 | 與 Apple 的 append-only 成對照 |
 | 錯誤族 | 只有 NotFound / 權限 / IO / JSON 壞;沒有 auth、rate limit、restricted | 每個 n/a 都是 SPI 假設的發現(計畫 §2) |
@@ -817,7 +817,7 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 **不建 op log / HLC**(決策 26):`PlaylistWriter` SPI + Spotify 寫入 → 共享檔版本守衛 → 投影 / push 變更集 / DERIVE 規則 4′ → `pl push` → `pl sync` → Apple 寫入(gate P0-2,預期 append-only)→ 真帳號驗收
 
 ### P6 — 抽象驗證 ✅(2026-09-08 計畫與結論:docs/superpowers/plans/2026-09-08-p6-local.md)
-接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單(A1–A12)與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。**結論(T3):SPI 撐得住**——local 全走原本的能力介面、沒有特例分支,唯一的新語意是 `CapDeviceBound` + `DeviceScoped`。接下一個真實平台前先補:rename 會改 id 的平台要能回新 id(A12)、foreign mapping 的 skip 理由要分開(A10)、`friendlyErr` 第四個平台時改成 provider 自己回訊息(A2)、`Search` 正規化下沉到 `provider`(A6)。
+接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單(A1–A12)與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。**結論(T3):SPI 撐得住**——local 全走原本的能力介面、沒有特例分支,唯一的新語意是 `CapDeviceBound` + `DeviceScoped`。接下一個真實平台前先補:rename 會改 id 的平台要能回新 id(A12)、`Pushable` 要能回「推不出去」的原因而不是 CLI 猜(A10)、`friendlyErr` 第四個平台時改成 provider 自己回訊息(A2)、`Search` 正規化下沉到 `provider`(A6)。
 
 ---
 
