@@ -204,8 +204,10 @@ func TestMismatchedSchemaVersionIsRetained(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	if _, err := OpenAt(path, time.Second); err != nil {
+	if s2, err := OpenAt(path, time.Second); err != nil {
 		t.Fatalf("同名保留檔已存在時再升版要能覆蓋:%v", err)
+	} else {
+		s2.Close() // 沒關的話 Windows 的 TempDir 清理會說檔案被佔用
 	}
 	// 全新的 db(user_version 0)不留 .v0。
 	fresh := filepath.Join(t.TempDir(), "state.db")
