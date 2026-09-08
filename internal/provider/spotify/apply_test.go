@@ -35,8 +35,8 @@ func (l *callLog) all() []writeCall {
 }
 func (l *callLog) reset() { l.mu.Lock(); defer l.mu.Unlock(); l.calls = nil }
 
-// writeServer:記下每個寫入呼叫;status 非零時從第 failFrom 個呼叫(1-based;0 = 全部)起回它。
-func writeServer(t *testing.T, status, failFrom int) (*Client, *callLog) {
+// writeServer:記下每個寫入呼叫;status 非零時從第 failFrom 個呼叫(1-based;0 = 全部)起回它;failCount 非零時只回那麼多次。
+func writeServer(t *testing.T, status, failFrom int, failCount ...int) (*Client, *callLog) {
 	t.Helper()
 	log := &callLog{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,8 @@ func writeServer(t *testing.T, status, failFrom int) (*Client, *callLog) {
 			}
 		}
 		log.add(writeCall{r.Method, r.URL.Path, body})
-		if status != 0 && len(log.all()) >= failFrom {
+		n := len(log.all())
+		if status != 0 && n >= failFrom && (len(failCount) == 0 || n < failFrom+failCount[0]) {
 			w.WriteHeader(status)
 			fmt.Fprintf(w, `{"error":{"status":%d,"message":"nope"}}`, status)
 			return
@@ -165,7 +166,7 @@ func TestApplyOpsPartialWriteError(t *testing.T) {
 	c, log := writeServer(t, http.StatusInternalServerError, 3) // rename、PUT 成功,第一個 POST 失敗
 	_, err := c.ApplyOps(context.Background(), "p1", ids(250), []provider.PlaylistOp{{Kind: provider.OpRename, Name: "n"}, {Kind: provider.OpAdd, ProviderID: "z", Pos: 0}})
 	var pw *provider.PartialWriteError
-	if !errors.As(err, &pw) || pw.PlaylistID != "p1" || pw.Written != 100 || pw.Want != 251 || !pw.Renamed || len(log.all()) != 3 {
+	if !errors.As(err, &pw) || pw.PlaylistID != "p1" || pw.Written != 100 || pw.Want != 251 || !pw.Renamed || len(log.all()) != 5 { // rename + PUT + POST 三次都 500
 		t.Fatalf("要 PartialWriteError{100/251, renamed}:%v %d", err, len(log.all()))
 	}
 	if !strings.Contains(err.Error(), "只有前 100 首(目標 251 首)") || !strings.Contains(err.Error(), "名字已先改好") {
@@ -174,6 +175,16 @@ func TestApplyOpsPartialWriteError(t *testing.T) {
 	c2, _ := writeServer(t, http.StatusInternalServerError, 1)
 	if _, err := c2.ApplyOps(context.Background(), "p1", ids(250), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); errors.As(err, &pw) || err == nil {
 		t.Fatalf("PUT 本身失敗 = 平台沒動,不是 partial:%v", err)
+	}
+	// POST 對 5xx 多試兩次:第 2 個呼叫(第一批 POST)500 兩次後成功 → 整體成功,呼叫數 = PUT 1 + POST 3 + POST 1
+	c3, log3 := writeServer(t, http.StatusInternalServerError, 2, 2)
+	if _, err := c3.ApplyOps(context.Background(), "p1", ids(250), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); err != nil || len(log3.all()) != 5 {
+		t.Fatalf("POST 重試:%v %d", err, len(log3.all()))
+	}
+	// 4xx 不重試:第一批 POST 400 → 立刻 partial,呼叫數 2
+	c4, log4 := writeServer(t, http.StatusBadRequest, 2)
+	if _, err := c4.ApplyOps(context.Background(), "p1", ids(250), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); !errors.As(err, &pw) || len(log4.all()) != 2 {
+		t.Fatalf("4xx 不重試:%v %d", err, len(log4.all()))
 	}
 }
 

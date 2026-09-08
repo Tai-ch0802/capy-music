@@ -131,7 +131,7 @@ package provider
 
 type Capability uint32
 
-const (
+const ( // 順序 = 位元位置,與 internal/provider/provider.go 一致;新能力一律加在尾端(舊位元不動)
     CapSearch Capability = 1 << iota
     CapISRCLookup      // 能用 ISRC 反查
     CapISRCExpose      // 回傳的 track 帶 ISRC
@@ -140,10 +140,13 @@ const (
     CapPlaylistAppend
     CapPlaylistRemove  // ⚠️ Apple 待驗證
     CapPlaylistReorder // ⚠️ Apple 待驗證
-    CapPlaylistRename  // P5 T1 加;Spotify 有
     CapLibraryRead
     CapLibraryWrite
     CapPlaybackControl
+    CapArtistSearch    // UX 計畫 T3
+    CapPlayPlaylist    // PlayRequest.PlaylistID
+    CapPlayQueue       // Play 把 TrackIDs 全排進佇列
+    CapPlaylistRename  // P5 T1 加(bit 13);Spotify 有
 )
 
 type Provider interface {
