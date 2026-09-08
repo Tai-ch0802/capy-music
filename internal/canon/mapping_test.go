@@ -34,7 +34,7 @@ func TestMappingLegacyStringDecodesAndReencodesAsObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(b), `{"schema_version":2,`) || !strings.Contains(string(b), `"mappings":{"spotify":{"id":"abc","confidence":100,"pinned":false,"source":"observed","updated_at":0}}`) {
+	if !strings.HasPrefix(string(b), `{"schema_version":3,`) || !strings.Contains(string(b), `"mappings":{"spotify":{"id":"abc","confidence":100,"pinned":false,"source":"observed","updated_at":0}}`) {
 		t.Fatalf("寫出要是物件形、schema_version 蓋成 2:%s", b)
 	}
 	if _, err := canon.Decode[canon.Tracks]([]byte(`{"schema_version":2,"tracks":{"i:X":{"cid":"i:X","artists":[],"mappings":{"spotify":12}}}}`)); err == nil {
@@ -68,7 +68,7 @@ func TestNormalizeStampsSchemaVersion(t *testing.T) {
 		},
 	} {
 		b, err := f()
-		if err != nil || !strings.HasPrefix(string(b), `{"schema_version":2,`) {
+		if err != nil || !strings.HasPrefix(string(b), `{"schema_version":3,`) {
 			t.Fatalf("%s:%v %s", name, err, b)
 		}
 	}

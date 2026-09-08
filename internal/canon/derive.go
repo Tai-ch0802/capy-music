@@ -20,10 +20,11 @@ type Observed struct {
 
 type DeriveInput struct {
 	Provider string
-	Playlist Playlist         // C
-	Tracks   map[string]Track // tracks.json 的 cid → track(只讀)
-	Base     *Snapshot        // 本裝置上次觀測;nil = 沒有(首次 pull)
-	Live     *Observed        // 平台現況;nil = 清單消失
+	Playlist Playlist          // C;items 的 cid 必須已經過墓碑重導(fetchCanonical 負責),Derive 只重導 base 與 L——C 裡殘留的敗者 cid 會配不到、又多報一筆 add
+	Tracks   map[string]Track  // tracks.json 的 cid → track(只讀)
+	Base     *Snapshot         // 本裝置上次觀測;nil = 沒有(首次 pull)
+	Live     *Observed         // 平台現況;nil = 清單消失
+	Merged   map[string]string // tracks.json 的合併墓碑(敗者 cid → 勝者);nil = 沒有
 }
 
 // Change 是變更集的一列;欄位對齊 T8 的 TSV:action pos cid provider_id title artists reason。
@@ -68,7 +69,8 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	L := in.Live.Tracks
 	now := Now().Unix()
 
-	// 規則 1、3:L 的每首算 cid 並觀測寫回 tracks。
+	// 規則 1、3:L 的每首用身分函式(決策 19:mapping → ISRC alias → 公式 → 墓碑)算 cid 並觀測寫回 tracks。
+	id := NewIdentity(in.Tracks, in.Merged)
 	lcid := make([]string, len(L))
 	lookup := func(cid string) (Track, bool) {
 		if t, ok := res.Tracks[cid]; ok {
@@ -78,11 +80,13 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		return t, ok
 	}
 	for i, t := range L {
-		cid := CID(prov, t.ProviderID, t.ISRC)
+		cid := id.Resolve(prov, t.ProviderID, t.ISRC)
 		lcid[i] = cid
 		tr, ok := lookup(cid)
 		if !ok {
-			res.Tracks[cid] = NewTrack(prov, t)
+			nt := NewTrack(prov, t)
+			nt.CID = cid // Resolve 可能經墓碑指到 tracks 裡已經沒有的勝者(手改過的檔):map key 與 cid 欄位必須一致,不然經 db 來回位元組會變
+			res.Tracks[cid] = nt
 			continue
 		}
 		cp := cloneTrack(tr)
@@ -120,12 +124,13 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		lCnt[cid]++
 	}
 
-	// 規則 5:只在 base 存在時移除;計數用 base 快照裡觀測當時的 cid(不經 mapping 反查:重新連結過的版本反查不到)。
+	// 規則 5:只在 base 存在時移除;計數用 base 快照裡觀測當時的 cid,只沿合併墓碑改寫(決策 19:不用 mapping 反查——
+	// 重釘到別的 id 的 cid 反查會走丟,那首就永遠移不掉)。
 	removed := map[int]bool{}
 	if in.Base != nil {
 		bCnt := map[string]int{}
 		for _, cid := range in.Base.CIDs {
-			bCnt[cid]++
+			bCnt[id.Redirect(cid)]++
 		}
 		for cid, b := range bCnt {
 			extra := b - lCnt[cid]

@@ -104,7 +104,7 @@ func merged(tracks, touched map[string]canon.Track) map[string]canon.Track {
 // converges:用結果再跑一次,必須零變更且清單逐位元相同(T8 兩輪 e2e 依賴這條)。
 func converges(t *testing.T, in canon.DeriveInput, res canon.DeriveResult) {
 	t.Helper()
-	again := mustDerive(t, canon.DeriveInput{Provider: in.Provider, Playlist: res.Playlist, Tracks: merged(in.Tracks, res.Tracks), Base: &res.Snapshot, Live: in.Live})
+	again := mustDerive(t, canon.DeriveInput{Provider: in.Provider, Playlist: res.Playlist, Tracks: merged(in.Tracks, res.Tracks), Base: &res.Snapshot, Live: in.Live, Merged: in.Merged})
 	if len(again.Changes) != 0 || !bytes.Equal(encode(t, &again.Playlist), encode(t, &res.Playlist)) {
 		t.Fatalf("第二輪應零變更且逐位元相同:%s\n%s\n%s", actions(again.Changes), encode(t, &res.Playlist), encode(t, &again.Playlist))
 	}
@@ -179,7 +179,9 @@ func TestDeriveDuplicateReorderConverges(t *testing.T) {
 
 // 同一個 provider id 先後落到兩個 cid(先沒 ISRC → p:spotify:x,後來補上 → i:…):結果必須是輸入的函數。
 // base 快照記 cid 之後這裡沒有任何 map 反查,所以是決定性的一次性 remove + add,下一輪收斂。
-func TestDeriveProviderIDSharedByTwoCidsIsDeterministic(t *testing.T) {
+// 決策 19 / 21:同一個 provider id 先無 ISRC(p: cid)、之後帶 ISRC 出現——身分函式先看 mapping,還是同一個 p: cid,零變更;
+// cid 除合併外永不改寫(T2b 之前這裡會 remove p: 再 add i:,同一首歌兩筆)。
+func TestDeriveProviderIDKeepsCidWhenISRCAppearsLater(t *testing.T) {
 	pin(t)
 	bare := ptrack("x")
 	bare.ISRC = ""
@@ -188,17 +190,69 @@ func TestDeriveProviderIDSharedByTwoCidsIsDeterministic(t *testing.T) {
 		t.Fatalf("沒 ISRC 先落到 provider 型 cid:%s", actions(first.Changes))
 	}
 	in := canon.DeriveInput{Provider: prov, Playlist: first.Playlist, Tracks: first.Tracks, Base: &first.Snapshot, Live: live("通勤", "x")}
-	want := "remove:p:spotify:x add:" + cidOf("x")
-	var res canon.DeriveResult
-	for i := 0; i < 200; i++ {
-		if res = mustDerive(t, in); actions(res.Changes) != want {
-			t.Fatalf("第 %d 次:%s(要 %s)", i, actions(res.Changes), want)
-		}
-	}
-	if first.Tracks["p:spotify:x"].Mappings[prov].ID != "x" || res.Tracks[cidOf("x")].Mappings[prov].ID != "x" {
-		t.Fatal("兩個 cid 應同時指著 provider id x")
+	res := mustDerive(t, in)
+	if len(res.Changes) != 0 || len(res.Tracks) != 0 || !slices.Equal(res.Snapshot.CIDs, []string{"p:spotify:x"}) {
+		t.Fatalf("p: 維持 p:,零變更、tracks 不動:%s %v %v", actions(res.Changes), res.Tracks, res.Snapshot.CIDs)
 	}
 	converges(t, in, res)
+}
+
+// 決策 19:合併後緊接的平台刪除要在第一次 pull 就移除——base 的 cid 只經墓碑重導、不查 mapping、不落公式。三種情境。
+func TestDeriveAfterMergePlatformDeleteRemovesOnFirstPull(t *testing.T) {
+	t.Run("一般", func(t *testing.T) {
+		tracks, pl, x, y := twoCids(t) // C = [x, y];spotify 清單只有 z(x);base [z] → [x],x 是敗者
+		base := snap("通勤", "z")
+		s, err := canon.Merge(tracks, map[string]*canon.Playlist{pl.PID: pl}, x, y)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := canon.DeriveInput{Provider: prov, Playlist: *pl, Tracks: tracks.Tracks, Merged: tracks.Merged, Base: base, Live: live("通勤")}
+		res := mustDerive(t, in)
+		if actions(res.Changes) != "remove:"+s || len(res.Playlist.Items) != 1 {
+			t.Fatalf("base 的敗者 cid 經墓碑重導才對得上清單裡的勝者;C 有兩個勝者 item、base 只有一個 → 只移除一個:%s %v", actions(res.Changes), cids(res.Playlist))
+		}
+		converges(t, in, res)
+	})
+	t.Run("敗者 id 只在 conflicts", func(t *testing.T) {
+		tracks, pl, x, y := twoCids(t)
+		ty := tracks.Tracks[y]
+		ty.Mappings[prov] = canon.Mapping{ID: "z2", Confidence: 100, Source: canon.SourceObserved, UpdatedAt: 5}
+		tracks.Tracks[y] = ty
+		base := &canon.Snapshot{Name: "通勤", Items: []string{"z", "z2"}, CIDs: []string{x, y}} // 平台兩個 id 都在
+		s, err := canon.Merge(tracks, map[string]*canon.Playlist{pl.PID: pl}, x, y)           // 敗者的 z 進 conflicts、mapping 只剩 z2
+		if err != nil {
+			t.Fatal(err)
+		}
+		z2 := provider.Track{ProviderID: "z2", ISRC: "TW000000000B", Title: "song-z", Artists: []string{"artist"}, DurationMS: 200000}
+		in := canon.DeriveInput{Provider: prov, Playlist: *pl, Tracks: tracks.Tracks, Merged: tracks.Merged, Base: base, Live: &canon.Observed{Name: "通勤", Tracks: []provider.Track{ptrack("z"), z2}}}
+		if res := mustDerive(t, in); len(res.Changes) != 0 {
+			t.Fatalf("清單裡敗者與勝者各一個 item、平台照舊 → 兩個都對到勝者、零變更:%s", actions(res.Changes))
+		}
+		in.Live = &canon.Observed{Name: "通勤", Tracks: []provider.Track{z2}} // 平台刪掉 z(它的 id 只剩 conflicts 記得)
+		res := mustDerive(t, in)
+		if actions(res.Changes) != "remove:"+s || len(res.Playlist.Items) != 1 {
+			t.Fatalf("恰好一筆 remove:%s %v", actions(res.Changes), cids(res.Playlist))
+		}
+		converges(t, in, res)
+	})
+	t.Run("cid 釘到別的 id、清單裡是另一個 id", func(t *testing.T) {
+		pl, tracks := world(t, "a")
+		x := cidOf("a")
+		tr := tracks[x]
+		tr.Mappings[prov] = canon.Mapping{ID: "P", Confidence: 100, Pinned: true, Source: canon.SourceReview}
+		tracks[x] = tr
+		base := snap("通勤", "a")
+		in := canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: base, Live: live("通勤", "a")}
+		if res := mustDerive(t, in); len(res.Changes) != 0 { // mapping 沒中(釘的是 P)、alias set 命中 → 還是 x
+			t.Fatalf("平台仍有 a → 零變更:%s", actions(res.Changes))
+		}
+		in.Live = live("通勤")
+		res := mustDerive(t, in)
+		if actions(res.Changes) != "remove:"+x { // base 的 x 不查 mapping(P 查不到)、不落公式,保留原 cid 才對得上
+			t.Fatalf("平台刪掉 a → remove:%s", actions(res.Changes))
+		}
+		converges(t, in, res)
+	})
 }
 
 // 隨機性質測試(PR #19 review 給的骨架):隨機 (C, base, L),universe 6 首、長度 0–6、允許重複,base 四分之一機率沒有;
@@ -498,5 +552,16 @@ func TestDeriveObservationOverridesFuzzyMapping(t *testing.T) {
 	again, err := canon.Derive(canon.DeriveInput{Provider: prov, Playlist: res.Playlist, Tracks: tracks, Live: live("通勤", "a")})
 	if err != nil || len(again.Tracks) != 0 || len(again.Changes) != 0 {
 		t.Fatalf("第二輪不該再有 tracks 變更:%v %d %s", err, len(again.Tracks), actions(again.Changes))
+	}
+}
+
+// Resolve 經墓碑可能指到 tracks 裡已經沒有的勝者(手改過的檔):新建 track 的 cid 欄要等於 map key,不然經 db 來回位元組會變。
+func TestDeriveNewTrackKeyMatchesCIDField(t *testing.T) {
+	pin(t)
+	in := canon.DeriveInput{Provider: prov, Playlist: *canon.NewPlaylist("通勤"), Tracks: map[string]canon.Track{}, Merged: map[string]string{cidOf("a"): "i:GHOST"}, Live: live("通勤", "a")}
+	res := mustDerive(t, in)
+	tr, ok := res.Tracks["i:GHOST"]
+	if !ok || tr.CID != "i:GHOST" || len(res.Tracks) != 1 || actions(res.Changes) != "add:i:GHOST" {
+		t.Fatalf("map key 與 cid 欄一致:%+v %s", res.Tracks, actions(res.Changes))
 	}
 }

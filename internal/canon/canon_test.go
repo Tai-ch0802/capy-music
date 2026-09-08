@@ -234,7 +234,7 @@ func TestRoundTripBitEqual(t *testing.T) {
 		}
 	}
 	m, tr, pl, dev := string(first[0]), string(first[1]), string(first[2]), string(first[3])
-	for _, want := range []string{`{"schema_version":2,"devices":[{"id":"dev1","name":"mac-renamed","last_seen":1756600002}],"playlists":[]}`} {
+	for _, want := range []string{`{"schema_version":3,"devices":[{"id":"dev1","name":"mac-renamed","last_seen":1756600002}],"playlists":[]}`} {
 		if !strings.Contains(m, want) {
 			t.Fatalf("manifest 形狀:%s", m)
 		}
@@ -242,10 +242,11 @@ func TestRoundTripBitEqual(t *testing.T) {
 	if !strings.Contains(tr, `"i:TWA472400123":{"cid":"i:TWA472400123","isrc":["TWA472400123"],"title":"派對動物","artists":["五月天"],"album":"自傳","duration_ms":227000,"mappings":{"apple":{"id":"i.abc","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
 		!strings.Contains(tr, `,"spotify":{"id":"6rq","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
 		!strings.Contains(tr, `"conflicts":[{"provider":"apple","provider_id":"i.abc","title":"派對動物 (Live)","duration_ms":252000}]}`) ||
-		!strings.Contains(tr, `"p:apple:i.lib1":{"cid":"p:apple:i.lib1","title":"上傳曲","artists":[],"duration_ms":0,"mappings":{"apple":{"id":"i.lib1","confidence":100,"pinned":false,"source":"observed","updated_at":`) {
+		!strings.Contains(tr, `"p:apple:i.lib1":{"cid":"p:apple:i.lib1","title":"上傳曲","artists":[],"duration_ms":0,"mappings":{"apple":{"id":"i.lib1","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
+		!strings.HasSuffix(strings.TrimSpace(tr), `"merged":{}}`) {
 		t.Fatalf("tracks 形狀(spec §6.2,決策 20 的 mapping 物件):%s", tr)
 	}
-	if !strings.HasPrefix(pl, `{"schema_version":2,"pid":"01TESTULID0000000000000001","name":"通勤","description":"上班聽","updated_at":`) ||
+	if !strings.HasPrefix(pl, `{"schema_version":3,"pid":"01TESTULID0000000000000001","name":"通勤","description":"上班聽","updated_at":`) ||
 		!strings.Contains(pl, `"items":[{"iid":"01TESTULID0000000000000002","cid":"i:TWA472400123","rank":"V","added_at":`) ||
 		!strings.Contains(pl, `"rank":"k"`) || !strings.Contains(pl, `"rank":"s"`) || !strings.HasSuffix(pl, `"links":{"spotify":"37i9"}}`+"\n") {
 		t.Fatalf("playlist 形狀:%s", pl)
