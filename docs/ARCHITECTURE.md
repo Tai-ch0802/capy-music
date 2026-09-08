@@ -816,8 +816,8 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 ### P5 — 雙向同步(2026-09-08 計畫:docs/superpowers/plans/2026-09-08-p5-sync.md)
 **不建 op log / HLC**(決策 26):`PlaylistWriter` SPI + Spotify 寫入 → 共享檔版本守衛 → 投影 / push 變更集 / DERIVE 規則 4′ → `pl push` → `pl sync` → Apple 寫入(gate P0-2,預期 append-only)→ 真帳號驗收
 
-### P6 — 抽象驗證(2026-09-08 計畫:docs/superpowers/plans/2026-09-08-p6-local.md)
-接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。T0 計畫 → 維護者 review → T1 讀端 → T2 寫端 → T3 local ↔ Spotify 的 sync e2e 與 §2 表定稿(決策 37)。
+### P6 — 抽象驗證 ✅(2026-09-08 計畫與結論:docs/superpowers/plans/2026-09-08-p6-local.md)
+接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單(A1–A12)與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。**結論(T3):SPI 撐得住**——local 全走原本的能力介面、沒有特例分支,唯一的新語意是 `CapDeviceBound` + `DeviceScoped`。接下一個真實平台前先補:rename 會改 id 的平台要能回新 id(A12)、foreign mapping 的 skip 理由要分開(A10)、`friendlyErr` 第四個平台時改成 provider 自己回訊息(A2)、`Search` 正規化下沉到 `provider`(A6)。
 
 ---
 
