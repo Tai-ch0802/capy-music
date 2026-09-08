@@ -219,6 +219,11 @@ type PlaybackController interface {
     Pause(ctx context.Context) error
     Next(ctx context.Context) error
     Prev(ctx context.Context) error
+    // 以下三個延後、尚未排程(2026-09-09 附錄 A 稽核):P1 計畫把 Seek / SetVolume / Enqueue 一起延後(P1 不進 bubbletea),
+    // P2 計畫對 Apple 半邊的 Seek / SetVolume 也延後,之後 P3–P6 都沒排回來,實際的 PlaybackController 沒有這三個方法。
+    // 要做的時候:Spotify 是 PUT /me/player/seek?position_ms= 與 /me/player/volume?volume_percent=(手機類裝置會回 403
+    // VOLUME_CONTROL_DISALLOW,訊息要講「這個裝置不給調音量」);Apple 是 osascript 的 player position / sound volume;
+    // Enqueue 連 CLI 命令都還沒設計(附錄 A 沒有 queue),真要做時先補附錄 A。
     Seek(ctx context.Context, posMS int) error
     SetVolume(ctx context.Context, pct int) error
     Enqueue(ctx context.Context, uri string) error
@@ -858,7 +863,7 @@ capy play <query...> [--provider P] [--device NAME] [--type track|artist|playlis
 capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;歧義:TTY 挑選器 / 非 TTY exit 2 + TSV
 capy play --pick               # 直接開挑選器(TTY 限定)
 capy play --id <track id>
-capy pause | capy next | capy prev | capy seek <mm:ss> | capy vol <0-100>
+capy pause | capy next | capy prev                         # seek / vol 延後(P1 計畫 §延後清單、P2 計畫對 Apple 半邊同樣延後;之後每個階段都沒排回來,2026-09-09 附錄 A 稽核補註)
 capy now [--watch]
 
 capy pl list
