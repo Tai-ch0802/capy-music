@@ -546,11 +546,8 @@ func trackURIs(want []string) ([]string, error) {
 	uris := make([]string, len(want))
 	var bad []string
 	for i, tid := range want {
-		uris[i] = tid
-		if !strings.HasPrefix(tid, "spotify:") {
-			uris[i] = "spotify:track:" + tid
-		}
-		if tid == "" || !(strings.HasPrefix(uris[i], "spotify:track:") || strings.HasPrefix(uris[i], "spotify:episode:")) {
+		var ok bool
+		if uris[i], ok = pushableURI(tid); !ok {
 			bad = append(bad, fmt.Sprintf("第 %d 首 %q", i+1, tid))
 		}
 	}
@@ -559,6 +556,18 @@ func trackURIs(want []string) ([]string, error) {
 	}
 	return uris, nil
 }
+
+// pushableURI:裸 id 補 spotify:track: 前綴;只有 track / episode 的 uri 推得進清單(local file 的 spotify:local:… 不行、空 id 不行)。
+func pushableURI(id string) (uri string, ok bool) {
+	uri = id
+	if !strings.HasPrefix(id, "spotify:") {
+		uri = "spotify:track:" + id
+	}
+	return uri, id != "" && (strings.HasPrefix(uri, "spotify:track:") || strings.HasPrefix(uri, "spotify:episode:"))
+}
+
+// Pushable:provider.PlaylistWriter。
+func (c *Client) Pushable(id string) bool { _, ok := pushableURI(id); return ok }
 
 // writeErr:403 = 不是自己的、也不是協作的清單(Spotify 只讓這兩種可寫);404 = 清單不存在,或寫入端點其實不是 /items(未驗證)。
 func writeErr(id string, err error) error {

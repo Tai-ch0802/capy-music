@@ -180,6 +180,9 @@ const (
 // (呼叫端列成 manual);平台真的失敗才回 err。
 type PlaylistWriter interface {
 	ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) (skipped []PlaylistOp, err error)
+	// Pushable:這個 id 能不能被 add 進清單(Spotify local file 的 uri、Apple library-only 的 id 不能)。純函式,不打 API;
+	// push 算變更集時用它決定「有 mapping 但推不出去」要列 skip,而不是送出去被整批拒收(PR #33 review)。
+	Pushable(id string) bool
 }
 
 // ApplyPlaylistOps:純函式,把 ops 依序套在 current 上,回傳結果序列與改名後的名稱(空 = 沒改名)。

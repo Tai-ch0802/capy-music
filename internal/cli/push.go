@@ -184,14 +184,14 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			items := make([]canon.LiveItem, len(tracks))
 			var local []string
 			for i, t := range tracks {
-				items[i] = canon.LiveItem{CID: lcid[i], ProviderID: t.ProviderID, Unpushable: t.Unpushable}
+				items[i] = canon.LiveItem{CID: lcid[i], ProviderID: t.ProviderID}
 				if t.Unpushable {
 					local = append(local, t.Title)
 				}
 			}
-			mappingID := func(cid string) (string, bool) {
+			mappingID := func(cid string) (string, bool) { // 有 mapping 但推不出去(別的清單觀測進來的 local file)= skip,不是整批被拒
 				m := s.tracks.Tracks[cid].Mappings[prov]
-				return m.ID, m.ID != ""
+				return m.ID, m.ID != "" && w.Pushable(m.ID)
 			}
 			ops, skipped := canon.PushPlan(items, pl.Items, live.Name, pl.Name, mappingID)
 			plan := &pushPlan{pl: pl, prov: prov, link: link, reader: r, writer: w, liveName: live.Name, base: b.Snapshot, current: snap.Items, ops: ops}

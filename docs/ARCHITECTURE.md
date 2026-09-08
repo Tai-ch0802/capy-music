@@ -189,6 +189,9 @@ type PlaylistWriter interface {
     // Kind 不支援的 op 跳過、支援的照做,回傳跳過的那些(呼叫端列成 manual);平台真的失敗才回 err。
     // P5 不做 rebuild fallback(決策 30)。CreatePlaylist 待有需要再加(push 只寫已連結的清單)。
     ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) (skipped []PlaylistOp, err error)
+    // Pushable:這個 id 能不能被 add 進清單(Spotify local file 的 spotify:local:… uri、Apple library-only 的 id 不能)。純函式。
+    // push 算變更集時用它:有 mapping 但推不出去的 item 列 skip,而不是送出去被整批拒收(T4;PR #33 review)。
+    Pushable(id string) bool
 }
 
 type PlaybackController interface {

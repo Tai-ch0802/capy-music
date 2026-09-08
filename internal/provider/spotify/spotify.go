@@ -42,6 +42,8 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	return p.c.ApplyOps(ctx, id, current, ops)
 }
 
+func (p *Provider) Pushable(id string) bool { return p.c.Pushable(id) }
+
 func (p *Provider) LookupISRC(ctx context.Context, isrc string) ([]provider.Track, error) {
 	return p.c.LookupISRC(ctx, isrc)
 }

@@ -124,6 +124,19 @@ func drivePlaylist(t *testing.T, dc *drive.Client) *canon.Playlist {
 	return decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__")
 }
 
+func drivePlaylistNamed(t *testing.T, dc *drive.Client, name string) *canon.Playlist {
+	t.Helper()
+	for fname, b := range driveFiles(t, dc) {
+		if strings.HasPrefix(fname, "pl__") {
+			if pl, err := canon.Decode[canon.Playlist](b); err == nil && pl.Name == name {
+				return pl
+			}
+		}
+	}
+	t.Fatalf("Drive 沒有叫 %s 的清單", name)
+	return nil
+}
+
 func cidsOf(pl *canon.Playlist) []string {
 	out := make([]string, len(pl.Items))
 	for i, it := range pl.Items {
@@ -330,6 +343,33 @@ func TestPlPushRefusesLocalFiles(t *testing.T) {
 	_, _, err := runPull(t, "pl", "push", "通勤2", "--yes", "--force")
 	if exitOf(t, err) != 3 || !strings.Contains(err.Error(), "local file") || !strings.Contains(err.Error(), "local-l1") || len(fs.written()) != 1 {
 		t.Fatalf("有 local file 的 items 變更要 exit 3:%v", err)
+	}
+}
+
+// 有 mapping 但推不出去(PR #33 review):local file 從別的清單觀測進 C(mapping 存的是 spotify:local:… uri),推另一個清單時那首列 skip,
+// 其餘照推——不是 add 出去被 Spotify 整批拒收。
+func TestPlPushSkipsUnpushableMappingFromOtherPlaylist(t *testing.T) {
+	fs, dc, _, _ := pushWorld(t)
+	fs.setLocal("l1")
+	fs.set("p2", "其他", "l1")
+	mustPull(t, "pl", "link", "其他", "spotify:p2")
+	mustPull(t, "pl", "pull", "其他", "--yes")
+	local := drivePlaylistNamed(t, dc, "其他").Items[0]
+	if m := driveTracks(t, dc).Tracks[local.CID].Mappings["spotify"]; !strings.HasPrefix(m.ID, "spotify:local:") {
+		t.Fatalf("前提:local file 的 mapping 存的是 uri:%+v", m)
+	}
+	pl := drivePlaylistNamed(t, dc, "通勤")
+	editCanonical(t, dc, pl, []string{"a", "b", "c", "d"}, nil, "")
+	pl = drivePlaylistNamed(t, dc, "通勤")
+	rank, err := canon.RankBetween(pl.Items[len(pl.Items)-1].Rank, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl.Items = append(pl.Items, canon.Item{IID: canon.NewULID(), CID: local.CID, Rank: rank, AddedAt: 1})
+	putPlaylist(t, dc, pl)
+	out, _ := mustPull(t, "pl", "push", "通勤", "--yes")
+	if !slices.Equal(actions(out), []string{"add", "skip"}) || !slices.Equal(fs.tracksOf("p1"), []string{"a", "b", "c", "d"}) {
+		t.Fatalf("local file 那首列 skip、d 照推:%s %v", out, fs.tracksOf("p1"))
 	}
 }
 
