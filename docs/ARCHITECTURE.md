@@ -390,13 +390,13 @@ Layer 3 — 人工釘選(最高優先)
    信心度 1.00,永不被自動覆寫
 ```
 
-**實作上信心度是 0–100 的整數**(`canon.Encode` 要逐位元決定性,整數沒有浮點格式化歧義):觀測 100、ISRC 反查 95、fuzzy 60–84 進 review / ≥85 自動寫入、人工 100。
+**實作上信心度是 0–100 的整數**(`canon.Encode` 要逐位元決定性,整數沒有浮點格式化歧義):觀測 100、ISRC 反查 95、fuzzy 60–84 進 review / ≥85 自動寫入、人工 100。fuzzy 分數以 `floor` 取整;**時長差 >3 s 的候選上限 84**(時長項歸零時 title + artist 滿分剛好 85,會讓 extended mix / radio edit 自動寫入;時長是標題沒帶關鍵字時唯一的訊號)。
 
-**觀測 cid 的身分規則(2026-09-08,P4 後半,附錄 C 決策 19)。** 跨 ISRC 的 mapping(fuzzy 配對、人工釘選)一旦存在,純觀測的 cid(§6.2 公式)會與 canonical 分裂:cid `i:A` 釘了 `apple:X`,Apple 回報 X 的 ISRC 是 B,下次 pull 會算出 `i:B`,同一首歌兩筆。所以觀測到的 (provider, id, isrc) 依序決定 cid:(1) `tracks.json` 已有 mapping `(provider, id)` → 該 cid;(2) 正規化 ISRC 在某個 track 的 alias set → 該 cid;(3) 否則 §6.2 公式。給定 `tracks.json` 是決定性的;DERIVE 對 **base 快照裡的 cid 也套同一函式**再計數(§6.5.1 第 1 點)。代價:item 的 cid 依賴觀測當下的 `tracks.json`,共享檔 LWW 的新面向進 P5 重審。
+**觀測 cid 的身分規則(2026-09-08,P4 後半,附錄 C 決策 19)。** 跨 ISRC 的 mapping(fuzzy 配對、人工釘選)一旦存在,純觀測的 cid(§6.2 公式)會與 canonical 分裂:cid `i:A` 釘了 `apple:X`,Apple 回報 X 的 ISRC 是 B,下次 pull 會算出 `i:B`,同一首歌兩筆。所以平台現況 L 觀測到的 (provider, id, isrc) 依序決定 cid:(1) `tracks.json` 已有 mapping `(provider, id)` → 該 cid;(2) 正規化 ISRC 在某個 track 的 alias set → 該 cid(多命中取字典序最小並警告);(3) 否則 §6.2 公式;(4) 結果是 `merged` 表裡的敗者 → 沿 tombstone 追到勝者。**alias set 只在人工操作(review accept / `resolve pin` / 合併)時成長且要過所有權檢查(候選的 ISRC 已屬另一 cid → 進 review),`Observe` 與自動 mapping 永不改動它**,由此保證每個 ISRC 至多屬於一個 cid。**base 快照的 cid 只經 `merged` tombstone 重導**——不在表裡就保留原 cid,絕不落公式(base 沒有 ISRC,落公式會算出不存在的 `p:` cid、移除計數歸零、永遠刪不掉)、也不查 mapping(人把 id 從 X 改釘給 Y 時,base 的 X 若被重導成 Y,X 就留成孤兒;保留 X 才會在下次 pull「移除 X、新增 Y」)。給定 `tracks.json` 全部決定性。代價:item 的 cid 依賴觀測當下的 `tracks.json`,共享檔 LWW 的新面向進 P5 重審。
 
-**mapping 的形狀與優先序(決策 20)。** `mappings[provider] = { id, confidence, pinned, source, updated_at }`,`source ∈ observed | isrc | fuzzy | review`;`pinned: true` + `id: ""` = 使用者裁定「這個平台沒有這首」(不可得也是意圖,跟著 Drive 走才不會每次重問)。優先序 **pinned > observed > isrc / fuzzy**:觀測到真實 id 會覆寫非 pinned 的自動 mapping;自動程序永不覆寫 pinned。
+**mapping 的形狀與優先序(決策 20)。** `mappings[provider] = { id, confidence, pinned, source, updated_at }`,`source ∈ observed | isrc | fuzzy | review`;`pinned: true` + `id: ""` = 使用者裁定「這個平台沒有這首」(不可得也是意圖,跟著 Drive 走才不會每次重問)。優先序 **pinned > observed > isrc / fuzzy**:觀測到真實 id 會覆寫非 pinned 的自動 mapping;自動程序永不覆寫 pinned。`updated_at` 只在 `(id, confidence, pinned, source)` 其中之一真的改變時才更新,等價比較不看它——否則每次 pull 都會因位元組不同而重傳整份 `tracks.json`。
 
-**cid 合併(決策 21)。** 「同一錄音、兩個 cid」只在人工 accept / `resolve pin` 時合併;≥85 的自動寫入**絕不合併**——最佳候選 `(provider, id)` 已屬於另一個 cid 時,不論分數一律進 review 並列出那個 cid 的證據。勝者 = 字典序較小的 cid(兩台裝置各自合併同一對也同解);敗者的 items 改寫成勝者、alias set / mappings / `conflicts[]` 聯集、敗者從 `tracks` 刪除。兩個 cid 對同一 provider 持有**不同** id 是「不是同一錄音」的證據:人工仍合併時,敗者那個 id 進 `conflicts[]`,不靜默丟棄。**cid 除合併外永不改寫**,`p:` 開頭的 cid 對到帶 ISRC 的 mapping 之後也維持 `p:`。
+**cid 合併(決策 21)。** 「同一錄音、兩個 cid」只在人工 accept / `resolve pin` 時合併;≥85 的自動寫入**絕不合併**——最佳候選 `(provider, id)` 已屬於另一個 cid 時,不論分數一律進 review 並列出那個 cid 的證據。勝者 = 字典序較小的 cid(兩台裝置各自合併同一對也同解);敗者的 items 改寫成勝者、alias set / mappings / `conflicts[]` 聯集、敗者從 `tracks` 移除但在 `tracks.json` 的 `merged` 表留 tombstone `{敗者: 勝者}`(永久保留;鏈在寫入時壓平、讀取沿鏈追)。tombstone 讓這個多檔改寫可重入:COMMIT 先傳 `tracks.json` 再逐檔傳 `pl__*.json`、沒有交易,中途失敗會留下指向已移除 cid 的 item;FETCH 與 `Hydrate` 前把 item cid 經 `merged` 重導,改到的清單下次 COMMIT 自然重傳。兩個 cid 對同一 provider 持有**不同** id 是「不是同一錄音」的證據:人工仍合併時,敗者那個 id 進 `conflicts[]`,不靜默丟棄。**cid 除合併外永不改寫**,`p:` 開頭的 cid 對到帶 ISRC 的 mapping 之後也維持 `p:`。
 
 ### 5.2 已知陷阱(必須寫進測試案例)
 
@@ -507,7 +507,7 @@ $ capy resolve --review
 ```
 appDataFolder/                       # 扁平,不建子資料夾(見下)
 ├── manifest.json                    # schema_version, devices[], playlists[](pid;2026-09-08 T8 加,pull 的閘用它偵測部分遺失), last_compaction 待 P5
-├── tracks.json                      # cid → 曲目 metadata + { provider: provider_id } mapping + conflicts[](§6.2)
+├── tracks.json                      # cid → 曲目 metadata + mapping 物件 + conflicts[](§6.2);merged{敗者 cid → 勝者 cid}(P4 決策 21 的 tombstone)
 ├── pl__<pid>.json                   # canonical playlist(§6.2:name/desc/links + items[])
 ├── pl__<pid>.json
 ├── dev__<device_id>.json            # ⭐ 每台裝置只寫自己的檔;含 base[pid][provider] = { snapshot, observed_at }
@@ -585,7 +585,7 @@ capy pl sync 的一輪:
 
 純函式、不碰 IO、不改動傳入的物件。輸入:canonical 清單 C(items 依 `(rank, iid)`)、`tracks.json` 的 cid → track(只讀)、本裝置上次觀測 base = `base[pid][provider]`(可能沒有)、平台現況 L(名稱 + 依平台順序的曲目,含 ISRC)。
 
-1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §5.1 的身分規則算 cid(P4 起:先看 `tracks` 的 mapping、再看 alias set、最後才是 §6.2 公式;**base 快照裡的 cid 在計數前也過同一個函式**,否則合併後緊接的平台刪除永遠刪不掉、P5 push 會把它加回去——決策 19);base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
+1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §5.1 的身分規則算 cid(P4 起:先看 `tracks` 的 mapping、再看 alias set、最後才是 §6.2 公式;**base 快照裡的 cid 在計數前只經 `merged` tombstone 重導**(不查 mapping、不落公式,都不是就保留快照原本的 cid),否則合併後緊接的平台刪除永遠刪不掉、P5 push 會把它加回去——決策 19);base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
 2. **配對由 LCS 決定,不是「第 n 次出現」。** 以 cid 序列(C 依 rank、L 依位置,重複照算)求最長共同子序列,對上的 item 留在原位;L 裡沒對上的出現,依 L 順序拿同 cid 剩下的 C item(rank 序最前者)配對並搬動;沒有剩下的才是新增。盲配「第 n 次出現」會在重複曲目換序時這輪搬這份、下輪搬那份,永遠多報一筆 move(2026-09-08 PR #19 review 抓到)。配對不看 mapping——別的 provider 建的 cid 在這個 provider 第一次被觀測到時要能配上(見第 3 點),否則每次 pull 都會多一份。
 3. **觀測寫回 tracks**:L 的每首都 `Observe`:`tracks` 沒有這個 cid → 新建 track(含這個 provider 的 mapping);有 cid 但沒這個 provider 的 mapping → 加 mapping(metadata 不符則記 `conflicts[]`,§6.2);已有 mapping → pinned 或 observed 不動(mapping 不抖動);P4 起非 pinned 的 `isrc` / `fuzzy` mapping 會被觀測到的真實 id 覆寫(決策 20 的優先序 pinned > observed > isrc / fuzzy)。
 4. **新增**:L 裡配對不到的出現 → add,插在它在 L 的前一個元素所配對的 C 位置之後;`iid` = 新 ULID、`added_at` = 現在。C 全空(首次 pull)時 rank 用 `Ranks(n)` 均分,其餘用 `RankBetween`。
@@ -614,10 +614,11 @@ capy pl sync 的一輪:
 db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
--- schema v4(PRAGMA user_version = 4;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id、P4 T2a 加 mappings 的 confidence / pinned / source / updated_at(決策 20);與 v0.5 草案的差異見下段)
+-- schema v4(PRAGMA user_version = 4;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id、P4 T2a 加 mappings 的 confidence / pinned / source / updated_at(決策 20)、T2b 加 merged 表(決策 21);與 v0.5 草案的差異見下段)
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT, artists TEXT /* JSON [] */, album TEXT, duration_ms INTEGER, conflicts TEXT /* JSON [],§6.2 */);
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT /* 空 + pinned = 不可得 */, confidence INTEGER /* 0–100 */, pinned INTEGER, source TEXT /* observed|isrc|fuzzy|review */, updated_at INTEGER, PRIMARY KEY (cid, provider));
+CREATE TABLE merged (cid TEXT PRIMARY KEY, into_cid TEXT /* tracks.json 的 merged 表鏡像:合併敗者 → 勝者(P4 決策 21) */);
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updated_at INTEGER);
 CREATE TABLE playlist_items (pid TEXT, iid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (pid, provider));
@@ -881,12 +882,12 @@ capy doctor
 | 16 | 播放器畫面(2026-09-04) | 先做 `now --watch`(bubbletea,Spotify 與 Apple 皆支援,Apple 端不得啟動未執行的 Music.app);無參數 `capy` 儀表板留到之後 | 範圍可控、獨立可測;儀表板依賴同一套元件,之後疊 |
 | 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除(2026-09-07 T6 已併入 `state.db`,`internal/cache` 留作門面,舊檔首次 Load 時刪除) | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
 | 18 | 刪除閾值公式與閘(2026-09-08,T8) | Q3 採 B:單一 (清單, provider) 要刪 >10 首、或 >30% 且 >3 首才擋,分母是該 provider 可見曲數(`DeriveResult.VisibleCount`);「Drive 不完整」是獨立的閘,`--yes` / `--force` 都不放行;`--force` 只能配單一清單、不能配 `--all`(一組超標整輪擋下,但解除只能一次一個清單) | A(`>10 或 >30%`)會擋掉「5 首刪 2 首」這種日常操作,C(<10 首不擋)會放過「4 首刪光」;B 兩邊都顧到。閘與閾值分開,是因為閾值的例外(`--force`)是「我知道我在刪」,不是「我知道 Drive 壞了」 |
-| 19 | 觀測 cid 的身分規則(2026-09-08,P4 T0) | 三段式:已有 mapping 的 (provider, id) → 該 cid;正規化 ISRC 在某 track 的 alias set → 該 cid;否則 §6.2 公式。DERIVE 對 base 快照的 cid 也套同一函式再計數 | 跨 ISRC 的 mapping(fuzzy、人工釘選)一存在,純觀測 cid 就會把同一首歌分裂成兩筆;base 不過同一函式的話,合併後緊接的平台刪除會變永久孤兒、P5 push 會把它加回去。代價:item cid 依賴觀測當下的 `tracks.json`,共享檔 LWW 的新面向進 P5 重審 |
-| 20 | mapping 物件化與 schema 硬切換(2026-09-08) | `mappings[provider] = {id, confidence 0–100 整數, pinned, source ∈ observed/isrc/fuzzy/review, updated_at}`;pinned + 空 id = 不可得;優先序 pinned > observed > isrc/fuzzy;`SchemaVersion` 1 → 2(所有檔),讀時相容字串舊形;SQLite user_version 3 → 4 | 釘選是使用者意圖,要跟 Drive 走(§7 早就講明);整數信心度避免 Encode 的浮點格式歧義;單一常數一條路;Drive 上目前沒有真資料,硬切換成本零,但 release notes 要寫「每台裝置都要更新」(Q10) |
-| 21 | cid 合併(2026-09-08) | 只由人裁決(accept / pin),自動寫入絕不合併——候選已屬另一 cid 一律進 review;勝者 = 字典序較小的 cid;兩 cid 對同 provider 持不同 id 時人工仍合併 → 敗者 id 進 `conflicts[]`;cid 除合併外永不改寫,`p:` 不重鍵 | 合併是改寫 source of truth 的多檔操作,85 分的自動判斷不夠格;字典序讓兩台裝置各自合併同一對也同解 |
+| 19 | 觀測 cid 的身分規則(2026-09-08,P4 T0) | 三段式:已有 mapping 的 (provider, id) → 該 cid;正規化 ISRC 在某 track 的 alias set → 該 cid;否則 §6.2 公式。結果是 tombstone 敗者就追到勝者;alias set 只在人工操作時成長且過所有權檢查(每個 ISRC 至多屬一個 cid);**base 快照的 cid 只經 `merged` tombstone 重導,不在表裡就保留原 cid,絕不落公式、不查 mapping** | 跨 ISRC 的 mapping(fuzzy、人工釘選)一存在,純觀測 cid 就會把同一首歌分裂成兩筆;base 沒有 ISRC,落公式會算出不存在的 cid 讓移除計數歸零 → 合併後緊接的平台刪除變永久孤兒、P5 push 加回去;查 mapping 在「id 改釘給別的 cid」時同樣製造孤兒(PR #24 review)。代價:item cid 依賴觀測當下的 `tracks.json`,共享檔 LWW 的新面向進 P5 重審 |
+| 20 | mapping 物件化與 schema 硬切換(2026-09-08) | `mappings[provider] = {id, confidence 0–100 整數, pinned, source ∈ observed/isrc/fuzzy/review, updated_at}`;pinned + 空 id = 不可得;優先序 pinned > observed > isrc/fuzzy;`updated_at` 只在 (id, confidence, pinned, source) 真的變時才動、等價比較不看它;`SchemaVersion` 1 → 2(所有檔),讀時相容字串舊形;SQLite user_version 3 → 4;不給 `Snapshot` 加 ISRC(tombstone 規則下 base 不需要) | 釘選是使用者意圖,要跟 Drive 走(§7 早就講明);整數信心度避免 Encode 的浮點格式歧義;單一常數一條路;Drive 上目前沒有真資料,硬切換成本零,但 release notes 要寫「每台裝置都要更新」(Q10) |
+| 21 | cid 合併(2026-09-08) | 只由人裁決(accept / pin),自動寫入絕不合併——候選已屬另一 cid 一律進 review;勝者 = 字典序較小的 cid;兩 cid 對同 provider 持不同 id 時人工仍合併 → 敗者 id 進 `conflicts[]`;敗者從 tracks 移除但在 `merged` 留 tombstone,FETCH / Hydrate 前 item cid 經 tombstone 重導;cid 除合併外永不改寫,`p:` 不重鍵 | 合併是改寫 source of truth 的多檔操作,85 分的自動判斷不夠格;字典序讓兩台裝置各自合併同一對也同解;tombstone 讓沒有交易的多檔 COMMIT 中途失敗可自癒(PR #24 review) |
 | 22 | `capy resolve` 契約(2026-09-08) | 預設全部已連結清單;≥85 自動寫入走 `withCanonical`;exit 0 無事/已寫入(review 佇列非空仍 0)、1 錯誤、2 待寫入未確認;`--review` TTY 逐筆、非 TTY exit 2;`pin <cid> <provider>:<id|none>`;`pl pull` 不做 resolve 只提示 | resolve 只增不刪所以不需 `--all`;cron 的 `resolve --yes` 不能因永遠有幾首解不開而永遠報錯;API 成本與關注點分離 |
-| 23 | Layer 1 / 2 規則(2026-09-08) | ISRC 反查候選只留 ISRC 相同者,多筆消歧:專輯名同 > 時長差最小 > id 字典序;fuzzy = 60·JW(title) + 25·JW(primary artist) + 15·時長項(≤3 s 滿分、≥30 s 零、線性),live/remix/acoustic/cover/demo/instrumental/karaoke 只在一邊 → 上限 84;<60 不列;`norm()` 手刻全形轉半形,不引入 `x/text`;artist alias 表延後 | 真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553,fuzzy 只補 ~1%;`Track` 沒有發行日所以拿掉「較早發行」 |
-| 24 | negative cache 延後(2026-09-08) | 每次 resolve 重查未解 cid;觸發條件:單次 >200 次 API 或 resolve 進 cron → 加純快取表(不進 `Dump`) | §7 本就允許純快取;這是成本判斷不是約束判斷 |
+| 23 | Layer 1 / 2 規則(2026-09-08) | ISRC 反查候選只留 ISRC 相同者,多筆消歧:專輯名同 > 時長差最小 > id 字典序;fuzzy = 60·JW(title) + 25·JW(primary artist) + 15·時長項(≤3 s 滿分、≥30 s 零、線性),live/remix/acoustic/cover/demo/instrumental/karaoke 只在一邊 → 上限 84;時長差 >3 s → 上限 84;`floor` 取整;<60 不列;`norm()` 手刻全形轉半形,不引入 `x/text`;artist alias 表延後 | 真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553,fuzzy 只補 ~1%;`Track` 沒有發行日所以拿掉「較早發行」 |
+| 24 | negative cache 延後(2026-09-08) | 每次 resolve 重查未解 cid;cron 的 `resolve --yes` 是支援用法;觸發條件只留單次 >200 次 API(T4 超過時 stderr 提醒)→ 加純快取表(不進 `Dump`) | §7 本就允許純快取;這是成本判斷不是約束判斷;cron 若同時是支援用法又是觸發條件,延後就變成一上線就欠(PR #24 review) |
 | 25 | P4 T0 只產計畫與 spec(2026-09-08) | 等維護者 review 後開 T1 | 與 P3 決策 12 同模式 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
