@@ -260,32 +260,37 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 	}
 	for _, sk := range skipped {
 		t := s.tracks.Tracks[sk.CID]
-		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, "", t.Title, strings.Join(t.Artists, ", "), sk.Reason})
+		reason, id := sk.Reason, ""
+		if m := t.Mappings[plan.prov]; m.ID != "" { // 有 mapping 但推不出去:resolve 修不了,提示也不會算它
+			reason, id = "有 mapping 但推不出去(local file / library-only),只能在平台手動加", m.ID
+		}
+		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
 	}
 	return rows, work
 }
 
 // apply:確認之後再讀一次 L 比對 current(平台端沒有 CAS,這是縮小窗口的做法;spec §6.5.2 規則 6)→ ApplyOps → 重讀 L′ → base := L′。
-// stale = 確認期間平台變了(或重讀失敗),這份零寫入;其餘 err 是 ApplyOps 的錯(可能寫了一半)。n 是套了幾個 op。
-func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (n int, stale bool, err error) {
+// stale = 確認期間平台變了(或重讀失敗),這份零寫入;其餘 err 是 ApplyOps 的錯(可能寫了一半)。n 是套了幾個 op;
+// touched = 平台有被改到(全部成功或半截),COMMIT 失敗時的說法靠它,不靠 n(半截時 n 是 0)。
+func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (n int, touched, stale bool, err error) {
 	now, err := p.reader.GetPlaylistItems(ctx, p.link)
 	if errors.Is(err, provider.ErrNotFound) {
 		now, err = nil, nil
 	}
 	if err != nil {
-		return 0, true, friendlyErr(p.prov, err)
+		return 0, false, true, friendlyErr(p.prov, err)
 	}
 	if !slices.Equal(idsOf(now), p.current) {
-		return 0, true, nil
+		return 0, false, true, nil
 	}
 	skipped, werr := p.writer.ApplyOps(ctx, p.link, p.current, p.ops)
 	written, renamed := len(p.want), p.wantName != ""
 	var pw *provider.PartialWriteError
 	switch {
 	case werr == nil:
-		n = len(p.ops) - len(skipped)
+		n, touched = len(p.ops)-len(skipped), true
 	case errors.As(werr, &pw):
-		written, renamed = pw.Written, pw.Renamed
+		written, renamed, touched = pw.Written, pw.Renamed, true
 	default:
 		written, renamed = -1, false // 第一個請求就失敗,平台沒動
 		werr = friendlyErr(p.prov, werr)
@@ -312,7 +317,7 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 		}
 	case written < 0:
 		fmt.Fprintf(stderr, "警告:重讀 %s 的 %s 失敗(%v);平台沒動,base 不變\n", p.pl.Name, p.prov, friendlyErr(p.prov, rerr))
-		return n, false, werr
+		return n, touched, false, werr
 	default:
 		fmt.Fprintf(stderr, "警告:重讀 %s 的 %s 失敗(%v);base 先記成已寫入的 %d 首,下次 pull 會校正\n", p.pl.Name, p.prov, friendlyErr(p.prov, rerr), written)
 		snap = canon.Snapshot{ID: p.link, Name: name, Items: slices.Clone(p.want[:written]), CIDs: slices.Clone(p.wantCIDs[:written])}
@@ -320,7 +325,7 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 	if !snapshotEqual(p.base, snap) {
 		s.mine().SetBase(p.pl.PID, p.prov, snap)
 	}
-	return n, false, werr
+	return n, touched, false, werr
 }
 
 func newPlPushCmd() *cobra.Command {
@@ -348,7 +353,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 			}
 			ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 			var deferred error // ApplyOps 失敗 / 確認期間平台變了:base 要落地(COMMIT 要走),所以 fn 回 nil、這裡收尾再回錯
-			applied := 0
+			applied, touched := 0, false
 			err := withCanonical(ctx, stderr, func(s *canonState) error {
 				targets, err := pullTargets(s, args, all, prov)
 				if err != nil {
@@ -396,8 +401,8 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				}
 				var stale []string
 				for _, p := range plans {
-					k, isStale, err := p.apply(ctx, s, stderr)
-					applied += k
+					k, hit, isStale, err := p.apply(ctx, s, stderr)
+					applied, touched = applied+k, touched || hit
 					switch {
 					case isStale:
 						why := "於確認期間變了"
@@ -421,15 +426,24 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				}
 				return nil
 			})
+			// COMMIT 失敗而平台已經被改到:版本守衛那句「零寫入」只對 Drive 成立,改口;半截寫入 + Drive 沒寫成兩件事都要講——
+			// 那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
 			var ge *guardError
-			switch { // COMMIT 失敗時平台已經改好、只有 Drive 沒寫成;版本守衛那句「零寫入」對 push 不成立,改口
-			case err != nil && applied > 0 && errors.As(err, &ge):
-				return fmt.Errorf("Drive 上的檔在這次執行期間變了(%s);平台已寫入 %d 筆、Drive 沒動(base 沒前進):先 capy pl pull 再 capy pl push", ge.Files, applied)
-			case err != nil && applied > 0:
-				return fmt.Errorf("平台已寫入 %d 筆,但 Drive 這邊沒寫成(base 沒前進):%w;先 capy pl pull 再 capy pl push", applied, err)
-			}
-			if err != nil {
+			var driveMsg string
+			switch {
+			case err == nil:
+			case !touched:
 				return err
+			case errors.As(err, &ge):
+				driveMsg = "Drive 上的檔在這次執行期間變了(" + ge.Files + ")"
+			default:
+				driveMsg = "Drive 沒寫成:" + err.Error()
+			}
+			switch {
+			case driveMsg != "" && deferred != nil:
+				return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),再 pull、再 push", deferred, driveMsg)
+			case driveMsg != "":
+				return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):先 capy pl pull 再 capy pl push", applied, driveMsg)
 			}
 			return deferred
 		},

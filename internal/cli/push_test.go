@@ -367,9 +367,33 @@ func TestPlPushSkipsUnpushableMappingFromOtherPlaylist(t *testing.T) {
 	}
 	pl.Items = append(pl.Items, canon.Item{IID: canon.NewULID(), CID: local.CID, Rank: rank, AddedAt: 1})
 	putPlaylist(t, dc, pl)
-	out, _ := mustPull(t, "pl", "push", "通勤", "--yes")
+	out, errs := mustPull(t, "pl", "push", "通勤", "--yes")
 	if !slices.Equal(actions(out), []string{"add", "skip"}) || !slices.Equal(fs.tracksOf("p1"), []string{"a", "b", "c", "d"}) {
 		t.Fatalf("local file 那首列 skip、d 照推:%s %v", out, fs.tracksOf("p1"))
+	}
+	if !strings.Contains(out, "有 mapping 但推不出去") || strings.Contains(errs, "尚未對應") {
+		t.Fatalf("reason 要說是推不出去、不是沒 mapping,提示也不算它:%s%s", out, errs)
+	}
+}
+
+// 半截寫入之後 COMMIT 也失敗:兩件事都要講(平台只有前 100 首、Drive 沒寫成 base 沒前進),不能是守衛那句「零寫入」。
+func TestPlPushPartialWriteThenCommitFailureSaysBoth(t *testing.T) {
+	fs, dc, srv, pl := pushWorld(t)
+	var ids []string
+	for i := 0; i < 150; i++ {
+		ids = append(ids, fmt.Sprintf("t%03d", i))
+	}
+	editCanonical(t, dc, pl, ids, nil, "")
+	fs.mu.Lock()
+	fs.postFail = 3
+	fs.mu.Unlock()
+	srv.FailOn(func(r *http.Request) bool { return r.Method == http.MethodPatch }, http.StatusInternalServerError, "backendError")
+	_, _, err := runPull(t, "pl", "push", "通勤", "--yes")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "只有前 100 首") || !strings.Contains(err.Error(), "Drive 沒寫成") || strings.Contains(err.Error(), "零寫入,重跑") {
+		t.Fatalf("兩件事都要講:%v", err)
+	}
+	if b := baseOf(t, dc); len(b.Items) != 3 {
+		t.Fatalf("base 沒前進:%d", len(b.Items))
 	}
 }
 
@@ -384,7 +408,7 @@ func TestPlPushPartialWriteAdvancesBase(t *testing.T) {
 	fs.mu.Lock()
 	fs.postFail = 3
 	fs.mu.Unlock()
-	_, errs, err := runPull(t, "pl", "push", "通勤", "--yes", "--force")
+	_, errs, err := runPull(t, "pl", "push", "通勤", "--yes")
 	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "只有前 100 首") || !strings.Contains(errs, "寫入 通勤 的 spotify 失敗") {
 		t.Fatalf("半截寫入要 exit 1 並講明:%v\n%s", err, errs)
 	}
@@ -425,7 +449,7 @@ func TestPlPushPartialWriteRereadFailureStillAdvancesBase(t *testing.T) {
 		}
 		fs.handler(t)(w, r)
 	})
-	_, errs, err := runPull(t, "pl", "push", "通勤", "--yes", "--force")
+	_, errs, err := runPull(t, "pl", "push", "通勤", "--yes")
 	if exitOf(t, err) != 1 || !strings.Contains(errs, "base 先記成已寫入的 100 首") {
 		t.Fatalf("重讀失敗要記 want[:written]:%v\n%s", err, errs)
 	}
