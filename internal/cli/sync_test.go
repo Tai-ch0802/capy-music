@@ -74,7 +74,7 @@ func TestPlSyncRoundConverges(t *testing.T) {
 	if !slices.Equal(fs1.tracksOf("p1"), []string{"c", "a"}) || !slices.Equal(fs2.tracksOf("q1"), []string{"c", "a"}) {
 		t.Fatalf("兩邊都要收斂到 [c a]:%v %v", fs1.tracksOf("p1"), fs2.tracksOf("q1"))
 	}
-	if !strings.Contains(errs, "已套用 2 筆 pull 變更、推送 2 筆") {
+	if !strings.Contains(errs, "已推送 2 筆變更") || !strings.Contains(errs, "已套用 2 筆 pull 變更") {
 		t.Fatalf("收尾訊息:%s", errs)
 	}
 	if out, errs := mustPull(t, "pl", "sync", "通勤", "--yes"); strings.TrimSpace(out) != "" || !strings.Contains(errs, "無變更") {
@@ -149,9 +149,12 @@ func TestPlSyncVersionGuardMessageAndRerun(t *testing.T) {
 		tr.Tracks[fakeCID("zz")] = canon.Track{CID: fakeCID("zz"), Title: "zz", Mappings: map[string]canon.Mapping{}}
 		putTracks(t, dc, tr)
 	}))
-	_, _, err := runPull(t, "pl", "sync", "通勤", "--yes")
+	_, errs, err := runPull(t, "pl", "sync", "通勤", "--yes")
 	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "平台已寫入 1 筆") || strings.Contains(err.Error(), "零寫入,重跑") || !slices.Equal(fs1.tracksOf("p1"), []string{"a", "c"}) {
 		t.Fatalf("守衛訊息要改口、Spotify 已被改:%v %v", err, fs1.tracksOf("p1"))
+	}
+	if strings.Contains(errs, "已套用") || !strings.Contains(errs, "已推送 1 筆") { // Drive 沒寫成就不能說 pull 套用了;平台寫入是既成事實
+		t.Fatalf("stderr 不得聲稱 pull 已套用:%s", errs)
 	}
 	fs1.setHook(nil)
 	// base 沒落地(dev__ 在 Drive),重跑的 pull 半邊會把剛推到 Spotify 的刪除當平台變更再吸收一次——不是零 pull、是零 push(決策 31 措辭已改)
@@ -188,6 +191,37 @@ func TestPlSyncReadOnlyProviderDegradesToPull(t *testing.T) {
 		t.Fatalf("push 明說 apple 仍是 exit 1:%v", err)
 	}
 	_ = fs1
+}
+
+// 一個清單的 push 半邊 refused(含 local file)不擋整輪(PR #36 review):cron 的 sync --all 照常 pull 兩個清單、push 另一個;
+// 那一格只 pull 不 push、stderr 說明;pl push 對同一個清單仍是 exit 3。
+func TestPlSyncRefusedPairOnlySkipsThatPush(t *testing.T) {
+	fs1, fs2, dc, _ := syncWorld(t)
+	fs1.setLocal("lf1")
+	fs1.set("p2", "睡前", "x", "lf1")
+	fs2.set("q2", "睡前", "x")
+	mustPull(t, "pl", "link", "睡前", "spotify:p2")
+	mustPull(t, "pl", "link", "睡前", "apple:q2")
+	mustPull(t, "pl", "sync", "--all", "--yes")
+	fs2.set("q2", "睡前", "x", "c") // 睡前 的 Apple 加 c(c 已有 spotify mapping)→ push 到 spotify 踩 local file
+	fs2.set("q1", "通勤", "a", "c") // 通勤 的 Apple 刪 b → 一個完全正常的 pull + push
+	out, errs := mustPull(t, "pl", "sync", "--all", "--yes")
+	if !strings.Contains(errs, "跳過 睡前 的 spotify 的 push 半邊") || !strings.Contains(errs, "local file") {
+		t.Fatalf("那一格只跳過並說明:%s", errs)
+	}
+	// 睡前 的 spotify 側沒有列(跳過);apple 側的 skip 是 local file 那首在 apple 沒 mapping,照常
+	if acts := dirActions(out); !slices.Equal(acts, []string{"pull add apple", "pull remove apple", "push skip apple", "push remove spotify"}) {
+		t.Fatalf("其餘照常:%v", acts)
+	}
+	if !slices.Equal(fs1.tracksOf("p1"), []string{"a", "c"}) || !slices.Equal(fs1.tracksOf("p2"), []string{"x", "lf1"}) {
+		t.Fatalf("通勤 推到 Spotify、睡前 的 Spotify 不動:%v %v", fs1.tracksOf("p1"), fs1.tracksOf("p2"))
+	}
+	if !slices.Equal(cidsOf(drivePlaylistNamed(t, dc, "睡前")), []string{fakeCID("x"), "p:spotify:spotify:local:x:y:lf1:200", fakeCID("c")}) {
+		t.Fatalf("睡前 的 pull 半邊要落地(含 c):%v", cidsOf(drivePlaylistNamed(t, dc, "睡前")))
+	}
+	if _, _, err := runPull(t, "pl", "push", "睡前", "--yes"); exitOf(t, err) != 3 {
+		t.Fatalf("pl push 對同一個清單仍是 exit 3:%v", err)
+	}
 }
 
 func TestPlSyncArgs(t *testing.T) {

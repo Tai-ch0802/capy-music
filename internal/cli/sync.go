@@ -25,7 +25,8 @@ func newPlSyncCmd() *cobra.Command {
 變更集一次印完(非 TTY 是無標題 TSV:dir action provider playlist pos cid provider_id title artists reason;dir ∈ pull / push),確認一次;
 --dry-run 的 push 半邊是用 pull 套用後的 canonical 投影的,看得到完整一輪。閾值對每個 (清單, 平台) 各算,exit code 同 pl pull / pl push。
 push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完平台才寫 Drive,Drive 那邊沒寫成時訊息會講明平台已經改了。
---provider 指到還寫不了的平台(Apple,P0-2 前)時只 pull 不 push,stderr 會說。`,
+--provider 指到還寫不了的平台(Apple,P0-2 前)時只 pull 不 push,stderr 會說;某個清單的某個平台推不了(含 local file)也一樣只跳過那一格的 push 半邊,
+不擋整輪(cron 的 sync --all 不會被一個清單綁死)。刪除閾值仍擋整輪。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
@@ -39,7 +40,7 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 			}
 			ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 			var deferred error
-			applied, touched := 0, false
+			applied, touched, pulled := 0, false, 0
 			err := withCanonical(ctx, stderr, func(s *canonState) error {
 				targets, err := pullTargets(s, args, all, prov)
 				if err != nil {
@@ -64,7 +65,7 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 				if len(rows) > 0 {
 					ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), syncHeader, rows)
 				}
-				if len(refused) > 0 {
+				if len(refused) > 0 { // planPush 不 strict 時不會回 refused;留著是免得哪天有人改回 strict 而靜靜寫入
 					return &BlockedError{Msg: strings.Join(refused, ";")}
 				}
 				if blocked = append(blocked, pblocked...); len(blocked) > 0 && !force {
@@ -99,9 +100,15 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 					}
 				}
 				applied, touched, deferred = applyPlans(ctx, s, plans, stderr)
-				fmt.Fprintf(stderr, "已套用 %d 筆 pull 變更、推送 %d 筆\n", len(pullRows), applied)
+				if applied > 0 { // 平台寫入是既成事實,可以現在講;pull 那半是 Drive 的事,COMMIT 成功後才講
+					fmt.Fprintf(stderr, "已推送 %d 筆變更\n", applied)
+				}
+				pulled = len(pullRows)
 				return nil
 			})
+			if err == nil && pulled > 0 {
+				fmt.Fprintf(stderr, "已套用 %d 筆 pull 變更\n", pulled)
+			}
 			return finishPush(err, applied, touched, deferred, "重跑 capy pl sync(pull 半邊會把已推到平台的變更當平台變更再吸收一次,不會重複)")
 		},
 	}

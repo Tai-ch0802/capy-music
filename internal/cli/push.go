@@ -132,6 +132,8 @@ type pushPlan struct {
 // refused 是 --force 也不放行的(前提、local file、清單消失);blocked 是刪除閾值(--force 越過)。
 // lives 非 nil 時該 (清單, provider) 的 L 直接用它(pl sync 的 push 半邊重用 pull 半邊剛讀的 L,決策 31)。
 // strict:明說 --provider 卻寫不了(Apple)是錯(push);sync 不是——「sync Apple」在 T6 前就是只 pull,stderr 說明後照常。
+// 同理 refused(前提、local file、清單消失)在 strict 時擋整輪(exit 3),不 strict 時只跳過那一格的 push 半邊(PR #36 review:
+// cron 的 sync --all 不能被一個含 local file 的清單永久綁死;pull 半邊照常落地)。
 func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
 	merged := mergedBase(s)
 	for _, pl := range targets {
@@ -156,14 +158,21 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				return nil, nil, nil, nil, err
 			}
 			link := pl.Links[prov]
+			refuse := func(msg string) {
+				if strict {
+					refused = append(refused, msg)
+					return
+				}
+				fmt.Fprintf(stderr, "跳過 %s 的 %s 的 push 半邊:%s\n", pl.Name, prov, msg)
+			}
 			ref, ok := refs[link]
 			if !ok {
-				refused = append(refused, fmt.Sprintf("%s 端找不到清單 %s(%s),先 capy pl pull %s(會取消連結)", prov, link, pl.Name, pl.Name))
+				refuse(fmt.Sprintf("%s 端找不到清單 %s(%s),先 capy pl pull %s(會取消連結)", prov, link, pl.Name, pl.Name))
 				continue
 			}
 			b, ok := merged[pl.PID][prov]
 			if !ok || b.Snapshot.ID != link { // 前提一
-				refused = append(refused, fmt.Sprintf("%s 的 %s 還沒 pull 過(沒有 base),先 capy pl pull %s", pl.Name, prov, pl.Name))
+				refuse(fmt.Sprintf("%s 的 %s 還沒 pull 過(沒有 base),先 capy pl pull %s", pl.Name, prov, pl.Name))
 				continue
 			}
 			live, reused := lives[liveKey{pl.PID, prov}]
@@ -183,7 +192,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			tracks := live.Tracks
 			lcid, snap := observeLive(s, prov, live)
 			if !liveUnchanged(b.Snapshot, snap) { // 前提二
-				refused = append(refused, fmt.Sprintf("%s 在 %s 有未 pull 的變更,先 capy pl pull %s(或 capy pl sync)", pl.Name, prov, pl.Name))
+				refuse(fmt.Sprintf("%s 在 %s 有未 pull 的變更,先 capy pl pull %s(或 capy pl sync)", pl.Name, prov, pl.Name))
 				continue
 			}
 			items := make([]canon.LiveItem, len(tracks))
@@ -210,7 +219,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				}
 			}
 			if itemsChange && len(local) > 0 { // 計畫 Q22:整批取代加不回 local file,最小操作做好前拒絕;只改名不算
-				refused = append(refused, fmt.Sprintf("%s 在 %s 有 %d 首 local file(%s),整批取代會把它們弄丟,這個清單暫不支援 push", pl.Name, prov, len(local), strings.Join(local, "、")))
+				refuse(fmt.Sprintf("%s 在 %s 有 %d 首 local file(%s),整批取代會把它們弄丟,這個清單暫不支援 push", pl.Name, prov, len(local), strings.Join(local, "、")))
 				continue
 			}
 			if removalBlocked(plan.removes, len(tracks)) {
