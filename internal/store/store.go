@@ -22,7 +22,7 @@ import (
 
 const (
 	fileName      = "state.db"
-	schemaVersion = 4 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at。升版舊檔改名保留(T9)
+	schemaVersion = 5 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at;v5(T2b,決策 21):加 merged。升版舊檔改名保留(T9)
 )
 
 // schema v1。與 spec §7 的差異(2026-09-07,理由寫在 spec §7):tracks 多 artists / conflicts(JSON)、少 updated_at
@@ -32,6 +32,7 @@ const schema = `
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT NOT NULL, artists TEXT NOT NULL, album TEXT NOT NULL, duration_ms INTEGER NOT NULL, conflicts TEXT NOT NULL);
 CREATE TABLE isrcs (cid TEXT NOT NULL, isrc TEXT NOT NULL, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (cid TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, confidence INTEGER NOT NULL, pinned INTEGER NOT NULL, source TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (cid, provider));
+CREATE TABLE merged (cid TEXT PRIMARY KEY, into_cid TEXT NOT NULL);
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE playlist_items (pid TEXT NOT NULL, iid TEXT NOT NULL, cid TEXT NOT NULL, rank TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, PRIMARY KEY (pid, provider));

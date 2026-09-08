@@ -647,3 +647,59 @@ func TestPlPullSecondRunUploadsNothing(t *testing.T) {
 		t.Fatalf("第二次 pull 要零上傳、零變更:writes=%d out=%q errs=%q", writes, out, errs)
 	}
 }
+
+// 決策 21 的自癒:tracks.json 已合併、清單還指著敗者(COMMIT 傳完 tracks.json 就斷掉的殘留)→ 下一次 pull 在 FETCH 修回、
+// 隨 COMMIT 上傳;之後零上傳、刪 db 重建等價;平台刪掉敗者那首時 base 的敗者 cid 經墓碑重導,一次 pull 就移除。
+func TestPlPullHealsMergedTombstoneLeftovers(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	ctx := context.Background()
+	tracks := decodeFile[canon.Tracks](t, driveFiles(t, dc), "tracks.json")
+	s, err := canon.Merge(tracks, nil, fakeCID("a"), fakeCID("b")) // 人工合併,清單刻意不改
+	if err != nil || s != fakeCID("a") {
+		t.Fatalf("勝者字典序小:%s %v", s, err)
+	}
+	body, err := canon.Encode(tracks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := dc.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Name == "tracks.json" {
+			if _, err := dc.Update(ctx, f.ID, canon.TracksFile().Props, body); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	out, errs := mustPull(t, "pl", "pull", "通勤", "--yes")
+	if out != "" || !strings.Contains(errs, "修復 1 筆") {
+		t.Fatalf("平台照舊 → 零列;stderr 說修了 1 筆:%q\n%s", out, errs)
+	}
+	pl := decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__")
+	if len(pl.Items) != 2 || pl.Items[0].CID != s || pl.Items[1].CID != s {
+		t.Fatalf("Drive 上的清單不再指著敗者:%v", pl.Items)
+	}
+	_, errs = mustPull(t, "pl", "pull", "通勤", "--yes")
+	if strings.Contains(errs, "修復") {
+		t.Fatalf("修過就不再修:%s", errs)
+	}
+	files2, dump2 := driveFiles(t, dc), dumpBytes(t)
+	deleteDB(t)
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	if !sameFiles(files2, driveFiles(t, dc)) || !bytes.Equal(dump2, dumpBytes(t)) {
+		t.Fatal("刪 db 後重建要與刪前等價(merged 表也在鏡像裡)")
+	}
+	fs.set("p1", "通勤", "a") // 平台刪掉 b:它的 cid 是敗者,只剩 base 記得
+	out, _ = mustPull(t, "pl", "pull", "通勤", "--yes")
+	if !strings.HasPrefix(out, "remove\tspotify\t通勤\t1\t"+s+"\t") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("恰好一筆 remove、cid 是勝者:%q", out)
+	}
+	if pl := decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__"); len(pl.Items) != 1 {
+		t.Fatalf("清單剩一個 item:%v", pl.Items)
+	}
+}

@@ -29,7 +29,7 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 			_ = tx.Rollback()
 		}
 	}()
-	for _, t := range []string{"tracks", "isrcs", "mappings", "playlists", "playlist_items", "playlist_links", "devices", "device_base"} {
+	for _, t := range []string{"tracks", "isrcs", "mappings", "merged", "playlists", "playlist_items", "playlist_links", "devices", "device_base"} {
 		if _, err = tx.Exec("DELETE FROM " + t); err != nil {
 			return err
 		}
@@ -58,6 +58,11 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 					cid, prov, m.ID, m.Confidence, m.Pinned, m.Source, m.UpdatedAt); err != nil {
 					return err
 				}
+			}
+		}
+		for loser, survivor := range c.Tracks.Merged {
+			if _, err = tx.Exec("INSERT INTO merged (cid, into_cid) VALUES (?, ?)", loser, survivor); err != nil {
+				return err
 			}
 		}
 	}
@@ -149,6 +154,16 @@ func (s *Store) Dump() (Canonical, error) {
 			return fmt.Errorf("mappings 有 tracks 沒有的 cid %s(db 不一致,刪掉重建)", cid)
 		}
 		t.Mappings[prov] = m
+		return nil
+	}); err != nil {
+		return c, err
+	}
+	if err := query(tx, "SELECT cid, into_cid FROM merged", func(r *sql.Rows) error {
+		var loser, survivor string
+		if err := r.Scan(&loser, &survivor); err != nil {
+			return err
+		}
+		c.Tracks.Merged[loser] = survivor
 		return nil
 	}); err != nil {
 		return c, err

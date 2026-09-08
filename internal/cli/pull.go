@@ -222,6 +222,19 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 			s.devices[d.DeviceID] = d
 		}
 	}
+	// 合併墓碑的自癒(決策 21):COMMIT 途中斷掉會留下「tracks.json 已合併、清單還指著敗者 cid」,這裡把 item 改指勝者;
+	// 位元組變了,COMMIT 自然重傳(無變更的 pull 也會走 COMMIT)。多重歸屬的警告也在這裡印一次。
+	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
+	for _, w := range id.Warnings() {
+		fmt.Fprintln(stderr, "警告:tracks.json "+w)
+	}
+	healed := 0
+	for _, pl := range s.playlists {
+		healed += id.RedirectItems(pl)
+	}
+	if healed > 0 {
+		fmt.Fprintf(stderr, "修復 %d 筆清單項目的合併殘留(上次寫入中斷:tracks.json 已合併、清單還指著舊 cid),會隨這次寫入一起上傳\n", healed)
+	}
 	// 閘的兩個證人:manifest 宣告的 pid、本機 db 記得的 pid(db 壞或空就沒有第二個證人,不算錯)。
 	known := slices.Clone(s.manifest.Playlists)
 	if local, err := st.Dump(); err == nil {
@@ -617,7 +630,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				return nil, nil, err
 			}
 			link := pl.Links[prov]
-			in := canon.DeriveInput{Provider: prov, Playlist: *pl, Tracks: s.tracks.Tracks}
+			in := canon.DeriveInput{Provider: prov, Playlist: *pl, Tracks: s.tracks.Tracks, Merged: s.tracks.Merged}
 			if b, ok := merged[pl.PID][prov]; ok && b.Snapshot.ID == link { // 別的平台清單留下的 base 不算數
 				in.Base = &b.Snapshot
 			}

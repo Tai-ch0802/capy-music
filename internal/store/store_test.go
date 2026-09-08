@@ -38,6 +38,7 @@ func fixture(t *testing.T) Canonical {
 	tr.Tracks[x.CID] = x
 	up := canon.NewTrack("apple", provider.Track{ProviderID: "i.lib1", Title: "上傳曲"})
 	tr.Tracks[up.CID] = up
+	tr.Merged["i:TW000000000X"] = x.CID // 合併墓碑(決策 21)也要無損來回
 	pl := canon.NewPlaylist("通勤")
 	pl.Description = "上班聽"
 	pl.Links["spotify"] = "37i9"

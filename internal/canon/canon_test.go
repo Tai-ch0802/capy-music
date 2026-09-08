@@ -242,7 +242,8 @@ func TestRoundTripBitEqual(t *testing.T) {
 	if !strings.Contains(tr, `"i:TWA472400123":{"cid":"i:TWA472400123","isrc":["TWA472400123"],"title":"派對動物","artists":["五月天"],"album":"自傳","duration_ms":227000,"mappings":{"apple":{"id":"i.abc","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
 		!strings.Contains(tr, `,"spotify":{"id":"6rq","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
 		!strings.Contains(tr, `"conflicts":[{"provider":"apple","provider_id":"i.abc","title":"派對動物 (Live)","duration_ms":252000}]}`) ||
-		!strings.Contains(tr, `"p:apple:i.lib1":{"cid":"p:apple:i.lib1","title":"上傳曲","artists":[],"duration_ms":0,"mappings":{"apple":{"id":"i.lib1","confidence":100,"pinned":false,"source":"observed","updated_at":`) {
+		!strings.Contains(tr, `"p:apple:i.lib1":{"cid":"p:apple:i.lib1","title":"上傳曲","artists":[],"duration_ms":0,"mappings":{"apple":{"id":"i.lib1","confidence":100,"pinned":false,"source":"observed","updated_at":`) ||
+		!strings.HasSuffix(strings.TrimSpace(tr), `"merged":{}}`) {
 		t.Fatalf("tracks 形狀(spec §6.2,決策 20 的 mapping 物件):%s", tr)
 	}
 	if !strings.HasPrefix(pl, `{"schema_version":2,"pid":"01TESTULID0000000000000001","name":"通勤","description":"上班聽","updated_at":`) ||

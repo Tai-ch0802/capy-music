@@ -88,16 +88,22 @@ func (m *Manifest) normalize() {
 
 // Tracks:tracks.json,cid → 曲目。
 type Tracks struct {
-	SchemaVersion int              `json:"schema_version"`
-	Tracks        map[string]Track `json:"tracks"`
+	SchemaVersion int               `json:"schema_version"`
+	Tracks        map[string]Track  `json:"tracks"`
+	Merged        map[string]string `json:"merged"` // 合併墓碑:敗者 cid → 勝者 cid(決策 21);寫入時壓平、讀取時沿鏈追
 }
 
-func NewTracks() *Tracks { return &Tracks{SchemaVersion: SchemaVersion, Tracks: map[string]Track{}} }
+func NewTracks() *Tracks {
+	return &Tracks{SchemaVersion: SchemaVersion, Tracks: map[string]Track{}, Merged: map[string]string{}}
+}
 
 func (t *Tracks) normalize() {
 	t.SchemaVersion = SchemaVersion
 	if t.Tracks == nil {
 		t.Tracks = map[string]Track{}
+	}
+	if t.Merged == nil {
+		t.Merged = map[string]string{}
 	}
 	for cid, tr := range t.Tracks {
 		if tr.Artists == nil || tr.Mappings == nil { // "artists":null 與 [] 是兩串不同位元組;mappings 同理
