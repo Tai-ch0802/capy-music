@@ -16,7 +16,7 @@ func TestProviderIdentityAndCaps(t *testing.T) {
 	if p.ID() != "spotify" || p.DisplayName() != "Spotify" {
 		t.Errorf("identity:(%s, %s)", p.ID(), p.DisplayName())
 	}
-	want := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaybackControl |
+	want := provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapPlaybackControl |
 		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue
 	if p.Caps() != want {
 		t.Errorf("Caps = %b, want %b", p.Caps(), want)
@@ -79,5 +79,12 @@ func TestProviderPlayPlaylistUsesContextAndIsExclusive(t *testing.T) {
 	}
 	if err := p.Play(context.Background(), provider.PlayRequest{PlaylistID: "p1", TrackIDs: []string{"t"}}); err == nil {
 		t.Fatal("PlaylistID 與 TrackIDs 同時給應報錯")
+	}
+}
+
+func TestProviderDeclaresISRCLookup(t *testing.T) {
+	p := New(http.DefaultClient, "http://127.0.0.1:0")
+	if !p.Caps().Has(provider.CapISRCLookup) {
+		t.Fatal("P4 T1:Spotify 要宣告 CapISRCLookup(LookupISRC / GetTrack 已實作)")
 	}
 }

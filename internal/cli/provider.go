@@ -88,6 +88,14 @@ func asPlayback(p provider.Provider) (provider.PlaybackController, error) {
 	return c, nil
 }
 
+func asISRCLookup(p provider.Provider) (provider.ISRCLookup, error) {
+	l, ok := p.(provider.ISRCLookup)
+	if !ok || !p.Caps().Has(provider.CapISRCLookup) {
+		return nil, notSupported(p, "ISRC 反查")
+	}
+	return l, nil
+}
+
 func asPlaylistReader(p provider.Provider) (provider.PlaylistReader, error) {
 	r, ok := p.(provider.PlaylistReader)
 	if !ok || !p.Caps().Has(provider.CapPlaylistRead) {

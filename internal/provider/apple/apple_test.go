@@ -2,8 +2,11 @@ package apple
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"testing"
 
@@ -45,5 +48,27 @@ func TestCapsArtistSearchButNoPlaylistPlay(t *testing.T) {
 	}
 	if caps.Has(provider.CapPlayPlaylist) {
 		t.Error("Apple 不得宣告 CapPlayPlaylist(R4:清單播放 URL 未驗證)")
+	}
+}
+
+func TestProviderDeclaresISRCLookupAndUsesStorefront(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	p := New(srv.Client(), srv.URL, "DEV", "MUT", "jp")
+	if !p.Caps().Has(provider.CapISRCLookup) {
+		t.Fatal("P4 T1:Apple 要宣告 CapISRCLookup")
+	}
+	if _, err := p.LookupISRC(context.Background(), "TWA472400123"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/catalog/jp/songs" {
+		t.Fatalf("LookupISRC 要帶 provider 的 storefront:%s", gotPath)
+	}
+	if _, err := p.GetTrack(context.Background(), "x"); !errors.Is(err, provider.ErrNotFound) && err != nil {
+		t.Fatalf("GetTrack 空 data 應是 ErrNotFound:%v", err)
 	}
 }

@@ -1,11 +1,13 @@
 // Package provider 定義 capability-based 的 Provider SPI(spec §3 的 P1 子集)。
-// PlaylistWriter/PlaylistOp 延後到 P4/P5;Searcher 的 GetTrack/LookupISRC 於 P4 resolver 進場時補。
+// PlaylistWriter/PlaylistOp 延後到 P5;ISRCLookup / TrackGetter 於 P4 T1(2026-09-08)加入,resolver 的 Layer 1 用。
 package provider
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"strings"
 )
 
 type Capability uint32
@@ -100,6 +102,35 @@ type Provider interface {
 
 type Searcher interface {
 	Search(ctx context.Context, q Query) ([]Track, error)
+}
+
+// ISRCLookup:以 ISRC 反查曲目(CapISRCLookup)。實作先 NormalizeISRC,不合格回 ErrBadISRC 不打 API;
+// 回傳可能多筆(Apple 的 filter[isrc] 明文可回多筆,Spotify 的 isrc: 查詢也會把單曲 / 專輯 / 合輯版本都回來),
+// 原樣全部回傳,消歧是 resolver 的事(spec §5.1)。沒有命中回空 slice、不是錯誤。
+type ISRCLookup interface {
+	LookupISRC(ctx context.Context, isrc string) ([]Track, error)
+}
+
+// TrackGetter:以 provider 內部 id 取單曲(釘選前確認 id 存在);找不到回 ErrNotFound。
+type TrackGetter interface {
+	GetTrack(ctx context.Context, id string) (Track, error)
+}
+
+// ErrBadISRC:正規化後不是 12 碼英數。
+var ErrBadISRC = errors.New("ISRC 格式不對(要 12 碼英數)")
+
+var (
+	isrcRe    = regexp.MustCompile(`^[A-Z0-9]{12}$`)
+	isrcStrip = strings.NewReplacer("-", "", " ", "") // package 層級:每次 NewReplacer 配置 6 KB,萬首清單就是 60 MB
+)
+
+// NormalizeISRC:大寫、去連字號與空白;非 12 碼視為缺失(回空字串)。canon 的 cid 與各 provider 的反查共用同一個定義。
+func NormalizeISRC(s string) string {
+	s = strings.ToUpper(isrcStrip.Replace(strings.TrimSpace(s)))
+	if !isrcRe.MatchString(s) {
+		return ""
+	}
+	return s
 }
 
 // ArtistSearcher:藝人搜尋與熱門歌曲(CapArtistSearch)。

@@ -34,7 +34,7 @@ func (p *Provider) ID() string          { return "apple" }
 func (p *Provider) DisplayName() string { return "Apple Music" }
 
 func (p *Provider) Caps() provider.Capability {
-	caps := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapArtistSearch
+	caps := provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapArtistSearch
 	// 不宣告 CapPlayPlaylist:library 清單沒有 catalog URL,music:// 播放清單未驗證(UX 計畫 R4)。
 	if playbackSupported {
 		caps |= provider.CapPlaybackControl
@@ -62,6 +62,14 @@ func (p *Provider) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]pr
 
 func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
 	return p.c.LibraryPlaylists(ctx)
+}
+
+func (p *Provider) LookupISRC(ctx context.Context, isrc string) ([]provider.Track, error) {
+	return p.c.SongsByISRC(ctx, p.storefront, isrc)
+}
+
+func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, error) {
+	return p.c.GetSong(ctx, p.storefront, id)
 }
 
 func (p *Provider) GetPlaylistItems(ctx context.Context, id string) ([]provider.Track, error) {

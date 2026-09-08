@@ -1,25 +1,13 @@
 package canon
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
-var (
-	isrcRe    = regexp.MustCompile(`^[A-Z0-9]{12}$`)
-	isrcStrip = strings.NewReplacer("-", "", " ", "") // 每次 NewReplacer 配置 6 KB 的替換表,萬首清單就是 60 MB
-)
-
-// NormalizeISRC:大寫、去連字號與空白;非 12 碼視為缺失(回空字串)。
-func NormalizeISRC(s string) string {
-	s = strings.ToUpper(isrcStrip.Replace(strings.TrimSpace(s)))
-	if !isrcRe.MatchString(s) {
-		return ""
-	}
-	return s
-}
+// NormalizeISRC:大寫、去連字號與空白;非 12 碼視為缺失(回空字串)。定義在 provider(反查也要用同一個),這裡只是門面。
+func NormalizeISRC(s string) string { return provider.NormalizeISRC(s) }
 
 // CID 是決定性 ID:有 ISRC → i:<正規化 ISRC>,否則 p:<prov>:<trackID>(prov 是平台名,trackID 是該平台的曲目 id)。
 // 它是 Drive 檔案裡的鍵,只能由觀測到的那首歌決定,不能隨「當時還看到什麼」而變——所以沒有

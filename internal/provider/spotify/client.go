@@ -199,6 +199,29 @@ func (c *Client) SearchTracks(ctx context.Context, text string, limit int) ([]pr
 	return out, nil
 }
 
+// LookupISRC:GET /search?q=isrc:<ISRC>&type=track。Spotify 的 isrc: 欄位查詢是精確比對,但同一 ISRC 可對到
+// 單曲 / 專輯 / 合輯多個版本,原樣全部回傳(單頁 10 筆),消歧是 resolver 的事(spec §5.1)。
+func (c *Client) LookupISRC(ctx context.Context, isrc string) ([]provider.Track, error) {
+	n := provider.NormalizeISRC(isrc)
+	if n == "" {
+		return nil, fmt.Errorf("%w:%q", provider.ErrBadISRC, isrc)
+	}
+	return c.SearchTracks(ctx, "isrc:"+n, searchPageMax)
+}
+
+// GetTrack:GET /tracks/{id};404 → ErrNotFound。
+func (c *Client) GetTrack(ctx context.Context, id string) (provider.Track, error) {
+	var t trackJSON
+	status, err := c.do(ctx, http.MethodGet, "/tracks/"+url.PathEscape(id), nil, nil, &t)
+	if err != nil {
+		if status == http.StatusNotFound {
+			return provider.Track{}, fmt.Errorf("%w:曲目 %s", provider.ErrNotFound, id)
+		}
+		return provider.Track{}, err
+	}
+	return t.toTrack(), nil
+}
+
 // ── artists ──
 
 type artistJSON struct {
