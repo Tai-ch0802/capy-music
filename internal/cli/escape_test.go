@@ -3,13 +3,16 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
+	_ "modernc.org/sqlite"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
@@ -114,10 +117,13 @@ func TestDriveInitRestoresAfterWipe(t *testing.T) {
 			}
 		}
 	})
-	wantRows := ""
+	wantRows := "" // 列出順序 = 上傳順序:manifest 最後(它宣告的檔要先存在)
 	for _, n := range names {
-		wantRows += "create\t" + n + "\n"
+		if n != "manifest.json" {
+			wantRows += "create\t" + n + "\n"
+		}
 	}
+	wantRows += "create\tmanifest.json\n"
 	out, _, err := runPull(t, "drive", "init", "--from-local")
 	if exitOf(t, err) != 2 || out != wantRows || srv.Len() != 0 {
 		t.Fatalf("非 TTY 沒 --yes:列出要建的檔、exit 2、零寫入:%v\n%q\n%q", err, out, wantRows)
@@ -131,6 +137,9 @@ func TestDriveInitRestoresAfterWipe(t *testing.T) {
 	}
 	if !sameFiles(before, driveFiles(t, dc)) {
 		t.Fatal("補回的檔要與清空前逐位元相同")
+	}
+	if fl, _ := dc.List(context.Background(), ""); fl[len(fl)-1].Name != "manifest.json" { // 假 Drive 依建立順序列出
+		t.Fatalf("manifest 要最後上傳:%v", fl[len(fl)-1].Name)
 	}
 	if !bytes.Equal(dump, dumpBytes(t)) {
 		t.Fatal("init 不動本機 cache")
@@ -203,6 +212,9 @@ func TestDriveInitSkipsOtherDevicesAndReportsLost(t *testing.T) {
 	if strings.Contains(out, "dev__01TESTDEVICEB") || !strings.Contains(out, "create\tdev__01TESTDEVICE00000000000000.json") || !strings.Contains(errs, "dev__01TESTDEVICEB0000000000000.json") {
 		t.Fatalf("別台裝置的 dev 檔不代為上傳、只建自己的,且要講明:%q %q", out, errs)
 	}
+	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); !strings.Contains(errs, "另有 1 個別台裝置的檔按設計不代傳") {
+		t.Fatalf("沒缺時也要講明有東西刻意沒補:%q", errs)
+	}
 	// manifest 宣告了 Drive 與本機都沒有的清單:補不回,講明出路,零寫入。
 	wipeDrive(t, dc)
 	ctx := context.Background()
@@ -223,5 +235,86 @@ func TestDriveInitNeedsLocalData(t *testing.T) {
 	_, _, srv := pullWorld(t)
 	if _, _, err := runPull(t, "drive", "init", "--from-local", "--yes"); exitOf(t, err) != 1 || !errors.Is(err, errNothingLocal) || srv.Len() != 0 {
 		t.Fatalf("本機沒資料:exit 1、零寫入:%v", err)
+	}
+}
+
+// 逃生口不得有副作用:版本不符不改名、壞檔不刪、全新機器不建 db;錯誤訊息要指向保留的舊版快取而不是「先 pl pull」。
+func TestExportNeverSelfHeals(t *testing.T) {
+	setCLITestConfig(t)
+	keyring.MockInit()
+	if _, _, err := runPull(t, "export"); exitOf(t, err) != 1 {
+		t.Fatal(err)
+	}
+	p, _ := store.Path()
+	if _, err := os.Stat(p); err == nil {
+		t.Fatal("全新機器上 export 不該建出 state.db")
+	}
+	fs, dc, srv := pullWorld(t)
+	fs.set("p1", "通勤", "a")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	p, _ = store.Path()
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 99"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	old, _ := os.ReadFile(p)
+	out, _, err := runPull(t, "export")
+	if exitOf(t, err) != 1 || !errors.Is(err, store.ErrSchemaMismatch) || out != "" {
+		t.Fatalf("版本不符:exit 1、不印:%v %q", err, out)
+	}
+	if b, _ := os.ReadFile(p); !bytes.Equal(b, old) {
+		t.Fatal("export 不得改動 state.db")
+	}
+	if _, err := os.Stat(p + ".v99"); err == nil {
+		t.Fatal("export 不得改名保留(那是 Open 的自癒,唯讀開法沒有)")
+	}
+	if _, _, err := runPull(t, "drive", "init", "--from-local", "--yes"); exitOf(t, err) != 1 || !errors.Is(err, store.ErrSchemaMismatch) {
+		t.Fatalf("drive init 走同一個唯讀開法:%v", err)
+	}
+	garbage := []byte("this is definitely not a sqlite database file, not even close")
+	if err := os.WriteFile(p, garbage, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runPull(t, "export"); exitOf(t, err) != 1 {
+		t.Fatalf("壞檔:exit 1:%v", err)
+	}
+	if b, _ := os.ReadFile(p); !bytes.Equal(b, garbage) {
+		t.Fatal("壞檔不得被刪掉或動到(那是使用者僅剩的一份)")
+	}
+	// 升版保留的舊版快取要被講出來,而不是叫人去 pl pull。
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p+".v2", []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runPull(t, "export"); err == nil || !strings.Contains(err.Error(), "state.db.v2") || !strings.Contains(err.Error(), "當時版本的 capy binary") {
+		t.Fatalf("要指向保留的舊版快取:%v", err)
+	}
+	_, _ = dc, srv
+}
+
+// Drive 上還在的檔比這個 capy 新:init 不得把舊版 manifest 建到它旁邊(spec §6.6:任何檔 schema 太新 → exit 1、零寫入)。
+func TestDriveInitRefusesNewerSchemaOnDrive(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	wipeDrive(t, dc)
+	if _, err := dc.Create(context.Background(), "tracks.json", canon.TracksFile().Props, []byte(`{"schema_version":99,"tracks":{}}`+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	before := driveFiles(t, dc)
+	_, _, err := runPull(t, "drive", "init", "--from-local", "--yes")
+	if exitOf(t, err) != 1 || !errors.Is(err, canon.ErrSchemaTooNew) || !strings.Contains(err.Error(), "tracks.json") {
+		t.Fatalf("Drive 上有更新版的檔 → exit 1 並點名:%v", err)
+	}
+	if !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatal("零寫入")
 	}
 }

@@ -46,8 +46,48 @@ type Store struct {
 	path string
 }
 
-// Stderr:升版保留舊檔時的提示(測試可換掉)。
+// Stderr:升版保留舊檔時的提示(測試可換掉)。package-level 可變全域,所以這個 package 的測試不能 t.Parallel()。
 var Stderr io.Writer = os.Stderr
+
+var (
+	ErrNoDB           = errors.New("本機沒有 state.db")
+	ErrSchemaMismatch = errors.New("本機 state.db 的 schema 版本與這個 capy 不同")
+)
+
+// OpenReadOnly:唯讀開法,給逃生口(export、drive init)用——不建檔、不自癒:壞檔不刪、版本不符不改名,任何不對就回錯、
+// 檔案原封不動。Open 的自癒對 cache 是對的,但 Drive 空掉 + 本機 db 有點壞正是最需要逃生口的組合,不能讓 export 把僅剩的一份毀掉。
+func OpenReadOnly(busyTimeout time.Duration) (*Store, error) {
+	p, err := Path()
+	if err != nil {
+		return nil, err
+	}
+	return OpenReadOnlyAt(p, busyTimeout)
+}
+
+func OpenReadOnlyAt(path string, busyTimeout time.Duration) (*Store, error) {
+	if strings.Contains(path, "?") {
+		return nil, fmt.Errorf("db 路徑不可含 ?(CAPY_CONFIG_DIR 換一個目錄):%s", path)
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNoDB
+	} else if err != nil {
+		return nil, err
+	}
+	s, err := open(path, busyTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("開啟 %s:%w", path, err)
+	}
+	var v int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("讀取 %s:%w", path, err)
+	}
+	if v != schemaVersion {
+		s.Close()
+		return nil, fmt.Errorf("%w:檔案是 v%d、這個 capy 支援 v%d;要匯出請用當時版本的 capy binary", ErrSchemaMismatch, v, schemaVersion)
+	}
+	return s, nil
+}
 
 // Path 回 db 路徑(不建立);CAPY_CONFIG_DIR 一併覆寫(測試靠它隔離)。
 func Path() (string, error) {
@@ -165,7 +205,7 @@ func (s *Store) retire(version int) error {
 			return err
 		}
 	}
-	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 升到 v%d:舊檔保留為 %s(沒有程式會讀它;確定不需要再自行刪除),快取會在下一次 pull 從 Drive 重建\n", version, schemaVersion, kept)
+	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 變成 v%d:舊檔保留為 %s(沒有程式會讀它;確定不需要再自行刪除),快取會在下一次 pull 從 Drive 重建\n", version, schemaVersion, kept)
 	return nil
 }
 

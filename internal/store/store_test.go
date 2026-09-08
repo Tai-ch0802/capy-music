@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,7 +159,7 @@ func TestRebuildFromDrive(t *testing.T) {
 	}
 }
 
-func TestMismatchedSchemaVersionIsRetained(t *testing.T) {
+func TestMismatchedSchemaVersionRetiresOldFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	s, err := OpenAt(path, time.Second)
 	if err != nil {
@@ -183,7 +184,6 @@ func TestMismatchedSchemaVersionIsRetained(t *testing.T) {
 	if s, err = OpenAt(path, time.Second); err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
 	out, err := s.Dump()
 	if err != nil || len(out.Tracks.Tracks) != 0 {
 		t.Fatalf("版本不符應整檔丟棄重建(不寫 ALTER):%v %+v", err, out.Tracks)
@@ -291,5 +291,147 @@ func TestCacheTablesRoundTrip(t *testing.T) {
 	}
 	if gotPls, gotRec, _ = s.LoadCache(); len(gotPls) != 0 || gotRec != nil {
 		t.Fatalf("SaveCache 是取代:%v %v", gotPls, gotRec)
+	}
+}
+
+// 唯讀開法:不建檔、版本不符不改名、壞檔不刪——逃生口不得有副作用。
+func TestOpenReadOnlyNeverTouchesFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	if _, err := OpenReadOnlyAt(path, time.Second); !errors.Is(err, ErrNoDB) {
+		t.Fatalf("沒有 db 要回 ErrNoDB:%v", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("唯讀開法不建檔")
+	}
+	s, err := OpenAt(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Hydrate(fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("PRAGMA user_version = 99"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	old, _ := os.ReadFile(path)
+	if _, err := OpenReadOnlyAt(path, time.Second); !errors.Is(err, ErrSchemaMismatch) || !strings.Contains(err.Error(), "v99") {
+		t.Fatalf("版本不符要回 ErrSchemaMismatch 並講版本:%v", err)
+	}
+	if b, _ := os.ReadFile(path); !bytes.Equal(b, old) {
+		t.Fatal("版本不符:檔案要原封不動")
+	}
+	if _, err := os.Stat(path + ".v99"); err == nil {
+		t.Fatal("唯讀開法不改名")
+	}
+	garbage := []byte("this is definitely not a sqlite database file, not even close")
+	if err := os.WriteFile(path, garbage, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenReadOnlyAt(path, time.Second); err == nil {
+		t.Fatal("壞檔要回錯")
+	}
+	if b, _ := os.ReadFile(path); !bytes.Equal(b, garbage) {
+		t.Fatal("壞檔不刪、不動")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = OpenAt(path, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Hydrate(fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	ro, err := OpenReadOnlyAt(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if c, err := ro.Dump(); err != nil || len(c.Playlists) != 2 {
+		t.Fatalf("正常的 db 要能 Dump:%v", err)
+	}
+}
+
+// Dump 必須是一致的快照:與另一個 capy 的 Hydrate 並行時不能讀到前半舊、後半新(capy export 與 cron 的 capy pl pull 同時跑正是它的用法)。
+func TestDumpIsConsistentUnderConcurrentHydrate(t *testing.T) {
+	pin(t)
+	path := filepath.Join(t.TempDir(), "state.db")
+	w, err := OpenAt(path, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	r, err := OpenAt(path, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	mk := func(tag string, n int) Canonical {
+		m := canon.NewManifest()
+		m.Touch("dev"+tag, tag)
+		tr := canon.NewTracks()
+		pl := canon.NewPlaylist(tag)
+		for i := 0; i < n; i++ {
+			x := canon.NewTrack("spotify", provider.Track{ProviderID: fmt.Sprintf("%s%d", tag, i), Title: tag})
+			tr.Tracks[x.CID] = x
+			if _, err := pl.Append(x.CID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m.AddPlaylist(pl.PID)
+		return Canonical{Manifest: m, Tracks: tr, Playlists: []canon.Playlist{*pl}, Devices: []canon.DeviceState{*canon.NewDeviceState("dev" + tag)}}
+	}
+	a, b := mk("A", 1), mk("B", 2)
+	if err := w.Hydrate(a); err != nil {
+		t.Fatal(err)
+	}
+	stop, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			c := a
+			if i%2 == 1 {
+				c = b
+			}
+			if err := w.Hydrate(c); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	deadline, n := time.Now().Add(400*time.Millisecond), 0
+	for time.Now().Before(deadline) {
+		c, err := r.Dump()
+		if err != nil {
+			close(stop)
+			t.Fatalf("Dump 讀到撕裂狀態:%v", err)
+		}
+		n++
+		if len(c.Playlists) != 1 {
+			close(stop)
+			t.Fatalf("撕裂:%d 個清單", len(c.Playlists))
+		}
+		want, tag := 1, "A"
+		if c.Playlists[0].Name == "B" {
+			want, tag = 2, "B"
+		}
+		if len(c.Playlists[0].Items) != want || len(c.Tracks.Tracks) != want || len(c.Manifest.Devices) != 1 || c.Manifest.Devices[0].ID != "dev"+tag || len(c.Devices) != 1 || c.Devices[0].DeviceID != "dev"+tag {
+			close(stop)
+			t.Fatalf("撕裂:清單 %s 但 items=%d tracks=%d manifest=%v devices=%d", c.Playlists[0].Name, len(c.Playlists[0].Items), len(c.Tracks.Tracks), c.Manifest.Devices, len(c.Devices))
+		}
+	}
+	close(stop)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n < 3 {
+		t.Fatalf("只讀了 %d 次,測不到並行", n)
 	}
 }

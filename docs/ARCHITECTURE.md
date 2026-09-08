@@ -584,7 +584,7 @@ capy pl sync 的一輪:
 | 刪除閾值 | 單一 (清單, provider) 在一次 `pl pull` 或 `pl push` 要刪除 **>10 首,或 >30% 且 >3 首**(分母是該 provider 可見的曲數;Q3 採 B,2026-09-08 T8,附錄 C 決策 18)時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push)。`--force` 只越過閾值,不放行「Drive 不完整」(下一列) |
 | Drive 不完整的閘 | `manifest.playlists` 宣告、或本機 `state.db` 記得的檔在 Drive 取不到(全空只是特例)→ `pl pull` / `pl link` 一律 exit 3、零寫入,`--yes` / `--force` 都不放行;出口是 `capy drive init --from-local`(2026-09-08 T9 已實作:只建 Drive 缺的檔、不覆寫還在的檔(Drive 為準)、不動本機 cache、不代為上傳別台裝置的 `dev__` 檔;沒缺就零寫入;manifest 宣告但兩邊都沒有的清單補不回,訊息講明只能清空 appdata 重建)。任何檔 `schema_version` 高於 binary 支援 → exit 1、零寫入 |
 | 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore` 從它回滾的語意隨扁平化改變(base 不再是共享檔),**P5 再定** |
-| Export 逃生口 | `capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),輸出 Drive 檔的合併形式到 stdout——鍵是檔名、值是該檔內容,與 Drive 上逐位元同形(2026-09-08 T9;`import` 就是它的反向);本機沒資料 exit 1、stdout 不印。反向路徑是 `capy drive init --from-local`(上一列;永不對非空 cache 做 hydrate-empty——它根本不寫本機) |
+| Export 逃生口 | `capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain;用 `store.OpenReadOnly`:壞檔不刪、版本不符不改名、不建檔,`Dump` 整批在一個 read transaction 裡所以是一致快照),輸出 Drive 檔的合併形式到 stdout——鍵是檔名、值是該檔內容的縮排形式,壓回 compact 後與 Drive 上逐位元相同(2026-09-08 T9;`import` 就是它的反向);本機沒資料 exit 1、stdout 不印,找得到升版保留的 `state.db.v<n>` 就指出來。反向路徑是 `capy drive init --from-local`(上一列;同一個唯讀開法,永不寫本機;上傳順序 manifest 最後;Drive 上還在的每個檔都先檢 schema) |
 
 ---
 

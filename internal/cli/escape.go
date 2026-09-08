@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -26,11 +27,16 @@ import (
 // - drive init --from-local:Drive 空 / 部分遺失時唯一允許寫入的命令。只建 Drive 缺的檔、不覆寫既有檔、不動本機 cache;
 //   別台裝置的 dev__ 檔不代為上傳(每台裝置只寫自己的檔,spec §6.3)。
 
-// localFiles:本機 state.db 的 Dump 編成 Drive 檔(檔名 → 位元組,與 COMMIT 上傳的完全相同);空 db 回空 map。
+// localFiles:本機 state.db 的 Dump 編成 Drive 檔(檔名 → 位元組,與 COMMIT 上傳的完全相同);沒有 db 回空 map。
+// 走唯讀開法:逃生口不得有副作用——store.Open 對壞檔會直接刪、對版本不符會改名,而 Drive 空掉 + 本機 db 有點壞
+// 正是最需要逃生口的組合,不能讓 export 把僅剩的一份毀掉;全新機器上也不該順手建出空 db。
 func localFiles() (map[string][]byte, error) {
-	st, err := store.Open(pullBusy)
+	st, err := store.OpenReadOnly(pullBusy)
+	if errors.Is(err, store.ErrNoDB) {
+		return map[string][]byte{}, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w(逃生口只讀不改:這個檔原封不動)%s", err, retainedHint())
 	}
 	defer st.Close()
 	c, err := st.Dump()
@@ -83,7 +89,20 @@ func fileRefOf(name string) (canon.FileRef, bool) {
 	return canon.FileRef{}, false
 }
 
-var errNothingLocal = errors.New("本機沒有任何 canonical 資料(state.db 是空的)")
+var errNothingLocal = errors.New("本機沒有任何 canonical 資料(沒有 state.db 或它是空的)")
+
+// retainedHint:找得到升版時保留的舊版快取就講出來——三個命令互相指路、資料卻躺在旁邊沒人提,是最糟的體驗。
+func retainedHint() string {
+	p, err := store.Path()
+	if err != nil {
+		return ""
+	}
+	kept, _ := filepath.Glob(p + ".v*")
+	if len(kept) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(";另外找到升版時保留的舊版快取 %s——要從它復原,請用當時版本的 capy binary 跑 capy export", strings.Join(kept, "、"))
+}
 
 func newExportCmd() *cobra.Command {
 	return &cobra.Command{
@@ -99,7 +118,7 @@ pl__<pid>.json、dev__<device_id>.json),值就是該檔的內容,與 Drive 上�
 				return err
 			}
 			if len(files) == 0 {
-				return fmt.Errorf("%w:沒有東西可以匯出;先 capy pl pull", errNothingLocal)
+				return fmt.Errorf("%w:沒有東西可以匯出;先 capy pl pull%s", errNothingLocal, retainedHint())
 			}
 			raw := map[string]json.RawMessage{}
 			for name, b := range files {
@@ -157,7 +176,7 @@ func newDriveInitCmd() *cobra.Command {
 				return err
 			}
 			if len(local) == 0 {
-				return fmt.Errorf("%w:沒有東西可以補回 Drive", errNothingLocal)
+				return fmt.Errorf("%w:沒有東西可以補回 Drive%s", errNothingLocal, retainedHint())
 			}
 			present, err := dc.List(ctx, "")
 			if err != nil {
@@ -180,17 +199,32 @@ func newDriveInitCmd() *cobra.Command {
 				}
 				rows = append(rows, []string{"create", name})
 			}
+			// manifest 最後,理由同 commitCanonical:它宣告的檔要先存在,上傳中斷才不會自己製造「Drive 不完整」;列出順序 = 上傳順序。
+			slices.SortStableFunc(rows, func(a, b []string) int {
+				am, bm := a[1] == canon.ManifestFile().Name, b[1] == canon.ManifestFile().Name
+				if am == bm {
+					return 0
+				}
+				if am {
+					return 1
+				}
+				return -1
+			})
 			if len(skipped) > 0 {
 				fmt.Fprintf(stderr, "不代為上傳別台裝置的檔(每台裝置只寫自己的,spec §6.3):%s;那台下次 pull 會當作沒有 base,只加不刪\n", strings.Join(skipped, "、"))
 			}
-			if lost, err := lostPlaylists(ctx, dc, present, have, local); err != nil {
+			if lost, err := inspectDrive(ctx, dc, present, have, local); err != nil {
 				return err
 			} else if len(lost) > 0 {
 				return fmt.Errorf("Drive 的 manifest 宣告了 %s,但 Drive 與本機都沒有這些檔:補不回,pl pull 會繼續 exit 3。那些清單已經遺失(兩邊都沒有);"+
 					"唯一的出路是到 Google 帳號設定「管理應用程式 → 刪除隱藏的應用程式資料」清空 appdata,再跑一次 capy drive init --from-local(manifest 會從本機重建、不含它們)", strings.Join(lost, "、"))
 			}
 			if len(rows) == 0 {
-				fmt.Fprintln(stderr, "Drive 已有本機記得的全部檔案,不需要補")
+				msg := "Drive 已有本機記得的全部檔案,不需要補"
+				if len(skipped) > 0 {
+					msg += fmt.Sprintf(";另有 %d 個別台裝置的檔按設計不代傳", len(skipped))
+				}
+				fmt.Fprintln(stderr, msg)
 				return nil
 			}
 			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ACTION", "FILE"}, rows)
@@ -210,7 +244,10 @@ func newDriveInitCmd() *cobra.Command {
 				}
 			}
 			for _, r := range rows {
-				ref, _ := fileRefOf(r[1])
+				ref, ok := fileRefOf(r[1])
+				if !ok {
+					return fmt.Errorf("不認得的檔名 %s,不上傳", r[1])
+				}
 				if _, err := dc.Create(ctx, ref.Name, ref.Props, local[ref.Name]); err != nil {
 					return fmt.Errorf("上傳 %s 失敗(已建的檔留著,重跑會接著補):%w", ref.Name, friendlyErr("google", err))
 				}
@@ -225,28 +262,36 @@ func newDriveInitCmd() *cobra.Command {
 	return cmd
 }
 
-// lostPlaylists:Drive 的 manifest 宣告、但 Drive 與本機都沒有的清單檔——init 補不回,要講明出路。
-func lostPlaylists(ctx context.Context, dc *drive.Client, present []drive.File, have map[string]bool, local map[string][]byte) ([]string, error) {
-	var mfs []drive.File
+// inspectDrive:Drive 上還在的每個我們的檔(同名取最新)都下載一次檢查 schema——任何檔比這個 capy 新就回錯、零寫入
+// (spec §6.6 的硬規則;不然 manifest 不見時會把 v1 的 manifest 建到新版檔旁邊)。順便回 manifest 宣告但 Drive 與本機都沒有的清單檔。
+func inspectDrive(ctx context.Context, dc *drive.Client, present []drive.File, have map[string]bool, local map[string][]byte) (lost []string, err error) {
+	byName := map[string][]drive.File{}
 	for _, f := range present {
-		if f.Name == canon.ManifestFile().Name {
-			mfs = append(mfs, f)
+		byName[f.Name] = append(byName[f.Name], f)
+	}
+	var manifest *canon.Manifest
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		if _, ours := fileRefOf(name); !ours {
+			continue
+		}
+		f := drive.Newest(byName[name])
+		b, err := dc.Download(ctx, f.ID)
+		if err != nil {
+			return nil, fmt.Errorf("下載 %s:%w", name, friendlyErr("google", err))
+		}
+		if err := canon.CheckSchema(b); err != nil {
+			return nil, fmt.Errorf("Drive 上的 %s:%w", name, err)
+		}
+		if name == canon.ManifestFile().Name {
+			if manifest, err = canon.Decode[canon.Manifest](b); err != nil {
+				return nil, fmt.Errorf("讀取 Drive 的 manifest.json:%w", err)
+			}
 		}
 	}
-	if len(mfs) == 0 {
+	if manifest == nil {
 		return nil, nil
 	}
-	mf := drive.Newest(mfs) // 同名多份取最新,與 FETCH 同一條規則
-	b, err := dc.Download(ctx, mf.ID)
-	if err != nil {
-		return nil, fmt.Errorf("下載 manifest.json:%w", friendlyErr("google", err))
-	}
-	m, err := canon.Decode[canon.Manifest](b)
-	if err != nil {
-		return nil, fmt.Errorf("讀取 Drive 的 manifest.json:%w", err)
-	}
-	var lost []string
-	for _, pid := range m.Playlists {
+	for _, pid := range manifest.Playlists {
 		name := canon.PlaylistFile(pid).Name
 		if _, ok := local[name]; !ok && !have[name] {
 			lost = append(lost, name)
