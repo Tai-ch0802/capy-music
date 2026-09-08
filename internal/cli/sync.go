@@ -24,7 +24,8 @@ func newPlSyncCmd() *cobra.Command {
 		Long: `同一把鎖裡每個清單先 pull 各平台(平台 → canonical)、再 push 各平台(canonical → 平台),--provider 只走一個平台。
 變更集一次印完(非 TTY 是無標題 TSV:dir action provider playlist pos cid provider_id title artists reason;dir ∈ pull / push),確認一次;
 --dry-run 的 push 半邊是用 pull 套用後的 canonical 投影的,看得到完整一輪。閾值對每個 (清單, 平台) 各算,exit code 同 pl pull / pl push。
-push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完平台才寫 Drive,Drive 那邊沒寫成時訊息會講明平台已經改了。`,
+push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完平台才寫 Drive,Drive 那邊沒寫成時訊息會講明平台已經改了。
+--provider 指到還寫不了的平台(Apple,P0-2 前)時只 pull 不 push,stderr 會說。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
@@ -49,7 +50,7 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 				if err != nil {
 					return err
 				}
-				plans, pushRows, pblocked, refused, err := planPush(ctx, s, targets, prov, stderr, pf, lives)
+				plans, pushRows, pblocked, refused, err := planPush(ctx, s, targets, prov, stderr, pf, lives, false)
 				if err != nil {
 					return err
 				}
@@ -101,7 +102,7 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 				fmt.Fprintf(stderr, "已套用 %d 筆 pull 變更、推送 %d 筆\n", len(pullRows), applied)
 				return nil
 			})
-			return finishPush(err, applied, touched, deferred)
+			return finishPush(err, applied, touched, deferred, "重跑 capy pl sync(pull 半邊會把已推到平台的變更當平台變更再吸收一次,不會重複)")
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "同步全部已連結的清單")

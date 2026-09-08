@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
 	"github.com/Tai-ch0802/capy-music/internal/drive/drivetest"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -145,7 +146,7 @@ func TestPlSyncVersionGuardMessageAndRerun(t *testing.T) {
 	fs2.set("q1", "通勤", "a", "c") // Apple 刪 b
 	fs1.setHook(once(func() {
 		tr := driveTracks(t, dc)
-		tr.Tracks[fakeCID("zz")] = tr.Tracks[fakeCID("a")]
+		tr.Tracks[fakeCID("zz")] = canon.Track{CID: fakeCID("zz"), Title: "zz", Mappings: map[string]canon.Mapping{}}
 		putTracks(t, dc, tr)
 	}))
 	_, _, err := runPull(t, "pl", "sync", "通勤", "--yes")
@@ -153,13 +154,40 @@ func TestPlSyncVersionGuardMessageAndRerun(t *testing.T) {
 		t.Fatalf("守衛訊息要改口、Spotify 已被改:%v %v", err, fs1.tracksOf("p1"))
 	}
 	fs1.setHook(nil)
-	if out, _ := mustPull(t, "pl", "sync", "通勤", "--yes"); strings.Contains(out, "push\t") {
-		t.Fatalf("重跑:pull 把兩邊的刪除吸收、不必再 push:%s", out)
+	// base 沒落地(dev__ 在 Drive),重跑的 pull 半邊會把剛推到 Spotify 的刪除當平台變更再吸收一次——不是零 pull、是零 push(決策 31 措辭已改)
+	if out, _ := mustPull(t, "pl", "sync", "通勤", "--yes"); strings.Contains(out, "push\t") || !strings.Contains(out, "pull\tremove\t") {
+		t.Fatalf("重跑:pull 半邊吸收(apple 先 pull 就把 b 拿掉,spotify 那半邊變無事)、零 push:%s", out)
 	}
 	if out, errs := mustPull(t, "pl", "sync", "通勤", "--yes"); strings.TrimSpace(out) != "" || !strings.Contains(errs, "無變更") {
 		t.Fatalf("第三次零變更:%s%s", out, errs)
 	}
 	_ = http.MethodGet
+}
+
+// --provider 指到寫不了的平台(Apple,T6 前):sync 降級成只 pull(stderr 說明),不像 push 那樣 exit 1——cron 放 sync,「sync Apple = pull Apple」才誠實。
+func TestPlSyncReadOnlyProviderDegradesToPull(t *testing.T) {
+	fs1, fs2, dc, _ := syncWorld(t)
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		p, err := orig(ctx, id)
+		if id == "apple" {
+			return readOnlyProvider{p, p.(provider.PlaylistReader)}, err
+		}
+		return p, err
+	}
+	t.Cleanup(func() { newProvider = orig })
+	fs2.set("q1", "通勤", "a", "b", "c", "d")
+	out, errs := mustPull(t, "pl", "sync", "通勤", "--yes", "--provider", "apple")
+	if !slices.Equal(dirActions(out), []string{"pull add apple"}) || !strings.Contains(errs, "跳過 通勤 的 apple") || len(fs2.written()) != 0 {
+		t.Fatalf("只 pull 不 push、stderr 說明:%s%s", out, errs)
+	}
+	if !slices.Equal(cidsOf(drivePlaylistNamed(t, dc, "通勤")), []string{fakeCID("a"), fakeCID("b"), fakeCID("c"), fakeCID("d")}) {
+		t.Fatal("pull 半邊要落地")
+	}
+	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "apple"); exitOf(t, err) != 1 {
+		t.Fatalf("push 明說 apple 仍是 exit 1:%v", err)
+	}
+	_ = fs1
 }
 
 func TestPlSyncArgs(t *testing.T) {

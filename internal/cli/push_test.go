@@ -546,7 +546,7 @@ func TestPlPushSkipsAppleUntilWritable(t *testing.T) {
 	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
 		p, err := orig(ctx, id)
 		if id == "apple" {
-			return readOnlyProvider{p}, err
+			return readOnlyProvider{p, p.(provider.PlaylistReader)}, err
 		}
 		return p, err
 	}
@@ -575,8 +575,11 @@ func TestPlPushRebuildFromDriveIsEquivalent(t *testing.T) {
 	}
 }
 
-// readOnlyProvider:只露出 Provider 介面(型別斷言不到 PlaylistWriter)。
-type readOnlyProvider struct{ provider.Provider }
+// readOnlyProvider:讀得到、寫不了(型別斷言不到 PlaylistWriter)——T6 前的 Apple。
+type readOnlyProvider struct {
+	provider.Provider
+	provider.PlaylistReader
+}
 
 func TestPlPushArgs(t *testing.T) {
 	pullWorld(t)

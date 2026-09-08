@@ -131,7 +131,8 @@ type pushPlan struct {
 // planPush:對每個目標 (清單, provider) 做 OBSERVE、兩個前提、PushPlan、閾值,產出計畫與 TSV 列。
 // refused 是 --force 也不放行的(前提、local file、清單消失);blocked 是刪除閾值(--force 越過)。
 // lives 非 nil 時該 (清單, provider) 的 L 直接用它(pl sync 的 push 半邊重用 pull 半邊剛讀的 L,決策 31)。
-func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]canon.Observed) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
+// strict:明說 --provider 卻寫不了(Apple)是錯(push);sync 不是——「sync Apple」在 T6 前就是只 pull,stderr 說明後照常。
+func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
 	merged := mergedBase(s)
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
@@ -144,7 +145,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			}
 			w, err := asPlaylistWriter(p)
 			if err != nil {
-				if only == prov { // 明說要推這個平台才算錯;--all / 沒指定時只跳過(Apple 在 T6 前寫不了)
+				if strict && only == prov { // 明說要推這個平台才算錯;--all / 沒指定時只跳過(Apple 在 T6 前寫不了)
 					return nil, nil, nil, nil, err
 				}
 				fmt.Fprintf(stderr, "跳過 %s 的 %s:%v\n", pl.Name, prov, err)
@@ -361,7 +362,8 @@ func applyPlans(ctx context.Context, s *canonState, plans []*pushPlan, stderr io
 
 // finishPush:withCanonical 回來之後的收尾。COMMIT 失敗而平台已經被改到:版本守衛那句「零寫入」只對 Drive 成立,改口;
 // 半截寫入 + Drive 沒寫成兩件事都要講——那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
-func finishPush(err error, applied int, touched bool, deferred error) error {
+// rerun 是「接下來怎麼做」那句(push / sync 各自的說法)。
+func finishPush(err error, applied int, touched bool, deferred error, rerun string) error {
 	var ge *guardError
 	var driveMsg string
 	switch {
@@ -375,9 +377,9 @@ func finishPush(err error, applied int, touched bool, deferred error) error {
 	}
 	switch {
 	case driveMsg != "" && deferred != nil:
-		return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),再 pull、再 push", deferred, driveMsg)
+		return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),再%s", deferred, driveMsg, strings.TrimPrefix(rerun, "先"))
 	case driveMsg != "":
-		return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):先 capy pl pull 再 capy pl push", applied, driveMsg)
+		return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):%s", applied, driveMsg, rerun)
 	}
 	return deferred
 }
@@ -413,7 +415,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				if err != nil {
 					return err
 				}
-				plans, rows, blocked, refused, err := planPush(ctx, s, targets, prov, stderr, newPlatforms(ctx), nil)
+				plans, rows, blocked, refused, err := planPush(ctx, s, targets, prov, stderr, newPlatforms(ctx), nil, true)
 				if err != nil {
 					return err
 				}
@@ -459,7 +461,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				}
 				return nil
 			})
-			return finishPush(err, applied, touched, deferred)
+			return finishPush(err, applied, touched, deferred, "先 capy pl pull 再 capy pl push")
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "推全部已連結的清單")
