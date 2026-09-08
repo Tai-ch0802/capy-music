@@ -298,7 +298,7 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 - db 位置 `config.Dir()/state.db`(`CAPY_CONFIG_DIR` 一併覆寫,測試靠它隔離)。
 - 存:canonical 鏡像(tracks / playlists / items / mappings)、provider `base` 副本、resolution cache。**不存**:憑證、provider 原始 JSON、**任何不在 Drive 的東西**(`ops` 離線佇列與 `review_queue` 見 Q4;T0 已從 spec §7 拿掉)。
 - Migration:`PRAGMA user_version` 不符就**整檔丟棄重建**。
-- **併入 UX 計畫的暫時快取**:`config.Dir()/cache.json`(各 provider 的播放清單 id/name、最近 50 筆搜尋/挑選)在這裡改存 SQLite,然後刪除該檔(見 `2026-09-04-ux-polish.md` R3)。
+- **併入 UX 計畫的暫時快取**:`config.Dir()/cache.json`(各 provider 的播放清單 id/name、最近 50 筆搜尋/挑選)在這裡改存 SQLite,然後刪除該檔(見 `2026-09-04-ux-polish.md` R3)。**2026-09-07 已做:`internal/cache` 留作門面(呼叫端與測試不動),底層換 `store` 的 `provider_playlists` / `recent` 兩張表;舊檔於首次 Load 刪除。補全路徑等鎖只給 200 ms,TAB 不卡。**
 - **Windows**:`os.Remove(state.db)` 在連線未關時會失敗(sharing violation);`-wal` / `-shm` 不一併刪的話舊 WAL 會 replay 進新 db,rebuild 不乾淨。刪除要先 `Close()`、三個檔一起刪,並有 Windows 上會跑到的測試。
 
 **測試**:`TestRebuildFromDrive` —— hydrate → dump、關閉並刪除三個檔、再 hydrate → dump,**逐位元相等**。(更強的 e2e 在 T8,因為它需要 `pl pull`。)

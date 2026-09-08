@@ -325,6 +325,22 @@ func TestMergeBaseDoesNotAliasInput(t *testing.T) {
 	}
 }
 
+func TestPlaylistItemsSortedByRankOnEncode(t *testing.T) {
+	pl := &canon.Playlist{SchemaVersion: 1, PID: "p", Items: []canon.Item{{IID: "i2", CID: "c", Rank: "k"}, {IID: "i1", CID: "c", Rank: "V"}, {IID: "i0", CID: "c", Rank: "k"}}}
+	b, err := canon.Encode(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i, j, k := strings.Index(string(b), `"iid":"i1"`), strings.Index(string(b), `"iid":"i0"`), strings.Index(string(b), `"iid":"i2"`); !(i < j && j < k) {
+		t.Fatalf("items 應依 (rank, iid) 排序:%s", b)
+	}
+	tr := canon.NewTracks()
+	tr.Tracks["p:x:1"] = canon.Track{CID: "p:x:1", Mappings: map[string]string{"x": "1"}}
+	if b, _ := canon.Encode(tr); !strings.Contains(string(b), `"artists":[]`) {
+		t.Fatalf("artists nil 要寫成 []:%s", b)
+	}
+}
+
 func TestLayout(t *testing.T) {
 	if f := canon.PlaylistFile("01X"); f.Name != "pl__01X.json" || f.Props["kind"] != canon.KindPlaylist || f.Props["pid"] != "01X" {
 		t.Fatalf("%+v", f)
