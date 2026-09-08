@@ -115,8 +115,44 @@ func ownedBy(s *canonState, id *canon.Identity, cid, prov string, t provider.Tra
 	return owner
 }
 
+// findCandidate:Layer 1(alias set 逐個 ISRC 反查)→ Layer 2(模糊搜尋)。回傳候選(nil = 找不到)、分數、來源與打了幾次 API。
+func findCandidate(ctx context.Context, c *layerClients, tr canon.Track) (cand *provider.Track, score int, source string, calls int, err error) {
+	if c.lookup != nil {
+		var cands []provider.Track
+		for _, isrc := range tr.ISRC {
+			found, err := c.lookup.LookupISRC(ctx, isrc)
+			if errors.Is(err, provider.ErrBadISRC) { // 契約:不合格不打 API,所以不計
+				continue
+			}
+			calls++
+			if err != nil {
+				return nil, 0, "", calls, err
+			}
+			cands = append(cands, found...)
+		}
+		if pick, ok := resolve.PickISRC(tr, cands); ok {
+			return &pick, isrcConfidence, canon.SourceISRC, calls, nil
+		}
+	}
+	if c.searcher != nil {
+		if q := resolve.FuzzyQuery(tr); q != "" {
+			found, err := c.searcher.Search(ctx, provider.Query{Text: q, Limit: fuzzyLimit})
+			calls++
+			if err != nil {
+				return nil, 0, "", calls, err
+			}
+			if ranked := resolve.RankFuzzy(tr, found); len(ranked) > 0 {
+				return &ranked[0].Track, ranked[0].Score, canon.SourceFuzzy, calls, nil
+			}
+		}
+	}
+	return nil, 0, "", calls, nil
+}
+
 // planResolve:對 targets 裡缺 mapping 的 (cid, provider) 跑 Layer 1 → Layer 2,產出佇列;不寫任何東西、不合併。
 // 所有權(決策 21):候選 (provider, id) 或其 ISRC 已屬另一個 cid、或這一輪已配給別的 cid → review,自動絕不合併。
+// 失敗不是全有全無:provider 級(建不了 client、授權過期——Apple token 本來就會定期失效)只跳過該 provider、stderr 說一次,
+// 別的 provider 照解;單次查詢失敗(429 退避後仍失敗、5xx)只讓那筆列成 review、reason 放錯誤,前面幾百次呼叫不白打。
 func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer) ([]resolveItem, error) {
 	pls := make([]canon.Playlist, 0, len(targets))
 	for _, pl := range targets {
@@ -126,45 +162,30 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 	clients := map[string]*layerClients{}
 	claimed := map[string]string{} // provider\x00id → 這一輪配給的 cid
 	calls := 0
+	failed := map[string]bool{} // provider 級失敗:這輪跳過它
 	var items []resolveItem
 	for _, need := range resolve.Needs(pls, s.tracks.Tracks) {
-		if only != "" && need.Provider != only {
+		if only != "" && need.Provider != only || failed[need.Provider] {
 			continue
 		}
 		tr := s.tracks.Tracks[need.CID]
-		c, err := clientsFor(ctx, clients, need.Provider)
-		if err != nil {
-			return nil, err
-		}
 		it := resolveItem{action: "review", cid: need.CID, prov: need.Provider, track: tr}
-		if c.lookup != nil {
-			var cands []provider.Track
-			for _, isrc := range tr.ISRC {
-				found, err := c.lookup.LookupISRC(ctx, isrc)
-				if errors.Is(err, provider.ErrBadISRC) { // 契約:不合格不打 API,所以不計
-					continue
-				}
-				calls++
-				if err != nil {
-					return nil, friendlyErr(need.Provider, err)
-				}
-				cands = append(cands, found...)
-			}
-			if pick, ok := resolve.PickISRC(tr, cands); ok {
-				it.cand, it.score, it.source = &pick, isrcConfidence, canon.SourceISRC
-			}
+		c, err := clientsFor(ctx, clients, need.Provider)
+		if err == nil {
+			var n int
+			it.cand, it.score, it.source, n, err = findCandidate(ctx, c, tr)
+			calls += n
 		}
-		if it.cand == nil && c.searcher != nil {
-			if q := resolve.FuzzyQuery(tr); q != "" {
-				found, err := c.searcher.Search(ctx, provider.Query{Text: q, Limit: fuzzyLimit})
-				calls++
-				if err != nil {
-					return nil, friendlyErr(need.Provider, err)
-				}
-				if ranked := resolve.RankFuzzy(tr, found); len(ranked) > 0 {
-					it.cand, it.score, it.source = &ranked[0].Track, ranked[0].Score, canon.SourceFuzzy
-				}
-			}
+		switch {
+		case err == nil:
+		case c == nil || errors.Is(err, provider.ErrAuthExpired):
+			failed[need.Provider] = true
+			fmt.Fprintf(stderr, "%s 這輪跳過:%v\n", need.Provider, friendlyErr(need.Provider, err))
+			continue
+		default:
+			it.reason = "查詢失敗:" + friendlyErr(need.Provider, err).Error()
+			items = append(items, it)
+			continue
 		}
 		switch {
 		case it.cand == nil:

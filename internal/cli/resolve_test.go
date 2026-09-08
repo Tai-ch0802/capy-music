@@ -633,3 +633,37 @@ func TestResolveReviewRejectsDryRun(t *testing.T) {
 		t.Fatalf("要在開頭擋下:%v", err)
 	}
 }
+
+// 規劃階段不是全有全無:apple 建不了 client(token 過期)只跳過 apple,spotify 那半邊照解;單次查詢失敗只讓那筆列成 review。
+func TestResolvePlanDegradesProviderAndCallFailures(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	fs.set("p2", "通勤", "c")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	mustPull(t, "pl", "link", "通勤", "apple:p2")
+	mustPull(t, "pl", "pull", "通勤", "--yes") // c 從 apple 進來,缺 spotify;a、b 缺 apple
+	fs.addCatalog(fakeCatalogTrack{ID: "sp-c", Name: "song-c", ISRC: fakeISRC("c")})
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "apple" {
+			return nil, provider.ErrAuthExpired
+		}
+		return orig(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = orig })
+	out, errs := mustPull(t, "resolve", "--yes")
+	if strings.Count(errs, "apple 這輪跳過:授權已過期") != 1 || !strings.HasPrefix(out, "map\t"+fakeCID("c")+"\tspotify\tsp-c\t") || strings.Contains(out, "\tapple\t") {
+		t.Fatalf("只跳過 apple、只說一次:%v\n%s", out, errs)
+	}
+	if driveTracks(t, dc).Tracks[fakeCID("c")].Mappings["spotify"].ID != "sp-c" {
+		t.Fatal("spotify 那半邊要寫入")
+	}
+	newProvider = orig
+	fs.setSearchStatus(http.StatusServiceUnavailable)
+	before := driveFiles(t, dc)
+	out, _, err := runPull(t, "resolve", "--yes")
+	if exitOf(t, err) != 0 || strings.Count(out, "review\t") != 2 || strings.Count(out, "\t查詢失敗:") != 2 || !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatalf("單次失敗 = 那筆 review、零寫入:%v\n%s", err, out)
+	}
+}
