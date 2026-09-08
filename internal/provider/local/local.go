@@ -60,6 +60,7 @@ var (
 	_ provider.ISRCLookup     = (*Provider)(nil)
 	_ provider.TrackGetter    = (*Provider)(nil)
 	_ provider.DeviceScoped   = (*Provider)(nil)
+	_ provider.PlaylistWriter = (*Provider)(nil)
 )
 
 func New(root, deviceID string) *Provider {
@@ -71,8 +72,9 @@ func (p *Provider) DisplayName() string { return "本機曲庫" }
 func (p *Provider) Root() string        { return p.root }
 
 func (p *Provider) Caps() provider.Capability {
-	// 寫入能力 T2 再加;不宣告播放(Q28)、不宣告 Create
-	return provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapDeviceBound
+	// 不宣告播放(Q28)、不宣告 Create;不宣告 Rename——local 的 id 就是檔名,改名 = id 變 = 下一次 pull 當 gone(計畫 §2 A12)
+	return provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapDeviceBound |
+		provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder
 }
 
 // Health:root 是可讀目錄、library.json(若存在)讀得懂。沒有 library.json 不算錯(曲庫空,清單仍讀得到)。
@@ -373,6 +375,66 @@ func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, err
 		}
 	}
 	return provider.Track{}, fmt.Errorf("曲庫與 local_root 都沒有 %s:%w", rel, provider.ErrNotFound)
+}
+
+// Pushable:本機的 id、而且曲庫有或檔案在 root 底下(同 GetTrack 的認定);foreign 一律 false(決策 36)。
+func (p *Provider) Pushable(id string) bool {
+	_, err := p.GetTrack(context.Background(), id)
+	return err == nil
+}
+
+// ApplyOps(決策 36):用 ApplyPlaylistOps 算目標序列,整檔重寫(#EXTM3U + 每首一行相對路徑;**別的工具寫的 #EXTINF 與註解會被丟掉**),
+// 寫到同目錄的暫存檔再 os.Rename 原子取代。rename 回在 skipped(id 就是檔名,改名會讓 id 變,SPI 沒有「新 id」可回——A12),
+// 呼叫端列成 manual。一次寫入,不會有 PartialWriteError。
+func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, ops []provider.PlaylistOp) (skipped []provider.PlaylistOp, err error) {
+	name, err := p.relOf(id)
+	if err != nil {
+		return nil, err
+	}
+	var doable []provider.PlaylistOp
+	for _, op := range ops {
+		if op.Kind == provider.OpRename {
+			skipped = append(skipped, op)
+			continue
+		}
+		doable = append(doable, op)
+	}
+	want, _, err := provider.ApplyPlaylistOps(current, doable)
+	if err != nil {
+		return nil, err
+	}
+	if len(doable) == 0 {
+		return skipped, nil
+	}
+	target := p.fsPath(name) // NTFS 分 NFC / NFD:寫回目錄裡實際的那個檔
+	if _, err := os.Stat(target); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("清單 %s 不存在:%w", name, provider.ErrNotFound)
+		}
+		return nil, err
+	}
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	for _, tid := range want { // track id 就是路徑(不帶 device);推不出去的(檔不在這台)Pushable 已經擋在 add 之前,配對上的原樣寫回
+		b.WriteString(tid)
+		b.WriteString("\n")
+	}
+	tmp, err := os.CreateTemp(p.root, ".capy-*.tmp")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name()) // rename 成功後這行是 no-op;失敗時不留暫存檔
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp.Name(), target); err != nil {
+		return nil, fmt.Errorf("寫入清單 %s:%w", name, err)
+	}
+	return skipped, nil
 }
 
 func sortedKeys(m map[string]LibraryTrack) []string {

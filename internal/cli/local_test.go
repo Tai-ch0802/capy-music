@@ -123,8 +123,8 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	mustPull(t, "pl", "link", "通勤", "spotify:p1")
 	mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
 	mustPull(t, "pl", "sync", "通勤", "--yes")
-	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "不支援寫入") {
-		t.Fatalf("T1 的 local 沒有寫入端,明說 --provider local 是 exit 1:%v", err)
+	if _, errs, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); err != nil || !strings.Contains(errs, "無變更") {
+		t.Fatalf("A 上 push 本機的 local:剛 sync 過,無變更:%v %s", err, errs)
 	}
 	cidsA := cidsOf(drivePlaylist(t, dc))
 	setDevice(t, devB) // 裝置 B:同一份 Drive,自己的 local_root 也有一份 通勤.m3u8(同名不同機器;沒 ISRC 的 with space 也在——接管後它的 cid 必須跟 A 的同一個)
@@ -216,19 +216,39 @@ func TestLocalConfigDoctorAndAuth(t *testing.T) {
 	}
 }
 
-// local ↔ Spotify 的一輪(T3 的前哨):Spotify 刪 b → pull 進 C;push 到 local 在 T1 沒有寫入端 → sync 只跳過那一格。
-func TestPlLocalSyncWithSpotifyReadOnlyHalf(t *testing.T) {
-	fs, dc, _ := localWorld(t)
+// local ↔ Spotify 的一輪(T3 的 e2e,不用第二台假伺服器):Spotify 刪 b → pull 進 C → push 到 local 整檔重寫;
+// local 端加一首(曲庫有、Spotify 沒 mapping)→ pull 進 C、push 到 Spotify 列 skip;再 sync 零變更;local 的 push 只寫本機的 id。
+func TestPlLocalSyncRoundWithSpotify(t *testing.T) {
+	fs, dc, root := localWorld(t)
 	fs.set("p1", "通勤", "a", "b")
 	mustPull(t, "pl", "link", "通勤", "spotify:p1")
 	mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
-	mustPull(t, "pl", "sync", "通勤", "--yes") // bootstrap:local 多一首 with space(C = a, b, space)
+	out, _ := mustPull(t, "pl", "sync", "通勤", "--yes") // bootstrap:local 多一首 with space → C = [a, b, space];push 到 spotify 列 skip(沒 mapping)
+	if !slices.Contains(dirActions(out), "push skip spotify") {
+		t.Fatalf("bootstrap:%s", out)
+	}
 	fs.set("p1", "通勤", "a")
 	out, errs := mustPull(t, "pl", "sync", "通勤", "--yes")
-	if !strings.Contains(errs, "跳過 通勤 的 local:") || !strings.Contains(errs, "不支援寫入") || strings.Contains(out, "push\tremove\tlocal") {
-		t.Fatalf("local 沒有寫入端就只跳過 push 半邊:%s%s", out, errs)
+	if !slices.Contains(dirActions(out), "pull remove spotify") || !slices.Contains(dirActions(out), "push remove local") || !strings.Contains(errs, "已推送 1 筆") {
+		t.Fatalf("Spotify 的刪除推到 local:%s%s", out, errs)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "通勤.m3u8")); string(got) != "#EXTM3U\na.mp3\nwith space.mp3\n" {
+		t.Fatalf("M3U 整檔重寫:%q", got)
 	}
 	if got := cidsOf(drivePlaylist(t, dc)); !slices.Equal(got, []string{"i:TW000000000A", "p:local:with space.mp3"}) { // b 靠 ISRC 是同一首,兩邊都算掉
-		t.Fatalf("Spotify 的刪除進 C:%v", got)
+		t.Fatalf("C:%v", got)
+	}
+	if b, ok := baseOfProv(t, dc, "local"); !ok || !slices.Equal(b.Items, []string{"a.mp3", "with space.mp3"}) {
+		t.Fatalf("local 的 base 前進到 L′:%+v", b)
+	}
+	writeFile(t, root, "通勤.m3u8", "#EXTM3U\na.mp3\nwith space.mp3\nb.flac\n") // local 端把 b 加回來(有 ISRC → 跟 Spotify 的 b 同一首,mapping 已在)
+	out, _ = mustPull(t, "pl", "sync", "通勤", "--yes")
+	if !slices.Contains(dirActions(out), "pull add local") || !slices.Contains(dirActions(out), "push add spotify") || !slices.Equal(fs.tracksOf("p1"), []string{"a", "b"}) {
+		t.Fatalf("local 加的推到 Spotify:%s %v", out, fs.tracksOf("p1"))
+	}
+	// 再 sync 零變更:stdout 只剩「沒 mapping 的 skip 列」(不是變更,每輪都會列),stderr 無變更
+	out, errs = mustPull(t, "pl", "sync", "通勤", "--yes")
+	if !strings.Contains(errs, "無變更") || slices.ContainsFunc(dirActions(out), func(a string) bool { return a != "push skip spotify" }) {
+		t.Fatalf("再 sync 零變更:%s%s", out, errs)
 	}
 }

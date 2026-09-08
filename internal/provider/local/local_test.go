@@ -114,11 +114,8 @@ func TestForeignAndDevicePrefix(t *testing.T) {
 	if _, err := p.GetPlaylistItems(ctx, other); !errors.Is(err, provider.ErrNotFound) {
 		t.Fatalf("foreign id 讀 items 要 ErrNotFound:%v", err)
 	}
-	if !p.Caps().Has(provider.CapDeviceBound) || p.Caps().Has(provider.CapPlaylistAppend) || p.Caps().Has(provider.CapPlaybackControl) {
+	if !p.Caps().Has(provider.CapDeviceBound) || p.Caps().Has(provider.CapPlaybackControl) || p.Caps().Has(provider.CapPlaylistCreate) {
 		t.Fatalf("能力:%b", p.Caps())
-	}
-	if _, ok := any(p).(provider.PlaylistWriter); ok {
-		t.Fatal("T1 還沒有寫入端")
 	}
 }
 
@@ -244,4 +241,67 @@ func TestLibraryErrorsAndNormalize(t *testing.T) {
 			t.Fatalf("NormalizePath(%q) = %q,要 %q", in, got, want)
 		}
 	}
+}
+
+func TestApplyOpsAndPushable(t *testing.T) {
+	p, root := world(t)
+	ctx := context.Background()
+	id := dev + "/通勤.m3u8"
+	if !p.Pushable("a.mp3") || !p.Pushable("notes.txt") || p.Pushable("nope.mp3") || p.Pushable("01OTHERDEVICE0000000000000/a.mp3") || p.Pushable("") {
+		t.Fatal("Pushable:曲庫有或檔案在、且是本機的")
+	}
+	if !p.Caps().Has(provider.CapPlaylistAppend|provider.CapPlaylistRemove|provider.CapPlaylistReorder) || p.Caps().Has(provider.CapPlaylistRename) {
+		t.Fatalf("寫入能力(沒有 Rename):%b", p.Caps())
+	}
+	current := []string{"a.mp3", "b.flac", "x.mp3", "sub/c.m4a"}
+	ops := []provider.PlaylistOp{
+		{Kind: provider.OpRemove, Pos: 2, ProviderID: "x.mp3"},
+		{Kind: provider.OpMove, From: 2, Pos: 0},
+		{Kind: provider.OpAdd, Pos: 1, ProviderID: "notes.txt"},
+		{Kind: provider.OpRename, Name: "新名"},
+	}
+	skipped, err := p.ApplyOps(ctx, id, current, ops)
+	if err != nil || len(skipped) != 1 || skipped[0].Kind != provider.OpRename {
+		t.Fatalf("rename 回 skipped、其餘做:%v %+v", err, skipped)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "通勤.m3u8"))
+	if err != nil || string(got) != "#EXTM3U\nsub/c.m4a\nnotes.txt\na.mp3\nb.flac\n" {
+		t.Fatalf("整檔重寫(EXTINF 與註解丟掉):%q %v", got, err)
+	}
+	if ents, _ := os.ReadDir(root); slices.ContainsFunc(ents, func(e os.DirEntry) bool { return strings.HasPrefix(e.Name(), ".capy-") }) {
+		t.Fatal("不留暫存檔")
+	}
+	items, _ := p.GetPlaylistItems(ctx, id)
+	if len(items) != 4 || items[0].ProviderID != "sub/c.m4a" || items[1].Title != "notes" {
+		t.Fatalf("重讀:%+v", items)
+	}
+	// 只有 rename:不動檔案
+	before, _ := os.ReadFile(filepath.Join(root, "通勤.m3u8"))
+	if sk, err := p.ApplyOps(ctx, id, idsOf(items), []provider.PlaylistOp{{Kind: provider.OpRename, Name: "x"}}); err != nil || len(sk) != 1 {
+		t.Fatalf("只有 rename:%v %+v", err, sk)
+	}
+	if after, _ := os.ReadFile(filepath.Join(root, "通勤.m3u8")); string(after) != string(before) {
+		t.Fatal("只有 rename 不寫檔")
+	}
+	// 越界 → 錯且不寫;別台裝置的曲目 → 整批不寫;foreign 清單 / 不存在的清單
+	if _, err := p.ApplyOps(ctx, id, idsOf(items), []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 99}}); err == nil {
+		t.Fatal("越界要錯")
+	}
+	if after, _ := os.ReadFile(filepath.Join(root, "通勤.m3u8")); string(after) != string(before) {
+		t.Fatal("錯誤路徑零寫入")
+	}
+	if _, err := p.ApplyOps(ctx, "01OTHERDEVICE0000000000000/通勤.m3u8", nil, []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "a.mp3"}}); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("foreign 清單:%v", err)
+	}
+	if _, err := p.ApplyOps(ctx, dev+"/nope.m3u8", nil, []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "a.mp3"}}); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("不存在的清單:%v", err)
+	}
+}
+
+func idsOf(ts []provider.Track) []string {
+	out := make([]string, len(ts))
+	for i, t := range ts {
+		out[i] = t.ProviderID
+	}
+	return out
 }

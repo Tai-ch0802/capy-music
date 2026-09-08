@@ -68,7 +68,7 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 
 `library.json` 由你自己維護(capy 不讀音訊 tag):`{"schema_version": 1, "tracks": {"相對路徑": {"title", "artists": [], "album", "duration_ms", "isrc"}}}`;清單裡每一行是相對於清單檔的路徑,`#EXTINF` 只在曲庫沒有那首時當備援標題。有 `isrc` 的曲目才會跟 Spotify / Apple 自動對上,沒有的靠 `capy resolve` 的模糊比對(local 這邊的搜尋是曲庫內比對,不用網路)。
 
-**本機曲庫綁裝置**:連結記的是「這台裝置的這個檔」,別台裝置的 `pl pull / push / sync` 會跳過它(stderr 會說是哪台的),不會把連結刪掉;一個清單同時只能連一台裝置的 M3U——想換一台主導(或重灌之後)就在那台重跑 `capy pl link`,它會接管並說明原本是哪台。目前只讀(pull),寫回 M3U 在下一版。
+**本機曲庫綁裝置**:連結記的是「這台裝置的這個檔」,別台裝置的 `pl pull / push / sync` 會跳過它(stderr 會說是哪台的),不會把連結刪掉;一個清單同時只能連一台裝置的 M3U——想換一台主導(或重灌之後)就在那台重跑 `capy pl link`,它會接管並說明原本是哪台。`pl push` / `pl sync` 寫回 M3U 是**整檔重寫**(`#EXTM3U` + 每行一個路徑):別的工具寫在裡面的 `#EXTINF` 與註解會被丟掉;清單改名不會寫回檔名(檔名就是它的 id,改了等於另一個清單——要改名請自己改檔名再 `pl link`)。
 
 ## Google Drive 同步(選用):登入 Google
 
