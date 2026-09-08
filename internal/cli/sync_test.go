@@ -61,7 +61,11 @@ func TestPlSyncRoundConverges(t *testing.T) {
 	fs1, fs2, _, _ := syncWorld(t)
 	fs1.set("p1", "通勤", "a", "c")
 	fs2.set("q1", "通勤", "c", "a", "b")
+	r1, r2 := fs1.reads(), fs2.reads()
 	out, errs := mustPull(t, "pl", "sync", "通勤", "--yes")
+	if fs1.reads()-r1 != 3 || fs2.reads()-r2 != 3 { // pull 1 + 套用前重讀 1 + L′ 1;push 半邊重用 pull 的 L(決策 31),不是 4
+		t.Fatalf("每個平台一輪只讀三次 items:%d %d", fs1.reads()-r1, fs2.reads()-r2)
+	}
 	want := []string{"pull move apple", "pull remove spotify", "push remove apple", "push move spotify"} // provider 依字典序(決策 31)
 	if !slices.Equal(dirActions(out), want) {
 		t.Fatalf("一輪的變更集:\n%s%s", out, errs)
