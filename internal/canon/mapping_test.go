@@ -1,6 +1,7 @@
 package canon_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -153,5 +154,34 @@ func TestDecodeStampsSchemaVersion(t *testing.T) {
 	m, err := canon.Decode[canon.Manifest]([]byte(`{"schema_version":1,"devices":[],"playlists":[]}`))
 	if err != nil || m.SchemaVersion != canon.SchemaVersion {
 		t.Fatalf("Decode 後 SchemaVersion 應為目前值 %d:%d %v", canon.SchemaVersion, m.SchemaVersion, err)
+	}
+}
+
+// 非 pinned 的空 id 是壞資料(舊 v1 檔寫了 "spotify": "" 也會解成 {ID:"", observed}),不是「不可得」:下一次觀測要修回來,不然永久隱形。
+func TestObserveRepairsEmptyObservedID(t *testing.T) {
+	fixClock(t, 1_700_000_000)
+	tr := canon.NewTrack("spotify", provider.Track{ProviderID: "x", Title: "T", DurationMS: 1000, ISRC: "TWA472400123"})
+	tr.Mappings["spotify"] = canon.Mapping{ID: "", Confidence: 100, Source: canon.SourceObserved}
+	changed, conflict := tr.Observe("spotify", provider.Track{ProviderID: "x", Title: "T", DurationMS: 1000})
+	if !changed || conflict || tr.Mappings["spotify"].ID != "x" {
+		t.Fatalf("空 id 的 observed 要被修回:changed=%t conflict=%t %+v", changed, conflict, tr.Mappings["spotify"])
+	}
+}
+
+// 值域不變式:confidence 夾到 0–100;source 不認得就拒絕(決策 20)。
+func TestMappingDecodeClampsConfidenceAndRejectsUnknownSource(t *testing.T) {
+	var m canon.Mapping
+	if err := json.Unmarshal([]byte(`{"id":"x","confidence":900,"pinned":false,"source":"fuzzy","updated_at":1}`), &m); err != nil || m.Confidence != 100 {
+		t.Fatalf("900 要夾成 100:%v %+v", err, m)
+	}
+	if err := json.Unmarshal([]byte(`{"id":"x","confidence":-5,"pinned":false,"source":"isrc","updated_at":1}`), &m); err != nil || m.Confidence != 0 {
+		t.Fatalf("-5 要夾成 0:%v %+v", err, m)
+	}
+	err := json.Unmarshal([]byte(`{"id":"x","confidence":50,"pinned":false,"source":"whatever","updated_at":1}`), &m)
+	if err == nil || !strings.Contains(err.Error(), "source 未知") {
+		t.Fatalf("未知 source 要拒絕:%v", err)
+	}
+	if _, err := canon.Decode[canon.Tracks]([]byte(`{"schema_version":2,"tracks":{"i:X":{"cid":"i:X","title":"t","artists":[],"duration_ms":0,"mappings":{"spotify":{"id":"x","confidence":1,"pinned":false,"source":"nope","updated_at":1}}}}}`)); err == nil {
+		t.Fatal("整份 tracks.json 帶未知 source 也要在 Decode 擋下")
 	}
 }

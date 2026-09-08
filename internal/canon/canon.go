@@ -172,6 +172,14 @@ func (m *Mapping) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &r); err != nil {
 		return err
 	}
+	// 值域不變式(決策 20):confidence 是 review queue 排序用的同一把尺,手改的檔夾到範圍內;source 不認得就拒絕——
+	// 新版本多出來的 source 一定伴隨 schema 跳版(舊 binary 早在 ErrSchemaTooNew 停下),所以這裡遇到的只會是手改錯字。
+	r.Confidence = max(0, min(100, r.Confidence))
+	switch r.Source {
+	case SourceObserved, SourceISRC, SourceFuzzy, SourceReview:
+	default:
+		return fmt.Errorf("mapping 的 source 未知:%q(只認 observed / isrc / fuzzy / review)", r.Source)
+	}
 	*m = Mapping(r)
 	return nil
 }

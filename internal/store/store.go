@@ -205,7 +205,8 @@ func (s *Store) retire(version int) error {
 			return err
 		}
 	}
-	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 變成 v%d:舊檔保留為 %s(沒有程式會讀它;確定不需要再自行刪除),快取會在下一次 pull 從 Drive 重建\n", version, schemaVersion, kept)
+	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 變成 v%d:舊檔保留為 %s,快取會在下一次 pull 從 Drive 重建。"+
+		"這版 capy 不讀舊檔;若 pull 說 Drive 不完整,救援是用上一版 capy binary(GitHub Releases)把舊檔改回 %s 後跑 capy drive init --from-local,再更新回來。確定不需要再自行刪除\n", version, schemaVersion, kept, fileName)
 	return nil
 }
 

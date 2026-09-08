@@ -34,7 +34,7 @@ go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 - `capy update`:問 GitHub Releases 最新正式版,下載本平台的檔、用 `checksums.txt` 做 SHA-256 校驗、跑一次新 binary 的 `--version` 確認能動,才覆蓋目前這顆;任何一步失敗,舊的原封不動。從 dev 版執行會換成正式版(之後 Google 登入就有內建 client)。
 - `capy update --dev`:抓 main 分支最新 commit、用 `go install` 重建並覆蓋(需要 Go toolchain,第一次約 20 秒)。
 
-Drive 狀態不確定時,更新前先 `capy export > backup.json`:本機快取 `state.db` 的 schema 升版時舊檔會保留為 `state.db.v<舊版>`,但沒有程式會讀它——那只是「不毀掉」,不是「能復原」。
+更新前先跑一次 `capy pl pull --dry-run`:exit 3(Drive 不完整)就先別更新。本機快取 `state.db` 的 schema 升版時舊檔會保留為 `state.db.v<舊版>`,但新版 capy 不讀它;而 `pl pull` 擋下「Drive 不完整」時給的出口 `capy drive init --from-local` 讀的是新的空快取——兩邊都沒資料。真的撞上了:從 Releases 拿上一版 binary,把 `state.db.v<舊版>` 改回 `state.db`,用舊版跑 `capy drive init --from-local` 把 Drive 補齊(新版讀得懂舊 schema 的 Drive 檔),再更新回來。不確定就先 `capy export > backup.json`。
 
 ## Spotify:自建 app(免費,約 2 分鐘)
 

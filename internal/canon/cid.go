@@ -58,7 +58,7 @@ func (tr *Track) Observe(prov string, t provider.Track) (changed, conflict bool)
 		if m.ID != t.ProviderID {
 			return false, tr.addConflict(prov, t)
 		}
-	} else if m.Source != SourceObserved {
+	} else if m.Source != SourceObserved || m.ID == "" { // 非 pinned 的空 id 是壞資料(手改 / 舊檔寫了 ""),不是「不可得」——那是 pinned 的語意;看到就修回來
 		tr.Mappings[prov] = observedMapping(t.ProviderID)
 		changed = true
 	}
