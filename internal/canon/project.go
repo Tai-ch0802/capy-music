@@ -6,17 +6,16 @@ package canon
 // ops 的位置語意由 provider.ApplyPlaylistOps 唯一定義(依序套用),這裡的性質測試也拿它驗「套完 = want」。
 
 import (
-	"fmt"
 	"slices"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
-// LiveItem:平台清單 L 的一首,cid 由 OBSERVE 依身分規則算好。
+// LiveItem:平台清單 L 的一首,cid 由 OBSERVE 依身分規則算好。推不出去的曲目(Spotify local file、Apple library-only)
+// 在 L 裡就配對、不動;要不要因為它們拒絕整個清單的 push 是呼叫端的事(計畫 Q22),這裡不需要知道。
 type LiveItem struct {
 	CID        string
 	ProviderID string
-	Unpushable bool // Spotify local file、Apple library-only:API 加不回去
 }
 
 // Skip:C 的 item 在平台上沒有、又推不出去(沒有 mapping、pinned 不可得、Apple 只有 library id)。
@@ -25,7 +24,9 @@ type Skip struct {
 	Reason   string
 }
 
-// PushPlan:diff(L 的 cid 序列, C 的 cid 序列)→ ops。mappingID 給 cid 在這個 provider 的可推 id(沒有回 false)。
+// PushPlan:diff(L 的 cid 序列, C 的 cid 序列)→ ops。mappingID 給 cid 在這個 provider 的**可推** id——沒有 mapping、釘成不可得、
+// 或 id 推不出去(Spotify local file 的 mapping 存的是 `spotify:local:…` uri、Apple 的 library-only id)都必須回 false,
+// 不然那首會變成 add 而讓 provider 整批拒收;這裡不認得各平台的 id 形狀,判斷交給呼叫端(provider.PlaylistWriter.Pushable)。
 // 回傳的 ops 依序套在 L 的 provider id 序列上等於「C 的順序、去掉 skipped、id 取 mapping(配對上的沿用 L 原文)」;
 // wantName ≠ liveName 時多一個 rename。remove 依 L 位置由後往前、move 用最簡單的逐位選擇、add 依目標位置遞增。
 // ponytail: move 不求最少(每個錯位的 item 一次 move),Spotify 反正整批取代;真要最少 move 再用 LCS 的補集。
@@ -139,8 +140,7 @@ func Reordered(base, live []string) bool {
 			n++
 		}
 	}
-	if n > common {
-		panic(fmt.Sprintf("LCS %d > 共同元素 %d", n, common)) // 不可能;性質測試會抓
-	}
+	// n > common 依構造不可能(每個 cid 的配對數 ≤ min(b, l),加總 ≤ Σ min);真的發生也只當「沒重排」(保留 C 順序),
+	// 這是 pull 的主路徑,不 panic。性質測試對任意序列對都呼叫過。
 	return n < common
 }

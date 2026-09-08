@@ -86,7 +86,7 @@ func TestPushPlanTable(t *testing.T) {
 // 性質:任意 live / want(含重複、含推不出去的),套完 ops = want 去掉 skipped;remove 由後往前、add 遞增(位置才不互相影響)。
 func TestPushPlanProperty(t *testing.T) {
 	letters := []string{"a", "b", "c", "d", "e", "f"}
-	seed := rand.Uint64()
+	seed := fuzzSeed(t)
 	r := rand.New(rand.NewPCG(seed, 7))
 	pick := func(n int) []string {
 		out := make([]string, n)
@@ -101,7 +101,7 @@ func TestPushPlanProperty(t *testing.T) {
 		if r.IntN(3) == 0 {
 			nomap = []string{letters[r.IntN(len(letters))]}
 		}
-		_ = canon.Reordered(toCIDs(live), toCIDs(want)) // 「LCS > 共同元素」的 panic 不可能:任意序列對都不會觸發
+		_ = canon.Reordered(toCIDs(live), toCIDs(want)) // 任意序列對都能算(不 panic、不越界)
 		pl, _ := world(t, want...)
 		ops, skipped := canon.PushPlan(liveItems(live...), pl.Items, "n", "n", mapper(nomap...))
 		// 期望:結果是 want 的子序列(順序不變),有 mapping 的 id 全部都在;沒 mapping 的 id 只能靠配對留下,

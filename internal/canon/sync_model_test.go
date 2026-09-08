@@ -218,7 +218,7 @@ func mutate(r *rand.Rand, ids []string, expected *[]string) []string {
 
 // 模型測試:每輪隨機挑一個平台做 1–3 個操作,sync 一輪後 C 與兩個平台都等於意圖;再 sync 一輪零變更。
 func TestSyncModelMatchesIntent(t *testing.T) {
-	seed := rand.Uint64()
+	seed := fuzzSeed(t)
 	r := rand.New(rand.NewPCG(seed, 11))
 	for round := 0; round < 200; round++ {
 		m := newModel(t, "a", "b", "c")
