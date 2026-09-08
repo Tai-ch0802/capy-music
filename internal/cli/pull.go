@@ -79,6 +79,7 @@ type canonState struct {
 type fetchedFile struct {
 	file drive.File
 	body []byte
+	n    int // FETCH 時同名檔的份數(版本守衛要比:別台裝置多建一份也算變動)
 }
 
 func (s *canonState) mine() *canon.DeviceState {
@@ -179,7 +180,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 		if err != nil {
 			return nil, false, fmt.Errorf("下載 %s:%w", name, friendlyErr("google", err))
 		}
-		s.fetched[name] = fetchedFile{f, b}
+		s.fetched[name] = fetchedFile{f, b, len(fs)}
 		return b, true, nil
 	}
 	decodeErr := func(name string, err error) error { return fmt.Errorf("讀取 Drive 的 %s:%w", name, err) }
@@ -322,6 +323,17 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 			return err
 		}
 	}
+	if len(ups) > 0 {
+		if err := guardVersions(ctx, dc, s, func(yield func(string) bool) {
+			for _, u := range ups {
+				if !yield(u.ref.Name) {
+					return
+				}
+			}
+		}); err != nil {
+			return err
+		}
+	}
 	for _, u := range ups {
 		var err error
 		if f, ok := s.fetched[u.ref.Name]; ok {
@@ -342,6 +354,38 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 	}
 	if err := st.Hydrate(c); err != nil {
 		fmt.Fprintf(s.stderr, "警告:Drive 已更新,但本機快取寫入失敗(下次 pull 會重建):%v\n", err)
+	}
+	return nil
+}
+
+// guardVersions:共享檔版本守衛(spec §6.3,決策 29)。Drive 沒有 CAS,lost update 擋不住,但擋得住它的後果:
+// 上傳前再 list 一次,FETCH 讀過的每個檔(不只這次要傳的——沒變的檔也參與了決策)version 與同名份數都要跟 FETCH 時一樣,
+// 要新建的檔也仍然不存在;任一不符就一個檔都不傳、本機不動、回錯叫使用者重跑(重跑會 FETCH 到對方的結果再算一次)。
+// 殘餘窗口只剩上傳序列本身。
+func guardVersions(ctx context.Context, dc *drive.Client, s *canonState, staged func(yield func(string) bool)) error {
+	files, err := dc.List(ctx, "")
+	if err != nil {
+		return friendlyErr("google", err)
+	}
+	byName := map[string][]drive.File{}
+	for _, f := range files {
+		byName[f.Name] = append(byName[f.Name], f)
+	}
+	changed := func(name string) error {
+		return fmt.Errorf("Drive 上的 %s 在這次執行期間被別台裝置改過;零寫入,重跑一次", name)
+	}
+	for _, name := range slices.Sorted(maps.Keys(s.fetched)) {
+		f := s.fetched[name]
+		now := byName[name]
+		i := slices.IndexFunc(now, func(g drive.File) bool { return g.ID == f.file.ID })
+		if len(now) != f.n || i < 0 || now[i].Version != f.file.Version {
+			return changed(name)
+		}
+	}
+	for name := range staged {
+		if _, ok := s.fetched[name]; !ok && len(byName[name]) > 0 { // 我們要 Create 的檔對方剛建了:再建就是第二份
+			return changed(name)
+		}
 	}
 	return nil
 }
