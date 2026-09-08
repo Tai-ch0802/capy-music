@@ -676,7 +676,15 @@ func TestPlPullHealsMergedTombstoneLeftovers(t *testing.T) {
 			}
 		}
 	}
-	out, errs := mustPull(t, "pl", "pull", "通勤", "--yes")
+	before := driveFiles(t, dc)
+	out, errs := mustPull(t, "pl", "pull", "通勤", "--dry-run") // 自癒在 FETCH 就發生,但 --dry-run 零寫入:訊息不能承諾「這次上傳」
+	if out != "" || !strings.Contains(errs, "修復 1 筆") || !strings.Contains(errs, "(通勤;") || !strings.Contains(errs, "下次寫入時一併上傳") || strings.Contains(errs, "這次") {
+		t.Fatalf("--dry-run:stderr 講事實、列清單名、不承諾這次:%q\n%s", out, errs)
+	}
+	if !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatal("--dry-run 零寫入,自癒也不例外")
+	}
+	out, errs = mustPull(t, "pl", "pull", "通勤", "--yes")
 	if out != "" || !strings.Contains(errs, "修復 1 筆") {
 		t.Fatalf("平台照舊 → 零列;stderr 說修了 1 筆:%q\n%s", out, errs)
 	}

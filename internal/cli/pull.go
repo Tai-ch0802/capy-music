@@ -229,11 +229,15 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 		fmt.Fprintln(stderr, "警告:tracks.json "+w)
 	}
 	healed := 0
-	for _, pl := range s.playlists {
-		healed += id.RedirectItems(pl)
+	var healedNames []string // 自癒會動到所有受影響的清單(不只這次的目標),名字要列出來
+	for _, pid := range slices.Sorted(maps.Keys(s.playlists)) {
+		if n := id.RedirectItems(s.playlists[pid]); n > 0 {
+			healed += n
+			healedNames = append(healedNames, s.playlists[pid].Name)
+		}
 	}
-	if healed > 0 {
-		fmt.Fprintf(stderr, "修復 %d 筆清單項目的合併殘留(上次寫入中斷:tracks.json 已合併、清單還指著舊 cid),會隨這次寫入一起上傳\n", healed)
+	if healed > 0 { // 這裡還不知道會不會寫入(--dry-run / 閾值 / 取消都不會),只講事實、不承諾這次上傳
+		fmt.Fprintf(stderr, "修復 %d 筆清單項目的合併殘留(%s;上次寫入中斷:tracks.json 已合併、清單還指著舊 cid),下次寫入時一併上傳\n", healed, strings.Join(healedNames, "、"))
 	}
 	// 閘的兩個證人:manifest 宣告的 pid、本機 db 記得的 pid(db 壞或空就沒有第二個證人,不算錯)。
 	known := slices.Clone(s.manifest.Playlists)

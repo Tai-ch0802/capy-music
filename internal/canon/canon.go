@@ -20,7 +20,10 @@ import (
 // Decode / Encode 都會經 normalize(),一律把 schema_version 蓋成目前值:不蓋的話 v1 檔重編出去還是寫 1,
 // v0.1.0 binary 會拿到 JSON 型別錯誤而不是 ErrSchemaTooNew(R-5)。代價是升級後第一次 pull 每個檔都重傳一次。
 // 想知道檔案原本的版本號要在 Decode 之前自己看(CheckSchema / 解 head),Decode 之後看到的永遠是目前值。
-const SchemaVersion = 2
+// 3(2026-09-08,P4 T2b,決策 21):tracks.json 加 merged(合併墓碑)。規則:**加的欄位若無法從別處重算就跳版**——
+// Decode 忽略未知欄位,schema 2 的 binary 會靜靜丟掉 merged、下一次 COMMIT 重編的位元組少了它就上傳,墓碑就此消失;
+// 跳版讓舊 binary 拿到 ErrSchemaTooNew 停在門外。純快取、可再生的欄位才不跳。
+const SchemaVersion = 3
 
 // 測試替換點:observed_at / updated_at / added_at / iid 全由這兩個衍生,沒有替換點的話逐位元相等的測試不可能穩定。
 var (

@@ -283,3 +283,22 @@ func TestMergeToleratesNilMappings(t *testing.T) {
 		t.Fatalf("勝者 mappings 為 nil 也要能搬:%s %v %+v", s, err, tracks.Tracks["i:A"].Mappings)
 	}
 }
+
+// 不同 id 時也比優先序:敗者是使用者釘的、勝者只是觀測到的 → 釘選留下、勝者的 id 進 conflicts(人的裁決不被合併蓋掉)。
+func TestMergeDifferentIDsKeepPinnedSide(t *testing.T) {
+	tracks, _, x, y := twoCids(t) // 勝者 y
+	tx, ty := tracks.Tracks[x], tracks.Tracks[y]
+	tx.Mappings["tidal"] = canon.Mapping{ID: "pinned-x", Confidence: 100, Pinned: true, Source: canon.SourceReview, UpdatedAt: 5}
+	ty.Mappings["tidal"] = canon.Mapping{ID: "seen-y", Confidence: 100, Source: canon.SourceObserved, UpdatedAt: 6}
+	tracks.Tracks[x], tracks.Tracks[y] = tx, ty
+	if _, err := canon.Merge(tracks, nil, x, y); err != nil {
+		t.Fatal(err)
+	}
+	got := tracks.Tracks[y]
+	if m := got.Mappings["tidal"]; !m.Pinned || m.ID != "pinned-x" {
+		t.Fatalf("敗者的釘選要留下:%+v", m)
+	}
+	if want := (canon.Conflict{Provider: "tidal", ProviderID: "seen-y", Title: "song-z", DurationMS: 200000}); !slices.Contains(got.Conflicts, want) {
+		t.Fatalf("輸的那邊(勝者觀測到的 id)進 conflicts:%+v", got.Conflicts)
+	}
+}

@@ -554,3 +554,14 @@ func TestDeriveObservationOverridesFuzzyMapping(t *testing.T) {
 		t.Fatalf("第二輪不該再有 tracks 變更:%v %d %s", err, len(again.Tracks), actions(again.Changes))
 	}
 }
+
+// Resolve 經墓碑可能指到 tracks 裡已經沒有的勝者(手改過的檔):新建 track 的 cid 欄要等於 map key,不然經 db 來回位元組會變。
+func TestDeriveNewTrackKeyMatchesCIDField(t *testing.T) {
+	pin(t)
+	in := canon.DeriveInput{Provider: prov, Playlist: *canon.NewPlaylist("通勤"), Tracks: map[string]canon.Track{}, Merged: map[string]string{cidOf("a"): "i:GHOST"}, Live: live("通勤", "a")}
+	res := mustDerive(t, in)
+	tr, ok := res.Tracks["i:GHOST"]
+	if !ok || tr.CID != "i:GHOST" || len(res.Tracks) != 1 || actions(res.Changes) != "add:i:GHOST" {
+		t.Fatalf("map key 與 cid 欄一致:%+v %s", res.Tracks, actions(res.Changes))
+	}
+}

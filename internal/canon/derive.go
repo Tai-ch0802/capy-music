@@ -84,7 +84,9 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		lcid[i] = cid
 		tr, ok := lookup(cid)
 		if !ok {
-			res.Tracks[cid] = NewTrack(prov, t)
+			nt := NewTrack(prov, t)
+			nt.CID = cid // Resolve 可能經墓碑指到 tracks 裡已經沒有的勝者(手改過的檔):map key 與 cid 欄位必須一致,不然經 db 來回位元組會變
+			res.Tracks[cid] = nt
 			continue
 		}
 		cp := cloneTrack(tr)

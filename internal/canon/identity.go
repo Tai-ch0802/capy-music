@@ -96,7 +96,8 @@ func (id *Identity) RedirectItems(p *Playlist) int {
 }
 
 // Merge 把 a、b 併成一個 cid(決策 21;只由人決定,自動寫入永不呼叫)。勝者是字典序較小的 cid;敗者的 alias set、mappings、
-// conflicts 併入勝者——同 provider 不同 id → 敗者的 id 進 conflicts[](交給 review),同 id 取優先序高的那個(pinned > observed > 其他);
+// conflicts 併入勝者——同 provider 的 mapping 一律取優先序高的那個(pinned > observed > 其他,同級勝者留):同 id 就只留一個,
+// 不同 id 時輸的那邊的 id 進 conflicts[](交給 review;敗者是 pinned 而勝者只是觀測 → 敗者的釘選留下、勝者的 id 進 conflicts);
 // 所有清單裡敗者的 item 改指勝者(清單 updated_at 前進);敗者從 tracks 移除、留墓碑 merged[敗者] = 勝者,既有指向敗者的墓碑一併壓平。
 // 傳入的 cid 先沿墓碑追:review 拿到的可能是已合併過的舊 cid。cid 除此之外永不改寫,p: 也不會因為拿到 ISRC 而換成 i:。
 func Merge(tr *Tracks, playlists map[string]*Playlist, a, b string) (survivor string, err error) {
@@ -130,8 +131,15 @@ func Merge(tr *Tracks, playlists map[string]*Playlist, a, b string) (survivor st
 			if mappingRank(lm) > mappingRank(sm) {
 				s.Mappings[prov] = lm
 			}
-		case lm.ID != "": // 敗者釘成「不可得」而勝者有 id 的話,勝者的 id 就是答案,沒東西可記
-			s.addConflict(prov, provider.Track{ProviderID: lm.ID, Title: l.Title, DurationMS: l.DurationMS})
+		default: // 不同 id:優先序高的留下(同級勝者留),輸的那邊的 id 進 conflicts——人的釘選不會被一次自動觀測蓋掉(決策 20)
+			if mappingRank(lm) > mappingRank(sm) {
+				s.Mappings[prov] = lm
+				if sm.ID != "" {
+					s.addConflict(prov, provider.Track{ProviderID: sm.ID, Title: s.Title, DurationMS: s.DurationMS})
+				}
+			} else if lm.ID != "" { // 敗者釘成「不可得」而輸給勝者的 pinned id:空 id 沒東西可記
+				s.addConflict(prov, provider.Track{ProviderID: lm.ID, Title: l.Title, DurationMS: l.DurationMS})
+			}
 		}
 	}
 	for _, c := range l.Conflicts {
