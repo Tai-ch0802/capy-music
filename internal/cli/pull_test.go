@@ -37,6 +37,13 @@ type fakeSpotify struct {
 	writes       []fakeWrite        // push 打過來的寫入(PUT / POST items、PUT 改名),依序
 	writeStatus  int                // 非零:所有寫入回這個狀態碼(403 = 別人的清單)
 	postFail     int                // 接下來 N 個 POST 回 500(client 對 5xx 會重試兩次,要讓一批真的失敗設 3)
+	itemReads    int                // GET /playlists/{id}/items 的次數(sync 的 push 半邊要重用 pull 的 L,不能多讀)
+}
+
+func (f *fakeSpotify) reads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.itemReads
 }
 
 func (f *fakeSpotify) setHook(h func()) {
@@ -134,6 +141,9 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(items, ","), len(items))
 		case strings.HasPrefix(r.URL.Path, "/playlists/") && strings.HasSuffix(r.URL.Path, "/items"):
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/playlists/"), "/items")
+			if r.Method == http.MethodGet {
+				f.itemReads++ // restricted / 404 也算一次讀(sync 對 restricted 清單只能讀一次)
+			}
 			if f.restricted[id] {
 				w.WriteHeader(http.StatusForbidden)
 				w.Write([]byte(`{"error":{"status":403,"message":"Forbidden"}}`))

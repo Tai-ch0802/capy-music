@@ -16,7 +16,7 @@ import (
 
 func newPlCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pl", Short: "播放清單"}
-	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd())
+	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd(), newPlSyncCmd())
 	return cmd
 }
 
