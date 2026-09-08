@@ -77,8 +77,23 @@ type canonState struct {
 }
 
 type fetchedFile struct {
-	file drive.File
-	body []byte
+	file  drive.File
+	body  []byte
+	peers []idVer // FETCH 時同名檔全部的 (ID, Version),排序後比——同名多份時別台裝置改到「另一份」也要擋
+}
+
+type idVer struct {
+	ID      string
+	Version int64
+}
+
+func idVers(fs []drive.File) []idVer {
+	out := make([]idVer, len(fs))
+	for i, f := range fs {
+		out[i] = idVer{f.ID, f.Version}
+	}
+	slices.SortFunc(out, func(a, b idVer) int { return strings.Compare(a.ID, b.ID) })
+	return out
 }
 
 func (s *canonState) mine() *canon.DeviceState {
@@ -179,7 +194,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 		if err != nil {
 			return nil, false, fmt.Errorf("下載 %s:%w", name, friendlyErr("google", err))
 		}
-		s.fetched[name] = fetchedFile{f, b}
+		s.fetched[name] = fetchedFile{f, b, idVers(fs)}
 		return b, true, nil
 	}
 	decodeErr := func(name string, err error) error { return fmt.Errorf("讀取 Drive 的 %s:%w", name, err) }
@@ -322,6 +337,15 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 			return err
 		}
 	}
+	if len(ups) > 0 {
+		names := make([]string, len(ups))
+		for i, u := range ups {
+			names[i] = u.ref.Name
+		}
+		if err := guardVersions(ctx, dc, s, names); err != nil {
+			return err
+		}
+	}
 	for _, u := range ups {
 		var err error
 		if f, ok := s.fetched[u.ref.Name]; ok {
@@ -342,6 +366,45 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 	}
 	if err := st.Hydrate(c); err != nil {
 		fmt.Fprintf(s.stderr, "警告:Drive 已更新,但本機快取寫入失敗(下次 pull 會重建):%v\n", err)
+	}
+	return nil
+}
+
+// guardVersions:共享檔版本守衛(spec §6.3,決策 29)。Drive 沒有 CAS,lost update 擋不住,但擋得住它的後果:
+// 上傳前再 list 一次,FETCH 讀過的每個檔(不只這次要傳的——沒變的檔也參與了決策)同名檔的 (ID, Version) 集合都要跟 FETCH 時一樣
+// (同名多份時對方改到另一份也算),要新建的檔也仍然不存在;任一不符就一個檔都不傳、本機不動、回錯叫使用者重跑
+// (重跑會 FETCH 到對方的結果再算一次)。訊息列出全部不符的檔與各自的原因。殘餘窗口只剩上傳序列本身。
+func guardVersions(ctx context.Context, dc *drive.Client, s *canonState, staged []string) error {
+	files, err := dc.List(ctx, "")
+	if err != nil {
+		return friendlyErr("google", err)
+	}
+	byName := map[string][]drive.File{}
+	for _, f := range files {
+		byName[f.Name] = append(byName[f.Name], f)
+	}
+	var bad []string
+	for _, name := range slices.Sorted(maps.Keys(s.fetched)) {
+		f := s.fetched[name]
+		now := idVers(byName[name])
+		i := slices.IndexFunc(now, func(v idVer) bool { return v.ID == f.file.ID })
+		switch {
+		case slices.Equal(now, f.peers):
+		case i < 0:
+			bad = append(bad, name+" 被別台裝置刪除或換掉")
+		case now[i].Version != f.file.Version:
+			bad = append(bad, name+" 被別台裝置改過")
+		default:
+			bad = append(bad, name+" 多了一份(或另一份被改過)")
+		}
+	}
+	for _, name := range staged {
+		if _, ok := s.fetched[name]; !ok && len(byName[name]) > 0 { // 我們要 Create 的檔對方剛建了:再建就是第二份
+			bad = append(bad, name+" 被別台裝置建立")
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("Drive 上的檔在這次執行期間變了(%s);零寫入,重跑一次", strings.Join(bad, "、"))
 	}
 	return nil
 }

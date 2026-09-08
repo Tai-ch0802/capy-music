@@ -32,6 +32,13 @@ type fakeSpotify struct {
 	missingItems map[string]bool    // 有列出但 items 回 404
 	catalog      []fakeCatalogTrack // /search 與 /tracks/{id} 的目錄(resolve 用);同一個 id 可登記多筆(多個 ISRC 都回它)
 	searchStatus int                // 非零:/search 一律回這個狀態碼(模擬 429 / 5xx)
+	hook         func()             // 非 nil:每個請求進來先呼叫(pull 的 OBSERVE 期間 = FETCH 之後、COMMIT 之前;模擬別台裝置寫 Drive)
+}
+
+func (f *fakeSpotify) setHook(h func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hook = h
 }
 
 func (f *fakeSpotify) setSearchStatus(code int) {
@@ -111,6 +118,9 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.hook != nil {
+			f.hook()
+		}
 		switch {
 		case r.URL.Path == "/me/playlists":
 			var items []string
