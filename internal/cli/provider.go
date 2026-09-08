@@ -104,6 +104,15 @@ func asPlaylistReader(p provider.Provider) (provider.PlaylistReader, error) {
 	return r, nil
 }
 
+// asPlaylistWriter:pl push 用;四個寫入能力任一即可(Apple append-only 版只有 Append,T6)。
+func asPlaylistWriter(p provider.Provider) (provider.PlaylistWriter, error) {
+	w, ok := p.(provider.PlaylistWriter)
+	if !ok || p.Caps()&(provider.CapPlaylistAppend|provider.CapPlaylistRemove|provider.CapPlaylistReorder|provider.CapPlaylistRename) == 0 {
+		return nil, notSupported(p, "寫入播放清單(P0-2 待驗證)")
+	}
+	return w, nil
+}
+
 // friendlyErr 把語意化錯誤轉成可行動訊息(spec R-5),指向對應 provider 的下一步。
 func friendlyErr(providerID string, err error) error {
 	switch {

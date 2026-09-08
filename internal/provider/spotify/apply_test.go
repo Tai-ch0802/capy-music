@@ -230,3 +230,12 @@ func TestPlaylistItemsMarksLocalFiles(t *testing.T) {
 		t.Fatalf("episode:%+v", tr)
 	}
 }
+
+func TestPushable(t *testing.T) {
+	c := New(nil, "")
+	for id, want := range map[string]bool{"abc": true, "spotify:track:abc": true, "spotify:episode:e1": true, "spotify:local:x:y:z:200": false, "": false, "spotify:show:s": false} {
+		if got := c.Pushable(id); got != want {
+			t.Fatalf("Pushable(%q) = %v", id, got)
+		}
+	}
+}

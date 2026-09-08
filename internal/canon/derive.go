@@ -69,30 +69,16 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	L := in.Live.Tracks
 	now := Now().Unix()
 
-	// 規則 1、3:L 的每首用身分函式(決策 19:mapping → ISRC alias → 公式 → 墓碑)算 cid 並觀測寫回 tracks。
+	// 規則 1、3:OBSERVE。
 	id := NewIdentity(in.Tracks, in.Merged)
-	lcid := make([]string, len(L))
+	lcid, updated := Observe(id, prov, in.Tracks, L)
+	res.Tracks = updated
 	lookup := func(cid string) (Track, bool) {
 		if t, ok := res.Tracks[cid]; ok {
 			return t, true
 		}
 		t, ok := in.Tracks[cid]
 		return t, ok
-	}
-	for i, t := range L {
-		cid := id.Resolve(prov, t.ProviderID, t.ISRC)
-		lcid[i] = cid
-		tr, ok := lookup(cid)
-		if !ok {
-			nt := NewTrack(prov, t)
-			nt.CID = cid // Resolve 可能經墓碑指到 tracks 裡已經沒有的勝者(手改過的檔):map key 與 cid 欄位必須一致,不然經 db 來回位元組會變
-			res.Tracks[cid] = nt
-			continue
-		}
-		cp := cloneTrack(tr)
-		if changed, conflict := cp.Observe(prov, t); changed || conflict { // 決策 20:isrc / fuzzy 被觀測覆寫也要寫回
-			res.Tracks[cid] = cp
-		}
 	}
 
 	// 規則 2、6:配對由 LCS 決定。先以 cid 序列(C 依 rank、L 依位置,重複照算)找最長共同子序列,對上的留在原位;
@@ -282,6 +268,32 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	}
 	res.Snapshot = Snapshot{ID: in.Live.ID, Name: in.Live.Name, Items: ids, CIDs: lcid}
 	return res, nil
+}
+
+// Observe(spec §6.5.1 規則 1、3):L 的每首用身分函式(決策 19:mapping → ISRC alias → 公式 → 墓碑)算 cid,
+// 並把觀測寫回 track(新建、補 mapping、記衝突)。純函式:不改 tracks,回傳要寫回的那些。pull 的 DERIVE 與 push 的 L / L′ 共用(P5 T4)。
+func Observe(id *Identity, prov string, tracks map[string]Track, L []provider.Track) (lcid []string, updated map[string]Track) {
+	lcid = make([]string, len(L))
+	updated = map[string]Track{}
+	for i, t := range L {
+		cid := id.Resolve(prov, t.ProviderID, t.ISRC)
+		lcid[i] = cid
+		tr, ok := updated[cid]
+		if !ok {
+			tr, ok = tracks[cid]
+		}
+		if !ok {
+			nt := NewTrack(prov, t)
+			nt.CID = cid // Resolve 可能經墓碑指到 tracks 裡已經沒有的勝者(手改過的檔):map key 與 cid 欄位必須一致,不然經 db 來回位元組會變
+			updated[cid] = nt
+			continue
+		}
+		cp := cloneTrack(tr)
+		if changed, conflict := cp.Observe(prov, t); changed || conflict { // 決策 20:isrc / fuzzy 被觀測覆寫也要寫回
+			updated[cid] = cp
+		}
+	}
+	return lcid, updated
 }
 
 // lcsPairs 找 C(rank 序,cOcc 是 cid → item 索引)與 L(lcid)的最長共同 cid 子序列,回傳兩邊的配對索引(-1 = 沒對上)。
