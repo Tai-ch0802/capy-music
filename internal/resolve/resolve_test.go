@@ -28,6 +28,12 @@ func TestNorm(t *testing.T) {
 		"派對動物 (Live)":                       "派對動物",
 		"Song (Version 2) - Radio Edit":     "song",
 		"Something About Us (Original Mix)": "something about us",
+		"派對動物(Live)完整版":                     "派對動物 完整版", // 剝掉群組也要留分隔:CJK 不斷詞
+		"派對動物 (Live) 完整版":                   "派對動物 完整版",
+		"派對動物 (Recorded Live at Wembley)":   "派對動物", // 標籤字不在第一個也剝
+		"Song (Piano Version)":              "song",
+		"Song (Part 2 Live)":                "song", // 混合寫法整組吃掉(capSet 會把它壓到 84)
+		"Song - Recorded Live 2011":         "song",
 	} {
 		if got := Norm(in); got != want {
 			t.Errorf("Norm(%q) = %q,要 %q", in, got, want)
@@ -69,6 +75,7 @@ func TestScoreFuzzyTable(t *testing.T) {
 		"feat 後綴不影響":                     {target("派對動物", 249957, "五月天"), cand("1", "派對動物 (feat. 蕭敬騰)", 249000, "五月天"), 100},
 		"全形半形":                           {target("Party Animal", 249957, "Mayday"), cand("1", "Ｐａｒｔｙ　Ａｎｉｍａｌ", 249957, "Ｍａｙｄａｙ"), 100},
 		"Live 只在一邊 → 上限 84":              {target("派對動物", 249957, "五月天"), cand("1", "派對動物 (Live)", 249957, "五月天"), 84},
+		"Recorded Live 也是 84":            {target("派對動物", 249957, "五月天"), cand("1", "派對動物 (Recorded Live at Wembley)", 249957, "五月天"), 84},
 		"Live 在兩邊 → 不壓":                  {target("派對動物 - Live", 249957, "五月天"), cand("1", "派對動物 (Live)", 249957, "五月天"), 100},
 		"remix 只在一邊(不是括號)":               {target("派對動物", 249957, "五月天"), cand("1", "派對動物 Club Remix", 249957, "五月天"), 84},
 		"時長差 3 s 滿分":                     {target("派對動物", 249957, "五月天"), cand("1", "派對動物", 252957, "五月天"), 100},
@@ -155,7 +162,8 @@ func TestNeeds(t *testing.T) {
 	p1 := canon.Playlist{PID: "p1", Links: map[string]string{"spotify": "s1", "apple": "a1"}, Items: []canon.Item{{CID: "i:A"}, {CID: "i:B"}, {CID: "i:C"}, {CID: "i:D"}, {CID: "i:GONE"}, {CID: "i:A"}}}
 	p2 := canon.Playlist{PID: "p0", Links: map[string]string{"apple": "a2"}, Items: []canon.Item{{CID: "i:A"}, {CID: "i:D"}}} // 沒連 spotify:D 的 spotify 缺口不因它而來
 	p3 := canon.Playlist{PID: "p3", Items: []canon.Item{{CID: "i:A"}}}                                                        // 沒有任何 link
-	got := Needs([]canon.Playlist{p1, p2, p3}, tracks)
+	p4 := canon.Playlist{PID: "p4", Links: map[string]string{"tidal": ""}, Items: []canon.Item{{CID: "i:A"}}}                 // 空字串 link = 沒連結
+	got := Needs([]canon.Playlist{p1, p2, p3, p4}, tracks)
 	want := []Need{
 		{CID: "i:A", Provider: "apple", Playlists: []string{"p0", "p1"}},
 		{CID: "i:D", Provider: "spotify", Playlists: []string{"p1"}},

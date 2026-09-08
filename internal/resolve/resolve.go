@@ -47,8 +47,14 @@ func tokens(s string) []string {
 
 func isTag(tok string, tags []string) bool { return slices.Contains(tags, tok) }
 
-// stripSuffixes:(…) / […] 群組第一個 token 是標籤字就整組刪,否則只留內容(括號本身之後會被 tokens 當分隔);
-// ` - ` 後面第一個 token 是標籤字就從那裡截斷(從左邊第一個命中的截,後面的一起掉)。
+func hasTag(toks, tags []string) bool {
+	return slices.ContainsFunc(toks, func(t string) bool { return isTag(t, tags) })
+}
+
+// stripSuffixes:(…) / […] 群組裡**任一** token 是標籤字就整組刪(「Recorded Live at Wembley」「Piano Version」的標籤字
+// 不在第一個;代價是「Part 2 Live」這種混合寫法整組被吃掉——它同時會被 capSet 壓到 84,只多進 review、不會誤配),
+// 否則只留內容(括號本身之後會被 tokens 當分隔);` - ` 後面那段任一 token 是標籤字就從那裡截斷(從左邊第一個命中的截,後面的一起掉)。
+// 刪掉的群組也要留一個分隔空白:CJK 不斷詞,「派對動物(Live)完整版」少了空白就變成另一個 token。
 func stripSuffixes(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -68,8 +74,8 @@ func stripSuffixes(s string) string {
 			break
 		}
 		inner := s[i+1 : i+1+end]
-		if t := tokens(inner); len(t) == 0 || !isTag(t[0], stripTags) {
-			b.WriteByte(' ')
+		b.WriteByte(' ')
+		if !hasTag(tokens(inner), stripTags) {
 			b.WriteString(inner)
 			b.WriteByte(' ')
 		}
@@ -82,7 +88,7 @@ func stripSuffixes(s string) string {
 			break
 		}
 		k += from
-		if t := tokens(out[k+3:]); len(t) > 0 && isTag(t[0], stripTags) {
+		if hasTag(tokens(out[k+3:]), stripTags) {
 			out = out[:k]
 			break
 		}
@@ -169,6 +175,8 @@ func primary(artists []string) string {
 // ScoreFuzzy(決策 23 Layer 2):60·JW(title) + 25·JW(primary artist) + 15·時長項(≤3 s 滿分、≥30 s 零、線性);
 // capTags 任一只在一邊、或 |Δ時長| > 3 s → 上限 84(時長是標題沒帶關鍵字時唯一能分辨 extended mix / radio edit 的訊號,
 // 不能被 title + artist 的 85 分蓋過去);floor 取整(84.9 進 review)。
+// 3–30 s 的線性斜坡因此永遠推不過 85:它只在已經 <85 的候選之間排順位(RankFuzzy 的第二鍵又直接比 |Δ|),刻意如此——
+// 決策 23 的兩條規則疊起來就是「時長只用來排序候選」。
 // ponytail: 時長不明(0,上傳曲)的一邊 |Δ| 幾乎必 ≥ 30 s → 時長項 0 且被壓到 84,永遠不會自動寫入,只會進 review——刻意保守。
 // 主要藝人任一邊缺 → 藝人項 0(兩邊都缺不算相同)。
 func ScoreFuzzy(target canon.Track, c provider.Track) int {
@@ -279,6 +287,9 @@ func Needs(playlists []canon.Playlist, tracks map[string]canon.Track) []Need {
 	byKey := map[[2]string]*Need{}
 	for _, pl := range playlists {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
+			if pl.Links[prov] == "" { // 空字串 = 沒連結(pullTargets 同一條規則;正常路徑不會留下,手改的檔會)
+				continue
+			}
 			for _, it := range pl.Items {
 				tr, ok := tracks[it.CID]
 				if !ok {
