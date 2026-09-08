@@ -126,8 +126,8 @@ func TestDriveInitRestoresAfterWipe(t *testing.T) {
 		t.Fatalf("dry-run 零寫入:%v", err)
 	}
 	out, errs := mustPull(t, "drive", "init", "--from-local", "--yes")
-	if out != wantRows || !strings.Contains(errs, "已補回 4 個檔") {
-		t.Fatalf("套用:%q %q", out, errs)
+	if out != wantRows || !strings.Contains(errs, "已補回 4 個檔") || !strings.Contains(errs, "tai@example.com") {
+		t.Fatalf("套用,且 --yes 路徑也要印出目標 Google 帳號:%q %q", out, errs)
 	}
 	if !sameFiles(before, driveFiles(t, dc)) {
 		t.Fatal("補回的檔要與清空前逐位元相同")

@@ -158,7 +158,7 @@ func TestRebuildFromDrive(t *testing.T) {
 	}
 }
 
-func TestMismatchedSchemaVersionIsDropped(t *testing.T) {
+func TestMismatchedSchemaVersionIsRetained(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	s, err := OpenAt(path, time.Second)
 	if err != nil {

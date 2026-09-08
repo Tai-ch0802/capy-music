@@ -215,7 +215,7 @@ func newDriveInitCmd() *cobra.Command {
 					return fmt.Errorf("上傳 %s 失敗(已建的檔留著,重跑會接著補):%w", ref.Name, friendlyErr("google", err))
 				}
 			}
-			fmt.Fprintf(stderr, "已補回 %d 個檔;接著 capy pl pull --all\n", len(rows))
+			fmt.Fprintf(stderr, "已補回 %d 個檔到 %s 的 Drive appdata;接著 capy pl pull --all\n", len(rows), googleAccount()) // --yes 也要看得到目標帳號:登錯帳號是這個閘存在的理由
 			return nil
 		},
 	}
@@ -227,15 +227,16 @@ func newDriveInitCmd() *cobra.Command {
 
 // lostPlaylists:Drive 的 manifest 宣告、但 Drive 與本機都沒有的清單檔——init 補不回,要講明出路。
 func lostPlaylists(ctx context.Context, dc *drive.Client, present []drive.File, have map[string]bool, local map[string][]byte) ([]string, error) {
-	var mf *drive.File
-	for i := range present {
-		if present[i].Name == canon.ManifestFile().Name {
-			mf = &present[i]
+	var mfs []drive.File
+	for _, f := range present {
+		if f.Name == canon.ManifestFile().Name {
+			mfs = append(mfs, f)
 		}
 	}
-	if mf == nil {
+	if len(mfs) == 0 {
 		return nil, nil
 	}
+	mf := drive.Newest(mfs) // 同名多份取最新,與 FETCH 同一條規則
 	b, err := dc.Download(ctx, mf.ID)
 	if err != nil {
 		return nil, fmt.Errorf("下載 manifest.json:%w", friendlyErr("google", err))
