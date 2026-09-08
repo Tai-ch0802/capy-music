@@ -33,6 +33,10 @@ type fakeSpotify struct {
 	catalog      []fakeCatalogTrack // /search 與 /tracks/{id} 的目錄(resolve 用);同一個 id 可登記多筆(多個 ISRC 都回它)
 	searchStatus int                // 非零:/search 一律回這個狀態碼(模擬 429 / 5xx)
 	hook         func()             // 非 nil:每個請求進來先呼叫(pull 的 OBSERVE 期間 = FETCH 之後、COMMIT 之前;模擬別台裝置寫 Drive)
+	local        map[string]bool    // 這些 id 以 local file 形式回(id null、uri spotify:local:…、is_local true)
+	writes       []fakeWrite        // push 打過來的寫入(PUT / POST items、PUT 改名),依序
+	writeStatus  int                // 非零:所有寫入回這個狀態碼(403 = 別人的清單)
+	postFail     int                // 接下來 N 個 POST 回 500(client 對 5xx 會重試兩次,要讓一批真的失敗設 3)
 }
 
 func (f *fakeSpotify) setHook(h func()) {
@@ -76,7 +80,7 @@ func words(s string) []string {
 type fakeList struct{ ID, Name string }
 
 func newFakeSpotify() *fakeSpotify {
-	return &fakeSpotify{items: map[string][]string{}, restricted: map[string]bool{}, missingItems: map[string]bool{}}
+	return &fakeSpotify{items: map[string][]string{}, restricted: map[string]bool{}, missingItems: map[string]bool{}, local: map[string]bool{}}
 }
 
 func (f *fakeSpotify) set(id, name string, tracks ...string) {
@@ -135,6 +139,10 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 				w.Write([]byte(`{"error":{"status":403,"message":"Forbidden"}}`))
 				return
 			}
+			if r.Method != http.MethodGet {
+				f.write(t, w, r, id)
+				return
+			}
 			if f.missingItems[id] {
 				w.WriteHeader(http.StatusNotFound)
 				w.Write([]byte(`{"error":{"status":404,"message":"Not found."}}`))
@@ -142,9 +150,15 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 			}
 			var its []string
 			for _, tid := range f.items[id] {
+				if f.local[tid] {
+					its = append(its, `{"item":`+fakeLocalJSON(tid)+`}`)
+					continue
+				}
 				its = append(its, `{"item":`+fakeTrackJSON(tid)+`}`)
 			}
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(its, ","), len(its))
+		case strings.HasPrefix(r.URL.Path, "/playlists/") && r.Method == http.MethodPut: // 改名
+			f.write(t, w, r, strings.TrimPrefix(r.URL.Path, "/playlists/"))
 		case r.URL.Path == "/search":
 			if f.searchStatus != 0 {
 				w.WriteHeader(f.searchStatus)

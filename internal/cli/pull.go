@@ -374,6 +374,13 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 // 上傳前再 list 一次,FETCH 讀過的每個檔(不只這次要傳的——沒變的檔也參與了決策)同名檔的 (ID, Version) 集合都要跟 FETCH 時一樣
 // (同名多份時對方改到另一份也算),要新建的檔也仍然不存在;任一不符就一個檔都不傳、本機不動、回錯叫使用者重跑
 // (重跑會 FETCH 到對方的結果再算一次)。訊息列出全部不符的檔與各自的原因。殘餘窗口只剩上傳序列本身。
+// guardError:版本守衛擋下(pull 時 Drive 零寫入;push 時平台可能已經寫了,訊息由 push 改口)。
+type guardError struct{ Files string }
+
+func (e *guardError) Error() string {
+	return "Drive 上的檔在這次執行期間變了(" + e.Files + ");零寫入,重跑一次"
+}
+
 func guardVersions(ctx context.Context, dc *drive.Client, s *canonState, staged []string) error {
 	files, err := dc.List(ctx, "")
 	if err != nil {
@@ -404,7 +411,7 @@ func guardVersions(ctx context.Context, dc *drive.Client, s *canonState, staged 
 		}
 	}
 	if len(bad) > 0 {
-		return fmt.Errorf("Drive 上的檔在這次執行期間變了(%s);零寫入,重跑一次", strings.Join(bad, "、"))
+		return &guardError{Files: strings.Join(bad, "、")}
 	}
 	return nil
 }
@@ -659,42 +666,14 @@ func pullTargets(s *canonState, args []string, all bool, prov string) ([]*canon.
 // observeAndDerive:OBSERVE + DERIVE,直接改 s(fn 回錯時 withCanonical 不會 COMMIT,所以不必另外暫存)。
 // gone 的訊號是「不在 ListPlaylists 的列表裡」而不是 items 回 404——Apple 的 library 端點對空清單也回 404(P2 遺留)。
 func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer) (rows [][]string, blocked []string, err error) {
-	readers := map[string]provider.PlaylistReader{}
-	listed := map[string]map[string]provider.PlaylistRef{}
-	reader := func(prov string) (provider.PlaylistReader, map[string]provider.PlaylistRef, error) {
-		if r, ok := readers[prov]; ok {
-			return r, listed[prov], nil
-		}
-		p, err := newProvider(ctx, prov)
-		if err != nil {
-			return nil, nil, err
-		}
-		r, err := asPlaylistReader(p)
-		if err != nil {
-			return nil, nil, err
-		}
-		refs, err := r.ListPlaylists(ctx)
-		if err != nil {
-			return nil, nil, friendlyErr(prov, err)
-		}
-		m := map[string]provider.PlaylistRef{}
-		for _, ref := range refs {
-			m[ref.ID] = ref
-		}
-		readers[prov], listed[prov] = r, m
-		return r, m, nil
-	}
-	var devs []canon.DeviceState
-	for _, id := range slices.Sorted(maps.Keys(s.devices)) {
-		devs = append(devs, *s.devices[id])
-	}
-	merged := canon.MergeBase(devs)
+	pf := newPlatforms(ctx)
+	merged := mergedBase(s)
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
 			if only != "" && prov != only {
 				continue
 			}
-			r, refs, err := reader(prov)
+			r, refs, err := pf.reader(prov)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -741,13 +720,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				pl.UpdatedAt = canon.Now().Unix()
 				continue
 			}
-			for cid, tr := range res.Tracks {
-				if old, ok := s.tracks.Tracks[cid]; ok && len(tr.Conflicts) > len(old.Conflicts) {
-					c := tr.Conflicts[len(tr.Conflicts)-1]
-					fmt.Fprintf(stderr, "警告:ISRC 衝突 %s:%s 的 %s(%s)與既有 metadata 不符,已記進 tracks.json 的 conflicts(spec §6.2)\n", cid, c.Provider, c.Title, c.ProviderID)
-				}
-				s.tracks.Tracks[cid] = tr
-			}
+			s.absorb(res.Tracks)
 			*pl = res.Playlist
 			if b, ok := merged[pl.PID][prov]; !ok || !snapshotEqual(b.Snapshot, res.Snapshot) {
 				s.mine().SetBase(pl.PID, prov, res.Snapshot) // 只在 base 缺或變了才寫:observed_at 每次都動,無條件寫 = 每次都上傳 dev 檔
