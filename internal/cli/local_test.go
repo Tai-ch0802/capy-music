@@ -182,6 +182,40 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	}
 }
 
+// A13 的回歸測試(advisor):Spotify 改名 → C 改名 → push 到不支援 rename 的 local 不能排 rename,local 的 base 也不能記成新名字,
+// 不然下一輪 pull 看 local 的 Live.Name ≠ Base.Name 就把 C(與 Spotify)改回舊名——使用者的改名一輪後自己撤銷。
+func TestPlLocalRenameDoesNotFlipBack(t *testing.T) {
+	fs, dc, _ := localWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
+	mustPull(t, "pl", "sync", "通勤", "--yes")
+	fs.set("p1", "通勤2", "a", "b") // Spotify 端改名
+	out, errs := mustPull(t, "pl", "sync", "通勤", "--yes")
+	if !slices.Contains(dirActions(out), "pull rename spotify") || slices.Contains(dirActions(out), "push rename local") || strings.Contains(errs, "手動") {
+		t.Fatalf("改名進 C、不排給 local、也沒有「手動」列:%s%s", out, errs)
+	}
+	if drivePlaylistNamed(t, dc, "通勤2") == nil {
+		t.Fatal("C 要改名成 通勤2")
+	}
+	if b, ok := baseOfProv(t, dc, "local"); !ok || b.Name != "通勤" {
+		t.Fatalf("local 的檔還是 通勤.m3u8,base 不能記成新名字:%+v", b)
+	}
+	out, errs = mustPull(t, "pl", "sync", "通勤2", "--yes")
+	if strings.Contains(out, "rename") || !strings.Contains(errs, "無變更") {
+		t.Fatalf("下一輪不能把改名撤銷:%s%s", out, errs)
+	}
+	if drivePlaylistNamed(t, dc, "通勤2") == nil || !strings.Contains(mustPullOut(t, "pl", "list", "--provider", "spotify"), "通勤2") {
+		t.Fatal("C 與 Spotify 都要還是 通勤2")
+	}
+}
+
+func mustPullOut(t *testing.T, args ...string) string {
+	t.Helper()
+	out, _ := mustPull(t, args...)
+	return out
+}
+
 // config / doctor / auth login 對 local 的說法。
 func TestLocalConfigDoctorAndAuth(t *testing.T) {
 	_, _, root := localWorld(t)
