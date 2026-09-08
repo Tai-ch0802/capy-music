@@ -54,16 +54,6 @@
 | Library playlist 寫入 | 建立/新增曲目可行;**移除與重排能力待驗證** | ⚠️ 見 §9 P0-2;P5 決策 30:gate 在維護者的寫入探測(計畫 R-8),預期 append-only,不採 rebuild |
 | ToS | 禁止與其他 JS 重組、禁止對存取收費、內容不可與其他內容 synchronized | 見 §8 |
 
-### 1.4 local(本機曲庫,P6;計畫 docs/superpowers/plans/2026-09-08-p6-local.md)
-
-| 項目 | 現況 | 影響 |
-|---|---|---|
-| 資料來源 | `local_root` 下的 `*.m3u8` / `*.m3u` 是清單,`library.json` 是曲庫(title / artists / album / duration_ms / isrc);不讀音訊 tag、不加相依 | 幾乎沒有 ISRC → 跟其他平台的對應靠 resolver Layer 2,`Search` 必做 |
-| **綁裝置** | 曲庫只在一台機器上,但 `pl__.Links` 是共享檔 | 決策 33:id 帶 device id、SPI 加 `CapDeviceBound` + `DeviceScoped.Foreign`;別台裝置的 pull / push / sync 對它只跳過,不算 gone、不 unlink |
-| id | 正規化相對路徑(forward slash、NFC);改名 / 搬家 = remove + add | 升級路徑 = 內容 hash(`capy local scan`) |
-| 寫入 | 整檔改寫 + 原子 rename,`#EXTINF` 與註解會被丟掉;全部 ops 都支援 | 與 Apple 的 append-only 成對照 |
-| 錯誤族 | 只有 NotFound / 權限 / IO / JSON 壞;沒有 auth、rate limit、restricted | 每個 n/a 都是 SPI 假設的發現(計畫 §2) |
-
 ### 1.3 Google(Drive appData)
 
 | 項目 | 現況 | 影響 |
@@ -78,6 +68,16 @@
 > 📌 使用者說的「Gmail OAuth 登入」在實作上是 **Google Sign-In (OIDC)**,不是 Gmail API。這個區別價值好幾千美元/年,務必寫進 Claude Code 的 context。
 
 ---
+
+### 1.4 local(本機曲庫,P6;計畫 docs/superpowers/plans/2026-09-08-p6-local.md)
+
+| 項目 | 現況 | 影響 |
+|---|---|---|
+| 資料來源 | `local_root` 下的 `*.m3u8` / `*.m3u` 是清單,`library.json` 是曲庫(title / artists / album / duration_ms / isrc);不讀音訊 tag、不加相依 | 幾乎沒有 ISRC → 跟其他平台的對應靠 resolver Layer 2,`Search` 必做 |
+| **綁裝置** | 曲庫只在一台機器上,但 `pl__.Links` 是共享檔(一個 provider 一格) | 決策 33:id 帶 device id、SPI 加 `CapDeviceBound` + `DeviceScoped.Foreign`;別台裝置的 pull / push / sync 對它只跳過,不算 gone、不 unlink;**一個 canonical 清單同時只連一台裝置的 M3U**,`pl link` 撞到別台的 link 就接管(重灌後 device_id 變了也靠這條接回來) |
+| id | 正規化相對路徑(forward slash、NFC);改名 / 搬家 = remove + add | 升級路徑 = 內容 hash(`capy local scan`) |
+| 寫入 | 整檔改寫 + 原子 rename,`#EXTINF` 與註解會被丟掉;全部 ops 都支援 | 與 Apple 的 append-only 成對照 |
+| 錯誤族 | 只有 NotFound / 權限 / IO / JSON 壞;沒有 auth、rate limit、restricted | 每個 n/a 都是 SPI 假設的發現(計畫 §2) |
 
 ## 2. 系統分層
 
@@ -157,8 +157,8 @@ const ( // 順序 = 位元位置,與 internal/provider/provider.go 一致;新能
     CapArtistSearch    // UX 計畫 T3
     CapPlayPlaylist    // PlayRequest.PlaylistID
     CapPlayQueue       // Play 把 TrackIDs 全排進佇列
-    CapPlaylistRename  // P5 T1 加(bit 13);Spotify 有
-    CapDeviceBound     // P6 決策 33(bit 14):id 只在本裝置有意義;實作者同時實作 DeviceScoped
+    CapPlaylistRename  // P5 T1 加(bit 14;CapSearch 是 bit 0);Spotify 有
+    CapDeviceBound     // P6 決策 33(bit 15):id 只在本裝置有意義;實作者同時實作 DeviceScoped
 )
 
 // DeviceScoped(P6 決策 33):綁裝置的 provider 告訴 CLI 某個 id 是不是別台裝置的——是的話 pull / push / sync 一律跳過,
@@ -865,7 +865,6 @@ capy pl unlink <name|pid> <provider>                      # P3(已實作);canoni
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
 capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義
 capy pl push   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(§6.5.2,決策 28):canonical → 平台;exit 同 pull(0/1/2/3);前提:base 存在且平台無未 pull 變更(比快照),否則 exit 3;對齊鍵是 cid,add 缺 mapping 的 item 列 skip;含 local file 的 Spotify 清單 exit 3;provider 不支援的 op 列 manual;push 後(成功或失敗)base := 重讀的平台狀態,pl__ 不變
-capy config set local_root <目錄>   # P6(決策 35):本機曲庫;之後 capy pl link 通勤 local:<M3U 檔名>(只能連本機的,決策 33)
 capy pl sync   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(決策 31):同一把鎖裡每個清單先 pull 各平台再 push 各平台(--provider 只走一個);一張表、一次確認;--dry-run 的 push 半邊用套用後的 C
 capy pl restore <name> --provider P                       # 延後(決策 31,計畫 Q18):= 把 base 快照 push 回平台,與 pl push 重疊
 
@@ -882,6 +881,7 @@ capy history clear             # 清空本機快取(state.db)的最近搜尋
 capy update                    # P3(T10 已實作):GitHub Releases 最新正式版 → 下載本平台檔 + checksums.txt SHA-256 校驗 + 新 binary --version 自檢,才覆蓋自己;沒有簽章,校驗只保證下載完整
 capy update --dev              # 從 main 最新節點 go install 重建並覆蓋自己(需 Go toolchain;沒有內建 Google client)
 capy completion <shell>        # cobra 內建;候選只讀本機快取
+capy config set local_root <目錄>   # P6(決策 35):本機曲庫;之後 capy pl link 通勤 local:<M3U 檔名>(只能連本機的,決策 33)
 capy doctor
 ```
 
@@ -933,7 +933,7 @@ capy doctor
 | 30 | Apple 寫入策略(2026-09-08) | gate 在 P0-2 寫入探測(維護者在拋棄式 library 清單上跑,計畫 R-8);預期 remove / reorder / rename 無文件化端點 → **append-only**:`add` 用 `POST …/tracks`(catalog id),其餘回 `ErrCapability` 列 manual;**不採 rebuild**;只寫使用者自建的 library 清單 | rebuild 需要刪清單(同樣未驗證)、清單 id 會變、Apple 端封面 / 描述會丟、中途失敗留兩份;append-only 配規則 4′ 不會讓未刪的曲目回流到 C;ToS「不可 synchronized」灰色地帶只寫自建清單 |
 | 31 | `pl sync` 與 `pl restore`(2026-09-08) | `sync` = 同一把鎖裡每個清單先 pull 各平台再 push 各平台(`--provider` 可只走一個平台),一張表、一次確認、閾值各算;push 半邊重用 pull 半邊的 L;撞上版本守衛時平台已改、Drive 沒改,訊息講明;`restore` 延後 | 兩個 push 前提由「先 pull 後 push」建構保證;Apple append-only 期間「只 sync Spotify」是合理用法;再讀一次 L 多花 quota 又會讓 200 ms 內的平台變動變成中途 exit 3;restore 在 per-device base 下等於 push base 快照,與 push 重疊 |
 | 32 | P5 T0 只產計畫與 spec(2026-09-08) | 等維護者 review 後開 T1 | 與決策 12 / 25 同模式;特別因為決策 26 推翻了 v0.5 核可過的 op log 設計 |
-| 33 | `local` 是綁裝置的 provider(2026-09-08,P6 T0) | playlist / track id = `<device_id>/<相對路徑>`;SPI 加 `CapDeviceBound`(bit 14)+ `DeviceScoped.Foreign(id)`;CLI 對別台裝置的 link 一律跳過(不 gone、不 refused、不動 base),`pl link` 只連本機的、`pl unlink` 任何裝置都可 | `pl__.Links` 是共享檔而曲庫只在一台機器:沒這條,別台的 `pl sync --all` 會把連結當 gone 刪掉;這是 SPI 的第一個「id 全域有意義」假設 |
+| 33 | `local` 是綁裝置的 provider(2026-09-08,P6 T0) | playlist / track id = `<device_id>/<相對路徑>`;SPI 加 `CapDeviceBound`(bit 15)+ `DeviceScoped.Foreign(id)`;CLI 對別台裝置的 link 一律跳過(不 gone、不 refused、不動 base);`pl link` 只連本機的,撞到別台裝置的 local link 時**接管**(訊息指出原擁有裝置;那台之後變 foreign)——這也是重灌 / 換設定目錄後 device_id 變了的復原路徑;`pl unlink` 任何裝置都可;一個 canonical 清單同時只連一台裝置的 M3U(Q30) | `pl__.Links` 是共享檔而曲庫只在一台機器:沒這條,別台的 `pl sync --all` 會把連結當 gone 刪掉;這是 SPI 的第一個「id 全域有意義」假設 |
 | 34 | local 的 id = 正規化相對路徑(2026-09-08) | forward slash、去 `./`、NFC;改名 / 搬家 = remove + add;cid `p:local:<device_id>/<路徑>`;內容 hash(`capy local scan`)是升級路徑,不建 | 驗證 SPI 夠用;跨裝置同路徑不撞靠 device 前綴 |
 | 35 | local 讀端(2026-09-08) | `local_root` 一層的 `*.m3u8` / `*.m3u` + `library.json`(不讀 tag、不加相依);`Search` 必做(resolver Layer 2 是 local ↔ Spotify 唯一的橋);不做播放、不做 `auth login local`、不做 Create;gone = 本機檔不存在 | 錯誤族只有 NotFound / 權限 / IO / JSON;auth / rate limit / restricted 的 n/a 都是發現 |
 | 36 | local 寫端(2026-09-08) | 整檔改寫(temp + `os.Rename`),丟 `#EXTINF` 與註解;rename = 改檔名;`Pushable` = 路徑在曲庫且非 foreign;全部 ops 都支援,沿用 push 套用前重讀、不做 mtime CAS | 第一個沒有 append-only 例外的寫端,與 Apple 成對照 |
