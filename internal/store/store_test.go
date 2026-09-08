@@ -173,6 +173,13 @@ func TestMismatchedSchemaVersionIsDropped(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notice bytes.Buffer
+	Stderr = &notice
+	t.Cleanup(func() { Stderr = os.Stderr })
 	if s, err = OpenAt(path, time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +194,28 @@ func TestMismatchedSchemaVersionIsDropped(t *testing.T) {
 	}
 	if v != schemaVersion {
 		t.Fatalf("重建後 user_version 應為 %d,得 %d", schemaVersion, v)
+	}
+	// 舊檔保留為 state.db.v99、位元組原封不動、有提示;再升一次會覆蓋同名保留檔(Windows 的 rename 不會蓋)。
+	kept, err := os.ReadFile(path + ".v99")
+	if err != nil || !bytes.Equal(kept, old) || !strings.Contains(notice.String(), "state.db.v99") {
+		t.Fatalf("版本不符的舊檔要原封保留並提示:%v %q", err, notice.String())
+	}
+	if _, err := s.db.Exec("PRAGMA user_version = 99"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if _, err := OpenAt(path, time.Second); err != nil {
+		t.Fatalf("同名保留檔已存在時再升版要能覆蓋:%v", err)
+	}
+	// 全新的 db(user_version 0)不留 .v0。
+	fresh := filepath.Join(t.TempDir(), "state.db")
+	if f, err := OpenAt(fresh, time.Second); err != nil {
+		t.Fatal(err)
+	} else {
+		f.Close()
+	}
+	if _, err := os.Stat(fresh + ".v0"); err == nil {
+		t.Fatal("全新的 db 不該留 .v0")
 	}
 }
 

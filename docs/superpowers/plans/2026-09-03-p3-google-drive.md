@@ -352,6 +352,8 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 
 **測試**:export round-trip;`drive init --from-local` 在 Drive 非空時拒絕;兩者的非 TTY 輸出。
 
+**2026-09-08:已實作於 `internal/cli/escape.go`。與上面不同的地方:** (1) `drive init --from-local` **不是「Drive 非空時拒絕」,而是只建 Drive 缺的檔、不覆寫還在的檔(Drive 為準)**——T8 的 exit 3 也涵蓋部分遺失(manifest 還在、某個 `pl__` 不見),拒絕非空會讓那條路變死路;沒缺就零寫入。(2) 不代為上傳別台裝置的 `dev__` 檔(每台裝置只寫自己的,spec §6.3),那台下次 pull 當作沒有 base、只加不刪。(3) 它不走 T8 的 `withCanonical`(那個閘就是它要解的狀態),自己做 `pull.lock` → 列 Drive → 與本機 Dump 比對 → 建檔;確認訊息帶 Google 帳號(登錯帳號會把曲庫傳到別人的 appdata)。(4) manifest 宣告但 Drive 與本機都沒有的清單補不回:exit 1 並講明唯一出路是清空 appdata 重跑(manifest 會從本機重建、不含它們)。(5) `export` 的「合併形式」解讀為檔名為鍵、檔內容為值的 JSON(最字面的讀法,`import` 就是反向);只讀本機 `state.db`;本機空 exit 1 且 stdout 不印。(6) 上面「T9 要一起想的銜接」:`store.OpenAt` 版本不符時改名保留舊檔為 `state.db.v<舊版>`(不刪、沒有程式讀它),README 提醒更新前先 `capy export`。
+
 ### T10 — 發行流程(決策 9)
 
 **產出**:`.goreleaser.yaml`、`.github/workflows/release.yml`、`README.md`。

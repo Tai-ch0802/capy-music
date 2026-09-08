@@ -246,7 +246,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 	}
 	if len(missing) > 0 {
 		return nil, &BlockedError{Msg: fmt.Sprintf("Drive appdata 不完整,取不到:%s。這不會被當成「使用者刪光了」,零寫入;--yes / --force 都不放行。"+
-			"若 Drive 真的被清空或登錯 Google 帳號(目前 %s),出口是 capy drive init --from-local(T9,尚未實作;在它完成前請保留本機 state.db——那是唯一剩下的一份)", strings.Join(missing, "、"), googleAccount())}
+			"若 Drive 真的被清空或登錯 Google 帳號(目前 %s),出口是 capy drive init --from-local(只補 Drive 缺的檔;本機 state.db 是唯一剩下的一份,別刪)", strings.Join(missing, "、"), googleAccount())}
 	}
 	return s, nil
 }
@@ -445,14 +445,18 @@ func newPlUnlinkCmd() *cobra.Command {
 
 // ---- pl pull ----
 
-// 確認提示的測試替換點(同 confirmAppleDisclosure 慣例);只在 stdin 與 stdout 都是 TTY 時才會被呼叫。
-var confirmPull = func(n int) (bool, error) {
+// 寫入 Drive 前的確認提示,pl pull 與 drive init 共用;測試替換點(同 confirmAppleDisclosure 慣例),
+// 只在 stdin 與 stdout 都是 TTY 時才會被呼叫。
+var confirmWrite = func(prompt string) (bool, error) {
 	ok := false
 	err := huh.NewForm(huh.NewGroup(
-		huh.NewConfirm().Title(fmt.Sprintf("套用以上 %d 筆變更到 Drive?", n)).Affirmative("套用").Negative("取消").Value(&ok),
+		huh.NewConfirm().Title(prompt).Affirmative("套用").Negative("取消").Value(&ok),
 	)).Run()
 	return ok, err
 }
+
+// bothTTY:stdout 與 stdin 都是終端機才能問;echo | capy … 這種 stdin 是管線的不問,直接當待套用。
+func bothTTY(cmd *cobra.Command) bool { return stdoutIsTTY(cmd) && ui.IsTTY(os.Stdin) }
 
 // removalBlocked:刪除閾值(Q3 採 B,2026-09-08;附錄 C 決策 18):單一 (清單, provider) 要移除 >10 首,
 // 或 >30% 且 >3 首。分母是「該 provider 可見的曲數」(DeriveResult.VisibleCount),不是 canonical 總曲數。
@@ -509,10 +513,10 @@ func newPlPullCmd() *cobra.Command {
 					return &PendingError{N: len(rows)}
 				}
 				if !yes {
-					if !stdoutIsTTY(cmd) || !ui.IsTTY(os.Stdin) {
+					if !bothTTY(cmd) {
 						return &PendingError{N: len(rows)}
 					}
-					ok, err := confirmPull(len(rows))
+					ok, err := confirmWrite(fmt.Sprintf("套用以上 %d 筆變更到 Drive?", len(rows)))
 					if err != nil {
 						return err
 					}

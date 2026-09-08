@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,9 @@ type Store struct {
 	path string
 }
 
+// Stderr:升版保留舊檔時的提示(測試可換掉)。
+var Stderr io.Writer = os.Stderr
+
 // Path 回 db 路徑(不建立);CAPY_CONFIG_DIR 一併覆寫(測試靠它隔離)。
 func Path() (string, error) {
 	dir, err := config.Dir()
@@ -63,8 +67,11 @@ func Open(busyTimeout time.Duration) (*Store, error) {
 	return OpenAt(p, busyTimeout)
 }
 
-// OpenAt:user_version 不是目前版本(含全新的 0)、或檔案本身壞掉(SQLITE_NOTADB / SQLITE_CORRUPT),就關閉、刪檔、重建——
-// 它是 cache,政策本來就允許我們自己刪。「暫時打不開」(SQLITE_BUSY、權限)照樣往上丟,不刪。
+// OpenAt:user_version 不是目前版本(含全新的 0)、或檔案本身壞掉(SQLITE_NOTADB / SQLITE_CORRUPT),就關閉、重建——
+// 它是 cache,政策本來就允許我們自己刪。但**版本不符的舊檔不刪,改名成 state.db.v<舊版> 留著**(2026-09-08 T9):
+// Drive 被清空時本機 cache 是唯一剩下的一份,升版一刀刪掉它,drive init --from-local 就沒東西可補。
+// 目前沒有任何程式會讀保留檔——這是「不毀掉」,不是「能復原」;真要跨版本復原走舊 binary 的 capy export。
+// 壞檔(讀不出版本)與全新的 0 照樣直接刪。「暫時打不開」(SQLITE_BUSY、權限)照樣往上丟,不刪。
 // ponytail: 路徑含 ? 直接拒絕——driver 在第一個 ? 切開 DSN,會把 db 靜默開到別的檔;真要支援再改 file: URI 加跳脫。
 func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 	if strings.Contains(path, "?") {
@@ -83,7 +90,11 @@ func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 			s.Close()
 			return nil, err
 		}
-		if err := s.Remove(); err != nil { // 版本不符或壞檔
+		if err == nil && v > 0 { // 版本不符:留舊檔
+			if err := s.retire(v); err != nil {
+				return nil, err
+			}
+		} else if err := s.Remove(); err != nil { // 壞檔或全新的 0
 			return nil, err
 		}
 	} else {
@@ -134,6 +145,28 @@ func (s *Store) Close() error {
 	err := s.db.Close()
 	s.db = nil
 	return err
+}
+
+// retire 關閉連線,把舊版 db 改名成 <path>.v<version>(已有同名保留檔就覆蓋——Windows 的 rename 不會蓋,先刪),
+// 伴生檔照 Remove 的理由刪掉。
+func (s *Store) retire(version int) error {
+	if err := s.Close(); err != nil {
+		return err
+	}
+	kept := fmt.Sprintf("%s.v%d", s.path, version)
+	if err := os.Remove(kept); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(s.path, kept); err != nil {
+		return err
+	}
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if err := os.Remove(s.path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 升到 v%d:舊檔保留為 %s(沒有程式會讀它;確定不需要再自行刪除),快取會在下一次 pull 從 Drive 重建\n", version, schemaVersion, kept)
+	return nil
 }
 
 // Remove 關閉連線並刪掉 db 與所有伴生檔。Windows 上連線未關會 sharing violation,所以先 Close;
