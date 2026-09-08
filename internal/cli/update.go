@@ -216,7 +216,7 @@ func fetchBytes(ctx context.Context, url string, limit int64) ([]byte, error) {
 // checksumFor:GoReleaser 的 checksums.txt 每行「<sha256 hex>  <檔名>」;找不到回空字串。
 func checksumFor(sums []byte, name string) string {
 	for _, line := range strings.Split(string(sums), "\n") {
-		if f := strings.Fields(line); len(f) == 2 && f[1] == name {
+		if f := strings.Fields(line); len(f) == 2 && f[1] == name && len(f[0]) == sha256.Size*2 {
 			return strings.ToLower(f[0])
 		}
 	}

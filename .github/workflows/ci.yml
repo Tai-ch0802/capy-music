@@ -52,4 +52,5 @@ jobs:
           bin=$(find dist -type f -name capy -path '*darwin_arm64*')
           test -n "$bin"
           "$bin" --version
+          test "$("$bin" --version)" != "capy version dev" # cli.version 的 -X 路徑錯了,capy update 的自檢會拒絕每一個真 release
           test "$("$bin" debug google-client)" = ci-test

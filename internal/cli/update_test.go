@@ -348,17 +348,23 @@ func TestUpdateReleaseChecksumMismatchLeavesBinary(t *testing.T) {
 }
 
 func TestUpdateReleaseMissingChecksumLine(t *testing.T) {
-	assets := releaseAssets(t, "1.2.3")
-	assets[updateChecksums] = []byte(sha256Hex([]byte("x")) + "  capy_1.2.3_plan9_mips.tar.gz\n")
-	downloads := stubRelease(t, http.StatusOK, "v1.2.3", assets)
-	exe := stubExecutable(t)
-	stubVersion(t, "1.0.0")
-	stubVerify(t, nil)
-	if _, err := runCLI(t, "update"); err == nil || !strings.Contains(err.Error(), "沒有 "+updateAssetName("1.2.3")+" 這一行") {
-		t.Fatalf("checksums.txt 缺這個檔那行要拒絕:%v", err)
-	}
-	if b, _ := os.ReadFile(exe); string(b) != "old" || *downloads != 1 {
-		t.Fatalf("不該碰 binary、不該再下載壓縮檔:%q %d", b, *downloads)
+	name := updateAssetName("1.2.3")
+	for label, sums := range map[string]string{
+		"缺這個檔那行": sha256Hex([]byte("x")) + "  capy_1.2.3_plan9_mips.tar.gz\n",
+		"hash 被截斷": "deadbeef  " + name + "\n", // 不是 64 字元就不算數(壞掉或被動過的 checksums.txt 不能讓程式 panic)
+	} {
+		assets := releaseAssets(t, "1.2.3")
+		assets[updateChecksums] = []byte(sums)
+		downloads := stubRelease(t, http.StatusOK, "v1.2.3", assets)
+		exe := stubExecutable(t)
+		stubVersion(t, "1.0.0")
+		stubVerify(t, nil)
+		if _, err := runCLI(t, "update"); err == nil || !strings.Contains(err.Error(), "沒有 "+name+" 這一行") {
+			t.Fatalf("%s:要拒絕:%v", label, err)
+		}
+		if b, _ := os.ReadFile(exe); string(b) != "old" || *downloads != 1 {
+			t.Fatalf("%s:不該碰 binary、不該再下載壓縮檔:%q %d", label, b, *downloads)
+		}
 	}
 }
 
@@ -475,6 +481,10 @@ func TestReleaseAssetNamesMatchGoreleaserConfig(t *testing.T) {
 		`name_template: "capy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"`,
 		`name_template: ` + updateChecksums,
 		`binary: capy`,
+		// 版本與內建 client 的注入路徑:錯一個字,verifyBinary 會拒絕每一個真 release、或 binary 沒有內建 client。
+		`-X github.com/Tai-ch0802/capy-music/internal/cli.version={{ .Version }}`,
+		`-X github.com/Tai-ch0802/capy-music/internal/auth.BuiltinGoogleClientID={{ .Env.GOOGLE_CLIENT_ID }}`,
+		`-X github.com/Tai-ch0802/capy-music/internal/auth.BuiltinGoogleClientSecret={{ .Env.GOOGLE_CLIENT_SECRET }}`,
 	} {
 		if !strings.Contains(yaml, want) {
 			t.Errorf(".goreleaser.yaml 找不到 %q(update.go 的檔名契約靠它)", want)
