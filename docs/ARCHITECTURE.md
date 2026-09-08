@@ -803,7 +803,7 @@ capy pl show   <name>
 capy pl link   <name|pid> <provider>:<playlist_id|name>   # P3(2026-09-08 T8 已實作):只認明確 link(Q5 B);canonical 清單不存在就建立;讀不到的清單不可連結
 capy pl unlink <name|pid> <provider>                      # P3(已實作);canonical 內容不動
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
-capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值,兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);讀不到的清單跳過
+capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義
 capy pl push   [--provider P] [--all] [--dry-run] [--force]           # P5
 capy pl sync   [--dry-run]                                # P5
 capy pl restore <name> --provider P                       # P5(語意待定,§6.6)
@@ -854,7 +854,7 @@ capy doctor
 | 15 | `play` 語意(2026-09-04) | 統一搜尋(曲目 + 藝人 + 我的播放清單);TTY 下唯一明確命中(清單名完全相符 → 藝人名完全相符 → 曲目恰一筆)直接播,否則挑選器;**非 TTY 一律確定性**:`--type`/前綴,歧義回 exit 2 與 TSV 候選;藝人 = 熱門歌曲;無參數維持恢復播放 | 「記得清單名、記不得 ID」是真實使用情境;可腳本化鐵則要求非 TTY 絕不互動 |
 | 16 | 播放器畫面(2026-09-04) | 先做 `now --watch`(bubbletea,Spotify 與 Apple 皆支援,Apple 端不得啟動未執行的 Music.app);無參數 `capy` 儀表板留到之後 | 範圍可控、獨立可測;儀表板依賴同一套元件,之後疊 |
 | 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除(2026-09-07 T6 已併入 `state.db`,`internal/cache` 留作門面,舊檔首次 Load 時刪除) | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
-| 18 | 刪除閾值公式與閘(2026-09-08,T8) | Q3 採 B:單一 (清單, provider) 要刪 >10 首、或 >30% 且 >3 首才擋,分母是該 provider 可見曲數(`DeriveResult.VisibleCount`);「Drive 不完整」是獨立的閘,`--yes` / `--force` 都不放行 | A(`>10 或 >30%`)會擋掉「5 首刪 2 首」這種日常操作,C(<10 首不擋)會放過「4 首刪光」;B 兩邊都顧到。閘與閾值分開,是因為閾值的例外(`--force`)是「我知道我在刪」,不是「我知道 Drive 壞了」 |
+| 18 | 刪除閾值公式與閘(2026-09-08,T8) | Q3 採 B:單一 (清單, provider) 要刪 >10 首、或 >30% 且 >3 首才擋,分母是該 provider 可見曲數(`DeriveResult.VisibleCount`);「Drive 不完整」是獨立的閘,`--yes` / `--force` 都不放行;`--force` 只能配單一清單、不能配 `--all`(一組超標整輪擋下,但解除只能一次一個清單) | A(`>10 或 >30%`)會擋掉「5 首刪 2 首」這種日常操作,C(<10 首不擋)會放過「4 首刪光」;B 兩邊都顧到。閘與閾值分開,是因為閾值的例外(`--force`)是「我知道我在刪」,不是「我知道 Drive 壞了」 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 

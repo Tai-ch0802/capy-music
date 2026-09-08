@@ -358,6 +358,29 @@ func TestPlLinkRefusesRestrictedAndDuplicate(t *testing.T) {
 	if _, _, err := runPull(t, "pl", "pull", "沒有這個"); err == nil || !strings.Contains(err.Error(), "pl link") {
 		t.Fatalf("未連結的清單要指路:%v", err)
 	}
+	// Apple 空清單回 404:link 要放行(新建空清單 → link → 再放歌是正常起手式)。
+	fs.set("e", "空的")
+	fs.missingItems["e"] = true
+	mustPull(t, "pl", "link", "空的", "spotify:e")
+	// 讀得到但不在自己列表裡的公開清單(像 base62 的 ID 會被 resolvePlaylistID 直接放行):不可連結,否則第一次 pull 就被當 gone。
+	pub := "37i9dQZF1DXcBWIGoYBM5M"
+	fs.mu.Lock()
+	fs.items[pub] = []string{"z"}
+	fs.mu.Unlock()
+	if _, _, err := runPull(t, "pl", "link", "公開", "spotify:"+pub); err == nil || !strings.Contains(err.Error(), "不在你的清單列表") {
+		t.Fatalf("不在列表裡的清單不可連結:%v", err)
+	}
+	fs.set(pub, "公開", "z")
+	mustPull(t, "pl", "link", "公開", "spotify:"+pub)
+	// 26 字元全大寫的清單名不是 pid:要建清單,不是「找不到 pid」。
+	fs.set("p9", "mix", "m")
+	if _, errs := mustPull(t, "pl", "link", "BEST OF THE YEAR MIX 2026!", "spotify:p9"); !strings.Contains(errs, "建立 canonical 清單 BEST OF THE YEAR MIX 2026!") {
+		t.Fatalf("全大寫名字要當名字:%q", errs)
+	}
+	fs.set("p10", "another", "n")
+	if _, _, err := runPull(t, "pl", "link", "01ARZ3NDEKTSV4RRFFQ69G5FAV", "spotify:p10"); err == nil || !strings.Contains(err.Error(), "找不到 pid") {
+		t.Fatalf("合法 ULID 卻不存在要報找不到 pid:%v", err)
+	}
 }
 
 func TestPlPullThresholdNeedsForce(t *testing.T) {
@@ -380,6 +403,12 @@ func TestPlPullThresholdNeedsForce(t *testing.T) {
 	}
 	if _, _, err := runPull(t, "pl", "pull", "通勤", "--yes", "--force", "--dry-run"); exitOf(t, err) != 2 {
 		t.Fatalf("--force 越過閾值後 dry-run 是待套用 exit 2:%v", err)
+	}
+	if _, _, err := runPull(t, "pl", "pull", "--all", "--yes", "--force"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "--all") {
+		t.Fatalf("--force 不能配 --all(安全閥一次只解除一個清單):%v", err)
+	}
+	if !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatal("被拒絕的 --force --all 零寫入")
 	}
 	mustPull(t, "pl", "pull", "通勤", "--yes", "--force")
 	if pl := decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__"); len(pl.Items) != 1 {
@@ -410,7 +439,7 @@ func TestPlPullDriveIncompleteBlocksEvenWithYesForce(t *testing.T) {
 		}
 	}
 	before := driveFiles(t, dc)
-	_, _, err := runPull(t, "pl", "pull", "--all", "--yes", "--force")
+	_, _, err := runPull(t, "pl", "pull", "通勤", "--yes", "--force") // 閘在目標解析之前,連清單找不找得到都輪不到
 	if exitOf(t, err) != 3 || !strings.Contains(err.Error(), "pl__") || !strings.Contains(err.Error(), "drive init --from-local") {
 		t.Fatalf("宣告了卻取不到的檔 → exit 3 並指路:%v", err)
 	}
@@ -455,15 +484,16 @@ func TestPlPullSchemaTooNewIsErrorZeroWrites(t *testing.T) {
 	}
 }
 
-func TestPlPullGoneUnlinksAndListedButMissingIsError(t *testing.T) {
+func TestPlPullGoneUnlinksAndListedBut404IsEmpty(t *testing.T) {
 	fs, dc, _ := pullWorld(t)
 	fs.set("p1", "通勤", "t1")
 	mustPull(t, "pl", "link", "通勤", "spotify:p1")
 	mustPull(t, "pl", "pull", "通勤", "--yes")
-	// 有列出但 items 404:不是 gone,是錯誤(exit 1)。
+	// 有列出但 items 404 = 空清單(Apple 的 library 端點對空清單回 404):移除走 GATE,不是 exit 1、更不是 gone。
 	fs.missingItems["p1"] = true
-	if _, _, err := runPull(t, "pl", "pull", "通勤", "--yes"); exitOf(t, err) != 1 {
-		t.Fatalf("列表裡還在但讀不到 → exit 1:%v", err)
+	out, _, err := runPull(t, "pl", "pull", "通勤")
+	if exitOf(t, err) != 2 || strings.Count(out, "remove\t") != 1 || strings.Contains(out, "unlink") {
+		t.Fatalf("列表裡還在但 404 → 當空清單走 GATE:%v\n%s", err, out)
 	}
 	delete(fs.missingItems, "p1")
 	// 不在列表裡:gone → unlink 列為變更,--yes 才套用;canonical 內容不動。

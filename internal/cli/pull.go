@@ -23,6 +23,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
+	"github.com/Tai-ch0802/capy-music/internal/ulid"
 )
 
 // P3 T8:pl link / unlink / pull(spec §6.1、§6.5、§6.6;計畫 T8)。三個命令共用 withCanonical 的骨架:
@@ -366,10 +367,20 @@ func newPlLinkCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// 「存在」的定義要跟 pull 的 gone 判準一致(在 ListPlaylists 裡):像 base62 的 ID 會被 resolvePlaylistID 直接放行,
+			// 別人的公開清單讀得到卻不在自己的列表裡,連了第一次 pull 就會被當成已刪除而自動 unlink。
+			refs, err := r.ListPlaylists(ctx)
+			if err != nil {
+				return friendlyErr(prov, err)
+			}
+			if !slices.ContainsFunc(refs, func(x provider.PlaylistRef) bool { return x.ID == id }) {
+				return fmt.Errorf("%s:%s 不在你的清單列表裡(capy pl list 看得到的才算):pull 會把不在列表裡的清單視為已刪除並自動取消連結,所以不可連結", prov, id)
+			}
 			// 讀不到的清單(Spotify 編輯清單、他人清單,spec §1.1)不可連結:pull 永遠會跳過它,連了只是騙自己。
+			// 404 放行:Apple 的 library 端點對空清單回 404,「新建空清單 → link → 再放歌」是正常起手式。
 			if _, err := r.GetPlaylistItems(ctx, id); errors.Is(err, provider.ErrRestricted) {
 				return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不可連結", prov, id)
-			} else if err != nil {
+			} else if err != nil && !errors.Is(err, provider.ErrNotFound) {
 				return friendlyErr(prov, err)
 			}
 			return withCanonical(ctx, cmd.ErrOrStderr(), func(s *canonState) error {
@@ -383,7 +394,7 @@ func newPlLinkCmd() *cobra.Command {
 					}
 				}
 				if pl == nil {
-					if len(args[0]) == 26 && strings.ToUpper(args[0]) == args[0] { // 像 pid 卻不存在:別把它當名字建清單
+					if _, err := ulid.Time(args[0]); err == nil && strings.ToUpper(args[0]) == args[0] { // 合法 ULID 卻不存在:別把它當名字建清單
 						return fmt.Errorf("找不到 pid %s 的 canonical 清單", args[0])
 					}
 					pl = canon.NewPlaylist(args[0])
@@ -468,6 +479,9 @@ func newPlPullCmd() *cobra.Command {
 			if prov != "" && !isProviderID(prov) {
 				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), prov)
 			}
+			if force && all { // 安全閥一次只解除一個清單:整輪放行會連「使用者自己都還不知道被清空」的清單一起放掉
+				return errors.New("--force 只能配單一清單(capy pl pull <name> --force),不能配 --all")
+			}
 			ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 			return withCanonical(ctx, stderr, func(s *canonState) error {
 				targets, err := pullTargets(s, args, all, prov)
@@ -478,7 +492,9 @@ func newPlPullCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows)
+				if len(rows) > 0 { // 零列時 TTY 也不印空表頭
+					ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows)
+				}
 				if len(rows) == 0 {
 					fmt.Fprintln(stderr, "無變更")
 					if dryRun {
@@ -513,7 +529,7 @@ func newPlPullCmd() *cobra.Command {
 	cmd.Flags().StringVar(&prov, "provider", "", "只拉這個 provider 的連結(預設:清單連結的全部 provider)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出變更,不寫入(有變更時 exit 2)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用);不放行 Drive 不完整")
-	cmd.Flags().BoolVar(&force, "force", false, "越過刪除閾值(>10 首,或 >30% 且 >3 首);不放行 Drive 不完整")
+	cmd.Flags().BoolVar(&force, "force", false, "越過刪除閾值(>10 首,或 >30% 且 >3 首);只能配單一清單、不能配 --all;不放行 Drive 不完整")
 	return cmd
 }
 
@@ -603,11 +619,13 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			}
 			if ref, ok := refs[link]; ok {
 				tracks, err := r.GetPlaylistItems(ctx, link)
-				if errors.Is(err, provider.ErrRestricted) {
+				switch {
+				case errors.Is(err, provider.ErrRestricted):
 					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s(開發模式 app 讀不到 Spotify 官方 / 他人的清單,不是清單消失)\n", pl.Name, prov, link)
 					continue
-				}
-				if err != nil {
+				case errors.Is(err, provider.ErrNotFound):
+					tracks = nil // 有列在清單列表裡卻 404 = 空清單(Apple 的 library 端點就這樣回);移除照常走 GATE 與閾值,不是 exit 1
+				case err != nil:
 					return nil, nil, fmt.Errorf("讀取 %s 的 %s:%s:%w", pl.Name, prov, link, friendlyErr(prov, err))
 				}
 				in.Live = &canon.Observed{ID: link, Name: ref.Name, Tracks: tracks}
@@ -633,6 +651,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			if res.Gone {
 				fmt.Fprintf(stderr, "警告:%s 端找不到清單 %s,%s 將取消連結(Q6);canonical 內容不動\n", prov, link, pl.Name)
 				delete(pl.Links, prov)
+				delete(s.mine().Base[pl.PID], prov) // 自己這台的舊 base 一起清(別台的碰不到,靠 Snapshot.ID 比對擋)
 				pl.UpdatedAt = canon.Now().Unix()
 				continue
 			}

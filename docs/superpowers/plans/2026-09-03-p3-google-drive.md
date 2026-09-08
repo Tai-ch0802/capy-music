@@ -323,7 +323,7 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 
 **產出**:`internal/cli/pl.go`(`pull` 子命令)、`cmd/capy/main.go`、`internal/cli/root.go`。
 
-**2026-09-08:已實作於 `internal/cli/pull.go`(`pl link` / `pl unlink` / `pl pull`;exit code 對照集中在 `cli.ExitCode`)。與下面原本的考量不同或補上的地方:** (1) 三個命令共用一個骨架 `withCanonical`:`pull.lock` → FETCH(一次 `files.list`,同名取最新)→ 閘 → 改狀態 → COMMIT,`pl link` 建清單也走同一個閘,不能繞過。(2) 「Drive 不完整」的證人有兩個:`manifest.playlists`(T8 加的欄位)與本機 `state.db` 記得的 pid,任一宣告但 Drive 取不到就 exit 3;任何檔 schema 太新 → exit 1;兩者都零寫入。(3) 「零變更」不等於「零寫入」:寫入以位元組差異判定,base 缺或變了才 `SetBase`(否則 `observed_at` 每次都動 = 每次都上傳 dev 檔),manifest 只在新裝置或本來就要寫東西時 touch。(4) gone 的訊號是「不在 `ListPlaylists` 的列表裡」,不是 items 回 404——Apple 的 library 端點對空清單也回 404;有列出但 404 是錯誤(exit 1)。(5) 快照加了平台清單 `id`,base 的 id ≠ 目前 link 就當沒有 base(unlink 後改連別的清單不會誤刪)。(6) 同裝置並行守門用 `pull.lock` 包整段,而不是交易內重驗 `observed_at`。
+**2026-09-08:已實作於 `internal/cli/pull.go`(`pl link` / `pl unlink` / `pl pull`;exit code 對照集中在 `cli.ExitCode`)。與下面原本的考量不同或補上的地方:** (1) 三個命令共用一個骨架 `withCanonical`:`pull.lock` → FETCH(一次 `files.list`,同名取最新)→ 閘 → 改狀態 → COMMIT,`pl link` 建清單也走同一個閘,不能繞過。(2) 「Drive 不完整」的證人有兩個:`manifest.playlists`(T8 加的欄位)與本機 `state.db` 記得的 pid,任一宣告但 Drive 取不到就 exit 3;任何檔 schema 太新 → exit 1;兩者都零寫入。(3) 「零變更」不等於「零寫入」:寫入以位元組差異判定,base 缺或變了才 `SetBase`(否則 `observed_at` 每次都動 = 每次都上傳 dev 檔),manifest 只在新裝置或本來就要寫東西時 touch。(4) gone 的訊號是「不在 `ListPlaylists` 的列表裡」,不是 items 回 404——Apple 的 library 端點對空清單也回 404;有列出但 404 = 空清單(Apple 的 library 端點對空清單回 404,PR #20 review),移除照常走 GATE 與閾值;`pl link` 用同一個「在列表裡」的存在定義。(5) 快照加了平台清單 `id`,base 的 id ≠ 目前 link 就當沒有 base(unlink 後改連別的清單不會誤刪)。(6) 同裝置並行守門用 `pull.lock` 包整段,而不是交易內重驗 `observed_at`。(7) `--force` 只能配單一清單、不能配 `--all`(PR #20 review:一組超標整輪擋下,但整輪放行會連使用者還不知道被清空的清單一起放掉)。
 
 - **GATE 是唯一的寫入閘**:算變更集 → dry-run 呈現 → 閾值檢查 → 才寫。
 - 非 TTY dry-run 輸出為無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;TTY 用 `ui.Table` 渲染同一份資料。**首次 pull 在 TTY 下**:spec §6.6 要求「自動先 dry-run 並要求確認」——定案用 huh Confirm,非 TTY 則靠 `--yes`。
@@ -343,6 +343,8 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 ### T9 — `export` 與 `drive init --from-local`(逃生口)
 
 **產出**:`internal/cli/` 兩個命令。
+
+> **T9 要一起想的銜接(PR #20 review 的觀察)**:T8 閘的第二個證人是本機 `state.db`,但 schema 升版會讓 `store.OpenAt` 整檔重建 db,而更早的 manifest 沒有 `playlists` 欄位——升級後的第一次 pull 兩個證人都是空的,對「Drive 部分遺失」等於沒有保護。目前還沒有真資料所以沒事,但 `drive init --from-local` 依賴本機 cache 是「唯一剩下的一份」,schema 升版時的重建政策(整檔丟棄)與它衝突,要決定:升版走搬遷、或升版前先 export。
 
 - **`export` 直接輸出 Drive 檔的合併形式**(不要發明第三種 JSON 形狀);spec §1.3 明列 appdata 計入使用者配額、且使用者可能清空,所以逃生口是硬需求。
 - `drive init --from-local`:唯一允許在「Drive 空 / 404」狀態下寫入的命令,**只做重新上傳,永遠不對非空的 cache 做 hydrate-empty**。沒有它,T8 的 exit 3 是死路。
