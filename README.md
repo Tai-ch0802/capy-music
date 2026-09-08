@@ -86,6 +86,9 @@ capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl unlink 通勤 spotify
 capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
+capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
+capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
+capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個平台沒有這首;id 已屬另一 cid 時合併(非 TTY 要 --yes)
 capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
 capy drive init --from-local [--dry-run] [--yes]   # 逃生口:Drive 空 / 部分遺失時用本機 state.db 補回缺的檔
 capy doctor [--provider apple]
@@ -96,6 +99,8 @@ capy update [--dev]                      # 見上方「更新」
 所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
 
 `capy pl pull` 的 exit code 是對外契約(cron 靠它):`0` 無變更或已成功套用、`1` 錯誤、`2` 有待套用的變更(`--dry-run`、非 TTY 沒給 `--yes`、在終端機取消)、`3` 安全閥擋下(Drive appdata 不完整;或單一清單要刪 >10 首、或 >30% 且 >3 首)。`--yes` 只跳過確認、`--force` 只越過刪除閾值且只能配單一清單(`capy pl pull <名稱> --force`,不能配 `--all`:安全閥一次只解除一個清單),兩者都不放行「Drive 不完整」——那條的出口是 `capy drive init --from-local`。變更集在非 TTY 下是無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;「這次動了幾筆」看行數,不佔 exit code。寫入順序固定 Drive 先、本機 `state.db` 後;`state.db` 只是快取,刪掉後下一次 pull 會從 Drive 重建。
+
+`capy resolve` 補 `pl pull` 不做的事:清單連結了兩個平台、曲目只從其中一邊 pull 進來時,另一邊的 id 由它找——先用 ISRC 反查(信心 95),沒有再用標題 + 藝人 + 時長模糊比對(0–100;標題一邊有 live / remix / acoustic / cover 之類、或時長差 >3 秒,上限 84)。≥85 自動寫入,走 `pl pull` 同一套鎖、閘與寫入順序;其餘印成 review 佇列——候選已屬另一首的一律進佇列,**合併只由人決定**。exit code:`0` 無事可寫或已寫入(佇列有東西仍是 0,cron 放 `capy resolve --yes` 不會因為永遠有幾首解不開而報錯)、`1` 錯誤、`2` 有可自動寫入的 mapping 但沒確認(`--dry-run`、非 TTY 沒 `--yes`、取消)。非 TTY 的 TSV:`action cid provider provider_id confidence source title artists reason`(`action` ∈ `map` 待寫入 / `review` 要人裁決 / `conflict` 同 ISRC 觀測到不同 id)。`--review` 在終端機逐筆裁決,決定寫成釘選(之後自動程序不再改);非 TTY 只印佇列並以 exit 2 結束——腳本用 `capy resolve pin`。單次 resolve 打超過 200 次 API 會在 stderr 提醒(未解開的曲目每次都會重查,目前沒有 negative cache)。`pl pull` 結尾會提示「N 首尚未對應到 <provider>」。
 
 兩個逃生口:`capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),把 Drive 檔的合併形式輸出到 stdout——鍵是檔名(`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`)、值是該檔內容的縮排形式(壓回 compact 後與 Drive 上逐位元相同);本機沒資料時 exit 1 且不印東西。它用唯讀方式開 `state.db`:壞檔不刪、版本不符不改名、全新機器不建檔,而且整份匯出是一個一致的快照(與 cron 的 `pl pull` 同時跑也不會撕裂)。`capy drive init --from-local` 是 `pl pull` 以 exit 3 擋下「Drive 不完整」之後的出口:只建 Drive 缺的檔、不覆寫還在的檔、不動本機快取,別台裝置的 `dev__` 檔不代為上傳;先列出要建的檔(非 TTY 是 TSV `action file`),`--yes` 或在終端機確認後才上傳,`--dry-run` 只列不傳。確認訊息會帶目前登入的 Google 帳號:登錯帳號會把整個曲庫傳到別人的 appdata。
 

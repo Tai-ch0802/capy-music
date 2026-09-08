@@ -48,11 +48,12 @@ func (e *BlockedError) Error() string { return e.Msg }
 func ExitCode(err error) (int, string) {
 	var amb *AmbiguousError
 	var pend *PendingError
+	var rev *ReviewNeedsTTYError
 	var blk *BlockedError
 	switch {
 	case err == nil:
 		return 0, ""
-	case errors.As(err, &amb), errors.As(err, &pend):
+	case errors.As(err, &amb), errors.As(err, &pend), errors.As(err, &rev):
 		return 2, err.Error()
 	case errors.As(err, &blk):
 		return 3, err.Error()
@@ -516,6 +517,7 @@ func newPlPullCmd() *cobra.Command {
 				if len(rows) > 0 { // 零列時 TTY 也不印空表頭
 					ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows)
 				}
+				resolveHint(s, targets, stderr) // pull 不做 resolve,只提示(決策 22)
 				if len(rows) == 0 {
 					fmt.Fprintln(stderr, "無變更")
 					if dryRun {
