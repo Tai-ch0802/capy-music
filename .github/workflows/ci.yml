@@ -54,3 +54,4 @@ jobs:
           "$bin" --version
           test "$("$bin" --version)" != "capy version dev" # cli.version 的 -X 路徑錯了,capy update 的自檢會拒絕每一個真 release
           test "$("$bin" debug google-client)" = ci-test
+          test "$("$bin" debug google-client --secret-state)" = set # BuiltinGoogleClientSecret 的 -X 路徑錯了,release.yml 只檢查 env var 擋不到;這裡不印 secret

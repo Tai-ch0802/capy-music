@@ -13,11 +13,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 const fakeSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -133,6 +135,27 @@ func TestUpdateDevNeedsGo(t *testing.T) {
 	stubVersion(t, "dev")
 	if _, err := runCLI(t, "update", "--dev"); err == nil || !strings.Contains(err.Error(), "go.dev/dl") || len(*calls) != 0 {
 		t.Fatalf("沒有 go 應指向下載頁、不呼叫 install:%v", err)
+	}
+}
+
+// TestReplaceExecutableKeepsOldMode:umask 077 下解出來的新檔是 0700,換上去要沿用舊 binary 的 0755。
+func TestReplaceExecutableKeepsOldMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 沒有 Unix 權限位元")
+	}
+	dir := t.TempDir()
+	dst, src := filepath.Join(dir, "capy"), filepath.Join(dir, "new")
+	if err := os.WriteFile(dst, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("new"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceExecutable(dst, src); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(dst); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("新 binary 要沿用舊檔權限 0755,得到 %o", fi.Mode().Perm())
 	}
 }
 
@@ -408,6 +431,45 @@ func TestUpdateReleaseNoneYetPointsToDev(t *testing.T) {
 	if b, _ := os.ReadFile(exe); string(b) != "old" || *downloads != 0 {
 		t.Fatal("不該動 binary")
 	}
+}
+
+// TestUpdateReleaseDownloadTimeout:伺服器收了請求不回,下載要在 Timeout 內放棄、binary 不動。
+func TestUpdateReleaseDownloadTimeout(t *testing.T) {
+	hang := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	t.Cleanup(hang.Close)
+	assets := releaseAssets(t, "1.2.3")
+	stubRelease(t, http.StatusOK, "v1.2.3", assets)
+	// 把 checksums.txt 的下載網址換成會卡住的那台:stubRelease 的網址是 host 決定的,這裡直接繞過去改 client 目標。
+	origClient := downloadClient
+	downloadClient = &http.Client{Timeout: 300 * time.Millisecond, Transport: rewriteHost(hang.URL)}
+	t.Cleanup(func() { downloadClient = origClient })
+	exe := stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	stubVerify(t, nil)
+	start := time.Now()
+	_, err := runCLI(t, "update")
+	if err == nil || !strings.Contains(err.Error(), updateChecksums) {
+		t.Fatalf("卡住的下載要回錯並點名是哪個檔:%v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("下載沒有 Timeout,會無聲卡死")
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatal("不該動到 binary")
+	}
+}
+
+// rewriteHost:把所有請求導到 target(測試用,讓「下載」打到會卡住的伺服器)。
+type rewriteHost string
+
+func (h rewriteHost) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, err := url.Parse(string(h))
+	if err != nil {
+		return nil, err
+	}
+	req = req.Clone(req.Context())
+	req.URL.Scheme, req.URL.Host = u.Scheme, u.Host
+	return http.DefaultTransport.RoundTrip(req)
 }
 
 func TestUpdateReleaseRateLimited(t *testing.T) {

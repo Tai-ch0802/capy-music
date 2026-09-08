@@ -42,6 +42,9 @@ var (
 	updateVerify     = verifyBinary
 )
 
+// downloadClient:release 檔約 20 MB,5 分鐘綽綽有餘;沒有 Timeout 的話半開連線會無聲卡死。
+var downloadClient = &http.Client{Timeout: 5 * time.Minute}
+
 var errGitHubNotFound = errors.New("GitHub 回 404")
 
 // devStampRe:capy update --dev / 手動安裝的版本戳記 YYYY.MM.DD-<sha7>;正式版是 tag 去掉 v 的 semver。
@@ -195,7 +198,7 @@ func fetchBytes(ctx context.Context, url string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +232,7 @@ func downloadVerified(ctx context.Context, url, dst, wantHex string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -408,8 +411,12 @@ func goInstall(ctx context.Context, goBin, sha, ver, gobin string, stderr io.Wri
 
 // replaceExecutable 用 src 換掉 dst。先把舊檔挪成 .old 再把新檔 rename 進來:Unix 本來就能直接覆蓋執行中的檔,
 // 但 Windows 不能覆寫執行中的 exe、只能改名,兩邊走同一條路。失敗就把舊檔放回去;.old 在 Windows 上
-// 執行中刪不掉,留給下次更新開頭清。
+// 執行中刪不掉,留給下次更新開頭清。新檔沿用舊檔的權限:解壓與 go install 都吃 umask,umask 077 會把
+// 裝在共用位置的 0755 換成 0700,同機器其他使用者就突然 permission denied。
 func replaceExecutable(dst, src string) error {
+	if fi, err := os.Stat(dst); err == nil {
+		_ = os.Chmod(src, fi.Mode().Perm())
+	}
 	old := dst + ".old"
 	_ = os.Remove(old)
 	if err := os.Rename(dst, old); err != nil {

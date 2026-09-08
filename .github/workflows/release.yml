@@ -25,6 +25,7 @@ jobs:
               exit 1
             fi
           done
+      - run: go vet ./... && go test -race ./... # ci.yml 不吃 tag:tag 打在沒跑過 CI 的 commit 上時,這是發版前唯一的把關(單一平台,當作絆線就好)
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser

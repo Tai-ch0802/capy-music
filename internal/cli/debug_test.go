@@ -56,4 +56,15 @@ func TestDebugGoogleClientPrintsOnlyBuiltinID(t *testing.T) {
 	if strings.Contains(out, "never-print-me") {
 		t.Fatal("secret 絕不能印出來")
 	}
+
+	// --secret-state:只回 set / unset(CI 用它驗 BuiltinGoogleClientSecret 的注入路徑沒斷),不印 secret。
+	out, err = runCLI(t, "debug", "google-client", "--secret-state")
+	if err != nil || out != "set\n" {
+		t.Fatalf("secret 有注入應印 set:%q %v", out, err)
+	}
+	auth.BuiltinGoogleClientSecret = ""
+	out, err = runCLI(t, "debug", "google-client", "--secret-state")
+	if err != nil || out != "unset\n" {
+		t.Fatalf("secret 沒注入應印 unset:%q %v", out, err)
+	}
 }
