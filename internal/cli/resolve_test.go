@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
@@ -315,7 +317,7 @@ func TestResolveConflictRowsAndKeep(t *testing.T) {
 }
 
 func TestResolveAPICallHint(t *testing.T) {
-	fs, _, _ := resolveWorld(t)
+	fs, dc, _ := resolveWorld(t)
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
 	orig := apiCallHint
 	apiCallHint = 1
@@ -323,6 +325,16 @@ func TestResolveAPICallHint(t *testing.T) {
 	_, errs, _ := runPull(t, "resolve", "--dry-run")
 	if !strings.Contains(errs, "次 API(超過 1)") {
 		t.Fatalf("超過門檻要提醒:%s", errs)
+	}
+	// 契約:不合格 ISRC 不打 API,所以不計——a 多兩個壞 alias,計數仍是 3(a 反查 1;b 反查 1 + 搜尋 1)
+	tr := driveTracks(t, dc)
+	ta := tr.Tracks[fakeCID("a")]
+	ta.ISRC = append([]string{"bad", "worse"}, ta.ISRC...)
+	tr.Tracks[fakeCID("a")] = ta
+	putTracks(t, dc, tr)
+	apiCallHint = 3
+	if _, errs, _ := runPull(t, "resolve", "--dry-run"); strings.Contains(errs, "次 API") {
+		t.Fatalf("壞 ISRC 不計:%s", errs)
 	}
 }
 
@@ -366,14 +378,32 @@ func TestResolvePinMergeUploadFailureThenPullHeals(t *testing.T) {
 	}
 }
 
+// pull 結尾的提示:兩個平台各缺對方的 mapping;--provider 那輪只提示它;被安全閥擋下時不提示(被拒絕的 derive 結果不落地)。
 func TestPlPullHintsUnresolved(t *testing.T) {
-	resolveWorld(t)
-	_, errs := mustPull(t, "pl", "pull", "通勤", "--provider", "spotify", "--yes")
-	if !strings.Contains(errs, "2 首尚未對應到 apple,跑 capy resolve") {
+	fs, _, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	fs.set("p2", "通勤", "c")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	mustPull(t, "pl", "link", "通勤", "apple:p2")
+	_, errs := mustPull(t, "pl", "pull", "通勤", "--yes")
+	if !strings.Contains(errs, "2 首尚未對應到 apple,跑 capy resolve") || !strings.Contains(errs, "1 首尚未對應到 spotify,跑 capy resolve") {
 		t.Fatalf("pull 結尾提示:%s", errs)
 	}
-	if _, errs := mustPull(t, "pl", "pull", "通勤", "--provider", "spotify", "--dry-run"); !strings.Contains(errs, "尚未對應到 apple") {
-		t.Fatalf("--dry-run 也提示:%s", errs)
+	_, errs = mustPull(t, "pl", "pull", "通勤", "--provider", "spotify", "--dry-run")
+	if !strings.Contains(errs, "1 首尚未對應到 spotify") || strings.Contains(errs, "apple") {
+		t.Fatalf("--dry-run 也提示,但 --provider 那輪只提示它:%s", errs)
+	}
+	ids := []string{"a", "b"}
+	for i := range 10 {
+		ids = append(ids, fmt.Sprintf("t%02d", i))
+	}
+	fs.set("p1", "通勤", ids...)
+	mustPull(t, "pl", "pull", "通勤", "--provider", "spotify", "--yes")
+	fs.set("p1", "通勤", "a") // 平台刪了 11 首 → 安全閥
+	_, errs, err := runPull(t, "pl", "pull", "通勤", "--provider", "spotify", "--yes")
+	if exitOf(t, err) != 3 || strings.Contains(errs, "尚未對應") {
+		t.Fatalf("擋下時不提示:%v\n%s", err, errs)
 	}
 }
 
@@ -466,5 +496,140 @@ func TestResolveReviewNoneAfterMergeFollowsTombstone(t *testing.T) {
 	}
 	if m := tracks.Tracks[cidA].Mappings["spotify"]; !m.Pinned || m.ID != "" {
 		t.Fatalf("none 釘在勝者上:%+v", m)
+	}
+}
+
+// putPlaylist:把清單檔直接寫回假 Drive(模擬手改)。
+func putPlaylist(t *testing.T, dc *drive.Client, pl *canon.Playlist) {
+	t.Helper()
+	body, err := canon.Encode(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	files, err := dc.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := canon.PlaylistFile(pl.PID)
+	for _, f := range files {
+		if f.Name == ref.Name {
+			if _, err := dc.Update(ctx, f.ID, ref.Props, body); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatalf("Drive 沒有 %s", ref.Name)
+}
+
+// review 迴圈中途出錯(Ctrl-C 或任何 error):整輪不寫入,包含已確認的自動 mapping;stderr 不能先說「寫入 N 筆」。Ctrl-C 同 pull 的取消:exit 2。
+func TestResolveReviewAbortWritesNothing(t *testing.T) {
+	fs, dc, srv := resolveWorld(t)
+	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")}) // a 自動 map;b 找不到候選 → 佇列
+	uploads := countUploads(srv)
+	for _, tc := range []struct {
+		err  error
+		exit int
+		msg  string
+	}{{huh.ErrUserAborted, 2, "已取消:這輪的 1 筆自動 mapping 與 0 筆裁決都不寫入"}, {errors.New("boom"), 1, "boom"}} {
+		stubReview(t, nil)
+		reviewPrompt = func(resolveItem, int, int, func(string) ([]provider.Track, error)) (reviewDecision, error) {
+			return reviewDecision{}, tc.err
+		}
+		_, errs, err := runPull(t, "resolve", "--review", "--yes")
+		if exitOf(t, err) != tc.exit || !strings.Contains(err.Error()+errs, tc.msg) || strings.Contains(errs, "寫入 1 筆 mapping") || *uploads != 0 {
+			t.Fatalf("%v:exit %d %v uploads=%d\n%s", tc.err, exitOf(t, err), err, *uploads, errs)
+		}
+		if _, has := driveTracks(t, dc).Tracks[fakeCID("a")].Mappings["apple"]; has {
+			t.Fatal("零寫入")
+		}
+	}
+}
+
+// manual 搜尋打 API 失敗(429 / 未登入):這筆當搜不到略過,不中斷整輪、前面的裁決不丟。
+func TestResolveReviewManualSearchFailureSkips(t *testing.T) {
+	fs, dc, _ := resolveWorld(t)
+	stubReview(t, func(it resolveItem, search func(string) ([]provider.Track, error)) reviewDecision {
+		if it.cid == fakeCID("a") {
+			fs.setSearchStatus(http.StatusTooManyRequests) // 佇列建好之後才壞,只打到 manual 搜尋
+			return reviewDecision{kind: "none"}
+		}
+		found, err := search("song b")
+		if err != nil || found != nil {
+			t.Fatalf("搜尋失敗要降級成搜不到:%v %v", err, found)
+		}
+		return reviewDecision{kind: "skip"}
+	})
+	_, errs := mustPull(t, "resolve", "--review")
+	if !strings.Contains(errs, "搜尋失敗,這筆先略過") || !strings.Contains(errs, "song-b:略過") || !strings.Contains(errs, "裁決 1 筆") {
+		t.Fatalf("stderr:%s", errs)
+	}
+	if m := driveTracks(t, dc).Tracks[fakeCID("a")].Mappings["apple"]; !m.Pinned || m.ID != "" {
+		t.Fatalf("前面的裁決要落地:%+v", m)
+	}
+}
+
+// 合併確認畫面按 Ctrl-C = 不同意合併:這筆略過、不中斷整輪(跟 select 表單的 Ctrl-C 不同,那個是取消整輪)。
+func TestResolveReviewMergeConfirmAbortIsDecline(t *testing.T) {
+	fs, dc, _ := resolveWorld(t)
+	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
+	mustPull(t, "resolve", "--yes")                                                  // a → ap-a
+	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("b")}) // b 的候選也是 ap-a(已屬 a)→ 進佇列
+	stubReview(t, func(it resolveItem, _ func(string) ([]provider.Track, error)) reviewDecision {
+		return reviewDecision{kind: "accept", cand: it.cand}
+	})
+	origConfirm := confirmWrite
+	confirmWrite = func(string) (bool, error) { return false, huh.ErrUserAborted }
+	t.Cleanup(func() { confirmWrite = origConfirm })
+	before := driveFiles(t, dc)
+	_, errs := mustPull(t, "resolve", "--review")
+	if !strings.Contains(errs, "song-b:略過(未合併)") || !strings.Contains(errs, "裁決 0 筆") || !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatalf("Ctrl-C = 不同意、零寫入:%s", errs)
+	}
+}
+
+// 空字串 link = 沒連結(同 resolve.Needs):conflict 掃描也不能把它當存在。
+func TestResolveConflictScanSkipsEmptyLink(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	tr := driveTracks(t, dc)
+	ta := tr.Tracks[fakeCID("a")]
+	ta.Conflicts = append(ta.Conflicts, canon.Conflict{Provider: "spotify", ProviderID: "a-live", Title: "song-a (Live)", DurationMS: 250000})
+	tr.Tracks[fakeCID("a")] = ta
+	putTracks(t, dc, tr)
+	pl := decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__")
+	pl.Links["spotify"] = ""
+	putPlaylist(t, dc, pl)
+	if out, _ := mustPull(t, "resolve", "--yes"); out != "" {
+		t.Fatalf("空 link 的 conflict 列不該浮現:%q", out)
+	}
+}
+
+// 裁決計數:略過、keep 卻已沒 mapping 都不算;none 算。
+func TestApplyDecisionDecidedFlag(t *testing.T) {
+	s := &canonState{tracks: canon.NewTracks()}
+	cid := fakeCID("a")
+	s.tracks.Tracks[cid] = canon.Track{CID: cid, Title: "song-a", Mappings: map[string]canon.Mapping{}}
+	it := resolveItem{cid: cid, prov: "spotify"}
+	for _, tc := range []struct {
+		kind string
+		want bool
+	}{{"skip", false}, {"keep", false}, {"none", true}} {
+		msg, decided, err := applyDecision(s, it, reviewDecision{kind: tc.kind}, nil)
+		if err != nil || decided != tc.want {
+			t.Fatalf("%s:%q decided=%v err=%v", tc.kind, msg, decided, err)
+		}
+	}
+}
+
+// --review 不能配 --dry-run:裁決一定寫入,靜默吃掉 --review 會讓人以為看過佇列了。
+func TestResolveReviewRejectsDryRun(t *testing.T) {
+	resolveWorld(t)
+	_, _, err := runPull(t, "resolve", "--review", "--dry-run")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "--review 不能配 --dry-run") {
+		t.Fatalf("要在開頭擋下:%v", err)
 	}
 }

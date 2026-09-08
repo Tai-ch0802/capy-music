@@ -141,10 +141,10 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 			var cands []provider.Track
 			for _, isrc := range tr.ISRC {
 				found, err := c.lookup.LookupISRC(ctx, isrc)
-				calls++
-				if errors.Is(err, provider.ErrBadISRC) {
+				if errors.Is(err, provider.ErrBadISRC) { // 契約:不合格不打 API,所以不計
 					continue
 				}
+				calls++
 				if err != nil {
 					return nil, friendlyErr(need.Provider, err)
 				}
@@ -194,7 +194,7 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 	seen := map[string]bool{}
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
-			if only != "" && prov != only {
+			if only != "" && prov != only || pl.Links[prov] == "" { // 空字串 = 沒連結,同 resolve.Needs
 				continue
 			}
 			for _, item := range pl.Items {
@@ -266,10 +266,7 @@ var reviewPrompt = func(it resolveItem, pos, total int, search func(string) ([]p
 	opts = append(opts, huh.NewOption("略過(下次再問)", "skip"), huh.NewOption("手動搜尋", "manual"), huh.NewOption("這個平台沒有這首(釘成不可得)", "none"))
 	kind := "skip"
 	if err := huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title(title).Options(opts...).Value(&kind))).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return reviewDecision{}, errors.New("已取消(這次的裁決都不寫入)")
-		}
-		return reviewDecision{}, err
+		return reviewDecision{}, err // Ctrl-C 原樣往上:RunE 把 huh.ErrUserAborted 當「取消 = 整輪不寫入」exit 2
 	}
 	d := reviewDecision{kind: kind}
 	switch kind {
@@ -353,42 +350,42 @@ func pinTrack(s *canonState, cid, prov string, t provider.Track, confirmMerge fu
 	return cid, merged, nil
 }
 
-// applyDecision 把一筆裁決寫進 s(決策一律 pinned / 100 / review,之後永久沿用)。回傳給 stderr 的一句話。
-func applyDecision(s *canonState, it resolveItem, d reviewDecision, confirmMerge func(other string) (bool, error)) (string, error) {
+// applyDecision 把一筆裁決寫進 s(決策一律 pinned / 100 / review,之後永久沿用)。回傳給 stderr 的一句話,與這筆算不算裁決(略過不算)。
+func applyDecision(s *canonState, it resolveItem, d reviewDecision, confirmMerge func(other string) (bool, error)) (string, bool, error) {
 	now := canon.Now().Unix()
 	switch d.kind {
 	case "skip":
-		return "略過", nil
+		return "略過", false, nil
 	case "none":
 		if _, err := pinMapping(s, it.cid, it.prov, canon.Mapping{ID: "", Confidence: 100, Pinned: true, Source: canon.SourceReview, UpdatedAt: now}); err != nil {
-			return "", err
+			return "", false, err
 		}
-		return "釘成不可得", nil
+		return "釘成不可得", true, nil
 	case "keep": // 釘住「現在」在那個 cid 上的 mapping,不是佇列建好時的那個:前一筆合併可能已經換掉它
 		cid := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged).Redirect(it.cid)
 		cur, has := s.tracks.Tracks[cid].Mappings[it.prov]
 		if !has {
-			return "略過(合併後已沒有這個 provider 的 mapping)", nil
+			return "略過(合併後已沒有這個 provider 的 mapping)", false, nil
 		}
 		if _, err := pinMapping(s, cid, it.prov, canon.Mapping{ID: cur.ID, Confidence: 100, Pinned: true, Source: canon.SourceReview, UpdatedAt: now}); err != nil {
-			return "", err
+			return "", false, err
 		}
-		return "釘住現有 mapping " + cur.ID, nil
+		return "釘住現有 mapping " + cur.ID, true, nil
 	case "accept", "manual":
 		if d.cand == nil {
-			return "", errors.New("沒有候選可接受")
+			return "", false, errors.New("沒有候選可接受")
 		}
 		cid, merged, err := pinTrack(s, it.cid, it.prov, *d.cand, confirmMerge)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		msg := "釘選 " + d.cand.ProviderID
 		if merged {
 			msg += ",並與另一個 cid 合併為 " + cid
 		}
-		return msg, nil
+		return msg, true, nil
 	}
-	return "", fmt.Errorf("未知的裁決 %q", d.kind)
+	return "", false, fmt.Errorf("未知的裁決 %q", d.kind)
 }
 
 // reviewLoop:對佇列(非 map 列)逐筆問 reviewPrompt 並套用;不同意合併的那筆當略過,不中斷整輪。回傳裁決筆數(略過不算)。
@@ -404,13 +401,18 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 	for i, it := range queue {
 		search := func(q string) ([]provider.Track, error) {
 			c, err := clientsFor(ctx, clients, it.prov)
-			if err != nil {
-				return nil, err
+			if err == nil && c.searcher == nil {
+				err = fmt.Errorf("%s 不支援搜尋", it.prov)
 			}
-			if c.searcher == nil {
-				return nil, fmt.Errorf("%s 不支援搜尋", it.prov)
+			var found []provider.Track
+			if err == nil {
+				found, err = c.searcher.Search(ctx, provider.Query{Text: q, Limit: fuzzyLimit})
 			}
-			return c.searcher.Search(ctx, provider.Query{Text: q, Limit: fuzzyLimit})
+			if err != nil { // 一次 429 / 未登入不該讓整輪重來(前面的裁決全丟):當搜不到,這筆下次再處理
+				fmt.Fprintf(stderr, "搜尋失敗,這筆先略過:%v\n", friendlyErr(it.prov, err))
+				return nil, nil
+			}
+			return found, nil
 		}
 		d, err := reviewPrompt(it, i+1, len(queue), search)
 		if err != nil {
@@ -420,9 +422,13 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 			if yes {
 				return true, nil
 			}
-			return confirmWrite(fmt.Sprintf("%s 的這個 id 已屬 cid %s:把 %s 與它合併(勝者字典序小、清單 item 全部改指勝者)?", it.prov, other, it.cid))
+			ok, err := confirmWrite(fmt.Sprintf("%s 的這個 id 已屬 cid %s:把 %s 與它合併(勝者字典序小、清單 item 全部改指勝者)?", it.prov, other, it.cid))
+			if errors.Is(err, huh.ErrUserAborted) { // 確認畫面 Ctrl-C = 不同意合併:這筆略過,不中斷整輪
+				return false, nil
+			}
+			return ok, err
 		}
-		msg, err := applyDecision(s, it, d, confirm)
+		msg, decided, err := applyDecision(s, it, d, confirm)
 		var pend *PendingError
 		if errors.As(err, &pend) {
 			msg, err = "略過(未合併)", nil
@@ -430,7 +436,7 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 		if err != nil {
 			return n, err
 		}
-		if d.kind != "skip" && msg != "略過(未合併)" {
+		if decided {
 			n++
 		}
 		fmt.Fprintf(stderr, "[%d/%d] %s:%s\n", i+1, len(queue), it.track.Title, msg)
@@ -446,14 +452,17 @@ func resolveTargets(s *canonState, args []string, prov string) ([]*canon.Playlis
 }
 
 // resolveHint:pl pull 結尾提示尚未對應的曲目數(pull 不做 resolve:API 成本與關注點分離,決策 22)。
-func resolveHint(s *canonState, targets []*canon.Playlist, stderr io.Writer) {
+// only 非空只提示那個 provider(--provider 那輪沒碰別的平台)。
+func resolveHint(s *canonState, targets []*canon.Playlist, only string, stderr io.Writer) {
 	pls := make([]canon.Playlist, 0, len(targets))
 	for _, pl := range targets {
 		pls = append(pls, *pl)
 	}
 	perProv := map[string]int{}
 	for _, n := range resolve.Needs(pls, s.tracks.Tracks) {
-		perProv[n.Provider]++
+		if only == "" || n.Provider == only {
+			perProv[n.Provider]++
+		}
 	}
 	for _, p := range slices.Sorted(maps.Keys(perProv)) {
 		fmt.Fprintf(stderr, "%d 首尚未對應到 %s,跑 capy resolve\n", perProv[p], p)
@@ -471,12 +480,16 @@ func newResolveCmd() *cobra.Command {
 其餘印成 review 佇列——候選已屬另一個 cid 的一律進佇列,合併只由人決定。
 非 TTY 輸出 TSV:action cid provider provider_id confidence source title artists reason(action ∈ map | review | conflict)。
 exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有待寫入的自動 mapping 但沒有確認(--dry-run、非 TTY 沒 --yes、取消)。
---review 在終端機逐筆裁決(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有);非 TTY 只印佇列並以 exit 2 結束。`,
+--review 在終端機逐筆裁決(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有);非 TTY 只印佇列並以 exit 2 結束;
+裁決完才一起寫入,中途 Ctrl-C 整輪不寫入(含自動 mapping)並以 exit 2 結束。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stderr, out := cmd.Context(), cmd.ErrOrStderr(), cmd.OutOrStdout()
 			if prov != "" && !isProviderID(prov) {
 				return fmt.Errorf("不認得 provider %q(%s)", prov, strings.Join(providerIDs, "|"))
+			}
+			if review && dryRun {
+				return errors.New("--review 不能配 --dry-run(裁決一定寫入;先看佇列用 capy resolve --dry-run)")
 			}
 			return withCanonical(ctx, stderr, func(s *canonState) error {
 				targets, err := resolveTargets(s, args, prov)
@@ -510,6 +523,7 @@ exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有
 					fmt.Fprintln(stderr, "沒有可自動寫入的 mapping")
 					return errSkipCommit
 				}
+				applied := 0
 				if pending > 0 {
 					if !yes {
 						if !bothTTY(cmd) {
@@ -523,13 +537,17 @@ exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有
 							return &PendingError{N: pending}
 						}
 					}
-					fmt.Fprintf(stderr, "寫入 %d 筆 mapping\n", applyMappings(s, items))
+					applied = applyMappings(s, items)
 				} else {
 					fmt.Fprintln(stderr, "沒有可自動寫入的 mapping")
 				}
 				switch {
 				case review && queued > 0:
 					n, err := reviewLoop(ctx, s, items, yes, stderr)
+					if errors.Is(err, huh.ErrUserAborted) { // 取消 = 整輪不寫入(自動 mapping 與已做的裁決都丟),同 pull 取消:exit 2
+						fmt.Fprintf(stderr, "已取消:這輪的 %d 筆自動 mapping 與 %d 筆裁決都不寫入\n", applied, n)
+						return &PendingError{N: pending + queued}
+					}
 					if err != nil {
 						return err
 					}
@@ -537,14 +555,17 @@ exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有
 				case queued > 0:
 					fmt.Fprintf(stderr, "%d 筆待人工裁決:在終端機跑 capy resolve --review,或用 capy resolve pin\n", queued)
 				}
+				if applied > 0 { // 只在真的要 COMMIT 時才說「寫入」:review 迴圈中途出錯上面已 return,不會留下說了謊的過去式
+					fmt.Fprintf(stderr, "寫入 %d 筆 mapping\n", applied)
+				}
 				return nil
 			})
 		},
 	}
 	cmd.Flags().StringVar(&prov, "provider", "", "只處理這個 provider(預設:清單連結的全部 provider)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出,不寫入(有可自動寫入的 mapping 時 exit 2)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出,不寫入(有可自動寫入的 mapping 時 exit 2;不能配 --review)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用);--review 時也直接同意合併")
-	cmd.Flags().BoolVar(&review, "review", false, "在終端機逐筆裁決 review 佇列(非 TTY:印佇列、exit 2)")
+	cmd.Flags().BoolVar(&review, "review", false, "在終端機逐筆裁決 review 佇列(非 TTY:印佇列、exit 2;不能配 --dry-run)")
 	cmd.AddCommand(newResolvePinCmd())
 	return cmd
 }

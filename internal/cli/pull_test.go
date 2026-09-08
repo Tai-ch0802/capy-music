@@ -31,6 +31,13 @@ type fakeSpotify struct {
 	restricted   map[string]bool    // items 回 403(編輯清單)
 	missingItems map[string]bool    // 有列出但 items 回 404
 	catalog      []fakeCatalogTrack // /search 與 /tracks/{id} 的目錄(resolve 用);同一個 id 可登記多筆(多個 ISRC 都回它)
+	searchStatus int                // 非零:/search 一律回這個狀態碼(模擬 429 / 5xx)
+}
+
+func (f *fakeSpotify) setSearchStatus(code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.searchStatus = code
 }
 
 // fakeCatalogTrack:目錄裡的一首;/search?q=isrc:X 回 ISRC 相同者,一般查詢回名稱含全部查詢字的。
@@ -129,6 +136,11 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 			}
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(its, ","), len(its))
 		case r.URL.Path == "/search":
+			if f.searchStatus != 0 {
+				w.WriteHeader(f.searchStatus)
+				fmt.Fprintf(w, `{"error":{"status":%d,"message":"nope"}}`, f.searchStatus)
+				return
+			}
 			q := r.URL.Query().Get("q")
 			var its []string
 			for _, c := range f.catalog {
