@@ -147,3 +147,11 @@ func TestMappingSameIgnoresUpdatedAt(t *testing.T) {
 		t.Fatal("pinned 不同就不同")
 	}
 }
+
+// Decode 本身就經 normalize():解出來的 SchemaVersion 永遠是目前值(檔案原本的版本號要在 Decode 前用 CheckSchema 看)。
+func TestDecodeStampsSchemaVersion(t *testing.T) {
+	m, err := canon.Decode[canon.Manifest]([]byte(`{"schema_version":1,"devices":[],"playlists":[]}`))
+	if err != nil || m.SchemaVersion != canon.SchemaVersion {
+		t.Fatalf("Decode 後 SchemaVersion 應為目前值 %d:%d %v", canon.SchemaVersion, m.SchemaVersion, err)
+	}
+}

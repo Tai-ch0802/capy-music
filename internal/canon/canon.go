@@ -16,8 +16,10 @@ import (
 )
 
 // SchemaVersion:每個檔案頂層都有;讀時忽略未知欄位,高於這個值就拒絕(Decode)。
-// 2(2026-09-08,P4 T2a,決策 20):mappings 從字串改物件;所有檔種共用同一個常數,所以一起跳版。Encode 一律蓋成目前值
-// (Decode 保留檔案原值,不蓋的話 v1 檔重編出去還是寫 1,舊 binary 會拿到 JSON 型別錯誤而不是 ErrSchemaTooNew)。
+// 2(2026-09-08,P4 T2a,決策 20):mappings 從字串改物件;所有檔種共用同一個常數,所以一起跳版。
+// Decode / Encode 都會經 normalize(),一律把 schema_version 蓋成目前值:不蓋的話 v1 檔重編出去還是寫 1,
+// v0.1.0 binary 會拿到 JSON 型別錯誤而不是 ErrSchemaTooNew(R-5)。代價是升級後第一次 pull 每個檔都重傳一次。
+// 想知道檔案原本的版本號要在 Decode 之前自己看(CheckSchema / 解 head),Decode 之後看到的永遠是目前值。
 const SchemaVersion = 2
 
 // 測試替換點:observed_at / updated_at / added_at / iid 全由這兩個衍生,沒有替換點的話逐位元相等的測試不可能穩定。
