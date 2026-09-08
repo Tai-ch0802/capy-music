@@ -172,11 +172,13 @@ type Base struct {
 	ObservedAt int64    `json:"observed_at"`
 }
 
-// Snapshot 是平台清單的觀測原文:名稱與依平台順序排列的 provider 曲目 id。存 provider id 不存 cid——
-// mapping 會變,觀測不該跟著變。
+// Snapshot 是平台清單的觀測原文:名稱、依平台順序的 provider 曲目 id,以及觀測當時依 §6.2 算出的 cid(與 Items 對齊)。
+// cid 由 (provider id, ISRC) 決定、不隨 mapping 變,所以它仍是「觀測」而非「解析結果」;DERIVE 的移除計數靠它——
+// 平台把曲目重新連結成另一個版本(X → Y,同 ISRC)之後再刪除,mapping 還是 X,只靠 id 反查會永遠刪不掉。
 type Snapshot struct {
 	Name  string   `json:"name"`
 	Items []string `json:"items"`
+	CIDs  []string `json:"cids"`
 }
 
 func NewDeviceState(deviceID string) *DeviceState {
@@ -197,6 +199,9 @@ func (d *DeviceState) SetBase(pid, provider string, s Snapshot) {
 	}
 	if s.Items == nil {
 		s.Items = []string{}
+	}
+	if s.CIDs == nil {
+		s.CIDs = []string{}
 	}
 	d.Base[pid][provider] = Base{Snapshot: s, ObservedAt: Now().Unix()}
 }

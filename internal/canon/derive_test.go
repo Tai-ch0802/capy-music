@@ -42,7 +42,14 @@ func live(name string, ids ...string) *canon.Observed {
 	return o
 }
 
-func snap(name string, ids ...string) *canon.Snapshot { return &canon.Snapshot{Name: name, Items: ids} }
+// snap:base 快照,cid 依 ptrack 的 ISRC 算(與 Derive 觀測時算出的相同)。
+func snap(name string, ids ...string) *canon.Snapshot {
+	s := &canon.Snapshot{Name: name, Items: ids}
+	for _, id := range ids {
+		s.CIDs = append(s.CIDs, cidOf(id))
+	}
+	return s
+}
 
 func actions(cs []canon.Change) string {
 	var out []string
@@ -262,6 +269,21 @@ func TestDeriveVersionSwapIsNoChange(t *testing.T) {
 	}
 	// 下一輪 base 是 [y]:反查得到同一個 cid,仍然零變更
 	converges(t, in, res)
+}
+
+// 平台把 x 重新連結成 y(同 ISRC)→ 零變更;之後使用者刪掉 → mapping 還是 x、base 的 id 是 y,靠快照裡的 cid 才刪得掉。
+func TestDeriveRelinkThenDeleteStillRemoves(t *testing.T) {
+	pl, tracks := world(t, "x")
+	y := ptrack("x")
+	y.ProviderID = "y"
+	swap := mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("通勤", "x"), Live: &canon.Observed{Name: "通勤", Tracks: []provider.Track{y}}})
+	if len(swap.Changes) != 0 || swap.Snapshot.Items[0] != "y" || swap.Snapshot.CIDs[0] != cidOf("x") {
+		t.Fatalf("換版本零變更,快照同時記 id 與當時的 cid:%s %+v", actions(swap.Changes), swap.Snapshot)
+	}
+	del := mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: swap.Playlist, Tracks: merged(tracks, swap.Tracks), Base: &swap.Snapshot, Live: live("通勤")})
+	if actions(del.Changes) != "remove:"+cidOf("x") || len(del.Playlist.Items) != 0 {
+		t.Fatalf("重新連結後的刪除要傳播:%s", actions(del.Changes))
+	}
 }
 
 func TestDeriveExistingCidGainsMapping(t *testing.T) {

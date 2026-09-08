@@ -19,7 +19,7 @@ func MergeBase(devs []DeviceState) map[string]map[string]Base {
 				if out[pid] == nil {
 					out[pid], winner[pid] = map[string]Base{}, map[string]string{}
 				}
-				b.Snapshot.Items = slices.Clone(b.Snapshot.Items)
+				b.Snapshot.Items, b.Snapshot.CIDs = slices.Clone(b.Snapshot.Items), slices.Clone(b.Snapshot.CIDs)
 				out[pid][prov], winner[pid][prov] = b, d.DeviceID
 			}
 		}

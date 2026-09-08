@@ -114,20 +114,12 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		}
 	}
 
-	// 規則 5:只在 base 存在時移除;base 的 provider id 經 mapping 反查成 cid。
+	// 規則 5:只在 base 存在時移除;計數用 base 快照裡觀測當時的 cid(不經 mapping 反查:重新連結過的版本反查不到)。
 	removed := map[int]bool{}
 	if in.Base != nil {
-		rev := map[string]string{} // provider id → cid
-		for cid, tr := range in.Tracks {
-			if id := tr.Mappings[prov]; id != "" {
-				rev[id] = cid
-			}
-		}
 		bCnt := map[string]int{}
-		for _, id := range in.Base.Items {
-			if cid, ok := rev[id]; ok {
-				bCnt[cid]++
-			}
+		for _, cid := range in.Base.CIDs {
+			bCnt[cid]++
 		}
 		for cid, b := range bCnt {
 			extra := b - len(lOcc[cid])
@@ -262,7 +254,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	for i, t := range L {
 		ids[i] = t.ProviderID
 	}
-	res.Snapshot = Snapshot{Name: in.Live.Name, Items: ids}
+	res.Snapshot = Snapshot{Name: in.Live.Name, Items: ids, CIDs: lcid}
 	return res, nil
 }
 

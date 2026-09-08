@@ -21,7 +21,7 @@ import (
 
 const (
 	fileName      = "state.db"
-	schemaVersion = 1
+	schemaVersion = 2 // v2(2026-09-08,T7):device_base 加 cids;尚無正式 dev 檔,不需搬遷
 )
 
 // schema v1。與 spec §7 的差異(2026-09-07,理由寫在 spec §7):tracks 多 artists / conflicts(JSON)、少 updated_at
@@ -35,7 +35,7 @@ CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT NOT NULL, description TE
 CREATE TABLE playlist_items (pid TEXT NOT NULL, iid TEXT NOT NULL, cid TEXT NOT NULL, rank TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, PRIMARY KEY (pid, provider));
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT NOT NULL, last_seen INTEGER NOT NULL, registered INTEGER NOT NULL, has_state INTEGER NOT NULL);
-CREATE TABLE device_base (device_id TEXT NOT NULL, pid TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL, items TEXT NOT NULL, observed_at INTEGER NOT NULL, PRIMARY KEY (device_id, pid, provider));
+CREATE TABLE device_base (device_id TEXT NOT NULL, pid TEXT NOT NULL, provider TEXT NOT NULL, name TEXT NOT NULL, items TEXT NOT NULL, cids TEXT NOT NULL, observed_at INTEGER NOT NULL, PRIMARY KEY (device_id, pid, provider));
 CREATE TABLE provider_playlists (provider TEXT NOT NULL, position INTEGER NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, total INTEGER NOT NULL, PRIMARY KEY (provider, position));
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER NOT NULL, provider TEXT NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT NOT NULL);
 `

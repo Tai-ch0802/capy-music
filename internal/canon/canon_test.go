@@ -200,7 +200,7 @@ func build(t *testing.T) [][]byte {
 		}
 	}
 	dev := canon.NewDeviceState("dev1")
-	dev.SetBase(pl.PID, "spotify", canon.Snapshot{Name: "通勤", Items: []string{"6rq", "other", "6rq"}})
+	dev.SetBase(pl.PID, "spotify", canon.Snapshot{Name: "通勤", Items: []string{"6rq", "other", "6rq"}, CIDs: []string{x.CID, "p:spotify:other", x.CID}})
 	dev.SetBase(pl.PID, "apple", canon.Snapshot{Name: "通勤"})
 	var out [][]byte
 	for _, v := range []any{m, tr, pl, dev} {
@@ -248,8 +248,8 @@ func TestRoundTripBitEqual(t *testing.T) {
 		!strings.Contains(pl, `"rank":"k"`) || !strings.Contains(pl, `"rank":"s"`) || !strings.HasSuffix(pl, `"links":{"spotify":"37i9"}}`+"\n") {
 		t.Fatalf("playlist 形狀:%s", pl)
 	}
-	if !strings.Contains(dev, `"base":{"01TESTULID0000000000000001":{"apple":{"snapshot":{"name":"通勤","items":[]},"observed_at":`) ||
-		!strings.Contains(dev, `"spotify":{"snapshot":{"name":"通勤","items":["6rq","other","6rq"]},"observed_at":`) {
+	if !strings.Contains(dev, `"base":{"01TESTULID0000000000000001":{"apple":{"snapshot":{"name":"通勤","items":[],"cids":[]},"observed_at":`) ||
+		!strings.Contains(dev, `"spotify":{"snapshot":{"name":"通勤","items":["6rq","other","6rq"],"cids":["i:TWA472400123","p:spotify:other","i:TWA472400123"]},"observed_at":`) {
 		t.Fatalf("device 形狀:%s", dev)
 	}
 	b, _ := canon.Encode(canon.NewPlaylist("空"))
@@ -317,10 +317,11 @@ func TestManifestDeviceOrderIsDeterministic(t *testing.T) {
 }
 
 func TestMergeBaseDoesNotAliasInput(t *testing.T) {
-	d := canon.DeviceState{DeviceID: "A", Base: map[string]map[string]canon.Base{"p1": {"spotify": {Snapshot: canon.Snapshot{Items: []string{"t1"}}, ObservedAt: 1}}}}
+	d := canon.DeviceState{DeviceID: "A", Base: map[string]map[string]canon.Base{"p1": {"spotify": {Snapshot: canon.Snapshot{Items: []string{"t1"}, CIDs: []string{"c1"}}, ObservedAt: 1}}}}
 	merged := canon.MergeBase([]canon.DeviceState{d})
 	merged["p1"]["spotify"].Snapshot.Items[0] = "MUTATED"
-	if d.Base["p1"]["spotify"].Snapshot.Items[0] != "t1" {
+	merged["p1"]["spotify"].Snapshot.CIDs[0] = "MUTATED"
+	if s := d.Base["p1"]["spotify"].Snapshot; s.Items[0] != "t1" || s.CIDs[0] != "c1" {
 		t.Fatal("合併結果不可與輸入共用底層陣列")
 	}
 }
