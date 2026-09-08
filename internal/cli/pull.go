@@ -245,7 +245,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 	}
 	if len(missing) > 0 {
 		return nil, &BlockedError{Msg: fmt.Sprintf("Drive appdata 不完整,取不到:%s。這不會被當成「使用者刪光了」,零寫入;--yes / --force 都不放行。"+
-			"若 Drive 真的被清空或登錯 Google 帳號(目前 %s),出口是 capy drive init --from-local(T9)", strings.Join(missing, "、"), googleAccount())}
+			"若 Drive 真的被清空或登錯 Google 帳號(目前 %s),出口是 capy drive init --from-local(T9,尚未實作;在它完成前請保留本機 state.db——那是唯一剩下的一份)", strings.Join(missing, "、"), googleAccount())}
 	}
 	return s, nil
 }

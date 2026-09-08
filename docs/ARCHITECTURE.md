@@ -572,7 +572,7 @@ capy pl sync 的一輪:
 6. **換序**:配對成功的 item 依 L 的順序排列;LCS 對上的留在原位,其餘配對的 item 搬動並只給它們新 rank(`RankBetween` 於最終整體順序的鄰居之間,鄰居可以是沒配對的 item),其餘 rank 不動;LCS 多解時偏好 C 中較前者。沒配對的 item 留在原 rank。LCS 用 Hunt–Szymanski(對配對點求 LIS):時間 O((n + r) log n)、記憶體 O(n + r),萬首清單(Spotify 單一清單上限)不會像 O(n·m) 的 DP 吃掉 855 MB。P3 沒有 HLC,順序以最後一次 pull 的 provider 為準。
 7. **改名**:base 存在且 `L.name ≠ base.name` → `C.name := L.name`(C 已經是那個名字就不算變更);首次 pull 不改名,C 的名字由建立者決定。
 8. **清單消失**:平台回 404 / 不在清單列表 → 回 gone、零 item 變更;T8 依 Q6(B)自動 unlink 並警告。開發模式讀不到的清單(Spotify 編輯清單)從不會被連結,pull 直接跳過並說明,**不是 gone**。
-9. **輸出**:變更集(add / remove / move / rename / unlink,欄位對齊 T8 的 TSV:`action pos cid provider_id title artists reason`)、套用後的 C、新建或更新的 tracks、新的 base 快照(= L 的 provider id 原文與觀測當時的 cid)、變更前該 provider **可見**的 item 數(cid 有該 provider mapping 的數量,Q3 的閾值分母)。
+9. **輸出**:變更集(add / remove / move / rename / unlink,欄位對齊 T8 的 TSV:`action pos cid provider_id title artists reason`)、套用後的 C、新建或更新的 tracks、新的 base 快照(= 平台清單 id、L 的 provider id 原文與觀測當時的 cid;§6.3)、變更前該 provider **可見**的 item 數(cid 有該 provider mapping 的數量,Q3 的閾值分母)。
 10. **無變更時 C 逐位元不變**(`updated_at` 不動),T8 的 exit 0「無變更」才不會說謊。rank 資料髒掉(兩個 item 同 rank 又需要插入)→ 回錯,不靜默重排。
 
 
