@@ -36,6 +36,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newConfigCmd(), newHistoryCmd(), newUpdateCmd())
 	cmd.AddCommand(newExportCmd(), newDriveCmd())
+	cmd.AddCommand(newResolveCmd())
 	return cmd
 }
 

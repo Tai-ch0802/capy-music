@@ -832,9 +832,9 @@ capy pl push   [--provider P] [--all] [--dry-run] [--force]           # P5
 capy pl sync   [--dry-run]                                # P5
 capy pl restore <name> --provider P                       # P5(語意待定,§6.6)
 
-capy resolve [<name|pid>] [--provider P] [--dry-run] [--yes]   # P4 後半(決策 22):預設全部已連結清單;缺 mapping 的 cid → ISRC 反查 → fuzzy;≥85 自動寫入(Drive 先 SQLite 後),其餘印 review 佇列 TSV;exit 0 無事/已寫入(佇列有東西仍 0)、1 錯誤、2 待寫入未確認
-capy resolve --review                                     # P4 後半:TTY 逐筆 accept / skip / manual search / not available;非 TTY 印佇列 TSV、exit 2
-capy resolve pin <cid> <provider>:<id|none>               # P4 後半:腳本用釘選;none = 這個平台沒有這首;對到已屬另一 cid 的 id → 合併(決策 21)
+capy resolve [<name|pid>] [--provider P] [--dry-run] [--yes]   # P4 後半 T4(已實作,決策 22):預設全部已連結清單;缺 mapping 的 cid → ISRC 反查(95)→ fuzzy(0–100);≥85 自動寫入(Drive 先 SQLite 後,不動 alias set),其餘印 review 佇列 TSV(候選已屬另一 cid、或同一輪已配給別的 cid 也進佇列);exit 0 無事/已寫入(佇列有東西仍 0)、1 錯誤、2 待寫入未確認;--dry-run 永不寫入(連 FETCH 自癒的殘留也不上傳);單次 >200 次 API 在 stderr 提醒(決策 24)
+capy resolve --review                                     # P4 後半 T4(已實作):TTY 逐筆 accept / skip / manual search / not available / keep(conflict 列);決定寫 pinned / 100 / review;accept 對到已屬另一 cid 的 id → 確認後合併,不同意當略過;非 TTY 印佇列 TSV、exit 2
+capy resolve pin <cid> <provider>:<id|none> [--yes]       # P4 後半 T4(已實作):腳本用釘選;none = 這個平台沒有這首;帶 id 時先 GetTrack 驗證(404 → exit 1 零寫入)並把它的 ISRC 加進 alias set;id 或其 ISRC 已屬另一 cid → 合併(決策 21;非 TTY 要 --yes,否則 exit 2 零寫入)
 capy export                                               # P3(2026-09-08 T9 已實作):只讀本機 state.db;檔名為鍵、檔內容為值的 JSON;本機空 exit 1
 capy import <file.json>                                   # 延後;P3 的反向逃生口是 drive init --from-local
 capy drive init --from-local [--dry-run] [--yes]          # P3(已實作):Drive 空 / 部分遺失時唯一允許寫入的命令;只建缺的檔、不覆寫、不動本機;exit 0 完成或沒缺、2 待套用

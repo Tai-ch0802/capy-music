@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/zalando/go-keyring"
 
@@ -26,8 +28,42 @@ type fakeSpotify struct {
 	mu           sync.Mutex
 	lists        []fakeList
 	items        map[string][]string
-	restricted   map[string]bool // items 回 403(編輯清單)
-	missingItems map[string]bool // 有列出但 items 回 404
+	restricted   map[string]bool    // items 回 403(編輯清單)
+	missingItems map[string]bool    // 有列出但 items 回 404
+	catalog      []fakeCatalogTrack // /search 與 /tracks/{id} 的目錄(resolve 用);同一個 id 可登記多筆(多個 ISRC 都回它)
+	searchStatus int                // 非零:/search 一律回這個狀態碼(模擬 429 / 5xx)
+}
+
+func (f *fakeSpotify) setSearchStatus(code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.searchStatus = code
+}
+
+// fakeCatalogTrack:目錄裡的一首;/search?q=isrc:X 回 ISRC 相同者,一般查詢回名稱含全部查詢字的。
+type fakeCatalogTrack struct {
+	ID, Name, ISRC, Artist string
+	Dur                    int
+}
+
+func (c fakeCatalogTrack) json() string {
+	return fmt.Sprintf(`{"id":%q,"name":%q,"duration_ms":%d,"explicit":false,"album":{"name":"A"},"artists":[{"name":%q}],"external_ids":{"isrc":%q}}`, c.ID, c.Name, c.Dur, c.Artist, c.ISRC)
+}
+
+func (f *fakeSpotify) addCatalog(c fakeCatalogTrack) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c.Artist == "" {
+		c.Artist = "artist"
+	}
+	if c.Dur == 0 {
+		c.Dur = 200000
+	}
+	f.catalog = append(f.catalog, c)
+}
+
+func words(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 }
 
 type fakeList struct{ ID, Name string }
@@ -99,6 +135,43 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 				its = append(its, `{"item":`+fakeTrackJSON(tid)+`}`)
 			}
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(its, ","), len(its))
+		case r.URL.Path == "/search":
+			if f.searchStatus != 0 {
+				w.WriteHeader(f.searchStatus)
+				fmt.Fprintf(w, `{"error":{"status":%d,"message":"nope"}}`, f.searchStatus)
+				return
+			}
+			q := r.URL.Query().Get("q")
+			var its []string
+			for _, c := range f.catalog {
+				if isrc, ok := strings.CutPrefix(q, "isrc:"); ok {
+					if c.ISRC == isrc {
+						its = append(its, c.json())
+					}
+					continue
+				}
+				have := words(c.Name + " " + c.Artist) // FuzzyQuery 是 標題 + 主要藝人
+				all := true
+				for _, w := range words(q) {
+					if !slices.Contains(have, w) {
+						all = false
+					}
+				}
+				if all {
+					its = append(its, c.json())
+				}
+			}
+			fmt.Fprintf(w, `{"tracks":{"items":[%s],"total":%d}}`, strings.Join(its, ","), len(its))
+		case strings.HasPrefix(r.URL.Path, "/tracks/"):
+			id := strings.TrimPrefix(r.URL.Path, "/tracks/")
+			for _, c := range f.catalog {
+				if c.ID == id {
+					w.Write([]byte(c.json()))
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"status":404,"message":"Not found."}}`))
 		default:
 			t.Errorf("非預期路徑:%s", r.URL.Path)
 		}
