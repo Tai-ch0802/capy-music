@@ -163,6 +163,9 @@ func (s *Store) Dump() (Canonical, error) {
 		if err := r.Scan(&loser, &survivor); err != nil {
 			return err
 		}
+		if _, ok := c.Tracks.Tracks[survivor]; !ok { // 敗者本來就不該在 tracks,勝者一定要在(Merge 維持的不變量,這裡是第二道證人)
+			return fmt.Errorf("merged 的 into_cid %s 不在 tracks 裡(db 不一致,刪掉重建)", survivor)
+		}
 		c.Tracks.Merged[loser] = survivor
 		return nil
 	}); err != nil {

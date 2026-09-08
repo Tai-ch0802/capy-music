@@ -43,6 +43,13 @@ func NewIdentity(tracks map[string]Track, merged map[string]string) *Identity {
 			}
 		}
 	}
+	if tracks != nil { // 懸空墓碑(勝者不在 tracks;Merge 不會產出,手改的檔會):Redirect 會安靜回一個死 cid,至少要出聲
+		for _, loser := range slices.Sorted(maps.Keys(merged)) {
+			if _, alive := tracks[merged[loser]]; !alive {
+				id.warnings = append(id.warnings, fmt.Sprintf("合併墓碑 %s → %s 的勝者不在 tracks 裡", loser, merged[loser]))
+			}
+		}
+	}
 	return id
 }
 

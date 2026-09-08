@@ -302,3 +302,18 @@ func TestMergeDifferentIDsKeepPinnedSide(t *testing.T) {
 		t.Fatalf("輸的那邊(勝者觀測到的 id)進 conflicts:%+v", got.Conflicts)
 	}
 }
+
+// 懸空墓碑(勝者不在 tracks):Merge 不會產出,手改的檔會;Redirect 照樣回那個 cid,但建索引時要出聲。
+func TestIdentityWarnsDanglingTombstone(t *testing.T) {
+	tracks, _, _, y := twoCids(t)
+	id := canon.NewIdentity(tracks.Tracks, map[string]string{"i:GONE": "i:GHOST", "i:OK": y})
+	if w := id.Warnings(); len(w) != 1 || !strings.Contains(w[0], "i:GONE → i:GHOST 的勝者不在 tracks 裡") {
+		t.Fatalf("要警告懸空的那條、放過正常的那條:%v", w)
+	}
+	if id.Redirect("i:GONE") != "i:GHOST" {
+		t.Fatal("Redirect 本身不改行為")
+	}
+	if w := canon.NewIdentity(nil, map[string]string{"a": "b"}).Warnings(); len(w) != 0 {
+		t.Fatalf("Merge 用 NewIdentity(nil, merged) 只追墓碑,不檢查:%v", w)
+	}
+}
