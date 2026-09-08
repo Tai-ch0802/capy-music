@@ -816,7 +816,8 @@ capy device list | capy device forget <device_id>         # 延後;P3 只在 man
 capy db rebuild                                           # 延後;P3 的重建 = 刪 state.db 後由 hydrate 從 Drive 重建(§7,有測試)
 capy config get|set|list       # 目前只有 default_provider
 capy history clear             # 清空本機快取(state.db)的最近搜尋
-capy update --dev              # 從 main 最新節點 go install 重建並覆蓋自己(需 Go toolchain);正式版更新等 T10
+capy update                    # P3(T10 已實作):GitHub Releases 最新正式版 → 下載本平台檔 + checksums.txt SHA-256 校驗 + 新 binary --version 自檢,才覆蓋自己;沒有簽章,校驗只保證下載完整
+capy update --dev              # 從 main 最新節點 go install 重建並覆蓋自己(需 Go toolchain;沒有內建 Google client)
 capy completion <shell>        # cobra 內建;候選只讀本機快取
 capy doctor
 ```
