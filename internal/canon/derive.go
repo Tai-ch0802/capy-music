@@ -124,13 +124,34 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		lCnt[cid]++
 	}
 
-	// 規則 5:只在 base 存在時移除;計數用 base 快照裡觀測當時的 cid,只沿合併墓碑改寫(決策 19:不用 mapping 反查——
-	// 重釘到別的 id 的 cid 反查會走丟,那首就永遠移不掉)。
+	// 規則 4′、5、6′(P5 決策 27):base 存在時三方語意——計數用 base 快照裡觀測當時的 cid,只沿合併墓碑改寫(決策 19:
+	// 不用 mapping 反查——重釘到別的 id 的 cid 反查會走丟,那首就永遠移不掉)。
 	removed := map[int]bool{}
+	ignoredL := map[int]bool{} // 規則 4′:L 裡配不到、又沒超出 base 計數的出現 = 平台還沒跟上 C 的移除,不新增、留給 push
 	if in.Base != nil {
+		baseCids := make([]string, len(in.Base.CIDs))
 		bCnt := map[string]int{}
-		for _, cid := range in.Base.CIDs {
-			bCnt[id.Redirect(cid)]++
+		for i, cid := range in.Base.CIDs {
+			baseCids[i] = id.Redirect(cid)
+			bCnt[baseCids[i]]++
+		}
+		// 規則 6′:平台沒重排(base 與 L 的共同元素順序一致)→ 配對上的 item 保留 C 的 rank、不報 move;
+		// 不然 Spotify 的重排會被 Apple 的下一次 pull 翻回舊順序再 push 回 Spotify。兩邊都重排 → 後 pull 者勝。
+		if !Reordered(baseCids, lcid) {
+			clear(moved)
+		}
+		// 規則 4′:某 cid 在 L 出現 l 次、base b 次,l > b 才新增、至多 l − b 個,取 L 順序最後的那幾個(平台新增通常在尾端)
+		unpaired := map[string][]int{}
+		for pos, cid := range lcid {
+			if pairedL[pos] < 0 {
+				unpaired[cid] = append(unpaired[cid], pos)
+			}
+		}
+		for cid, poss := range unpaired {
+			allowed := max(0, lCnt[cid]-bCnt[cid])
+			for _, pos := range poss[:max(0, len(poss)-allowed)] {
+				ignoredL[pos] = true
+			}
 		}
 		for cid, b := range bCnt {
 			extra := b - lCnt[cid]
@@ -153,13 +174,26 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		}
 	}
 	fixed := func(r ref) bool { return r.item >= 0 && !moved[r.item] }
+	lastPaired := -1     // 規則 4′:L 尾端的新增(後面沒有配對上的元素)一律接在 C 的尾端——平台沒重排而 C 順序不同時(6′),
+	for pos := range L { // 使用者在平台尾端加的歌才會在 C 也在尾端,而不是插在「L 前一個元素」在 C 的位置之後(那可能是 C 的開頭)
+		if pairedL[pos] >= 0 {
+			lastPaired = pos
+		}
+	}
 	prev := -1
 	for pos := range L {
 		if item := pairedL[pos]; item >= 0 && !moved[item] {
 			prev = slices.IndexFunc(final, func(r ref) bool { return r.item == item })
 			continue
 		}
-		prev++
+		if ignoredL[pos] {
+			continue
+		}
+		if pos > lastPaired {
+			prev = len(final)
+		} else {
+			prev++
+		}
 		final = slices.Insert(final, prev, ref{pairedL[pos], pos})
 	}
 
@@ -226,7 +260,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		}
 	}
 	for pos, t := range L {
-		if pairedL[pos] < 0 {
+		if pairedL[pos] < 0 && !ignoredL[pos] {
 			changes = append(changes, Change{Action: "add", Pos: pos, CID: lcid[pos], ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台新增"})
 		}
 	}

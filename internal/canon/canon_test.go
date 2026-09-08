@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -370,4 +372,22 @@ func TestManifestPlaylistsSortedDeduped(t *testing.T) {
 	if err != nil || old.Playlists == nil {
 		t.Fatalf("T8 之前的 manifest 沒有 playlists,解回來要是空 slice:%v %+v", err, old)
 	}
+}
+
+// fuzzSeed:隨機性質測試的 seed——預設固定(每天跑同一條軌跡,CI 紅了就能重現),CAPY_FUZZ_SEED 覆蓋(數字,或 random 換一條);永遠印出來。
+func fuzzSeed(t *testing.T) uint64 {
+	t.Helper()
+	seed := uint64(1)
+	switch s := os.Getenv("CAPY_FUZZ_SEED"); {
+	case s == "random":
+		seed = rand.Uint64()
+	case s != "":
+		n, err := strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			t.Fatalf("CAPY_FUZZ_SEED=%q 不是數字", s)
+		}
+		seed = n
+	}
+	t.Logf("seed %d(CAPY_FUZZ_SEED 覆蓋)", seed)
+	return seed
 }
