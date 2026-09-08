@@ -20,6 +20,8 @@ var (
 	_ provider.ArtistSearcher     = (*Provider)(nil)
 	_ provider.PlaylistReader     = (*Provider)(nil)
 	_ provider.PlaybackController = (*Provider)(nil)
+	_ provider.ISRCLookup         = (*Provider)(nil)
+	_ provider.TrackGetter        = (*Provider)(nil)
 )
 
 func New(hc *http.Client, base string) *Provider {
@@ -31,8 +33,16 @@ func (p *Provider) DisplayName() string { return "Spotify" }
 
 func (p *Provider) Caps() provider.Capability {
 	// 寫入能力(playlist modify)於 P4/P5 實作 ApplyOps 時再宣告
-	return provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaybackControl |
+	return provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapPlaybackControl |
 		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue
+}
+
+func (p *Provider) LookupISRC(ctx context.Context, isrc string) ([]provider.Track, error) {
+	return p.c.LookupISRC(ctx, isrc)
+}
+
+func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, error) {
+	return p.c.GetTrack(ctx, id)
 }
 
 // Health:devices 是最便宜的授權+連線驗證(doctor 用)。

@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -10,6 +12,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
+	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
 func newDebugCmd() *cobra.Command {
@@ -21,6 +24,47 @@ func newDebugCmd() *cobra.Command {
 	cmd.AddCommand(newDebugAppleTokenCmd())
 	cmd.AddCommand(newDebugDriveLsCmd())
 	cmd.AddCommand(newDebugGoogleClientCmd())
+	cmd.AddCommand(newDebugLookupISRCCmd())
+	return cmd
+}
+
+// newDebugLookupISRCCmd:以 ISRC 反查曲目——P4 resolver 的 Layer 1 走的就是這條路,真帳號驗收 R-1 用。
+func newDebugLookupISRCCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "lookup-isrc <isrc>",
+		Short: "以 ISRC 反查曲目(P4 resolver Layer 1 驗收用)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := getProvider(cmd)
+			if err != nil {
+				return err
+			}
+			l, err := asISRCLookup(p)
+			if err != nil {
+				return err
+			}
+			tracks, err := l.LookupISRC(cmd.Context(), args[0])
+			if err != nil {
+				return friendlyErr(p.ID(), err)
+			}
+			if len(tracks) == 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s 沒有曲目符合 ISRC %s\n", p.DisplayName(), args[0])
+				return nil
+			}
+			tty := stdoutIsTTY(cmd)
+			rows := make([][]string, len(tracks))
+			for i, tr := range tracks { // 自己組 row:不靠 trackRows「不過濾、不重排」的隱性前提把 ISRC 接到別首歌上
+				dur := strconv.Itoa(tr.DurationMS)
+				if tty {
+					dur = ui.FormatDuration(tr.DurationMS)
+				}
+				rows[i] = []string{tr.ProviderID, tr.Title, strings.Join(tr.Artists, ", "), tr.Album, dur, tr.ISRC}
+			}
+			ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION", "ISRC"}, rows)
+			return nil
+		},
+	}
+	providerFlag(cmd)
 	return cmd
 }
 

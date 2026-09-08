@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -365,5 +366,54 @@ func TestSearchArtistsAndTopSongs(t *testing.T) {
 	tracks, err := c.ArtistTopSongs(context.Background(), "tw", "a1")
 	if err != nil || len(tracks) != 1 || tracks[0].ProviderID != "s1" {
 		t.Fatalf("ArtistTopSongs = %+v, %v", tracks, err)
+	}
+}
+
+// ── P4 T1:ISRC 反查與單曲 ──
+
+func TestSongsByISRCUsesCatalogFilter(t *testing.T) {
+	var gotPath, gotISRC string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotISRC = r.URL.Path, r.URL.Query().Get("filter[isrc]")
+		if gotISRC == "TWA472400123" {
+			fmt.Fprintf(w, `{"data":[%s,%s]}`, songJSONFx("1"), songJSONFx("2"))
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":[]}`) // Apple 沒有命中回空 data,不是 404
+	})
+	got, err := c.SongsByISRC(context.Background(), "tw", "twa-4724-00123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/catalog/tw/songs" || gotISRC != "TWA472400123" {
+		t.Fatalf("要打 /catalog/{sf}/songs?filter[isrc]=<正規化 ISRC>:%s %s", gotPath, gotISRC)
+	}
+	if len(got) != 2 || got[0].ProviderID != "1" || got[1].ProviderID != "2" {
+		t.Fatalf("多筆要原樣全回:%+v", got)
+	}
+	none, err := c.SongsByISRC(context.Background(), "tw", "ZZZ000000000")
+	if err != nil || len(none) != 0 {
+		t.Fatalf("沒有命中要回空 slice、不是錯誤:%v %v", none, err)
+	}
+	if _, err := c.SongsByISRC(context.Background(), "tw", "bad"); !errors.Is(err, provider.ErrBadISRC) {
+		t.Fatalf("不合格的 ISRC 回 ErrBadISRC:%v", err)
+	}
+}
+
+func TestGetSongMaps404ToNotFound(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/catalog/tw/songs/ok" {
+			fmt.Fprintf(w, `{"data":[%s]}`, songJSONFx("ok"))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"errors":[{"status":"404","title":"Resource Not Found","detail":"Resource with requested id was not found"}]}`)
+	})
+	tr, err := c.GetSong(context.Background(), "tw", "ok")
+	if err != nil || tr.ProviderID != "ok" || tr.ISRC != "TWA472400123" {
+		t.Fatalf("GetSong:%+v %v", tr, err)
+	}
+	if _, err := c.GetSong(context.Background(), "tw", "gone"); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("404 要映射成 ErrNotFound:%v", err)
 	}
 }

@@ -201,6 +201,35 @@ func (c *Client) SearchSongs(ctx context.Context, storefront, term string, limit
 	return out, nil
 }
 
+// SongsByISRC:GET /catalog/{sf}/songs?filter[isrc]=<ISRC>。Apple 明文可回多筆;沒有命中回空 data(不是 404)。
+func (c *Client) SongsByISRC(ctx context.Context, storefront, isrc string) ([]provider.Track, error) {
+	n := provider.NormalizeISRC(isrc)
+	if n == "" {
+		return nil, fmt.Errorf("%w:%q", provider.ErrBadISRC, isrc)
+	}
+	var resp struct {
+		Data []songJSON `json:"data"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/songs", url.Values{"filter[isrc]": {n}}, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]provider.Track, len(resp.Data))
+	for i := range resp.Data {
+		out[i] = resp.Data[i].toTrack()
+	}
+	return out, nil
+}
+
+// GetSong:Song 去掉播放 URL,404 映射成 ErrNotFound(釘選前確認 catalog id 存在)。
+func (c *Client) GetSong(ctx context.Context, storefront, id string) (provider.Track, error) {
+	t, _, err := c.Song(ctx, storefront, id)
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+		return provider.Track{}, fmt.Errorf("%w:曲目 %s", provider.ErrNotFound, id)
+	}
+	return t, err
+}
+
 type artistJSON struct {
 	ID         string `json:"id"`
 	Attributes struct {

@@ -509,3 +509,52 @@ func TestArtistTopTracksSurfacesNon403(t *testing.T) {
 		t.Fatal("500 應回錯")
 	}
 }
+
+// ── P4 T1:ISRC 反查與單曲 ──
+
+func TestLookupISRCUsesSearchFilterAndNormalizes(t *testing.T) {
+	var gotQ url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search" {
+			t.Errorf("應打 /search:%s", r.URL.Path)
+		}
+		gotQ = r.URL.Query()
+		fmt.Fprintf(w, `{"tracks":{"items":[%s,%s],"total":2}}`, trackFx("single"), trackFx("album"))
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.Client(), srv.URL)
+	got, err := c.LookupISRC(context.Background(), " twa-4724-00123 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQ.Get("q") != "isrc:TWA472400123" || gotQ.Get("type") != "track" {
+		t.Fatalf("要用 isrc: 欄位查詢、正規化後的 ISRC、type=track:%s", gotQ.Encode())
+	}
+	if len(got) != 2 || got[0].ProviderID != "single" || got[1].ProviderID != "album" || got[0].ISRC != "TWA472400123" {
+		t.Fatalf("多筆要原樣全回(消歧是 resolver 的事):%+v", got)
+	}
+	if _, err := c.LookupISRC(context.Background(), "nope"); !errors.Is(err, provider.ErrBadISRC) {
+		t.Fatalf("不合格的 ISRC 不打 API、回 ErrBadISRC:%v", err)
+	}
+}
+
+func TestGetTrackMaps404ToNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tracks/ok":
+			_, _ = io.WriteString(w, trackFx("ok"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":{"status":404,"message":"Non existing id"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.Client(), srv.URL)
+	tr, err := c.GetTrack(context.Background(), "ok")
+	if err != nil || tr.ProviderID != "ok" || tr.ISRC != "TWA472400123" {
+		t.Fatalf("GetTrack:%+v %v", tr, err)
+	}
+	if _, err := c.GetTrack(context.Background(), "gone"); !errors.Is(err, provider.ErrNotFound) {
+		t.Fatalf("404 要映射成 ErrNotFound:%v", err)
+	}
+}
