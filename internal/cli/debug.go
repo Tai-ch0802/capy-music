@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -50,9 +52,13 @@ func newDebugLookupISRCCmd() *cobra.Command {
 				return nil
 			}
 			tty := stdoutIsTTY(cmd)
-			rows := trackRows(tracks, tty)
-			for i := range rows {
-				rows[i] = append(rows[i], tracks[i].ISRC)
+			rows := make([][]string, len(tracks))
+			for i, tr := range tracks { // 自己組 row:不靠 trackRows「不過濾、不重排」的隱性前提把 ISRC 接到別首歌上
+				dur := strconv.Itoa(tr.DurationMS)
+				if tty {
+					dur = ui.FormatDuration(tr.DurationMS)
+				}
+				rows[i] = []string{tr.ProviderID, tr.Title, strings.Join(tr.Artists, ", "), tr.Album, dur, tr.ISRC}
 			}
 			ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION", "ISRC"}, rows)
 			return nil

@@ -20,6 +20,8 @@ var (
 	_ provider.ArtistSearcher     = (*Provider)(nil)
 	_ provider.PlaylistReader     = (*Provider)(nil)
 	_ provider.PlaybackController = (*Provider)(nil)
+	_ provider.ISRCLookup         = (*Provider)(nil)
+	_ provider.TrackGetter        = (*Provider)(nil)
 )
 
 // ErrNotRunning:Music.app 沒開。State 不會替使用者把它啟動起來(Play 會)。
