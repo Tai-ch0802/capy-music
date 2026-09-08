@@ -350,7 +350,7 @@ func TestUpdateReleaseChecksumMismatchLeavesBinary(t *testing.T) {
 func TestUpdateReleaseMissingChecksumLine(t *testing.T) {
 	name := updateAssetName("1.2.3")
 	for label, sums := range map[string]string{
-		"缺這個檔那行": sha256Hex([]byte("x")) + "  capy_1.2.3_plan9_mips.tar.gz\n",
+		"缺這個檔那行":   sha256Hex([]byte("x")) + "  capy_1.2.3_plan9_mips.tar.gz\n",
 		"hash 被截斷": "deadbeef  " + name + "\n", // 不是 64 字元就不算數(壞掉或被動過的 checksums.txt 不能讓程式 panic)
 	} {
 		assets := releaseAssets(t, "1.2.3")
