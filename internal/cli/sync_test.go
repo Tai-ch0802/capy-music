@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -164,12 +163,24 @@ func TestPlSyncVersionGuardMessageAndRerun(t *testing.T) {
 	if out, errs := mustPull(t, "pl", "sync", "通勤", "--yes"); strings.TrimSpace(out) != "" || !strings.Contains(errs, "無變更") {
 		t.Fatalf("第三次零變更:%s%s", out, errs)
 	}
-	_ = http.MethodGet
+}
+
+// restricted 清單(開發模式 app 讀不到):pull 半邊跳過後 push 半邊不再讀一次、不再印一次(lives 的 nil 哨兵)。
+func TestPlSyncRestrictedReadOnceAndSaidOnce(t *testing.T) {
+	fs1, _, _, _ := syncWorld(t)
+	fs1.mu.Lock()
+	fs1.restricted["p1"] = true
+	fs1.mu.Unlock()
+	r := fs1.reads()
+	out, errs := mustPull(t, "pl", "sync", "通勤", "--yes")
+	if fs1.reads()-r != 1 || strings.Count(errs, "跳過 通勤 的 spotify") != 1 || strings.Contains(out, "spotify") {
+		t.Fatalf("只讀一次、只說一次:reads=%d\n%s%s", fs1.reads()-r, out, errs)
+	}
 }
 
 // --provider 指到寫不了的平台(Apple,T6 前):sync 降級成只 pull(stderr 說明),不像 push 那樣 exit 1——cron 放 sync,「sync Apple = pull Apple」才誠實。
 func TestPlSyncReadOnlyProviderDegradesToPull(t *testing.T) {
-	fs1, fs2, dc, _ := syncWorld(t)
+	_, fs2, dc, _ := syncWorld(t)
 	orig := newProvider
 	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
 		p, err := orig(ctx, id)
@@ -190,7 +201,6 @@ func TestPlSyncReadOnlyProviderDegradesToPull(t *testing.T) {
 	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "apple"); exitOf(t, err) != 1 {
 		t.Fatalf("push 明說 apple 仍是 exit 1:%v", err)
 	}
-	_ = fs1
 }
 
 // 一個清單的 push 半邊 refused(含 local file)不擋整輪(PR #36 review):cron 的 sync --all 照常 pull 兩個清單、push 另一個;

@@ -668,9 +668,10 @@ type liveKey struct{ pid, prov string }
 
 // observeAndDerive:OBSERVE + DERIVE,直接改 s(fn 回錯時 withCanonical 不會 COMMIT,所以不必另外暫存)。
 // gone 的訊號是「不在 ListPlaylists 的列表裡」而不是 items 回 404——Apple 的 library 端點對空清單也回 404(P2 遺留)。
-// lives 是這輪讀到的每個 L(pl sync 的 push 半邊重用,不再打一次平台;決策 31)。
-func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms) (rows [][]string, blocked []string, lives map[liveKey]canon.Observed, err error) {
-	lives = map[liveKey]canon.Observed{}
+// lives 是這輪讀到的每個 L(pl sync 的 push 半邊重用,不再打一次平台;決策 31);值是 nil 表示 pull 半邊已經跳過它
+// (restricted),push 半邊也直接跳過、不重讀不重印。
+func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms) (rows [][]string, blocked []string, lives map[liveKey]*canon.Observed, err error) {
+	lives = map[liveKey]*canon.Observed{}
 	merged := mergedBase(s)
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
@@ -691,6 +692,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
 					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s(開發模式 app 讀不到 Spotify 官方 / 他人的清單,不是清單消失)\n", pl.Name, prov, link)
+					lives[liveKey{pl.PID, prov}] = nil
 					continue
 				case errors.Is(err, provider.ErrNotFound):
 					tracks = nil // 有列在清單列表裡卻 404 = 空清單(Apple 的 library 端點就這樣回);移除照常走 GATE 與閾值,不是 exit 1
@@ -698,7 +700,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 					return nil, nil, nil, fmt.Errorf("讀取 %s 的 %s:%s:%w", pl.Name, prov, link, friendlyErr(prov, err))
 				}
 				in.Live = &canon.Observed{ID: link, Name: ref.Name, Tracks: tracks}
-				lives[liveKey{pl.PID, prov}] = *in.Live
+				lives[liveKey{pl.PID, prov}] = in.Live
 			}
 			res, err := canon.Derive(in)
 			if err != nil {

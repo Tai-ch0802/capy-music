@@ -141,6 +141,9 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(items, ","), len(items))
 		case strings.HasPrefix(r.URL.Path, "/playlists/") && strings.HasSuffix(r.URL.Path, "/items"):
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/playlists/"), "/items")
+			if r.Method == http.MethodGet {
+				f.itemReads++ // restricted / 404 也算一次讀(sync 對 restricted 清單只能讀一次)
+			}
 			if f.restricted[id] {
 				w.WriteHeader(http.StatusForbidden)
 				w.Write([]byte(`{"error":{"status":403,"message":"Forbidden"}}`))
@@ -150,7 +153,6 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 				f.write(t, w, r, id)
 				return
 			}
-			f.itemReads++
 			if f.missingItems[id] {
 				w.WriteHeader(http.StatusNotFound)
 				w.Write([]byte(`{"error":{"status":404,"message":"Not found."}}`))

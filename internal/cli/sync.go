@@ -109,7 +109,7 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 			if err == nil && pulled > 0 {
 				fmt.Fprintf(stderr, "已套用 %d 筆 pull 變更\n", pulled)
 			}
-			return finishPush(err, applied, touched, deferred, "重跑 capy pl sync(pull 半邊會把已推到平台的變更當平台變更再吸收一次,不會重複)")
+			return finishPush(err, applied, touched, deferred, "重跑 capy pl sync(pull 半邊會把已推到平台的變更當平台變更再吸收一次,不會重複)", "再重跑 capy pl sync")
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "同步全部已連結的清單")

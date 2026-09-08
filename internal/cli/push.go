@@ -134,7 +134,7 @@ type pushPlan struct {
 // strict:明說 --provider 卻寫不了(Apple)是錯(push);sync 不是——「sync Apple」在 T6 前就是只 pull,stderr 說明後照常。
 // 同理 refused(前提、local file、清單消失)在 strict 時擋整輪(exit 3),不 strict 時只跳過那一格的 push 半邊(PR #36 review:
 // cron 的 sync --all 不能被一個含 local file 的清單永久綁死;pull 半邊照常落地)。
-func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
+func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]*canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
 	merged := mergedBase(s)
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
@@ -175,8 +175,14 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				refuse(fmt.Sprintf("%s 的 %s 還沒 pull 過(沒有 base),先 capy pl pull %s", pl.Name, prov, pl.Name))
 				continue
 			}
-			live, reused := lives[liveKey{pl.PID, prov}]
-			if !reused {
+			reused, seen := lives[liveKey{pl.PID, prov}]
+			if seen && reused == nil { // pull 半邊已跳過(restricted):不重讀、不重印
+				continue
+			}
+			var live canon.Observed
+			if seen {
+				live = *reused
+			} else {
 				tracks, err := r.GetPlaylistItems(ctx, link)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
@@ -371,8 +377,8 @@ func applyPlans(ctx context.Context, s *canonState, plans []*pushPlan, stderr io
 
 // finishPush:withCanonical 回來之後的收尾。COMMIT 失敗而平台已經被改到:版本守衛那句「零寫入」只對 Drive 成立,改口;
 // 半截寫入 + Drive 沒寫成兩件事都要講——那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
-// rerun 是「接下來怎麼做」那句(push / sync 各自的說法)。
-func finishPush(err error, applied int, touched bool, deferred error, rerun string) error {
+// next 是「接下來怎麼做」那句(push / sync 各自的說法);nextAfterHalf 是半截寫入那條「先 pl pull --dry-run 看清楚」之後接的那句。
+func finishPush(err error, applied int, touched bool, deferred error, next, nextAfterHalf string) error {
 	var ge *guardError
 	var driveMsg string
 	switch {
@@ -386,9 +392,9 @@ func finishPush(err error, applied int, touched bool, deferred error, rerun stri
 	}
 	switch {
 	case driveMsg != "" && deferred != nil:
-		return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),再%s", deferred, driveMsg, strings.TrimPrefix(rerun, "先"))
+		return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),%s", deferred, driveMsg, nextAfterHalf)
 	case driveMsg != "":
-		return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):%s", applied, driveMsg, rerun)
+		return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):%s", applied, driveMsg, next)
 	}
 	return deferred
 }
@@ -470,7 +476,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				}
 				return nil
 			})
-			return finishPush(err, applied, touched, deferred, "先 capy pl pull 再 capy pl push")
+			return finishPush(err, applied, touched, deferred, "先 capy pl pull 再 capy pl push", "再 pull、再 push")
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "推全部已連結的清單")
