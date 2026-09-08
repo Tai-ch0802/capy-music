@@ -16,7 +16,11 @@ import (
 )
 
 // SchemaVersion:每個檔案頂層都有;讀時忽略未知欄位,高於這個值就拒絕(Decode)。
-const SchemaVersion = 1
+// 2(2026-09-08,P4 T2a,決策 20):mappings 從字串改物件;所有檔種共用同一個常數,所以一起跳版。
+// Decode / Encode 都會經 normalize(),一律把 schema_version 蓋成目前值:不蓋的話 v1 檔重編出去還是寫 1,
+// v0.1.0 binary 會拿到 JSON 型別錯誤而不是 ErrSchemaTooNew(R-5)。代價是升級後第一次 pull 每個檔都重傳一次。
+// 想知道檔案原本的版本號要在 Decode 之前自己看(CheckSchema / 解 head),Decode 之後看到的永遠是目前值。
+const SchemaVersion = 2
 
 // 測試替換點:observed_at / updated_at / added_at / iid 全由這兩個衍生,沒有替換點的話逐位元相等的測試不可能穩定。
 var (
@@ -70,6 +74,7 @@ func (m *Manifest) Touch(id, name string) bool {
 
 // normalize:devices 依 ID 排序、playlists 排序去重——manifest 是共用檔,兩台裝置註冊順序不同不能得到不同位元組。
 func (m *Manifest) normalize() {
+	m.SchemaVersion = SchemaVersion
 	if m.Devices == nil {
 		m.Devices = []Device{}
 	}
@@ -90,27 +95,93 @@ type Tracks struct {
 func NewTracks() *Tracks { return &Tracks{SchemaVersion: SchemaVersion, Tracks: map[string]Track{}} }
 
 func (t *Tracks) normalize() {
+	t.SchemaVersion = SchemaVersion
 	if t.Tracks == nil {
 		t.Tracks = map[string]Track{}
 	}
 	for cid, tr := range t.Tracks {
-		if tr.Artists == nil { // "artists":null 與 [] 是兩串不同位元組
-			tr.Artists = []string{}
+		if tr.Artists == nil || tr.Mappings == nil { // "artists":null 與 [] 是兩串不同位元組;mappings 同理
+			tr.Artists, tr.Mappings = nonNilStrings(tr.Artists), nonNilMappings(tr.Mappings)
 			t.Tracks[cid] = tr
 		}
 	}
 }
 
-// Track:canonical 曲目(spec §6.2)。Mappings 是 provider → provider_id,P3 不帶 confidence / pinned。
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func nonNilMappings(m map[string]Mapping) map[string]Mapping {
+	if m == nil {
+		return map[string]Mapping{}
+	}
+	return m
+}
+
+// Track:canonical 曲目(spec §6.2)。Mappings 是 provider → Mapping(決策 20;P3 是純字串 id,Decode 相容)。
 type Track struct {
-	CID        string            `json:"cid"`
-	ISRC       []string          `json:"isrc,omitempty"` // alias set 的形狀,但 P3 只會有 0 或 1 個:觀測只帶一個 ISRC,不同 ISRC 落到不同 cid;合併同曲不同 ISRC 是 P4 resolver 的事
-	Title      string            `json:"title"`
-	Artists    []string          `json:"artists"`
-	Album      string            `json:"album,omitempty"`
-	DurationMS int               `json:"duration_ms"`
-	Mappings   map[string]string `json:"mappings"`
-	Conflicts  []Conflict        `json:"conflicts,omitempty"`
+	CID        string             `json:"cid"`
+	ISRC       []string           `json:"isrc,omitempty"` // alias set:只在人工操作(accept / pin / 合併)時成長(決策 19);觀測與自動 mapping 不碰
+	Title      string             `json:"title"`
+	Artists    []string           `json:"artists"`
+	Album      string             `json:"album,omitempty"`
+	DurationMS int                `json:"duration_ms"`
+	Mappings   map[string]Mapping `json:"mappings"`
+	Conflicts  []Conflict         `json:"conflicts,omitempty"`
+}
+
+// Mapping 的來源。
+const (
+	SourceObserved = "observed" // pull 時在平台清單裡看到:id 確定,「是不是同一錄音」由 ISRC 決定
+	SourceISRC     = "isrc"     // resolver Layer 1(ISRC 反查)
+	SourceFuzzy    = "fuzzy"    // resolver Layer 2
+	SourceReview   = "review"   // 人工:review accept / resolve pin / 合併
+)
+
+// Mapping:cid 在某個 provider 的對應(決策 20)。Confidence 0–100 整數(浮點會讓 Encode 的位元組不決定性);
+// Pinned 只有 Source review 會是 true;Pinned 且 ID 空 = 使用者裁定「這個平台沒有這首」。
+// UpdatedAt 只在 (ID, Confidence, Pinned, Source) 真的改變時更新——否則每次 pull 都會重傳整份 tracks.json。
+type Mapping struct {
+	ID         string `json:"id"`
+	Confidence int    `json:"confidence"`
+	Pinned     bool   `json:"pinned"`
+	Source     string `json:"source"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+// Same:等價比較不看 UpdatedAt(兩台裝置各自算出同一結果不該互相 LWW 覆蓋)。
+func (m Mapping) Same(o Mapping) bool {
+	return m.ID == o.ID && m.Confidence == o.Confidence && m.Pinned == o.Pinned && m.Source == o.Source
+}
+
+// UnmarshalJSON 相容 schema 1 的字串舊形("spotify": "id"):視為 observed / 100 / 不 pinned / updated_at 0。寫出永遠是物件。
+func (m *Mapping) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var id string
+		if err := json.Unmarshal(b, &id); err != nil {
+			return err
+		}
+		*m = Mapping{ID: id, Confidence: 100, Source: SourceObserved}
+		return nil
+	}
+	type raw Mapping // 去掉方法,免得遞迴
+	var r raw
+	if err := json.Unmarshal(b, &r); err != nil {
+		return err
+	}
+	// 值域不變式(決策 20):confidence 是 review queue 排序用的同一把尺,手改的檔夾到範圍內;source 不認得就拒絕——
+	// 新版本多出來的 source 一定伴隨 schema 跳版(舊 binary 早在 ErrSchemaTooNew 停下),所以這裡遇到的只會是手改錯字。
+	r.Confidence = max(0, min(100, r.Confidence))
+	switch r.Source {
+	case SourceObserved, SourceISRC, SourceFuzzy, SourceReview:
+	default:
+		return fmt.Errorf("mapping 的 source 未知:%q(只認 observed / isrc / fuzzy / review)", r.Source)
+	}
+	*m = Mapping(r)
+	return nil
 }
 
 // Conflict:同 cid 但 metadata 不符的觀測;P3 只記錄不裁決(review queue 是 P4)。
@@ -145,6 +216,7 @@ func NewPlaylist(name string) *Playlist {
 
 // normalize:items 依 (rank, iid) 排序——順序就是 rank(spec §6.2),檔案與 SQLite 鏡像(store.Dump)才會逐位元一致。
 func (p *Playlist) normalize() {
+	p.SchemaVersion = SchemaVersion
 	if p.Items == nil {
 		p.Items = []Item{}
 	}
@@ -208,6 +280,7 @@ func NewDeviceState(deviceID string) *DeviceState {
 }
 
 func (d *DeviceState) normalize() {
+	d.SchemaVersion = SchemaVersion
 	if d.Base == nil {
 		d.Base = map[string]map[string]Base{}
 	}

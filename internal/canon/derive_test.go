@@ -120,7 +120,7 @@ func TestDeriveFirstPullEmptyC(t *testing.T) {
 	if ranks := []string{res.Playlist.Items[0].Rank, res.Playlist.Items[1].Rank, res.Playlist.Items[2].Rank}; strings.Join(ranks, ",") != strings.Join(canon.Ranks(3), ",") {
 		t.Fatalf("C 全空時 rank 應用 Ranks 均分:%v", ranks)
 	}
-	if len(res.Tracks) != 3 || res.Tracks[cidOf("a")].Mappings[prov] != "a" || res.VisibleCount != 0 {
+	if len(res.Tracks) != 3 || res.Tracks[cidOf("a")].Mappings[prov].ID != "a" || res.VisibleCount != 0 {
 		t.Fatalf("新曲要建 track 含 mapping;變更前可見數 0:%+v %d", res.Tracks, res.VisibleCount)
 	}
 	if strings.Join(res.Snapshot.Items, ",") != "a,b,c" || res.Snapshot.Name != "通勤" {
@@ -195,7 +195,7 @@ func TestDeriveProviderIDSharedByTwoCidsIsDeterministic(t *testing.T) {
 			t.Fatalf("第 %d 次:%s(要 %s)", i, actions(res.Changes), want)
 		}
 	}
-	if first.Tracks["p:spotify:x"].Mappings[prov] != "x" || res.Tracks[cidOf("x")].Mappings[prov] != "x" {
+	if first.Tracks["p:spotify:x"].Mappings[prov].ID != "x" || res.Tracks[cidOf("x")].Mappings[prov].ID != "x" {
 		t.Fatal("兩個 cid 應同時指著 provider id x")
 	}
 	converges(t, in, res)
@@ -380,7 +380,7 @@ func TestDeriveVersionSwapIsNoChange(t *testing.T) {
 	y.ProviderID = "y" // 專輯版:同 ISRC、不同 provider id
 	in := canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("通勤", "x"), Live: &canon.Observed{Name: "通勤", Tracks: []provider.Track{y}}}
 	res := mustDerive(t, in)
-	if len(res.Changes) != 0 || len(res.Tracks) != 0 || tracks[cidOf("x")].Mappings[prov] != "x" {
+	if len(res.Changes) != 0 || len(res.Tracks) != 0 || tracks[cidOf("x")].Mappings[prov].ID != "x" {
 		t.Fatalf("同 ISRC 換版本應零變更、mapping 不動:%s %+v", actions(res.Changes), res.Tracks)
 	}
 	if !bytes.Equal(encode(t, &res.Playlist), encode(t, &pl)) {
@@ -417,7 +417,7 @@ func TestDeriveExistingCidGainsMapping(t *testing.T) {
 	if len(res.Changes) != 0 || len(res.Playlist.Items) != 1 {
 		t.Fatalf("別的 provider 建的 cid 第一次被觀測要配對,不是再加一份:%s", actions(res.Changes))
 	}
-	if got := res.Tracks[cidOf("a")]; got.Mappings[prov] != "a" || got.Mappings["apple"] != "i.a" {
+	if got := res.Tracks[cidOf("a")]; got.Mappings[prov].ID != "a" || got.Mappings["apple"].ID != "i.a" {
 		t.Fatalf("要加上這個 provider 的 mapping:%+v", got)
 	}
 	converges(t, in, res)
@@ -476,5 +476,27 @@ func TestDeriveDoesNotMutateInput(t *testing.T) {
 	mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("通勤", "a", "b"), Live: live("x", "b", "c")})
 	if !bytes.Equal(before, encode(t, &pl)) || !bytes.Equal(beforeTr, encode(t, &canon.Tracks{SchemaVersion: 1, Tracks: tracks})) {
 		t.Fatal("Derive 不可改動傳入的 Playlist / Tracks")
+	}
+}
+
+// TestDeriveObservationOverridesFuzzyMapping:決策 20——tracks 裡是 fuzzy 的 mapping,平台觀測到真實 id 要寫回
+// (以前只在「沒有 mapping 或有衝突」時寫回,覆寫會靜默掉);再 derive 一次沒有任何 tracks 變更。
+func TestDeriveObservationOverridesFuzzyMapping(t *testing.T) {
+	pl, tracks := world(t, "a")
+	tr := tracks[cidOf("a")]
+	tr.Mappings[prov] = canon.Mapping{ID: "guess", Confidence: 80, Source: canon.SourceFuzzy, UpdatedAt: 5}
+	tracks[cidOf("a")] = tr
+	res, err := canon.Derive(canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Live: live("通勤", "a")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := res.Tracks[cidOf("a")]
+	if !ok || got.Mappings[prov].ID != "a" || got.Mappings[prov].Source != canon.SourceObserved || len(res.Changes) != 0 {
+		t.Fatalf("觀測要覆寫 fuzzy mapping 並寫回 res.Tracks:%v %+v %s", ok, got.Mappings[prov], actions(res.Changes))
+	}
+	tracks[cidOf("a")] = got
+	again, err := canon.Derive(canon.DeriveInput{Provider: prov, Playlist: res.Playlist, Tracks: tracks, Live: live("通勤", "a")})
+	if err != nil || len(again.Tracks) != 0 || len(again.Changes) != 0 {
+		t.Fatalf("第二輪不該再有 tracks 變更:%v %d %s", err, len(again.Tracks), actions(again.Changes))
 	}
 }

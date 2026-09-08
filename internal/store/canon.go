@@ -53,8 +53,9 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 					return err
 				}
 			}
-			for prov, id := range t.Mappings {
-				if _, err = tx.Exec("INSERT INTO mappings (cid, provider, provider_id) VALUES (?, ?, ?)", cid, prov, id); err != nil {
+			for prov, m := range t.Mappings {
+				if _, err = tx.Exec("INSERT INTO mappings (cid, provider, provider_id, confidence, pinned, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+					cid, prov, m.ID, m.Confidence, m.Pinned, m.Source, m.UpdatedAt); err != nil {
 					return err
 				}
 			}
@@ -115,7 +116,7 @@ func (s *Store) Dump() (Canonical, error) {
 		if err := json.Unmarshal([]byte(conflicts), &t.Conflicts); err != nil {
 			return err
 		}
-		t.Artists, t.Mappings = nonNil(t.Artists), map[string]string{}
+		t.Artists, t.Mappings = nonNil(t.Artists), map[string]canon.Mapping{}
 		c.Tracks.Tracks[t.CID] = t
 		return nil
 	})
@@ -137,16 +138,17 @@ func (s *Store) Dump() (Canonical, error) {
 	}); err != nil {
 		return c, err
 	}
-	if err := query(tx, "SELECT cid, provider, provider_id FROM mappings", func(r *sql.Rows) error {
-		var cid, prov, id string
-		if err := r.Scan(&cid, &prov, &id); err != nil {
+	if err := query(tx, "SELECT cid, provider, provider_id, confidence, pinned, source, updated_at FROM mappings", func(r *sql.Rows) error {
+		var cid, prov string
+		var m canon.Mapping
+		if err := r.Scan(&cid, &prov, &m.ID, &m.Confidence, &m.Pinned, &m.Source, &m.UpdatedAt); err != nil {
 			return err
 		}
 		t, ok := c.Tracks.Tracks[cid]
 		if !ok {
 			return fmt.Errorf("mappings 有 tracks 沒有的 cid %s(db 不一致,刪掉重建)", cid)
 		}
-		t.Mappings[prov] = id
+		t.Mappings[prov] = m
 		return nil
 	}); err != nil {
 		return c, err

@@ -22,7 +22,7 @@ import (
 
 const (
 	fileName      = "state.db"
-	schemaVersion = 3 // v2(2026-09-08,T7):device_base 加 cids;v3(2026-09-08,T8):加 playlist_id。尚無正式 dev 檔,不需搬遷
+	schemaVersion = 4 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at。升版舊檔改名保留(T9)
 )
 
 // schema v1。與 spec §7 的差異(2026-09-07,理由寫在 spec §7):tracks 多 artists / conflicts(JSON)、少 updated_at
@@ -31,7 +31,7 @@ const (
 const schema = `
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT NOT NULL, artists TEXT NOT NULL, album TEXT NOT NULL, duration_ms INTEGER NOT NULL, conflicts TEXT NOT NULL);
 CREATE TABLE isrcs (cid TEXT NOT NULL, isrc TEXT NOT NULL, PRIMARY KEY (cid, isrc));
-CREATE TABLE mappings (cid TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, PRIMARY KEY (cid, provider));
+CREATE TABLE mappings (cid TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, confidence INTEGER NOT NULL, pinned INTEGER NOT NULL, source TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (cid, provider));
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE playlist_items (pid TEXT NOT NULL, iid TEXT NOT NULL, cid TEXT NOT NULL, rank TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, PRIMARY KEY (pid, provider));
@@ -205,7 +205,8 @@ func (s *Store) retire(version int) error {
 			return err
 		}
 	}
-	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 變成 v%d:舊檔保留為 %s(沒有程式會讀它;確定不需要再自行刪除),快取會在下一次 pull 從 Drive 重建\n", version, schemaVersion, kept)
+	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 變成 v%d:舊檔保留為 %s,快取會在下一次 pull 從 Drive 重建。"+
+		"這版 capy 不讀舊檔;若 pull 說 Drive 不完整,救援是用上一版 capy binary(GitHub Releases)把舊檔改回 %s 後跑 capy drive init --from-local,再更新回來。確定不需要再自行刪除\n", version, schemaVersion, kept, fileName)
 	return nil
 }
 
