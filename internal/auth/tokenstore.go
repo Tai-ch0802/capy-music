@@ -112,6 +112,11 @@ var (
 // 對話框時,這邊的 capy search 看起來就只是當掉,使用者不會知道該去按「允許」。檔案鎖分不出持有者是
 // 卡在對話框還是單純正在換發 token,訊息兩種都要涵蓋。
 func lockFile(ctx context.Context, name string) (unlock func(), err error) {
+	return LockFile(ctx, name, "對方正在存取 keychain,可能停在授權對話框上——畫面上若有 keychain 對話框,按「允許」即可繼續")
+}
+
+// LockFile 是 lockFile 的匯出版:notice 是等太久時提示裡「對方在做什麼」那句(pull.lock 的持有者不是在碰 keychain)。
+func LockFile(ctx context.Context, name, notice string) (unlock func(), err error) {
 	dir, err := config.Dir()
 	if err != nil {
 		return nil, err
@@ -134,7 +139,7 @@ func lockFile(ctx context.Context, name string) (unlock func(), err error) {
 		}
 		if !notified && time.Since(start) >= lockNoticeAfter {
 			notified = true
-			fmt.Fprintf(lockStderr, "等待另一個 capy 釋放 %s(對方正在存取 keychain,可能停在授權對話框上)——畫面上若有 keychain 對話框,按「允許」即可繼續;要放棄按 Ctrl-C。\n", name)
+			fmt.Fprintf(lockStderr, "等待另一個 capy 釋放 %s(%s);要放棄按 Ctrl-C。\n", name, notice)
 		}
 		select {
 		case <-ctx.Done():

@@ -26,10 +26,12 @@ var (
 
 var ErrSchemaTooNew = errors.New("Drive 上的檔案 schema 比這個 capy 新,請先 capy update")
 
-// Manifest:manifest.json。last_compaction 隨 op log 佈局待 P5(spec §6.3),先不放。
+// Manifest:manifest.json。playlists 是 Drive 上應該存在的 pl__<pid>.json(2026-09-08 T8 加):pull 的閘用
+// 「manifest 宣告、但 Drive 取不到」偵測部分遺失(spec §6.3)。last_compaction 隨 op log 佈局待 P5,先不放。
 type Manifest struct {
 	SchemaVersion int      `json:"schema_version"`
 	Devices       []Device `json:"devices"`
+	Playlists     []string `json:"playlists"` // pid,排序去重
 }
 
 type Device struct {
@@ -38,7 +40,19 @@ type Device struct {
 	LastSeen int64  `json:"last_seen"`
 }
 
-func NewManifest() *Manifest { return &Manifest{SchemaVersion: SchemaVersion, Devices: []Device{}} }
+func NewManifest() *Manifest {
+	return &Manifest{SchemaVersion: SchemaVersion, Devices: []Device{}, Playlists: []string{}}
+}
+
+// AddPlaylist 宣告 pid 的檔存在;回傳是否為新宣告。P3 沒有刪清單的命令,所以只加不減。
+func (m *Manifest) AddPlaylist(pid string) bool {
+	defer m.normalize()
+	if slices.Contains(m.Playlists, pid) {
+		return false
+	}
+	m.Playlists = append(m.Playlists, pid)
+	return true
+}
 
 // Touch 註冊或更新裝置(last_seen = Now);回傳是否為新裝置。裝置只能由使用者用 device forget 移除,這裡不刪。
 func (m *Manifest) Touch(id, name string) bool {
@@ -54,12 +68,17 @@ func (m *Manifest) Touch(id, name string) bool {
 	return true
 }
 
-// normalize:devices 依 ID 排序——manifest 是共用檔,兩台裝置註冊順序不同不能得到不同位元組。
+// normalize:devices 依 ID 排序、playlists 排序去重——manifest 是共用檔,兩台裝置註冊順序不同不能得到不同位元組。
 func (m *Manifest) normalize() {
 	if m.Devices == nil {
 		m.Devices = []Device{}
 	}
 	slices.SortFunc(m.Devices, func(a, b Device) int { return strings.Compare(a.ID, b.ID) })
+	if m.Playlists == nil {
+		m.Playlists = []string{}
+	}
+	slices.Sort(m.Playlists)
+	m.Playlists = slices.Compact(m.Playlists)
 }
 
 // Tracks:tracks.json,cid → 曲目。
@@ -175,7 +194,10 @@ type Base struct {
 // Snapshot 是平台清單的觀測原文:名稱、依平台順序的 provider 曲目 id,以及觀測當時依 §6.2 算出的 cid(與 Items 對齊)。
 // cid 由 (provider id, ISRC) 決定、不隨 mapping 變,所以它仍是「觀測」而非「解析結果」;DERIVE 的移除計數靠它——
 // 平台把曲目重新連結成另一個版本(X → Y,同 ISRC)之後再刪除,mapping 還是 X,只靠 id 反查會永遠刪不掉。
+// ID 是被觀測的平台清單 id(2026-09-08 T8 加):base 只對「目前連結的那個平台清單」有效,unlink 後改連別的清單,
+// 舊 base 不能拿來算移除。
 type Snapshot struct {
+	ID    string   `json:"id"`
 	Name  string   `json:"name"`
 	Items []string `json:"items"`
 	CIDs  []string `json:"cids"`

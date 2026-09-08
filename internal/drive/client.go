@@ -135,17 +135,23 @@ func (c *Client) Find(ctx context.Context, name string, props map[string]string)
 	if err != nil || len(fs) == 0 {
 		return nil, err
 	}
-	newest := fs[0]
-	for _, f := range fs[1:] {
-		// 同一毫秒用 ID 決勝:files.list 沒有 orderBy,順序未定義;沒有決定性 tiebreak 兩台裝置會各認一份、永不收斂。
-		if f.ModifiedTime.After(newest.ModifiedTime) || (f.ModifiedTime.Equal(newest.ModifiedTime) && f.ID > newest.ID) {
-			newest = f
-		}
-	}
+	newest := Newest(fs)
 	if len(fs) > 1 {
 		fmt.Fprintf(Stderr, "警告:Drive appdata 有 %d 份 %s,採用最新的一份(%s)\n", len(fs), name, newest.ModifiedTime.Format(time.RFC3339))
 	}
 	return &newest, nil
+}
+
+// Newest 在同名多份裡挑 modifiedTime 最新者;同一毫秒用 ID 決勝:files.list 沒有 orderBy,順序未定義,
+// 沒有決定性 tiebreak 兩台裝置會各認一份、永不收斂。fs 不可為空。
+func Newest(fs []File) File {
+	newest := fs[0]
+	for _, f := range fs[1:] {
+		if f.ModifiedTime.After(newest.ModifiedTime) || (f.ModifiedTime.Equal(newest.ModifiedTime) && f.ID > newest.ID) {
+			newest = f
+		}
+	}
+	return newest
 }
 
 // Create 在 appDataFolder 建檔。內容一律 application/json——capy 放進 Drive 的全是 JSON。
@@ -194,7 +200,8 @@ func (c *Client) Download(ctx context.Context, id string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// Delete 永久刪除(appdata 檔沒有垃圾桶)。
+// Delete 永久刪除(files.delete 不進垃圾桶)。appdata 檔可以被 PATCH 成 trashed=true 進垃圾桶(2026-09-07 真帳號實測),
+// 但 capy 不走那條:List 一律排除垃圾桶裡的檔,進了就等於消失。目前只有測試與 probe 用。
 func (c *Client) Delete(ctx context.Context, id string) error {
 	resp, err := c.do(ctx, http.MethodDelete, c.base+"/files/"+url.PathEscape(id), "", nil)
 	if err != nil {

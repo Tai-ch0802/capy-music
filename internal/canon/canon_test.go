@@ -200,7 +200,7 @@ func build(t *testing.T) [][]byte {
 		}
 	}
 	dev := canon.NewDeviceState("dev1")
-	dev.SetBase(pl.PID, "spotify", canon.Snapshot{Name: "通勤", Items: []string{"6rq", "other", "6rq"}, CIDs: []string{x.CID, "p:spotify:other", x.CID}})
+	dev.SetBase(pl.PID, "spotify", canon.Snapshot{ID: "37i9", Name: "通勤", Items: []string{"6rq", "other", "6rq"}, CIDs: []string{x.CID, "p:spotify:other", x.CID}})
 	dev.SetBase(pl.PID, "apple", canon.Snapshot{Name: "通勤"})
 	var out [][]byte
 	for _, v := range []any{m, tr, pl, dev} {
@@ -234,7 +234,7 @@ func TestRoundTripBitEqual(t *testing.T) {
 		}
 	}
 	m, tr, pl, dev := string(first[0]), string(first[1]), string(first[2]), string(first[3])
-	for _, want := range []string{`{"schema_version":1,"devices":[{"id":"dev1","name":"mac-renamed","last_seen":1756600002}]}`} {
+	for _, want := range []string{`{"schema_version":1,"devices":[{"id":"dev1","name":"mac-renamed","last_seen":1756600002}],"playlists":[]}`} {
 		if !strings.Contains(m, want) {
 			t.Fatalf("manifest 形狀:%s", m)
 		}
@@ -248,8 +248,8 @@ func TestRoundTripBitEqual(t *testing.T) {
 		!strings.Contains(pl, `"rank":"k"`) || !strings.Contains(pl, `"rank":"s"`) || !strings.HasSuffix(pl, `"links":{"spotify":"37i9"}}`+"\n") {
 		t.Fatalf("playlist 形狀:%s", pl)
 	}
-	if !strings.Contains(dev, `"base":{"01TESTULID0000000000000001":{"apple":{"snapshot":{"name":"通勤","items":[],"cids":[]},"observed_at":`) ||
-		!strings.Contains(dev, `"spotify":{"snapshot":{"name":"通勤","items":["6rq","other","6rq"],"cids":["i:TWA472400123","p:spotify:other","i:TWA472400123"]},"observed_at":`) {
+	if !strings.Contains(dev, `"base":{"01TESTULID0000000000000001":{"apple":{"snapshot":{"id":"","name":"通勤","items":[],"cids":[]},"observed_at":`) ||
+		!strings.Contains(dev, `"spotify":{"snapshot":{"id":"37i9","name":"通勤","items":["6rq","other","6rq"],"cids":["i:TWA472400123","p:spotify:other","i:TWA472400123"]},"observed_at":`) {
 		t.Fatalf("device 形狀:%s", dev)
 	}
 	b, _ := canon.Encode(canon.NewPlaylist("空"))
@@ -351,5 +351,20 @@ func TestLayout(t *testing.T) {
 	}
 	if canon.ManifestFile().Name != "manifest.json" || canon.TracksFile().Props["kind"] != canon.KindTracks {
 		t.Fatal("manifest / tracks 檔名")
+	}
+}
+
+func TestManifestPlaylistsSortedDeduped(t *testing.T) {
+	m := canon.NewManifest()
+	if !m.AddPlaylist("b") || !m.AddPlaylist("a") || m.AddPlaylist("b") {
+		t.Fatal("AddPlaylist:新宣告 true、重複 false")
+	}
+	b, err := canon.Encode(m)
+	if err != nil || !strings.Contains(string(b), `"playlists":["a","b"]`) {
+		t.Fatalf("playlists 要排序去重:%v %s", err, b)
+	}
+	old, err := canon.Decode[canon.Manifest]([]byte(`{"schema_version":1,"devices":[]}`))
+	if err != nil || old.Playlists == nil {
+		t.Fatalf("T8 之前的 manifest 沒有 playlists,解回來要是空 slice:%v %+v", err, old)
 	}
 }

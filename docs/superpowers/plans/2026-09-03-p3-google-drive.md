@@ -323,6 +323,8 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 
 **產出**:`internal/cli/pl.go`(`pull` 子命令)、`cmd/capy/main.go`、`internal/cli/root.go`。
 
+**2026-09-08:已實作於 `internal/cli/pull.go`(`pl link` / `pl unlink` / `pl pull`;exit code 對照集中在 `cli.ExitCode`)。與下面原本的考量不同或補上的地方:** (1) 三個命令共用一個骨架 `withCanonical`:`pull.lock` → FETCH(一次 `files.list`,同名取最新)→ 閘 → 改狀態 → COMMIT,`pl link` 建清單也走同一個閘,不能繞過。(2) 「Drive 不完整」的證人有兩個:`manifest.playlists`(T8 加的欄位)與本機 `state.db` 記得的 pid,任一宣告但 Drive 取不到就 exit 3;任何檔 schema 太新 → exit 1;兩者都零寫入。(3) 「零變更」不等於「零寫入」:寫入以位元組差異判定,base 缺或變了才 `SetBase`(否則 `observed_at` 每次都動 = 每次都上傳 dev 檔),manifest 只在新裝置或本來就要寫東西時 touch。(4) gone 的訊號是「不在 `ListPlaylists` 的列表裡」,不是 items 回 404——Apple 的 library 端點對空清單也回 404;有列出但 404 是錯誤(exit 1)。(5) 快照加了平台清單 `id`,base 的 id ≠ 目前 link 就當沒有 base(unlink 後改連別的清單不會誤刪)。(6) 同裝置並行守門用 `pull.lock` 包整段,而不是交易內重驗 `observed_at`。
+
 - **GATE 是唯一的寫入閘**:算變更集 → dry-run 呈現 → 閾值檢查 → 才寫。
 - 非 TTY dry-run 輸出為無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;TTY 用 `ui.Table` 渲染同一份資料。**首次 pull 在 TTY 下**:spec §6.6 要求「自動先 dry-run 並要求確認」——定案用 huh Confirm,非 TTY 則靠 `--yes`。
 - **exit code**:`0` 無變更**或已成功套用**、`2` 有待套用變更(dry-run,或非 TTY 未給 `--yes`)、`3` 安全閥擋下、`1` 錯誤。
@@ -364,7 +366,7 @@ grep -n 'pl__<pid>.json\|dev__<device_id>.json' docs/ARCHITECTURE.md   # 扁平�
 |---|---|---|---|---|
 | Q1 | Desktop client 換 token 是否**真的**必送 `client_secret` | 文件把欄位標 Optional,豁免只列 Android/iOS/Chrome | 跑 G-0 再定 | **T3 前** |
 | Q2 | Drive quota 是否已改 quota units 模型與 2026 計費 | 只影響 spec 文字 | 開 limits 頁對照數字再改,別改成錯的 | **T0 前** |
-| Q3 | 刪除閾值公式 | A `>10 或 >30%`(spec 現況)/ B `>10 或 (>30% 且 >3)` / C 只看比例、清單 <10 首不擋 | B。A 會擋掉「5 首刪 2 首」 | **T8 前** |
+| Q3 | 刪除閾值公式 | A `>10 或 >30%`(spec 現況)/ B `>10 或 (>30% 且 >3)` / C 只看比例、清單 <10 首不擋 | B。A 會擋掉「5 首刪 2 首」。**2026-09-08 T8 採 B 實作(每個 (清單, provider) 各算,附錄 C 決策 18);維護者若偏好 A/C,改 `removalBlocked` 一行與其表格測試即可** | **T8 前** |
 | Q4 | `ops` 離線佇列與 `review_queue` 兩張表 | A 從 spec §7 刪掉(它們不在 Drive,存在就違反硬約束)/ B 保留但明示「未上傳的 ops 隨 db 遺失」 | A | **T0 前** |
 | Q5 | 平台清單 ↔ `pid` 的連結 | A 自動連結(名稱相符)+ `pl link` 覆寫 / B 只認明確 `pl link` | B(猜錯會寫進 source of truth) | **T7 前** |
 | Q6 | 平台端清單被使用者刪除時 | A 傳播刪除 / B 自動 unlink + 警告 / C 下次 push 重建 | B | T7 前 |

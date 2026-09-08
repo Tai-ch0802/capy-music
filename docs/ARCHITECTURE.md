@@ -485,7 +485,7 @@ $ capy resolve --review
 
 ```
 appDataFolder/                       # 扁平,不建子資料夾(見下)
-├── manifest.json                    # schema_version, devices[], last_compaction
+├── manifest.json                    # schema_version, devices[], playlists[](pid;2026-09-08 T8 加,pull 的閘用它偵測部分遺失), last_compaction 待 P5
 ├── tracks.json                      # cid → 曲目 metadata + { provider: provider_id } mapping + conflicts[](§6.2)
 ├── pl__<pid>.json                   # canonical playlist(§6.2:name/desc/links + items[])
 ├── pl__<pid>.json
@@ -496,7 +496,7 @@ appDataFolder/                       # 扁平,不建子資料夾(見下)
 **扁平檔名 + `appProperties`,不建巢狀資料夾。** Drive **不強制同資料夾內檔名唯一**:v0.5 畫的 `playlists/<pid>/` 巢狀樹在兩台裝置同時 resolve-or-create 時會生出兩個同名資料夾。改為所有檔案平放在 appDataFolder,`appProperties` 放 `kind`(manifest / tracks / playlist / device)、`pid`、`device_id`,用 `files.list` 的 `q` 過濾;`fields` 一定要明列(預設只回四個欄位),`nextPageToken` 一律迴圈。同名檔多份時取 `modifiedTime` 最新者並印警告,不清理(merge 對重複檔無害)。每個檔案頂層有 `schema_version`,讀時忽略未知欄位,版本高於 binary 支援即拒寫。
 
 **⭐ per-device 檔(`dev__<device_id>.json`)是核心設計。**
-Drive 沒有 atomic compare-and-swap(v3 已移除 `etag`,`files.update` 沒有任何 precondition 參數),也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會靜默 last-write-wins。**每台裝置只寫自己的檔 → 這個檔的寫入永不衝突。** `base` 因此從共享檔移進各裝置自己的 `dev__<device_id>.json`,形狀 `base[pid][provider] = { snapshot, observed_at }`,`snapshot = { name, items, cids }`(items = 依平台順序的 provider id,cids = 觀測當時依 §6.2 算出的 cid、與 items 對齊、不隨 mapping 變;2026-09-08 T7 加),讀取時合併取 `observed_at` 最大者(LWW register)。
+Drive 沒有 atomic compare-and-swap(v3 已移除 `etag`,`files.update` 沒有任何 precondition 參數),也沒有真正的 append(update 是整檔覆寫)。如果所有裝置寫同一個檔,一定會靜默 last-write-wins。**每台裝置只寫自己的檔 → 這個檔的寫入永不衝突。** `base` 因此從共享檔移進各裝置自己的 `dev__<device_id>.json`,形狀 `base[pid][provider] = { snapshot, observed_at }`,`snapshot = { id, name, items, cids }`(id = 被觀測的平台清單 id,base 只對目前連結的那個平台清單有效,unlink 後改連別的清單,舊 base 不算數,2026-09-08 T8 加;items = 依平台順序的 provider id;cids = 觀測當時依 §6.2 算出的 cid、與 items 對齊、不隨 mapping 變;2026-09-08 T7 加),讀取時合併取 `observed_at` 最大者(LWW register)。
 
 **誠實記下的取捨:** `manifest.json` / `tracks.json` / `pl__<pid>.json` 仍是共享檔,兩台裝置同時寫會 last-write-wins;`version` 欄位只能**事後**偵測 lost update,不能防止。P3 以單裝置為主,接受這個風險;**P5 前必須重審**。真正做到無衝突的只有 `dev__<device_id>.json`。
 
@@ -581,7 +581,8 @@ capy pl sync 的一輪:
 | 機制 | 說明 |
 |---|---|
 | Dry-run 預設引導 | 首次 `sync` 自動先跑 `--dry-run` 並要求確認 |
-| 刪除閾值 | 單次 `pl pull` 或 `pl push` 刪除 >10 首或 >30% 時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push) |
+| 刪除閾值 | 單一 (清單, provider) 在一次 `pl pull` 或 `pl push` 要刪除 **>10 首,或 >30% 且 >3 首**(分母是該 provider 可見的曲數;Q3 採 B,2026-09-08 T8,附錄 C 決策 18)時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push)。`--force` 只越過閾值,不放行「Drive 不完整」(下一列) |
+| Drive 不完整的閘 | `manifest.playlists` 宣告、或本機 `state.db` 記得的檔在 Drive 取不到(全空只是特例)→ `pl pull` / `pl link` 一律 exit 3、零寫入,`--yes` / `--force` 都不放行;出口是 `capy drive init --from-local`(T9)。任何檔 `schema_version` 高於 binary 支援 → exit 1、零寫入 |
 | 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore` 從它回滾的語意隨扁平化改變(base 不再是共享檔),**P5 再定** |
 | Export 逃生口 | `capy export` 輸出完整 JSON 到 stdout(Drive 檔的合併形式),不依賴 Drive、不回存 Drive;Drive 空 / 404 時的反向路徑是 `capy drive init --from-local`(只重新上傳本機 cache,永不對非空 cache 做 hydrate-empty) |
 
@@ -592,7 +593,7 @@ capy pl sync 的一輪:
 db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
--- schema v2(PRAGMA user_version = 2;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids;與 v0.5 草案的差異見下段)
+-- schema v3(PRAGMA user_version = 3;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id;與 v0.5 草案的差異見下段)
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT, artists TEXT /* JSON [] */, album TEXT, duration_ms INTEGER, conflicts TEXT /* JSON [],§6.2 */);
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (cid, provider));
@@ -600,7 +601,8 @@ CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updat
 CREATE TABLE playlist_items (pid TEXT, iid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (pid, provider));
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT, last_seen INTEGER, registered INTEGER /* 在 manifest.devices */, has_state INTEGER /* 有 dev__<id>.json */);
-CREATE TABLE device_base (device_id TEXT, pid TEXT, provider TEXT, name TEXT, items TEXT /* JSON,平台順序的 provider id */, cids TEXT /* JSON,觀測當時的 cid,與 items 對齊 */, observed_at INTEGER, PRIMARY KEY (device_id, pid, provider));
+CREATE TABLE device_base (device_id TEXT, pid TEXT, provider TEXT, playlist_id TEXT /* 被觀測的平台清單 id */, name TEXT, items TEXT /* JSON,平台順序的 provider id */, cids TEXT /* JSON,觀測當時的 cid,與 items 對齊 */, observed_at INTEGER, PRIMARY KEY (device_id, pid, provider));
+-- manifest.playlists 不另存:Dump 由 playlists 表推回(pull 的閘保證「宣告但取不到」的狀態永遠不會被 Hydrate 進來,兩者恆等)。
 -- 純快取(原 cache.json,附錄 C 決策 17):順序存 position,「最新在前、去重、上限 50」在 internal/cache 的記憶體邏輯
 CREATE TABLE provider_playlists (provider TEXT, position INTEGER, id TEXT, name TEXT, total INTEGER, PRIMARY KEY (provider, position));
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER, provider TEXT, type TEXT, id TEXT, label TEXT, detail TEXT);
@@ -798,10 +800,10 @@ capy now [--watch]
 
 capy pl list
 capy pl show   <name>
-capy pl link   <name> <provider>:<playlist_id>            # P3;連結規則(自動配名 vs 僅認明確 link)T7 前定
-capy pl unlink <name> <provider>                          # P3
+capy pl link   <name|pid> <provider>:<playlist_id|name>   # P3(2026-09-08 T8 已實作):只認明確 link(Q5 B);canonical 清單不存在就建立;讀不到的清單不可連結
+capy pl unlink <name|pid> <provider>                      # P3(已實作);canonical 內容不動
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
-capy pl pull   [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3:平台 → canonical → Drive(§6.1);--yes 跳過確認、--force 才越過刪除閾值,兩者分開
+capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值,兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);讀不到的清單跳過
 capy pl push   [--provider P] [--all] [--dry-run] [--force]           # P5
 capy pl sync   [--dry-run]                                # P5
 capy pl restore <name> --provider P                       # P5(語意待定,§6.6)
@@ -852,6 +854,7 @@ capy doctor
 | 15 | `play` 語意(2026-09-04) | 統一搜尋(曲目 + 藝人 + 我的播放清單);TTY 下唯一明確命中(清單名完全相符 → 藝人名完全相符 → 曲目恰一筆)直接播,否則挑選器;**非 TTY 一律確定性**:`--type`/前綴,歧義回 exit 2 與 TSV 候選;藝人 = 熱門歌曲;無參數維持恢復播放 | 「記得清單名、記不得 ID」是真實使用情境;可腳本化鐵則要求非 TTY 絕不互動 |
 | 16 | 播放器畫面(2026-09-04) | 先做 `now --watch`(bubbletea,Spotify 與 Apple 皆支援,Apple 端不得啟動未執行的 Music.app);無參數 `capy` 儀表板留到之後 | 範圍可控、獨立可測;儀表板依賴同一套元件,之後疊 |
 | 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除(2026-09-07 T6 已併入 `state.db`,`internal/cache` 留作門面,舊檔首次 Load 時刪除) | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
+| 18 | 刪除閾值公式與閘(2026-09-08,T8) | Q3 採 B:單一 (清單, provider) 要刪 >10 首、或 >30% 且 >3 首才擋,分母是該 provider 可見曲數(`DeriveResult.VisibleCount`);「Drive 不完整」是獨立的閘,`--yes` / `--force` 都不放行 | A(`>10 或 >30%`)會擋掉「5 首刪 2 首」這種日常操作,C(<10 首不擋)會放過「4 首刪光」;B 兩邊都顧到。閘與閾值分開,是因為閾值的例外(`--force`)是「我知道我在刪」,不是「我知道 Drive 壞了」 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 
