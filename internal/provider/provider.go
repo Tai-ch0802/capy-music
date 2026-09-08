@@ -212,6 +212,9 @@ func ApplyPlaylistOps(current []string, ops []PlaylistOp) (items []string, name 
 			items = slices.Delete(items, op.From, op.From+1)
 			items = slices.Insert(items, op.Pos, id)
 		case OpRename:
+			if op.Name == "" { // "" 同時代表「沒 rename」,空名字會無聲消失;幾乎一定是呼叫端掉了 Name
+				return nil, "", fmt.Errorf("op %d rename 沒有 Name", i)
+			}
 			name = op.Name
 		default:
 			return nil, "", fmt.Errorf("op %d 未知的 Kind %q", i, op.Kind)
@@ -219,3 +222,22 @@ func ApplyPlaylistOps(current []string, ops []PlaylistOp) (items []string, name 
 	}
 	return items, name, nil
 }
+
+// PartialWriteError:ApplyOps 分批寫到一半失敗(第一批取代成功、後面的批次失敗),平台清單停在被截短的狀態。
+// 呼叫端要讓使用者知道清單現在是半截的、把 base 推到現況、並提示重跑 push 補回其餘(spec §6.5.2 規則 7)。
+type PartialWriteError struct {
+	PlaylistID    string
+	Written, Want int  // 平台現在有的首數 / 目標首數
+	Renamed       bool // 改名已先成功(items 之前做的)
+	Err           error
+}
+
+func (e *PartialWriteError) Error() string {
+	msg := fmt.Sprintf("清單 %s 寫到一半失敗:平台現在只有前 %d 首(目標 %d 首),重跑 push 補回其餘", e.PlaylistID, e.Written, e.Want)
+	if e.Renamed {
+		msg += ";名字已先改好"
+	}
+	return msg + ":" + e.Err.Error()
+}
+
+func (e *PartialWriteError) Unwrap() error { return e.Err }

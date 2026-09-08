@@ -3,12 +3,14 @@ package spotify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -19,10 +21,24 @@ type writeCall struct {
 	body         map[string]any
 }
 
-// writeServer:記下每個寫入呼叫;status 非零時全部回它。
-func writeServer(t *testing.T, status int) (*Client, *[]writeCall) {
+// callLog:handler goroutine 寫、測試 goroutine 讀,鎖住免得哪天測試改成併發就變 race。
+type callLog struct {
+	mu    sync.Mutex
+	calls []writeCall
+}
+
+func (l *callLog) add(c writeCall) { l.mu.Lock(); defer l.mu.Unlock(); l.calls = append(l.calls, c) }
+func (l *callLog) all() []writeCall {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.calls)
+}
+func (l *callLog) reset() { l.mu.Lock(); defer l.mu.Unlock(); l.calls = nil }
+
+// writeServer:記下每個寫入呼叫;status 非零時從第 failFrom 個呼叫(1-based;0 = 全部)起回它。
+func writeServer(t *testing.T, status, failFrom int) (*Client, *callLog) {
 	t.Helper()
-	var calls []writeCall
+	log := &callLog{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var body map[string]any
@@ -31,8 +47,8 @@ func writeServer(t *testing.T, status int) (*Client, *[]writeCall) {
 				t.Errorf("body 不是 JSON:%s", b)
 			}
 		}
-		calls = append(calls, writeCall{r.Method, r.URL.Path, body})
-		if status != 0 {
+		log.add(writeCall{r.Method, r.URL.Path, body})
+		if status != 0 && len(log.all()) >= failFrom {
 			w.WriteHeader(status)
 			fmt.Fprintf(w, `{"error":{"status":%d,"message":"nope"}}`, status)
 			return
@@ -40,7 +56,7 @@ func writeServer(t *testing.T, status int) (*Client, *[]writeCall) {
 		w.Write([]byte(`{"snapshot_id":"x"}`))
 	}))
 	t.Cleanup(srv.Close)
-	return NewClient(srv.Client(), srv.URL), &calls
+	return NewClient(srv.Client(), srv.URL), log
 }
 
 func ids(n int) []string {
@@ -67,18 +83,19 @@ func TestApplyOpsBatches(t *testing.T) {
 		batch []int // 每個呼叫的 uris 數
 		pos   []int // POST 的 position(第一個是 PUT,填 -1)
 	}{{0, []int{0}, []int{-1}}, {1, []int{1}, []int{-1}}, {100, []int{100}, []int{-1}}, {101, []int{100, 1}, []int{-1, 100}}, {250, []int{100, 100, 50}, []int{-1, 100, 200}}} {
-		c, calls := writeServer(t, 0)
+		c, log := writeServer(t, 0, 0)
 		want := ids(tc.n)
 		// current 比 want 多一首,ops 是把它移除(n = 0 時 current = [x]、ops = remove 0 → 清空)
 		current := append([]string{"x"}, want...)
 		if _, err := c.ApplyOps(context.Background(), "p1", current, []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 0}}); err != nil {
 			t.Fatalf("n=%d:%v", tc.n, err)
 		}
-		if len(*calls) != len(tc.batch) {
-			t.Fatalf("n=%d:呼叫 %d 次,要 %d:%+v", tc.n, len(*calls), len(tc.batch), *calls)
+		calls := log.all()
+		if len(calls) != len(tc.batch) {
+			t.Fatalf("n=%d:呼叫 %d 次,要 %d:%+v", tc.n, len(calls), len(tc.batch), calls)
 		}
 		var got []string
-		for i, call := range *calls {
+		for i, call := range calls {
 			method := http.MethodPost
 			if i == 0 {
 				method = http.MethodPut
@@ -106,38 +123,76 @@ func TestApplyOpsBatches(t *testing.T) {
 	}
 }
 
-// 套完 ops 跟 current 一樣 = 零呼叫;rename 走 PUT /playlists/{id} 且在 items 之前;local file 的 id 本身是 uri。
-func TestApplyOpsNoopRenameAndLocalURI(t *testing.T) {
-	c, calls := writeServer(t, 0)
+// 套完 ops 跟 current 一樣 = 零呼叫;rename 走 PUT /playlists/{id} 且在 items 之前;episode uri 照送、local file 整批不送。
+func TestApplyOpsNoopRenameAndURIs(t *testing.T) {
+	c, log := writeServer(t, 0, 0)
 	cur := []string{"a", "b"}
 	skipped, err := c.ApplyOps(context.Background(), "p1", cur, []provider.PlaylistOp{{Kind: provider.OpMove, From: 0, Pos: 1}, {Kind: provider.OpMove, From: 1, Pos: 0}})
-	if err != nil || skipped != nil || len(*calls) != 0 {
-		t.Fatalf("互相抵銷的 ops 要零呼叫:%v %v %+v", skipped, err, *calls)
+	if err != nil || skipped != nil || len(log.all()) != 0 {
+		t.Fatalf("互相抵銷的 ops 要零呼叫:%v %v %+v", skipped, err, log.all())
 	}
-	if _, err := c.ApplyOps(context.Background(), "p1", cur, []provider.PlaylistOp{{Kind: provider.OpRename, Name: "通勤 2026"}}); err != nil || len(*calls) != 1 || (*calls)[0].method != http.MethodPut || (*calls)[0].path != "/playlists/p1" || (*calls)[0].body["name"] != "通勤 2026" {
-		t.Fatalf("只改名:%v %+v", err, *calls)
+	if _, err := c.ApplyOps(context.Background(), "p1", cur, []provider.PlaylistOp{{Kind: provider.OpRename, Name: "通勤 2026"}}); err != nil || len(log.all()) != 1 || log.all()[0].method != http.MethodPut || log.all()[0].path != "/playlists/p1" || log.all()[0].body["name"] != "通勤 2026" {
+		t.Fatalf("只改名:%v %+v", err, log.all())
 	}
-	*calls = nil
-	if _, err := c.ApplyOps(context.Background(), "p1", cur, []provider.PlaylistOp{{Kind: provider.OpRename, Name: "n"}, {Kind: provider.OpAdd, ProviderID: "spotify:local:x:y:z:1", Pos: 2}}); err != nil {
+	log.reset()
+	if _, err := c.ApplyOps(context.Background(), "p1", cur, []provider.PlaylistOp{{Kind: provider.OpRename, Name: "n"}, {Kind: provider.OpAdd, ProviderID: "spotify:episode:e1", Pos: 2}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*calls) != 2 || (*calls)[0].path != "/playlists/p1" || !slices.Equal(uris((*calls)[1].body), []string{"spotify:track:a", "spotify:track:b", "spotify:local:x:y:z:1"}) {
-		t.Fatalf("rename 先、items 後,local uri 原樣:%+v", *calls)
+	if calls := log.all(); len(calls) != 2 || calls[0].path != "/playlists/p1" || !slices.Equal(uris(calls[1].body), []string{"spotify:track:a", "spotify:track:b", "spotify:episode:e1"}) {
+		t.Fatalf("rename 先、items 後,episode uri 原樣:%+v", calls)
+	}
+	// 推不出去的曲目:local file、空 id → 一個請求都不送(連 rename 也不送),訊息列出位置
+	log.reset()
+	for _, ops := range [][]provider.PlaylistOp{
+		{{Kind: provider.OpRename, Name: "n"}, {Kind: provider.OpAdd, ProviderID: "spotify:local:x:y:z:1", Pos: 2}},
+		{{Kind: provider.OpAdd, ProviderID: "", Pos: 0}},
+	} {
+		_, err := c.ApplyOps(context.Background(), "p1", cur, ops)
+		if err == nil || !strings.Contains(err.Error(), "整批不送") || !strings.Contains(err.Error(), "第 ") || len(log.all()) != 0 {
+			t.Fatalf("%v:%v %+v", ops, err, log.all())
+		}
+	}
+	if _, err := c.ApplyOps(context.Background(), "p1", []string{"spotify:local:q"}, nil); err != nil || len(log.all()) != 0 {
+		t.Fatalf("current 裡有 local file 但沒變 = 零呼叫、不算錯:%v", err)
+	}
+	if _, err := c.ApplyOps(context.Background(), "p1", []string{"spotify:local:q"}, []provider.PlaylistOp{{Kind: provider.OpRename, Name: "n"}}); err != nil || len(log.all()) != 1 {
+		t.Fatalf("只改名不碰 items,local file 不擋:%v %d", err, len(log.all()))
+	}
+}
+
+// PUT 之後的 POST 失敗 = 平台停在被截短的狀態:回 PartialWriteError 帶已寫 / 目標首數與是否已改名;PUT 本身失敗則不是。
+func TestApplyOpsPartialWriteError(t *testing.T) {
+	c, log := writeServer(t, http.StatusInternalServerError, 3) // rename、PUT 成功,第一個 POST 失敗
+	_, err := c.ApplyOps(context.Background(), "p1", ids(250), []provider.PlaylistOp{{Kind: provider.OpRename, Name: "n"}, {Kind: provider.OpAdd, ProviderID: "z", Pos: 0}})
+	var pw *provider.PartialWriteError
+	if !errors.As(err, &pw) || pw.PlaylistID != "p1" || pw.Written != 100 || pw.Want != 251 || !pw.Renamed || len(log.all()) != 3 {
+		t.Fatalf("要 PartialWriteError{100/251, renamed}:%v %d", err, len(log.all()))
+	}
+	if !strings.Contains(err.Error(), "只有前 100 首(目標 251 首)") || !strings.Contains(err.Error(), "名字已先改好") {
+		t.Fatalf("訊息:%v", err)
+	}
+	c2, _ := writeServer(t, http.StatusInternalServerError, 1)
+	if _, err := c2.ApplyOps(context.Background(), "p1", ids(250), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); errors.As(err, &pw) || err == nil {
+		t.Fatalf("PUT 本身失敗 = 平台沒動,不是 partial:%v", err)
 	}
 }
 
 func TestApplyOpsErrors(t *testing.T) {
-	c, calls := writeServer(t, http.StatusForbidden)
+	c, log := writeServer(t, http.StatusForbidden, 0)
 	_, err := c.ApplyOps(context.Background(), "p1", []string{"a"}, []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "b", Pos: 1}})
-	if err == nil || !strings.Contains(err.Error(), "只有自己的或協作的清單可以寫") || len(*calls) != 1 {
-		t.Fatalf("403:%v %d", err, len(*calls))
+	if err == nil || !strings.Contains(err.Error(), "只有自己的或協作的清單可以寫") || len(log.all()) != 1 {
+		t.Fatalf("403:%v %d", err, len(log.all()))
 	}
-	if _, err := c.ApplyOps(context.Background(), "p1", []string{"a"}, []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 5}}); err == nil || !strings.Contains(err.Error(), "越界") || len(*calls) != 1 {
-		t.Fatalf("ops 不合法不打 API:%v %d", err, len(*calls))
+	if _, err := c.ApplyOps(context.Background(), "p1", []string{"a"}, []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 5}}); err == nil || !strings.Contains(err.Error(), "越界") || len(log.all()) != 1 {
+		t.Fatalf("ops 不合法不打 API:%v %d", err, len(log.all()))
 	}
-	c2, calls2 := writeServer(t, http.StatusInternalServerError)
-	if _, err := c2.ApplyOps(context.Background(), "p1", ids(1), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); err == nil || strings.Contains(err.Error(), "協作") || len(*calls2) != 1 {
+	c2, log2 := writeServer(t, http.StatusInternalServerError, 0)
+	if _, err := c2.ApplyOps(context.Background(), "p1", ids(1), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); err == nil || strings.Contains(err.Error(), "協作") || len(log2.all()) != 1 {
 		t.Fatalf("500 原樣回:%v", err)
+	}
+	c3, _ := writeServer(t, http.StatusNotFound, 0)
+	if _, err := c3.ApplyOps(context.Background(), "p1", ids(1), []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "z", Pos: 0}}); err == nil || !strings.Contains(err.Error(), "寫入端點不是 /items") {
+		t.Fatalf("404 要指向端點路徑:%v", err)
 	}
 }
 
@@ -157,5 +212,10 @@ func TestPlaylistItemsMarksLocalFiles(t *testing.T) {
 	}
 	if !got[1].Unpushable || got[1].ProviderID != "spotify:local:me:home:song:200" || got[1].Title != "home" {
 		t.Fatalf("local file:%+v", got[1])
+	}
+	// is_local=false 但 id 是 null(沒帶 additional_types 的 podcast episode):也拿 uri,推得出去所以不標 Unpushable
+	ep := trackJSON{URI: "spotify:episode:e1", Name: "ep"}
+	if tr := ep.toTrack(); tr.ProviderID != "spotify:episode:e1" || tr.Unpushable {
+		t.Fatalf("episode:%+v", tr)
 	}
 }

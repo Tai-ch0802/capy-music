@@ -141,7 +141,7 @@ func (t *trackJSON) toTrack() provider.Track {
 		artists[i] = a.Name
 	}
 	id := t.ID
-	if t.IsLocal && id == "" { // 沒有 id 就拿 uri 當 id:cid 才不會是空的 p:spotify:,而且同一個 local file 每次都算同一首
+	if id == "" { // local file(與沒帶 additional_types 的 podcast episode)的 id 是 null:拿 uri 當 id,cid 才不會是空的 p:spotify:
 		id = t.URI
 	}
 	return provider.Track{
@@ -478,26 +478,30 @@ const playlistWriteBatch = 100
 // ApplyOps:整批取代(spec 決策 28)。ops 套在 current 上得到目標序列;變了就 PUT 前 100 首(空序列 = 清空)、
 // 其後每 100 首 POST 到 position;改名走 PUT /playlists/{id},在 items 之前(先做便宜的)。Spotify 全部 Kind 都支援,
 // skipped 恆為 nil。寫入端點沿用讀取的 /items 路徑(spec §1.1 的改名);真帳號尚未驗證寫入也吃 /items(計畫 T1)。
-// 不是原子的:PUT 之後的 POST 失敗,平台停在半途——呼叫端要重讀平台並把 base 推到現況(§6.5.2 規則 7)。
+// 送出前先驗整份 uris:空 id、或不是 track / episode 的 uri(local file 加不回去,靜默丟掉就是沒過閾值的刪除)→ 一個請求都不送。
+// 不是原子的:PUT 之後的 POST 失敗,平台停在被截短的狀態 → 回 *provider.PartialWriteError,呼叫端要讓使用者知道、
+// 把 base 推到現況、提示重跑補回(§6.5.2 規則 7)。
 func (c *Client) ApplyOps(ctx context.Context, id string, current []string, ops []provider.PlaylistOp) ([]provider.PlaylistOp, error) {
 	want, name, err := provider.ApplyPlaylistOps(current, ops)
 	if err != nil {
 		return nil, err
 	}
+	itemsChanged := !slices.Equal(want, current)
+	var uris []string
+	if itemsChanged { // 只改名、或 ops 互相抵銷:current 裡有 local file 也不算錯(沒有要送 items)
+		if uris, err = trackURIs(want); err != nil {
+			return nil, err
+		}
+	}
+	renamed := false
 	if name != "" {
 		if _, err := c.do(ctx, http.MethodPut, "/playlists/"+url.PathEscape(id), nil, map[string]string{"name": name}, nil); err != nil {
 			return nil, writeErr(id, err)
 		}
+		renamed = true
 	}
-	if slices.Equal(want, current) {
+	if !itemsChanged {
 		return nil, nil
-	}
-	uris := make([]string, len(want))
-	for i, tid := range want {
-		uris[i] = tid
-		if !strings.HasPrefix(tid, "spotify:") { // local file 的 id 本身就是 uri
-			uris[i] = "spotify:track:" + tid
-		}
 	}
 	path := "/playlists/" + url.PathEscape(id) + "/items"
 	head := min(len(uris), playlistWriteBatch)
@@ -507,17 +511,40 @@ func (c *Client) ApplyOps(ctx context.Context, id string, current []string, ops 
 	for pos := head; pos < len(uris); pos += playlistWriteBatch {
 		end := min(pos+playlistWriteBatch, len(uris))
 		if _, err := c.do(ctx, http.MethodPost, path, nil, map[string]any{"uris": uris[pos:end], "position": pos}, nil); err != nil {
-			return nil, writeErr(id, err)
+			return nil, &provider.PartialWriteError{PlaylistID: id, Written: pos, Want: len(uris), Renamed: renamed, Err: writeErr(id, err)}
 		}
 	}
 	return nil, nil
 }
 
-// writeErr:403 = 不是自己的、也不是協作的清單(Spotify 只讓這兩種可寫)。
+// trackURIs:want 的每個 id 變成 uri,並擋掉推不出去的——空 id(呼叫端漏填、或 id 是 null 的項目)與非 track / episode
+// 的 uri(spotify:local:… 加不回去)。Spotify 的 add / replace 只吃 spotify:track: 與 spotify:episode:。
+func trackURIs(want []string) ([]string, error) {
+	uris := make([]string, len(want))
+	var bad []string
+	for i, tid := range want {
+		uris[i] = tid
+		if !strings.HasPrefix(tid, "spotify:") {
+			uris[i] = "spotify:track:" + tid
+		}
+		if tid == "" || !(strings.HasPrefix(uris[i], "spotify:track:") || strings.HasPrefix(uris[i], "spotify:episode:")) {
+			bad = append(bad, fmt.Sprintf("第 %d 首 %q", i+1, tid))
+		}
+	}
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("推不出去的曲目(local file 或空 id),整批不送:%s", strings.Join(bad, "、"))
+	}
+	return uris, nil
+}
+
+// writeErr:403 = 不是自己的、也不是協作的清單(Spotify 只讓這兩種可寫);404 = 清單不存在,或寫入端點其實不是 /items(未驗證)。
 func writeErr(id string, err error) error {
 	var ae *apiError
-	if errors.As(err, &ae) && ae.Status == http.StatusForbidden {
+	switch {
+	case errors.As(err, &ae) && ae.Status == http.StatusForbidden:
 		return fmt.Errorf("Spotify 拒絕寫入清單 %s(只有自己的或協作的清單可以寫):%w", id, err)
+	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+		return fmt.Errorf("Spotify 找不到清單 %s(或寫入端點不是 /items,見 spec §1.1):%w", id, err)
 	}
 	return err
 }

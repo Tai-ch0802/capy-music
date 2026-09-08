@@ -28,6 +28,7 @@ func TestApplyPlaylistOpsSequentialPositions(t *testing.T) {
 		{"remove 核對不符", []PlaylistOp{{Kind: OpRemove, Pos: 0, ProviderID: "b"}}, nil, "", "是 a 不是 b"},
 		{"move 越界", []PlaylistOp{{Kind: OpMove, From: 0, Pos: 3}}, nil, "", "move 0 → 3 越界"},
 		{"未知 Kind", []PlaylistOp{{Kind: "swap"}}, nil, "", `未知的 Kind "swap"`},
+		{"rename 沒有 Name", []PlaylistOp{{Kind: OpRename}}, nil, "", "rename 沒有 Name"},
 	} {
 		got, nm, err := ApplyPlaylistOps(cur, tc.ops)
 		if tc.err != "" {
