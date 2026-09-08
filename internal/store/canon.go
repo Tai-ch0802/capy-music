@@ -95,7 +95,15 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 // Dump 由鏡像表重建 canon 物件,順序決定性:playlists 依 pid、items 依 (rank, iid)、devices 依 device_id。
 func (s *Store) Dump() (Canonical, error) {
 	c := Canonical{Manifest: canon.NewManifest(), Tracks: canon.NewTracks(), Playlists: []canon.Playlist{}, Devices: []canon.DeviceState{}}
-	err := s.query("SELECT cid, title, artists, album, duration_ms, conflicts FROM tracks ORDER BY cid", func(r *sql.Rows) error {
+	// 整個 Dump 在一個 read transaction 裡:八個 SELECT 之間若讓別的 capy 的 Hydrate commit 進來,export 會讀到前半舊、後半新的
+	// 撕裂狀態(輕則被下面的一致性檢查擋下並建議「刪掉重建」——本機是唯一一份時那是最糟的建議;重則靜靜產出對不起來的備份)。
+	// SQLite 的 deferred 交易在第一個 SELECT 取得 SHARED 鎖後持有到結束,寫入者的 commit 會等(busy_timeout),讀到的是一致的快照。
+	tx, err := s.db.Begin()
+	if err != nil {
+		return c, err
+	}
+	defer tx.Rollback()
+	err = query(tx, "SELECT cid, title, artists, album, duration_ms, conflicts FROM tracks ORDER BY cid", func(r *sql.Rows) error {
 		var t canon.Track
 		var artists, conflicts string
 		if err := r.Scan(&t.CID, &t.Title, &artists, &t.Album, &t.DurationMS, &conflicts); err != nil {
@@ -114,7 +122,7 @@ func (s *Store) Dump() (Canonical, error) {
 	if err != nil {
 		return c, err
 	}
-	if err := s.query("SELECT cid, isrc FROM isrcs ORDER BY cid, isrc", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT cid, isrc FROM isrcs ORDER BY cid, isrc", func(r *sql.Rows) error {
 		var cid, isrc string
 		if err := r.Scan(&cid, &isrc); err != nil {
 			return err
@@ -129,7 +137,7 @@ func (s *Store) Dump() (Canonical, error) {
 	}); err != nil {
 		return c, err
 	}
-	if err := s.query("SELECT cid, provider, provider_id FROM mappings", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT cid, provider, provider_id FROM mappings", func(r *sql.Rows) error {
 		var cid, prov, id string
 		if err := r.Scan(&cid, &prov, &id); err != nil {
 			return err
@@ -144,7 +152,7 @@ func (s *Store) Dump() (Canonical, error) {
 		return c, err
 	}
 	byPID := map[string]*canon.Playlist{}
-	if err := s.query("SELECT pid, name, description, updated_at FROM playlists ORDER BY pid", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT pid, name, description, updated_at FROM playlists ORDER BY pid", func(r *sql.Rows) error {
 		p := canon.Playlist{SchemaVersion: canon.SchemaVersion, Items: []canon.Item{}, Links: map[string]string{}}
 		if err := r.Scan(&p.PID, &p.Name, &p.Description, &p.UpdatedAt); err != nil {
 			return err
@@ -157,7 +165,7 @@ func (s *Store) Dump() (Canonical, error) {
 	for i := range c.Playlists {
 		byPID[c.Playlists[i].PID] = &c.Playlists[i]
 	}
-	if err := s.query("SELECT pid, iid, cid, rank, added_at FROM playlist_items ORDER BY pid, rank, iid", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT pid, iid, cid, rank, added_at FROM playlist_items ORDER BY pid, rank, iid", func(r *sql.Rows) error {
 		var pid string
 		var it canon.Item
 		if err := r.Scan(&pid, &it.IID, &it.CID, &it.Rank, &it.AddedAt); err != nil {
@@ -172,7 +180,7 @@ func (s *Store) Dump() (Canonical, error) {
 	}); err != nil {
 		return c, err
 	}
-	if err := s.query("SELECT pid, provider, provider_id FROM playlist_links", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT pid, provider, provider_id FROM playlist_links", func(r *sql.Rows) error {
 		var pid, prov, id string
 		if err := r.Scan(&pid, &prov, &id); err != nil {
 			return err
@@ -187,7 +195,7 @@ func (s *Store) Dump() (Canonical, error) {
 		return c, err
 	}
 	byDev := map[string]*canon.DeviceState{}
-	if err := s.query("SELECT device_id, name, last_seen, registered, has_state FROM devices ORDER BY device_id", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT device_id, name, last_seen, registered, has_state FROM devices ORDER BY device_id", func(r *sql.Rows) error {
 		var d canon.Device
 		var registered, hasState bool
 		if err := r.Scan(&d.ID, &d.Name, &d.LastSeen, &registered, &hasState); err != nil {
@@ -206,7 +214,7 @@ func (s *Store) Dump() (Canonical, error) {
 	for i := range c.Devices {
 		byDev[c.Devices[i].DeviceID] = &c.Devices[i]
 	}
-	if err := s.query("SELECT device_id, pid, provider, playlist_id, name, items, cids, observed_at FROM device_base", func(r *sql.Rows) error {
+	if err := query(tx, "SELECT device_id, pid, provider, playlist_id, name, items, cids, observed_at FROM device_base", func(r *sql.Rows) error {
 		var dev, pid, prov, items, cids string
 		var b canon.Base
 		if err := r.Scan(&dev, &pid, &prov, &b.Snapshot.ID, &b.Snapshot.Name, &items, &cids, &b.ObservedAt); err != nil {
@@ -240,8 +248,13 @@ func (s *Store) Dump() (Canonical, error) {
 	return c, nil
 }
 
-func (s *Store) query(q string, each func(*sql.Rows) error, args ...any) error {
-	rows, err := s.db.Query(q, args...)
+type querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// query:跑一個 SELECT 逐列回呼;db 可以是 *sql.DB 或 *sql.Tx(Dump 整批放在一個交易裡)。
+func query(db querier, q string, each func(*sql.Rows) error, args ...any) error {
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,7 @@ go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 
 (release 分發規劃中:macOS Homebrew、Windows Scoop/winget。)
 
-更新:`capy update --dev` 會抓 main 分支最新 commit、用 `go install` 重建並覆蓋目前這顆 binary(需要 Go toolchain,第一次約 20 秒)。正式版發行後 `capy update`(不帶 `--dev`)才會有作用。
+更新:`capy update --dev` 會抓 main 分支最新 commit、用 `go install` 重建並覆蓋目前這顆 binary(需要 Go toolchain,第一次約 20 秒)。正式版發行後 `capy update`(不帶 `--dev`)才會有作用。Drive 狀態不確定時,更新前先 `capy export > backup.json`:本機快取 `state.db` 的 schema 升版時舊檔會保留為 `state.db.v<舊版>`,但沒有程式會讀它——那只是「不毀掉」,不是「能復原」。
 
 ## Spotify:自建 app(免費,約 2 分鐘)
 
@@ -56,6 +56,8 @@ capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl unlink 通勤 spotify
 capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
+capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
+capy drive init --from-local [--dry-run] [--yes]   # 逃生口:Drive 空 / 部分遺失時用本機 state.db 補回缺的檔
 capy doctor [--provider apple]
 capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
 ```
@@ -63,6 +65,8 @@ capy config set default_provider apple   # 之後不必每次帶 --provider;conf
 所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
 
 `capy pl pull` 的 exit code 是對外契約(cron 靠它):`0` 無變更或已成功套用、`1` 錯誤、`2` 有待套用的變更(`--dry-run`、非 TTY 沒給 `--yes`、在終端機取消)、`3` 安全閥擋下(Drive appdata 不完整;或單一清單要刪 >10 首、或 >30% 且 >3 首)。`--yes` 只跳過確認、`--force` 只越過刪除閾值且只能配單一清單(`capy pl pull <名稱> --force`,不能配 `--all`:安全閥一次只解除一個清單),兩者都不放行「Drive 不完整」——那條的出口是 `capy drive init --from-local`(尚未實作)。變更集在非 TTY 下是無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;「這次動了幾筆」看行數,不佔 exit code。寫入順序固定 Drive 先、本機 `state.db` 後;`state.db` 只是快取,刪掉後下一次 pull 會從 Drive 重建。
+
+兩個逃生口:`capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),把 Drive 檔的合併形式輸出到 stdout——鍵是檔名(`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`)、值是該檔內容的縮排形式(壓回 compact 後與 Drive 上逐位元相同);本機沒資料時 exit 1 且不印東西。它用唯讀方式開 `state.db`:壞檔不刪、版本不符不改名、全新機器不建檔,而且整份匯出是一個一致的快照(與 cron 的 `pl pull` 同時跑也不會撕裂)。`capy drive init --from-local` 是 `pl pull` 以 exit 3 擋下「Drive 不完整」之後的出口:只建 Drive 缺的檔、不覆寫還在的檔、不動本機快取,別台裝置的 `dev__` 檔不代為上傳;先列出要建的檔(非 TTY 是 TSV `action file`),`--yes` 或在終端機確認後才上傳,`--dry-run` 只列不傳。確認訊息會帶目前登入的 Google 帳號:登錯帳號會把整個曲庫傳到別人的 appdata。
 
 ## Shell 補全(TAB 列出播放清單名與最近搜尋)
 

@@ -245,20 +245,28 @@ func Encode(v any) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// Decode 先看 schema_version:缺 → 錯;高於支援 → ErrSchemaTooNew(拒寫的閘就在這裡:讀不進來就寫不出去);
-// 未知欄位一律忽略(新版 capy 加的欄位,舊版不能因此壞掉)。
-func Decode[T any](b []byte) (*T, error) {
+// CheckSchema 只看 schema_version(缺 → 錯;高於支援 → ErrSchemaTooNew),不解整份;給只想知道「能不能碰這個檔」的人用。
+func CheckSchema(b []byte) error {
 	var head struct {
 		SchemaVersion int `json:"schema_version"`
 	}
 	if err := json.Unmarshal(b, &head); err != nil {
-		return nil, err
+		return err
 	}
 	if head.SchemaVersion == 0 {
-		return nil, errors.New("檔案缺 schema_version")
+		return errors.New("檔案缺 schema_version")
 	}
 	if head.SchemaVersion > SchemaVersion {
-		return nil, fmt.Errorf("%w(檔案 %d,支援 %d)", ErrSchemaTooNew, head.SchemaVersion, SchemaVersion)
+		return fmt.Errorf("%w(檔案 %d,支援 %d)", ErrSchemaTooNew, head.SchemaVersion, SchemaVersion)
+	}
+	return nil
+}
+
+// Decode 先看 schema_version:缺 → 錯;高於支援 → ErrSchemaTooNew(拒寫的閘就在這裡:讀不進來就寫不出去);
+// 未知欄位一律忽略(新版 capy 加的欄位,舊版不能因此壞掉)。
+func Decode[T any](b []byte) (*T, error) {
+	if err := CheckSchema(b); err != nil {
+		return nil, err
 	}
 	v := new(T)
 	if err := json.Unmarshal(b, v); err != nil {

@@ -52,7 +52,7 @@ func (s *Store) SaveCache(pls map[string][]ProviderPlaylist, recent []Recent) (e
 // LoadCache 讀回兩張表;沒有資料時 map 為空、recent 為 nil。
 func (s *Store) LoadCache() (map[string][]ProviderPlaylist, []Recent, error) {
 	pls := map[string][]ProviderPlaylist{}
-	if err := s.query("SELECT provider, id, name, total FROM provider_playlists ORDER BY provider, position", func(r *sql.Rows) error {
+	if err := query(s.db, "SELECT provider, id, name, total FROM provider_playlists ORDER BY provider, position", func(r *sql.Rows) error {
 		var prov string
 		var p ProviderPlaylist
 		if err := r.Scan(&prov, &p.ID, &p.Name, &p.Total); err != nil {
@@ -64,7 +64,7 @@ func (s *Store) LoadCache() (map[string][]ProviderPlaylist, []Recent, error) {
 		return nil, nil, err
 	}
 	var recent []Recent
-	if err := s.query("SELECT at, provider, type, id, label, detail FROM recent ORDER BY position", func(r *sql.Rows) error {
+	if err := query(s.db, "SELECT at, provider, type, id, label, detail FROM recent ORDER BY position", func(r *sql.Rows) error {
 		var x Recent
 		if err := r.Scan(&x.At, &x.Provider, &x.Type, &x.ID, &x.Label, &x.Detail); err != nil {
 			return err
