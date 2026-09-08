@@ -1,7 +1,7 @@
 # capy-music — 跨平台音樂 CLI 架構規劃
 
 > 專案名稱 `capy-music`,binary `capy`
-> 文件版本 v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
+> 文件版本 v0.7 — 2026-09-08(P4 後半對齊:§5.1 觀測 cid 三段式身分規則、mapping 物件化與 schema 2、§5.3 review queue 契約、§6.5.1 base 也過身分函式、§7 schema v4、附錄 C 決策 19–25;計畫在 docs/superpowers/plans/2026-09-08-p4-resolver.md;v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
 > 本文件為架構基準,所有「已驗證」標記的事實均於 2026-08 查證。
 
 ---
@@ -154,8 +154,14 @@ type Provider interface {
 
 type Searcher interface {
     Search(ctx context.Context, q Query) ([]Track, error)
-    GetTrack(ctx context.Context, id string) (*Track, error)
-    LookupISRC(ctx context.Context, isrc string) ([]Track, error)
+}
+
+// P4 後半(2026-09-08,T1):能力介面,不塞進 Searcher;實作者宣告 CapISRCLookup
+type ISRCLookup interface {
+    LookupISRC(ctx context.Context, isrc string) ([]Track, error)   // 正規化 ISRC;多筆時由 resolver 消歧(§5.1)
+}
+type TrackGetter interface {
+    GetTrack(ctx context.Context, id string) (Track, error)
 }
 
 type PlaylistReader interface {
@@ -384,20 +390,34 @@ Layer 3 — 人工釘選(最高優先)
    信心度 1.00,永不被自動覆寫
 ```
 
+**實作上信心度是 0–100 的整數**(`canon.Encode` 要逐位元決定性,整數沒有浮點格式化歧義):觀測 100、ISRC 反查 95、fuzzy 60–84 進 review / ≥85 自動寫入、人工 100。fuzzy 分數以 `floor` 取整;**時長差 >3 s 的候選上限 84**(時長項歸零時 title + artist 滿分剛好 85,會讓 extended mix / radio edit 自動寫入;時長是標題沒帶關鍵字時唯一的訊號)。
+
+**觀測 cid 的身分規則(2026-09-08,P4 後半,附錄 C 決策 19)。** 跨 ISRC 的 mapping(fuzzy 配對、人工釘選)一旦存在,純觀測的 cid(§6.2 公式)會與 canonical 分裂:cid `i:A` 釘了 `apple:X`,Apple 回報 X 的 ISRC 是 B,下次 pull 會算出 `i:B`,同一首歌兩筆。所以平台現況 L 觀測到的 (provider, id, isrc) 依序決定 cid:(1) `tracks.json` 已有 mapping `(provider, id)` → 該 cid;(2) 正規化 ISRC 在某個 track 的 alias set → 該 cid(多命中取字典序最小並警告);(3) 否則 §6.2 公式;(4) 結果是 `merged` 表裡的敗者 → 沿 tombstone 追到勝者。**alias set 只在人工操作(review accept / `resolve pin` / 合併)時成長且要過所有權檢查(候選的 ISRC 已屬另一 cid → 進 review),`Observe` 與自動 mapping 永不改動它**,由此保證每個 ISRC 至多屬於一個 cid。**base 快照的 cid 只經 `merged` tombstone 重導**——不在表裡就保留原 cid,絕不落公式(base 沒有 ISRC,落公式會算出不存在的 `p:` cid、移除計數歸零、永遠刪不掉)、也不查 mapping(人把 id 從 X 改釘給 Y 時,base 的 X 若被重導成 Y,X 就留成孤兒;保留 X 才會在下次 pull「移除 X、新增 Y」)。給定 `tracks.json` 全部決定性。代價:item 的 cid 依賴觀測當下的 `tracks.json`,共享檔 LWW 的新面向進 P5 重審。
+
+**mapping 的形狀與優先序(決策 20)。** `mappings[provider] = { id, confidence, pinned, source, updated_at }`,`source ∈ observed | isrc | fuzzy | review`;`pinned: true` + `id: ""` = 使用者裁定「這個平台沒有這首」(不可得也是意圖,跟著 Drive 走才不會每次重問)。優先序 **pinned > observed > isrc / fuzzy**:觀測到真實 id 會覆寫非 pinned 的自動 mapping;自動程序永不覆寫 pinned。`updated_at` 只在 `(id, confidence, pinned, source)` 其中之一真的改變時才更新,等價比較不看它——否則每次 pull 都會因位元組不同而重傳整份 `tracks.json`。
+
+**cid 合併(決策 21)。** 「同一錄音、兩個 cid」只在人工 accept / `resolve pin` 時合併;≥85 的自動寫入**絕不合併**——最佳候選 `(provider, id)` 已屬於另一個 cid 時,不論分數一律進 review 並列出那個 cid 的證據。勝者 = 字典序較小的 cid(兩台裝置各自合併同一對也同解);敗者的 items 改寫成勝者、alias set / mappings / `conflicts[]` 聯集、敗者從 `tracks` 移除但在 `tracks.json` 的 `merged` 表留 tombstone `{敗者: 勝者}`(永久保留;鏈在寫入時壓平、讀取沿鏈追)。tombstone 讓這個多檔改寫可重入:COMMIT 先傳 `tracks.json` 再逐檔傳 `pl__*.json`、沒有交易,中途失敗會留下指向已移除 cid 的 item;FETCH 與 `Hydrate` 前把 item cid 經 `merged` 重導,改到的清單下次 COMMIT 自然重傳。兩個 cid 對同一 provider 持有**不同** id 是「不是同一錄音」的證據:人工仍合併時,敗者那個 id 進 `conflicts[]`,不靜默丟棄。**cid 除合併外永不改寫**,`p:` 開頭的 cid 對到帶 ISRC 的 mapping 之後也維持 `p:`。
+
 ### 5.2 已知陷阱(必須寫進測試案例)
 
 | 陷阱 | 表現 | 對策 |
 |---|---|---|
-| 一首錄音多個 ISRC | 重發、remaster、地區版各有 ISRC | 建 ISRC alias set,任一命中即視為同一錄音。**P3 不解**:`cid` 是決定性 ID(§6.2,`i:<正規化 ISRC>`),alias set 無法收斂成同一個 cid,跨 provider 會產生兩筆 canonical track;收斂是 P4 resolver 的工作 |
+| 一首錄音多個 ISRC | 重發、remaster、地區版各有 ISRC | 建 ISRC alias set,任一命中即視為同一錄音。**P3 不解**:`cid` 是決定性 ID(§6.2,`i:<正規化 ISRC>`),alias set 無法收斂成同一個 cid,跨 provider 會產生兩筆 canonical track;收斂是 P4 resolver 的工作。**P4 後半(決策 21)**:收斂 = cid 合併,只由人裁決,自動寫入絕不合併;合併後 alias set 聯集,之後觀測到任一 ISRC 都經 §5.1 身分規則對回同一 cid |
 | Apple 部分曲目缺 ISRC | `attributes.isrc` 為空 | 自動降級到 Layer 2 |
 | YouTube Music 完全無 ISRC | — | 未來接入時只能 Layer 2 + 人工 |
 | Live / Remix / Cover 誤配 | 標題相近、時長相近 | 標題含 live/remix/acoustic/cover 關鍵字時提高門檻 |
 | 中文簡繁 / 藝名別名 | 「五月天」vs「Mayday」 | 維護 artist alias 表,可從兩邊 API 的 artist 物件互相學習 |
 | 區域下架 | 某平台查得到但不可播 | `available_markets` 已被 Spotify 移除 → 只能靠播放時的錯誤回報 |
 
-### 5.3 Review Queue
+### 5.3 Review Queue 與 `capy resolve`(2026-09-08 定案,附錄 C 決策 22)
 
-信心度 < 0.85 的配對**不自動寫入**,進 review queue:
+`capy resolve [<清單>] [--provider P] [--dry-run] [--yes]`:預設掃**全部**已連結的清單(resolve 只增不刪,不像 `pl pull` 需要 `--all`);對每個 (清單, provider) 找出 items 裡缺該 provider mapping 的 cid → Layer 1 → Layer 2;**≥85 自動寫入**(走 `pl pull` 同一套 `withCanonical`:pull.lock、Drive 不完整的閘、Drive 先 SQLite 後),其餘印成 review 佇列。`pl pull` 本身不做 resolve(API 成本與關注點分離),只在結尾提示「N 首尚未對應到 <provider>,跑 capy resolve」。
+
+**exit code**:`0` 無事可寫或已寫入——**review 佇列有東西仍是 0**(它是 TSV 列,不是失敗;cron 的 `resolve --yes` 不能因為永遠有幾首解不開而永遠報錯)、`1` 錯誤、`2` 有待寫入的自動 mapping 但沒有確認(`--dry-run`、非 TTY 沒給 `--yes`、終端機取消)。非 TTY 的 TSV 欄位:`action cid provider provider_id confidence source title artists reason`,`action ∈ map | review | conflict`。
+
+review 佇列的來源:(a) 找不到候選或最佳分數 <85;(b) 最佳候選已屬另一 cid(決策 21);(c) `conflicts[]` 非空且該 provider 的 mapping 不是 pinned(髒 ISRC,§6.2 那句「只印 stderr 太弱」的落點)。
+
+信心度 < 85 的配對**不自動寫入**,進 review queue,`capy resolve --review` 在 TTY 逐筆裁決(非 TTY → 印佇列 TSV、exit 2:明確要求人工裁決卻沒有終端機):
 
 ```
 $ capy resolve --review
@@ -408,17 +428,17 @@ $ capy resolve --review
          [a]ccept  [s]kip  [m]anual search  [n]ot available
 ```
 
-決策寫入 `mappings`(信心度 1.00),之後永久沿用。
+決策寫入 `mappings`(`pinned: true`、信心度 100、`source: review`),之後永久沿用:accept = 釘選候選;not available = 釘選空 id;manual search = 用平台搜尋挑一首再釘;skip = 這次不裁決(下次還會出現);conflicts 的 keep = 把現有 mapping 釘住(人確認過)。腳本用 `capy resolve pin <cid> <provider>:<id|none>`。釘選或 accept 對到已屬另一 cid 的 id → 依決策 21 合併(TTY 要確認;非 TTY 要 `--yes`)。
 
 ### 5.4 解析快取
 
 同步時逐首查 API 成本極高(Spotify 已移除批次端點!)。三層快取:
 
-1. **SQLite `resolution_cache`** — cid × provider → provider_id,TTL 30 天
-2. **Negative cache** — 查不到的也要記,TTL 7 天,避免每次同步重打
-3. **Drive `tracks.json`**(扁平命名,§6.3;cid → metadata 與 `{ provider: provider_id }` mapping)— 跨裝置共用解析結果,新裝置首次同步幾乎零 API 呼叫
+1. **Drive `tracks.json`**(扁平命名,§6.3;cid → metadata 與 mapping 物件)— 跨裝置共用解析結果,新裝置首次同步幾乎零 API 呼叫。**P3 已有。**
+2. **SQLite `mappings` 表**就是它的本機鏡像,即本機正向快取;不另建 `resolution_cache`。**P3 已有。**
+3. **Negative cache 延後**(2026-09-08 決策 24):每次 `resolve` 對尚未解開的 cid 重查(Layer 1 一次 + Layer 2 一次);以真帳號 ~2,500 首、ISRC 覆蓋 99% 估算,穩態每次數十次 API,可接受。觸發條件:單次 `resolve` 超過 200 次 API 呼叫、或有人把 `resolve --yes` 放進 cron;屆時加純快取表(不進 `Dump`,重建只是慢一點,不違反 §7)。
 
-第 3 點很重要:它讓「換一台電腦」不會重跑幾千次 API。
+第 1 點很重要:它讓「換一台電腦」不會重跑幾千次 API。
 
 ---
 
@@ -465,9 +485,10 @@ $ capy resolve --review
   "artists": ["五月天"],
   "album": "自傳",
   "duration_ms": 227000,
-  "mappings": {                   // cid → 各平台 id;§7 mappings 表就是這個的鏡像,P3 不帶 confidence/pinned
-    "spotify": "6rqhFg...",
-    "apple":   "i.abc123"
+  "mappings": {                   // cid → 各平台 id;§7 mappings 表是它的鏡像。P4 後半(決策 20,schema 2)改為物件;讀時相容 P3 的字串舊形(視為 observed / 100 / 不 pinned),寫出永遠是物件
+    "spotify": { "id": "6rqhFg...", "confidence": 100, "pinned": false, "source": "observed", "updated_at": 1756500000 },
+    "apple":   { "id": "i.abc123",  "confidence": 95,  "pinned": false, "source": "isrc",     "updated_at": 1756600000 }
+    // 「這個平台沒有這首」= { "id": "", "confidence": 100, "pinned": true, "source": "review", ... }
   },
   "conflicts": [                  // 同 ISRC 但 title/duration 不符的觀測;P3 只記錄不裁決(見下)
     { "provider": "spotify", "provider_id": "6rqhFg...", "title": "派對動物 (Live)", "duration_ms": 252000 }
@@ -479,14 +500,14 @@ $ capy resolve --review
 
 **`iid` 是 playlist item 的鍵,`cid` 只是屬性(附錄 C 決策 13)。** 每個 item 有自己的 ULID `iid`,同一首歌在同一個清單裡可以出現多次,不去重——Drive 上的副本是 source of truth,現在去重等於備份永久少掉資訊。
 
-**`cid` 是決定性 ID,不是 ULID。** 有 ISRC → `i:<正規化 ISRC>`(大寫、去連字號、非 12 碼視為缺失);沒有 → `p:<provider>:<provider_id>`。cid 是 Drive 檔案裡的鍵,不能隨「當時觀測到什麼」而變:**不做「同 ISRC 但 metadata 不符就退回 `p:`」的防呆**——那會讓裝置 A(只看到一首)與裝置 B(看到衝突)算出不同的 cid。偵測到衝突時照樣用 `i:` 當鍵,把衝突事實寫進 Drive `tracks.json` 該 cid 的 `conflicts[]`(上方 JSON:另一個 provider 的 `provider_id` 與觀測到的 `title` / `duration_ms`)並在 stderr 印一行警告;**不落 SQLite**(§7,db 只存 Drive 上有的東西)。真正的 review queue 是 P4 的事(§5.3),這裡只把事實記在 source of truth 上——髒 ISRC 會讓兩首不同的歌塌進同一個 cid,只印 stderr 太弱。上傳曲 / 純 library 曲沒有 ISRC 也沒有 catalog id,保留成 `p:` 形式的 provider-only track,**絕不可當成已刪除**。
+**`cid` 是決定性 ID,不是 ULID。** 有 ISRC → `i:<正規化 ISRC>`(大寫、去連字號、非 12 碼視為缺失);沒有 → `p:<provider>:<provider_id>`。cid 是 Drive 檔案裡的鍵,不能隨「當時觀測到什麼」而變:**不做「同 ISRC 但 metadata 不符就退回 `p:`」的防呆**——那會讓裝置 A(只看到一首)與裝置 B(看到衝突)算出不同的 cid。偵測到衝突時照樣用 `i:` 當鍵,把衝突事實寫進 Drive `tracks.json` 該 cid 的 `conflicts[]`(上方 JSON:另一個 provider 的 `provider_id` 與觀測到的 `title` / `duration_ms`)並在 stderr 印一行警告;**不落 SQLite**(§7,db 只存 Drive 上有的東西)。真正的 review queue 是 P4 的事(§5.3),這裡只把事實記在 source of truth 上——髒 ISRC 會讓兩首不同的歌塌進同一個 cid,只印 stderr 太弱。上傳曲 / 純 library 曲沒有 ISRC 也沒有 catalog id,保留成 `p:` 形式的 provider-only track,**絕不可當成已刪除**。**cid 一旦建立,除合併(§5.1 決策 21)外永不改寫**;`p:` 開頭的 cid 之後對到帶 ISRC 的 mapping 也維持 `p:`。P4 起,觀測到的 (provider, id, isrc) 對到哪個 cid 依 §5.1 的三段式身分規則(先看 mapping、再看 alias set、最後才是上面的公式)。
 
 ### 6.3 Drive appData 佈局
 
 ```
 appDataFolder/                       # 扁平,不建子資料夾(見下)
 ├── manifest.json                    # schema_version, devices[], playlists[](pid;2026-09-08 T8 加,pull 的閘用它偵測部分遺失), last_compaction 待 P5
-├── tracks.json                      # cid → 曲目 metadata + { provider: provider_id } mapping + conflicts[](§6.2)
+├── tracks.json                      # cid → 曲目 metadata + mapping 物件 + conflicts[](§6.2);merged{敗者 cid → 勝者 cid}(P4 決策 21 的 tombstone)
 ├── pl__<pid>.json                   # canonical playlist(§6.2:name/desc/links + items[])
 ├── pl__<pid>.json
 ├── dev__<device_id>.json            # ⭐ 每台裝置只寫自己的檔;含 base[pid][provider] = { snapshot, observed_at }
@@ -564,9 +585,9 @@ capy pl sync 的一輪:
 
 純函式、不碰 IO、不改動傳入的物件。輸入:canonical 清單 C(items 依 `(rank, iid)`)、`tracks.json` 的 cid → track(只讀)、本裝置上次觀測 base = `base[pid][provider]`(可能沒有)、平台現況 L(名稱 + 依平台順序的曲目,含 ISRC)。
 
-1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §6.2 算 cid;base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
+1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §5.1 的身分規則算 cid(P4 起:先看 `tracks` 的 mapping、再看 alias set、最後才是 §6.2 公式;**base 快照裡的 cid 在計數前只經 `merged` tombstone 重導**(不查 mapping、不落公式,都不是就保留快照原本的 cid),否則合併後緊接的平台刪除永遠刪不掉、P5 push 會把它加回去——決策 19);base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
 2. **配對由 LCS 決定,不是「第 n 次出現」。** 以 cid 序列(C 依 rank、L 依位置,重複照算)求最長共同子序列,對上的 item 留在原位;L 裡沒對上的出現,依 L 順序拿同 cid 剩下的 C item(rank 序最前者)配對並搬動;沒有剩下的才是新增。盲配「第 n 次出現」會在重複曲目換序時這輪搬這份、下輪搬那份,永遠多報一筆 move(2026-09-08 PR #19 review 抓到)。配對不看 mapping——別的 provider 建的 cid 在這個 provider 第一次被觀測到時要能配上(見第 3 點),否則每次 pull 都會多一份。
-3. **觀測寫回 tracks**:L 的每首都 `Observe`:`tracks` 沒有這個 cid → 新建 track(含這個 provider 的 mapping);有 cid 但沒這個 provider 的 mapping → 加 mapping(metadata 不符則記 `conflicts[]`,§6.2);已有 mapping → 不動(mapping 不抖動)。
+3. **觀測寫回 tracks**:L 的每首都 `Observe`:`tracks` 沒有這個 cid → 新建 track(含這個 provider 的 mapping);有 cid 但沒這個 provider 的 mapping → 加 mapping(metadata 不符則記 `conflicts[]`,§6.2);已有 mapping → pinned 或 observed 不動(mapping 不抖動);P4 起非 pinned 的 `isrc` / `fuzzy` mapping 會被觀測到的真實 id 覆寫(決策 20 的優先序 pinned > observed > isrc / fuzzy)。
 4. **新增**:L 裡配對不到的出現 → add,插在它在 L 的前一個元素所配對的 C 位置之後;`iid` = 新 ULID、`added_at` = 現在。C 全空(首次 pull)時 rank 用 `Ranks(n)` 均分,其餘用 `RankBetween`。
 5. **移除**:**只在 base 存在時**發生:某 cid 在 base 出現 b 次、在 L 出現 l 次、b > l,才把 C 裡配對不到的該 cid 出現**依 rank 由後往前**移除至多 b − l 個。沒有 base(首次 pull)永不移除。這條同時保護「在 Apple 加入、經 ISRC 對到 Spotify id、但從沒 push 到 Spotify」的曲目:它不在 Spotify 的 base 裡,所以不會被讀成「Spotify 刪了它」。
 6. **換序**:配對成功的 item 依 L 的順序排列;LCS 對上的留在原位,其餘配對的 item 搬動並只給它們新 rank(`RankBetween` 於最終整體順序的鄰居之間,鄰居可以是沒配對的 item),其餘 rank 不動;LCS 多解時偏好 C 中較前者。沒配對的 item 留在原 rank。LCS 用 Hunt–Szymanski(對配對點求 LIS):時間 O((n + r) log n)、記憶體 O(n + r),萬首清單(Spotify 單一清單上限)不會像 O(n·m) 的 DP 吃掉 855 MB。P3 沒有 HLC,順序以最後一次 pull 的 provider 為準。
@@ -593,10 +614,11 @@ capy pl sync 的一輪:
 db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
--- schema v3(PRAGMA user_version = 3;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id;與 v0.5 草案的差異見下段)
+-- schema v4(PRAGMA user_version = 4;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id、P4 T2a 加 mappings 的 confidence / pinned / source / updated_at(決策 20)、T2b 加 merged 表(決策 21);與 v0.5 草案的差異見下段)
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT, artists TEXT /* JSON [] */, album TEXT, duration_ms INTEGER, conflicts TEXT /* JSON [],§6.2 */);
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
-CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (cid, provider));
+CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT /* 空 + pinned = 不可得 */, confidence INTEGER /* 0–100 */, pinned INTEGER, source TEXT /* observed|isrc|fuzzy|review */, updated_at INTEGER, PRIMARY KEY (cid, provider));
+CREATE TABLE merged (cid TEXT PRIMARY KEY, into_cid TEXT /* tracks.json 的 merged 表鏡像:合併敗者 → 勝者(P4 決策 21) */);
 CREATE TABLE playlists (pid TEXT PRIMARY KEY, name TEXT, description TEXT, updated_at INTEGER);
 CREATE TABLE playlist_items (pid TEXT, iid TEXT, cid TEXT, rank TEXT, added_at INTEGER, PRIMARY KEY (pid, iid));
 CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY KEY (pid, provider));
@@ -614,7 +636,7 @@ Migration:`PRAGMA user_version` 不符就**整檔丟棄重建**(從 Drive hydrat
 
 SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive 完整重建。這是設計約束,要寫測試驗證。
 
-**`mappings` 在 P3 只有 `(cid, provider, provider_id)`,沒有 `confidence` / `pinned` / `updated_at`。** 這三欄在 Drive 上沒有來源——`tracks.json` 的 mapping 就是 `{ provider: provider_id }`(§5.4、§6.2、§6.3)——留著就等於「刪 db 可從 Drive 完整重建」這條硬約束在規格層面先天不成立。理由與下一段拒收 ops / review 兩張表**完全相同**:db 裡只能存 Drive 上有的東西。而且 P3 沒有 resolver(§9,resolver 與 review queue 是 P4),沒有任何程式碼會產生信心度或釘選。**P4 做 resolver 時要把這三欄同時加回 `tracks.json` 與本表**(§5.1 Layer 3 的人工釘選是使用者意圖,必須跟著 Drive 走才「永久沿用」);migration policy 是整檔丟棄重建,加欄位不用寫 ALTER,成本為零。只加表不加 Drive 形狀,同一個洞就會在 P4 原樣重現。
+**P4 後半(2026-09-08,決策 20)已把 `confidence` / `pinned` / `updated_at`(外加 `source`)同時加回 `tracks.json` 與本表;下一段是 P3 當時的理由,留作紀錄。** `mappings` 在 P3 只有 `(cid, provider, provider_id)`,沒有 `confidence` / `pinned` / `updated_at`。 這三欄在 Drive 上沒有來源——`tracks.json` 的 mapping 就是 `{ provider: provider_id }`(§5.4、§6.2、§6.3)——留著就等於「刪 db 可從 Drive 完整重建」這條硬約束在規格層面先天不成立。理由與下一段拒收 ops / review 兩張表**完全相同**:db 裡只能存 Drive 上有的東西。而且 P3 沒有 resolver(§9,resolver 與 review queue 是 P4),沒有任何程式碼會產生信心度或釘選。**P4 做 resolver 時要把這三欄同時加回 `tracks.json` 與本表**(§5.1 Layer 3 的人工釘選是使用者意圖,必須跟著 Drive 走才「永久沿用」);migration policy 是整檔丟棄重建,加欄位不用寫 ALTER,成本為零。只加表不加 Drive 形狀,同一個洞就會在 P4 原樣重現。
 
 **P3 不建 `ops` 離線佇列與 review 佇列兩張表(v0.5 有)。** 理由要讀準:已上傳的 op log **在 Drive 上**(§6.3 的 `ops/<device_id>.jsonl`,§6.5 步驟 6 會上傳它),真正不在 Drive 的只有 `synced = 0` 的離線佇列與使用者尚未裁決的 review 項目——這兩樣一旦進 db,「刪 db 可從 Drive 完整重建」就不成立。P3 為了讓這條硬約束成立而不建這兩張表,**不是否決 §6.4 的 op log 設計**;P5 要做離線佇列時,得連同它的重建策略一起回頭加表。db 裡只能存 Drive 上有的東西(canonical 鏡像、各裝置 `base` 副本)與純快取(`resolution_cache`);不存憑證、不存 provider 原始 JSON。
 
@@ -750,6 +772,8 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 ### P4 — 單向同步
 canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→ review queue
 
+> **排程註記(2026-09-08):** 前半(canonical model → `pl pull`)已隨 P3 完成(附錄 C 決策 10);後半(resolver + review queue)依 [docs/superpowers/plans/2026-09-08-p4-resolver.md](superpowers/plans/2026-09-08-p4-resolver.md) 執行(決策 19–25;真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553)。
+
 ### P5 — 雙向同步
 op log → HLC → 三方合併 → `pl push` → `--dry-run` + 安全網
 
@@ -808,7 +832,9 @@ capy pl push   [--provider P] [--all] [--dry-run] [--force]           # P5
 capy pl sync   [--dry-run]                                # P5
 capy pl restore <name> --provider P                       # P5(語意待定,§6.6)
 
-capy resolve --review                                     # P4 後半
+capy resolve [<name|pid>] [--provider P] [--dry-run] [--yes]   # P4 後半(決策 22):預設全部已連結清單;缺 mapping 的 cid → ISRC 反查 → fuzzy;≥85 自動寫入(Drive 先 SQLite 後),其餘印 review 佇列 TSV;exit 0 無事/已寫入(佇列有東西仍 0)、1 錯誤、2 待寫入未確認
+capy resolve --review                                     # P4 後半:TTY 逐筆 accept / skip / manual search / not available;非 TTY 印佇列 TSV、exit 2
+capy resolve pin <cid> <provider>:<id|none>               # P4 後半:腳本用釘選;none = 這個平台沒有這首;對到已屬另一 cid 的 id → 合併(決策 21)
 capy export                                               # P3(2026-09-08 T9 已實作):只讀本機 state.db;檔名為鍵、檔內容為值的 JSON;本機空 exit 1
 capy import <file.json>                                   # 延後;P3 的反向逃生口是 drive init --from-local
 capy drive init --from-local [--dry-run] [--yes]          # P3(已實作):Drive 空 / 部分遺失時唯一允許寫入的命令;只建缺的檔、不覆寫、不動本機;exit 0 完成或沒缺、2 待套用
@@ -856,6 +882,13 @@ capy doctor
 | 16 | 播放器畫面(2026-09-04) | 先做 `now --watch`(bubbletea,Spotify 與 Apple 皆支援,Apple 端不得啟動未執行的 Music.app);無參數 `capy` 儀表板留到之後 | 範圍可控、獨立可測;儀表板依賴同一套元件,之後疊 |
 | 17 | 順序(2026-09-04) | UX 三個 PR 先於 Google/Drive(P3 T3+);`cache.json` 為暫時性,P3 T6 併入 SQLite 後刪除(2026-09-07 T6 已併入 `state.db`,`internal/cache` 留作門面,舊檔首次 Load 時刪除) | 維護者已能實測工具,UX 摩擦是當下最貴的成本 |
 | 18 | 刪除閾值公式與閘(2026-09-08,T8) | Q3 採 B:單一 (清單, provider) 要刪 >10 首、或 >30% 且 >3 首才擋,分母是該 provider 可見曲數(`DeriveResult.VisibleCount`);「Drive 不完整」是獨立的閘,`--yes` / `--force` 都不放行;`--force` 只能配單一清單、不能配 `--all`(一組超標整輪擋下,但解除只能一次一個清單) | A(`>10 或 >30%`)會擋掉「5 首刪 2 首」這種日常操作,C(<10 首不擋)會放過「4 首刪光」;B 兩邊都顧到。閘與閾值分開,是因為閾值的例外(`--force`)是「我知道我在刪」,不是「我知道 Drive 壞了」 |
+| 19 | 觀測 cid 的身分規則(2026-09-08,P4 T0) | 三段式:已有 mapping 的 (provider, id) → 該 cid;正規化 ISRC 在某 track 的 alias set → 該 cid;否則 §6.2 公式。結果是 tombstone 敗者就追到勝者;alias set 只在人工操作時成長且過所有權檢查(每個 ISRC 至多屬一個 cid);**base 快照的 cid 只經 `merged` tombstone 重導,不在表裡就保留原 cid,絕不落公式、不查 mapping** | 跨 ISRC 的 mapping(fuzzy、人工釘選)一存在,純觀測 cid 就會把同一首歌分裂成兩筆;base 沒有 ISRC,落公式會算出不存在的 cid 讓移除計數歸零 → 合併後緊接的平台刪除變永久孤兒、P5 push 加回去;查 mapping 在「id 改釘給別的 cid」時同樣製造孤兒(PR #24 review)。代價:item cid 依賴觀測當下的 `tracks.json`,共享檔 LWW 的新面向進 P5 重審 |
+| 20 | mapping 物件化與 schema 硬切換(2026-09-08) | `mappings[provider] = {id, confidence 0–100 整數, pinned, source ∈ observed/isrc/fuzzy/review, updated_at}`;pinned + 空 id = 不可得;優先序 pinned > observed > isrc/fuzzy;`updated_at` 只在 (id, confidence, pinned, source) 真的變時才動、等價比較不看它;`SchemaVersion` 1 → 2(所有檔),讀時相容字串舊形;SQLite user_version 3 → 4;不給 `Snapshot` 加 ISRC(tombstone 規則下 base 不需要) | 釘選是使用者意圖,要跟 Drive 走(§7 早就講明);整數信心度避免 Encode 的浮點格式歧義;單一常數一條路;Drive 上目前沒有真資料,硬切換成本零,但 release notes 要寫「每台裝置都要更新」(Q10) |
+| 21 | cid 合併(2026-09-08) | 只由人裁決(accept / pin),自動寫入絕不合併——候選已屬另一 cid 一律進 review;勝者 = 字典序較小的 cid;兩 cid 對同 provider 持不同 id 時人工仍合併 → 敗者 id 進 `conflicts[]`;敗者從 tracks 移除但在 `merged` 留 tombstone,FETCH / Hydrate 前 item cid 經 tombstone 重導;cid 除合併外永不改寫,`p:` 不重鍵 | 合併是改寫 source of truth 的多檔操作,85 分的自動判斷不夠格;字典序讓兩台裝置各自合併同一對也同解;tombstone 讓沒有交易的多檔 COMMIT 中途失敗可自癒(PR #24 review) |
+| 22 | `capy resolve` 契約(2026-09-08) | 預設全部已連結清單;≥85 自動寫入走 `withCanonical`;exit 0 無事/已寫入(review 佇列非空仍 0)、1 錯誤、2 待寫入未確認;`--review` TTY 逐筆、非 TTY exit 2;`pin <cid> <provider>:<id|none>`;`pl pull` 不做 resolve 只提示 | resolve 只增不刪所以不需 `--all`;cron 的 `resolve --yes` 不能因永遠有幾首解不開而永遠報錯;API 成本與關注點分離 |
+| 23 | Layer 1 / 2 規則(2026-09-08) | ISRC 反查候選只留 ISRC 相同者,多筆消歧:專輯名同 > 時長差最小 > id 字典序;fuzzy = 60·JW(title) + 25·JW(primary artist) + 15·時長項(≤3 s 滿分、≥30 s 零、線性),live/remix/acoustic/cover/demo/instrumental/karaoke 只在一邊 → 上限 84;時長差 >3 s → 上限 84;`floor` 取整;<60 不列;`norm()` 手刻全形轉半形,不引入 `x/text`;artist alias 表延後 | 真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553,fuzzy 只補 ~1%;`Track` 沒有發行日所以拿掉「較早發行」 |
+| 24 | negative cache 延後(2026-09-08) | 每次 resolve 重查未解 cid;cron 的 `resolve --yes` 是支援用法;觸發條件只留單次 >200 次 API(T4 超過時 stderr 提醒)→ 加純快取表(不進 `Dump`) | §7 本就允許純快取;這是成本判斷不是約束判斷;cron 若同時是支援用法又是觸發條件,延後就變成一上線就欠(PR #24 review) |
+| 25 | P4 T0 只產計畫與 spec(2026-09-08) | 等維護者 review 後開 T1 | 與 P3 決策 12 同模式 |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 
