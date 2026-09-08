@@ -131,7 +131,7 @@ package provider
 
 type Capability uint32
 
-const (
+const ( // 順序 = 位元位置,與 internal/provider/provider.go 一致;新能力一律加在尾端(舊位元不動)
     CapSearch Capability = 1 << iota
     CapISRCLookup      // 能用 ISRC 反查
     CapISRCExpose      // 回傳的 track 帶 ISRC
@@ -143,6 +143,10 @@ const (
     CapLibraryRead
     CapLibraryWrite
     CapPlaybackControl
+    CapArtistSearch    // UX 計畫 T3
+    CapPlayPlaylist    // PlayRequest.PlaylistID
+    CapPlayQueue       // Play 把 TrackIDs 全排進佇列
+    CapPlaylistRename  // P5 T1 加(bit 13);Spotify 有
 )
 
 type Provider interface {
@@ -169,20 +173,22 @@ type PlaylistReader interface {
     GetPlaylistItems(ctx context.Context, id string) ([]Track, error)
 }
 
-// PlaylistOp(2026-09-08 P5 T0 定形):位置語意是依序套用、每個 Pos / From 指的是前面 ops 套完後的狀態。
+// PlaylistOp(2026-09-08 P5 T1 已實作,internal/provider/provider.go):位置語意是依序套用、每個 Pos / From 指的是
+// 前面 ops 套完後的狀態;move 是「先從 From 拿出來、再插到 Pos」。純函式 ApplyPlaylistOps(current, ops) 是這個語意的
+// 唯一定義,provider 實作與 push 的計畫測試都用它。
 type PlaylistOp struct {
-    Kind       string // add | remove | move | rename
-    ProviderID string // add / remove / move 的曲目 id(Apple 只收 catalog id)
+    Kind       string // OpAdd | OpRemove | OpMove | OpRename
+    ProviderID string // add:要插入的曲目 id(Apple 只收 catalog id);remove:選填,填了會核對
     Pos, From  int    // add:插入位置;remove:位置;move:From → Pos
     Name       string // rename
 }
 
 type PlaylistWriter interface {
-    CreatePlaylist(ctx context.Context, name, desc string) (string, error)
     // ApplyOps 一次套用一批操作,由 provider 決定用什麼端點實現;current 是呼叫端剛觀測到的 provider id 序列,
     // ops 相對於它(provider 不再讀一次:少一次 API、少一個競態窗口)。
-    // 不支援的 Kind 回 ErrCapability(先把支援的做完再回),呼叫端把那些列成 manual;P5 不做 rebuild fallback(決策 30)。
-    ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) error
+    // Kind 不支援的 op 跳過、支援的照做,回傳跳過的那些(呼叫端列成 manual);平台真的失敗才回 err。
+    // P5 不做 rebuild fallback(決策 30)。CreatePlaylist 待有需要再加(push 只寫已連結的清單)。
+    ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) (skipped []PlaylistOp, err error)
 }
 
 type PlaybackController interface {
@@ -205,12 +211,12 @@ type Track struct {
     Album       string
     DurationMS  int
     Explicit    bool
-    Unpushable  bool     // P5 T1:Spotify local file(is_local)、Apple library-only 曲目——API 加不回去,push 時視為釘在原位(計畫 Q22)
+    Unpushable  bool     // P5 T1 已加:Spotify local file(is_local;id 是 null 所以 ProviderID 拿 uri)、Apple library-only 曲目——API 加不回去,push 時只配對不新增(計畫 Q22)
     Raw         json.RawMessage
 }
 ```
 
-**`ApplyOps` 而非細顆粒方法**是刻意的:讓 provider 自己決定「逐條 API 呼叫」還是「整批 replace」。Spotify 有 `PUT /playlists/{id}/items` 可整批取代(P5 決策 28:任何 add / remove / move 都走整批取代,前 100 首 `PUT`、其後每批 100 `POST`);Apple 預期只能 append(決策 30:remove / move / rename 回 `ErrCapability`,不重建)。這個抽象讓兩者都塞得下。
+**`ApplyOps` 而非細顆粒方法**是刻意的:讓 provider 自己決定「逐條 API 呼叫」還是「整批 replace」。Spotify 有 `PUT /playlists/{id}/items` 可整批取代(P5 決策 28:任何 add / remove / move 都走整批取代,前 100 首 `PUT`(空序列 = 清空)、其後每批 100 `POST`,`rename` 走 `PUT /playlists/{id}` 且在 items 之前;T1 已實作,**寫入端點沿用讀取的 `/items` 路徑,真帳號尚未驗證**——若 404 改成 `/tracks` 是一個常數的事);Apple 預期只能 append(決策 30:remove / move / rename 回 `ErrCapability`,不重建)。這個抽象讓兩者都塞得下。
 
 ---
 
@@ -603,7 +609,7 @@ capy pl sync 的一輪(pl pull 只有 1–3 + 6;pl push 只有 1–2 + 4–6—�
 3. **對齊鍵是 cid,不是 provider id**(同規則 1):want = C 的 items 依 rank 的 cid 序列,live = L 經 §5.1 身分規則算出的 cid 序列(OBSERVE 已算)。LCS 配對(重複照算,與規則 2 同一套);**配對上的 item 不動**——「pinned 成不可得、但曲目此刻就在平台上」與「Apple 沒有 catalog 對應的 library-only 曲目(`i.` id)」都會配上、不會被當成 remove(以 provider id 序列 diff 投影會把被 skip 的 item 排進 remove,PR #30 review)。
 4. **變更集**:配不到的 L 出現 → `remove`(provider id 取 L 原文);配不到的 C item 要 `tracks[cid].mappings[provider].id` 才能 `add`,沒有(無 mapping、pinned 不可得、Apple 只有 library id)→ 列成 `skip`(reason 指向 `capy resolve`)並從 want 拿掉,不阻擋其他曲目——純 `skip` 只剩「C 有、平台沒有、又推不出去」;配對上但順序不同 → `move`;`rename`(C.name ≠ L.name 且 provider 支援);位置語意是**依序套用、每個位置指的是前面 ops 套完後的狀態**。TSV 欄位同 pull(`action pos cid provider_id title artists reason`)再加 `skip` / `manual`。不可推的項目(Spotify local file、library-only)在 L 裡幾乎一定也在 C(只能經這個平台進 C),配對後不動;Spotify 的整批取代加不回 local file:**含 local file 的 Spotify 清單在最小操作完成前拒絕 push**(exit 3,訊息列出那幾首;計畫 Q19 / Q22)。
 5. **安全網**:`remove` 數過決策 18 的閾值(分母 = L 的長度)→ exit 3、`--force` 才越過且只能配單一清單;`--dry-run` 只印、有變更 exit 2、不碰平台不碰 Drive;非 TTY 沒 `--yes` → exit 2;TTY 確認。
-6. **套用**:`provider.ApplyOps(ctx, id, current, ops)`(`current` = 剛觀測到的 L,provider 不再讀一次);provider 對某類 op 回 `ErrCapability` → 那些列標成 `manual`(Apple 的 remove / move / rename,決策 30),其餘照做。Spotify:任何 add / remove / move → 整批取代(`PUT /playlists/{id}/items` 前 100 首 + `POST …?position=` 其後每批 100),`rename` → `PUT /playlists/{id}`;只有自己或協作的清單可寫,403 → 友善訊息。
+6. **套用**:`provider.ApplyOps(ctx, id, current, ops)`(`current` = 剛觀測到的 L);provider 不支援的 op 回在 `skipped` → 那些列標成 `manual`(Apple 的 remove / move / rename,決策 30),其餘照做。**平台端沒有 CAS,整批取代等於放棄偵測**:讀到 L 之後、寫入之前別台裝置(或手機)在同一清單加的歌會被直接覆蓋——跟 Drive 那側的版本守衛不對稱(PR #31 review)。縮小窗口的做法(T4 做):確認之後、`ApplyOps` 之前**再讀一次 L 與 `current` 比對**,不一致就中止(exit 3、零寫入、訊息指向 pull);TTY 確認畫面等人按鍵的那段時間正是最大的窗口。殘餘窗口 = 讀與 PUT 之間。分批寫到一半失敗回 `*provider.PartialWriteError`(已寫 / 目標首數、是否已改名),push 要把它印成「清單現在是半截的、重跑補回」,不是一般錯誤。Spotify:任何 add / remove / move → 整批取代(`PUT /playlists/{id}/items` 前 100 首 + `POST …?position=` 其後每批 100),`rename` → `PUT /playlists/{id}`;只有自己或協作的清單可寫,403 → 友善訊息。
 7. **驗證與前進 base——ApplyOps 成功或失敗都做**:重讀 L′,L′ ≠ want(平台拒收、順序被正規化、分批做到一半斷網)→ stderr 警告;base[pid][provider] := L′ 的快照(與 pull 同一條 Observe 路)。base 是「本裝置上次看到的平台狀態」,不是「上次成功同步的狀態」:分批做到一半死掉而 base 不動,下一次 pull 會把我們自己的殘局讀成使用者刪了 150 首(PR #30 review)。**`pl__<pid>.json` 不變**(items / rank / name 都不動);`tracks.json` 可能因 Observe 補 mapping / conflicts 而變。
 8. **COMMIT** 走 `withCanonical`;ApplyOps 失敗時**仍然 COMMIT**(base 要落地),COMMIT 完再以 exit 1 結束並講明平台改了幾批,下一次 push 自然補上沒送出去的。全部套用成功、Drive 上傳失敗 → base 沒前進,下次 pull 把剛 push 的東西當平台變更再 derive:LCS 對同 cid 配上、零變更,不會重複。
 

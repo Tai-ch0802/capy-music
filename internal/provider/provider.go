@@ -1,12 +1,14 @@
 // Package provider 定義 capability-based 的 Provider SPI(spec §3 的 P1 子集)。
-// PlaylistWriter/PlaylistOp 延後到 P5;ISRCLookup / TrackGetter 於 P4 T1(2026-09-08)加入,resolver 的 Layer 1 用。
+// ISRCLookup / TrackGetter 於 P4 T1(2026-09-08)加入,resolver 的 Layer 1 用;PlaylistWriter / PlaylistOp 於 P5 T1 加入,pl push 用(spec §6.5.2)。
 package provider
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -27,6 +29,7 @@ const (
 	CapArtistSearch // SearchArtists + ArtistTopTracks(UX 計畫 T3)
 	CapPlayPlaylist // PlayRequest.PlaylistID
 	CapPlayQueue    // Play 會把 TrackIDs 全部排進佇列;沒有此能力的 provider 只播第一首
+	CapPlaylistRename
 )
 
 // Has 回報 c 是否包含 want 的全部能力位。
@@ -51,6 +54,7 @@ type Track struct {
 	Album      string
 	DurationMS int
 	Explicit   bool
+	Unpushable bool // API 加不回去的曲目(Spotify local file、Apple library-only):push 時只配對、不新增(計畫 Q22)
 	Raw        json.RawMessage
 }
 
@@ -154,3 +158,86 @@ type PlaybackController interface {
 	Next(ctx context.Context) error
 	Prev(ctx context.Context) error
 }
+
+// PlaylistOp:pl push 的一筆操作(spec §3、§6.5.2)。位置語意:依序套用,Pos / From 指的是前面 ops 套完後的狀態;
+// move 是「先從 From 拿出來、再插到 Pos」,Pos 指拿出來之後的序列。
+type PlaylistOp struct {
+	Kind       string // OpAdd | OpRemove | OpMove | OpRename
+	ProviderID string // add:要插入的曲目 id;remove:選填,填了會核對該位置真的是它
+	Pos, From  int    // add:插入位置;remove:位置;move:From → Pos
+	Name       string // rename
+}
+
+const (
+	OpAdd    = "add"
+	OpRemove = "remove"
+	OpMove   = "move"
+	OpRename = "rename"
+)
+
+// PlaylistWriter:把 ops 寫到平台清單(CapPlaylistAppend / Remove / Reorder / Rename)。current 是呼叫端剛觀測到的
+// provider id 序列,ops 相對於它(provider 不再讀一次)。Kind 不支援的 op 跳過、支援的照做,回傳跳過的那些
+// (呼叫端列成 manual);平台真的失敗才回 err。
+type PlaylistWriter interface {
+	ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) (skipped []PlaylistOp, err error)
+}
+
+// ApplyPlaylistOps:純函式,把 ops 依序套在 current 上,回傳結果序列與改名後的名稱(空 = 沒改名)。
+// 位置越界、remove 核對不符、Kind 未知都回錯。provider 實作與 push 的計畫測試共用它,兩邊對「位置」的理解才會一致。
+func ApplyPlaylistOps(current []string, ops []PlaylistOp) (items []string, name string, err error) {
+	items = slices.Clone(current)
+	if items == nil {
+		items = []string{}
+	}
+	for i, op := range ops {
+		switch op.Kind {
+		case OpAdd:
+			if op.Pos < 0 || op.Pos > len(items) {
+				return nil, "", fmt.Errorf("op %d add 位置 %d 越界(長度 %d)", i, op.Pos, len(items))
+			}
+			items = slices.Insert(items, op.Pos, op.ProviderID)
+		case OpRemove:
+			if op.Pos < 0 || op.Pos >= len(items) {
+				return nil, "", fmt.Errorf("op %d remove 位置 %d 越界(長度 %d)", i, op.Pos, len(items))
+			}
+			if op.ProviderID != "" && items[op.Pos] != op.ProviderID {
+				return nil, "", fmt.Errorf("op %d remove 位置 %d 是 %s 不是 %s", i, op.Pos, items[op.Pos], op.ProviderID)
+			}
+			items = slices.Delete(items, op.Pos, op.Pos+1)
+		case OpMove:
+			if op.From < 0 || op.From >= len(items) || op.Pos < 0 || op.Pos >= len(items) {
+				return nil, "", fmt.Errorf("op %d move %d → %d 越界(長度 %d)", i, op.From, op.Pos, len(items))
+			}
+			id := items[op.From]
+			items = slices.Delete(items, op.From, op.From+1)
+			items = slices.Insert(items, op.Pos, id)
+		case OpRename:
+			if op.Name == "" { // "" 同時代表「沒 rename」,空名字會無聲消失;幾乎一定是呼叫端掉了 Name
+				return nil, "", fmt.Errorf("op %d rename 沒有 Name", i)
+			}
+			name = op.Name
+		default:
+			return nil, "", fmt.Errorf("op %d 未知的 Kind %q", i, op.Kind)
+		}
+	}
+	return items, name, nil
+}
+
+// PartialWriteError:ApplyOps 分批寫到一半失敗(第一批取代成功、後面的批次失敗),平台清單停在被截短的狀態。
+// 呼叫端要讓使用者知道清單現在是半截的、把 base 推到現況、並提示重跑 push 補回其餘(spec §6.5.2 規則 7)。
+type PartialWriteError struct {
+	PlaylistID    string
+	Written, Want int  // 平台現在有的首數 / 目標首數
+	Renamed       bool // 改名已先成功(items 之前做的)
+	Err           error
+}
+
+func (e *PartialWriteError) Error() string {
+	msg := fmt.Sprintf("清單 %s 寫到一半失敗:平台現在只有前 %d 首(目標 %d 首),重跑 push 補回其餘", e.PlaylistID, e.Written, e.Want)
+	if e.Renamed {
+		msg += ";名字已先改好"
+	}
+	return msg + ":" + e.Err.Error()
+}
+
+func (e *PartialWriteError) Unwrap() error { return e.Err }

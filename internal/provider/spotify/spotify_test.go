@@ -17,12 +17,13 @@ func TestProviderIdentityAndCaps(t *testing.T) {
 		t.Errorf("identity:(%s, %s)", p.ID(), p.DisplayName())
 	}
 	want := provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapPlaybackControl |
-		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue
+		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue |
+		provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder | provider.CapPlaylistRename
 	if p.Caps() != want {
 		t.Errorf("Caps = %b, want %b", p.Caps(), want)
 	}
-	if p.Caps().Has(provider.CapPlaylistRemove) {
-		t.Error("P1 不應宣告寫入能力")
+	if p.Caps().Has(provider.CapPlaylistCreate) {
+		t.Error("P5 T1 沒有 CreatePlaylist,不宣告")
 	}
 }
 
