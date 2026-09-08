@@ -121,3 +121,7 @@ capy completion fish | source
 1. 一次性:repo Settings → Secrets and variables → Actions 設 `GOOGLE_CLIENT_ID` 與 `GOOGLE_CLIENT_SECRET`(專案自己的 Google Desktop client;它們只存在 GitHub secrets 與發出去的 binary 裡,不進 repo)。
 2. `git tag v1.2.3 && git push origin v1.2.3`:`.github/workflows/release.yml` 用 GoReleaser 建四個平台的檔、`checksums.txt` 與 GitHub Release;secret 沒設會在建置前就失敗。tag 帶 `-rc1` 之類會標成 pre-release,`capy update` 不會抓到它。
 3. 每個 PR 的 CI 都會用假值跑一次 `goreleaser release --snapshot`、執行建出來的 binary 確認注入到位,所以推 tag 前 release 設定已經被驗過。
+
+## 授權
+
+MIT,見 [LICENSE](LICENSE)。Releases 的壓縮檔裡也附一份。
