@@ -145,6 +145,16 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
+			link := pl.Links[prov]
+			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單只跳過——不算 refused;明說要推這個平台才算錯(同下面寫入端的規矩)
+				if strict && only == prov {
+					return nil, nil, nil, nil, fmt.Errorf("%s 的 %s:%s 屬於裝置 %s,不是這台的本機清單(要在這台接手:capy pl link %s %s:<檔名>)", pl.Name, prov, link, deviceName(s, link), pl.Name, prov)
+				}
+				if strict { // 單獨 push 沒人說過;sync 的 pull 半邊已經說過一次,不重印
+					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s 屬於裝置 %s(要在這台接手:capy pl link %s %s:<檔名>)\n", pl.Name, prov, link, deviceName(s, link), pl.Name, prov)
+				}
+				continue
+			}
 			w, err := asPlaylistWriter(p)
 			if err != nil {
 				if strict && only == prov { // 明說要推這個平台才算錯;--all / 沒指定時只跳過(Apple 在 T6 前寫不了)
@@ -157,7 +167,6 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
-			link := pl.Links[prov]
 			refuse := func(msg string) {
 				if strict {
 					refused = append(refused, msg)

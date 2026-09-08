@@ -58,6 +58,18 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 
 需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app);搜尋與播放清單在 macOS / Windows 皆可用。
 
+## 本機曲庫(local,選用):M3U 清單 + library.json
+
+```bash
+capy config set local_root ~/Music/capy      # 裡面放 *.m3u8(或 .m3u)清單與 library.json
+capy pl list --provider local
+capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶這台裝置的 id
+```
+
+`library.json` 由你自己維護(capy 不讀音訊 tag):`{"schema_version": 1, "tracks": {"相對路徑": {"title", "artists": [], "album", "duration_ms", "isrc"}}}`;清單裡每一行是相對於清單檔的路徑,`#EXTINF` 只在曲庫沒有那首時當備援標題。有 `isrc` 的曲目才會跟 Spotify / Apple 自動對上,沒有的靠 `capy resolve` 的模糊比對(local 這邊的搜尋是曲庫內比對,不用網路)。
+
+**本機曲庫綁裝置**:連結記的是「這台裝置的這個檔」,別台裝置的 `pl pull / push / sync` 會跳過它(stderr 會說是哪台的),不會把連結刪掉;一個清單同時只能連一台裝置的 M3U——想換一台主導(或重灌之後)就在那台重跑 `capy pl link`,它會接管並說明原本是哪台。目前只讀(pull),寫回 M3U 在下一版。
+
 ## Google Drive 同步(選用):登入 Google
 
 `capy auth login google` 之後,播放清單會同步到你 Google Drive 的應用程式資料夾(其他 app 與你自己都看不到內容,只佔你的 Drive 空間)。只索取三個權限:`openid`、`userinfo.email`、`drive.appdata`。

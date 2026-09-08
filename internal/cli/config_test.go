@@ -72,8 +72,8 @@ func TestConfigGetAndListPlainText(t *testing.T) {
 		t.Fatalf("get 非 TTY 應印裸值,得到 %q", out)
 	}
 	_ = config.Save(&config.Config{DefaultProvider: "apple", SpotifyClientID: "cid", AppleStorefront: "tw"})
-	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nspotify_client_id\tcid\napple_storefront\ttw\n" {
-		t.Fatalf("list 非 TTY 應列出三個非機密欄位 key\\tvalue,得到 %q", out)
+	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\n" {
+		t.Fatalf("list 非 TTY 應列出四個非機密欄位 key\\tvalue,得到 %q", out)
 	}
 	if out, _ := runCLI(t, "config", "get", "spotify_client_id"); out != "cid\n" {
 		t.Fatalf("get 應支援三個欄位,得到 %q", out)

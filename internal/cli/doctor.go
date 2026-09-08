@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -204,6 +205,40 @@ func spotifyChecks() []check {
 	}
 }
 
+// localChecks(P6):沒有憑證、沒有網路——只看 local_root 與 library.json(計畫 §2 A8)。
+func localChecks() []check {
+	return []check{
+		{"local_root 設定", func(context.Context) (string, error) {
+			cfg, err := config.Load()
+			if err != nil {
+				return "", err
+			}
+			if cfg.LocalRoot == "" {
+				return "", errors.New("未設定 — capy config set local_root <目錄>")
+			}
+			return cfg.LocalRoot, nil
+		}},
+		{"目錄與 library.json", func(ctx context.Context) (string, error) {
+			p, err := newLocalProvider()
+			if err != nil {
+				return "", err
+			}
+			if err := p.Health(ctx); err != nil {
+				return "", err
+			}
+			r, err := asPlaylistReader(p) // doctor 是救命用的,不用會 panic 的型別斷言
+			if err != nil {
+				return "", err
+			}
+			refs, err := r.ListPlaylists(ctx)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%d 個清單檔", len(refs)), nil
+		}},
+	}
+}
+
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "doctor", Short: "診斷設定與連線(BYO 問題一站排除)", Args: cobra.NoArgs,
@@ -215,8 +250,10 @@ func newDoctorCmd() *cobra.Command {
 				checks = spotifyChecks()
 			case "apple":
 				checks = appleChecks()
+			case "local":
+				checks = localChecks()
 			default:
-				return fmt.Errorf("未知的 provider %q(可用:spotify、apple)", provider)
+				return fmt.Errorf("未知的 provider %q(可用:%s)", provider, strings.Join(providerIDs, "、"))
 			}
 			if failed := runChecks(cmd.Context(), cmd.OutOrStdout(), checks); failed > 0 {
 				return fmt.Errorf("%d 項檢查未通過", failed)

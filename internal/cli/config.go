@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,7 +17,9 @@ const keyDefaultProvider = "default_provider"
 
 // configKeys:config.json 的非機密欄位(機密只在 keychain)。只有 default_provider 可用 config set 改:
 // spotify_client_id 換了 token 也要重換(走 auth login spotify),apple_storefront 由 auth login apple 從帳號取得。
-var configKeys = []string{keyDefaultProvider, "spotify_client_id", "apple_storefront"}
+const keyLocalRoot = "local_root" // P6:本機曲庫目錄;可用 config set 改
+
+var configKeys = []string{keyDefaultProvider, keyLocalRoot, "spotify_client_id", "apple_storefront"}
 
 func configGet(c *config.Config, key string) (string, error) {
 	switch key {
@@ -25,6 +29,8 @@ func configGet(c *config.Config, key string) (string, error) {
 		return c.SpotifyClientID, nil
 	case "apple_storefront":
 		return c.AppleStorefront, nil
+	case keyLocalRoot:
+		return c.LocalRoot, nil
 	}
 	return "", fmt.Errorf("未知的設定 %q(可用:%s)", key, strings.Join(configKeys, "、"))
 }
@@ -41,8 +47,18 @@ func configSet(c *config.Config, key, val string) error {
 		return errors.New("spotify_client_id 請用 capy auth login spotify 重設(client ID 換了,token 也要重新授權)")
 	case "apple_storefront":
 		return errors.New("apple_storefront 由 capy auth login apple 從你的帳號取得,不手動設")
+	case keyLocalRoot: // 存絕對路徑;要是存在的目錄(手打錯路徑時當場知道,不是等到 pl list 才錯)
+		abs, err := filepath.Abs(val)
+		if err != nil {
+			return err
+		}
+		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+			return fmt.Errorf("%s 不是存在的目錄:%s", key, abs)
+		}
+		c.LocalRoot = abs
+		return nil
 	}
-	return fmt.Errorf("未知的設定 %q(可設定:%s)", key, keyDefaultProvider)
+	return fmt.Errorf("未知的設定 %q(可設定:%s、%s)", key, keyDefaultProvider, keyLocalRoot)
 }
 
 func newConfigCmd() *cobra.Command {
@@ -64,7 +80,7 @@ func newConfigCmd() *cobra.Command {
 			},
 		},
 		&cobra.Command{
-			Use: "set <key> <value>", Short: "寫入設定值(目前可設:default_provider)", Args: cobra.ExactArgs(2),
+			Use: "set <key> <value>", Short: "寫入設定值(可設:default_provider、local_root)", Args: cobra.ExactArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				c, err := config.Load()
 				if err != nil {

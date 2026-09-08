@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
+	"github.com/Tai-ch0802/capy-music/internal/provider/local"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -25,7 +27,7 @@ const flagProvider = "provider"
 
 // providerIDs:合法 provider 的唯一清單(flag 說明、newProvider 的錯誤、config set 的驗證、default_provider
 // 的讀取都用它;加第三個 provider 只改這裡)。
-var providerIDs = []string{"spotify", "apple"}
+var providerIDs = []string{"spotify", "apple", "local"}
 
 func isProviderID(id string) bool { return slices.Contains(providerIDs, id) }
 
@@ -37,6 +39,8 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 		return newSpotifyProvider(ctx)
 	case "apple":
 		return newAppleProvider(ctx)
+	case "local":
+		return newLocalProvider()
 	default:
 		return nil, fmt.Errorf("未知的 provider %q(可用:%s)", id, strings.Join(providerIDs, "、"))
 	}
@@ -113,6 +117,28 @@ func asPlaylistWriter(p provider.Provider) (provider.PlaylistWriter, error) {
 	return w, nil
 }
 
+// newLocalProvider(P6 決策 35):沒有憑證,只要 local_root;device_id 是 id 的前綴(決策 33),沒登入 Google 就沒有 device_id,
+// 那就只能讀不能 link(link / pull 本來就要 Google)。
+func newLocalProvider() (provider.Provider, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.LocalRoot == "" {
+		return nil, errors.New("尚未設定本機曲庫目錄 — 先執行 capy config set local_root <目錄>(裡面放 *.m3u8 清單與 library.json)")
+	}
+	if cfg.DeviceID == "" { // 本機清單的 id 帶裝置 id,它在 auth login google 時才產生;空的話 id 會變成 /通勤.m3u8、Foreign 全判本機
+		return nil, errors.New("本機清單的 id 帶裝置 id,而裝置 id 在 capy auth login google 時產生 — 先登入 Google")
+	}
+	return local.New(cfg.LocalRoot, cfg.DeviceID), nil
+}
+
+// foreignLink:綁裝置的 provider(決策 33)說這個 id 是別台裝置的——pull / push / sync 一律跳過,不算 gone、不 refused、不動 base。
+func foreignLink(p provider.Provider, id string) bool {
+	ds, ok := p.(provider.DeviceScoped)
+	return ok && p.Caps().Has(provider.CapDeviceBound) && ds.Foreign(id)
+}
+
 // friendlyErr 把語意化錯誤轉成可行動訊息(spec R-5),指向對應 provider 的下一步。
 func friendlyErr(providerID string, err error) error {
 	switch {
@@ -124,6 +150,8 @@ func friendlyErr(providerID string, err error) error {
 		return fmt.Errorf("沒有作用中的播放裝置 — 開一個播放器,或用 capy devices --provider %s 查看後以 --device 指定", providerID)
 	case errors.Is(err, provider.ErrNotFound):
 		return err // 訊息已可行動(如「清單為空或不存在」),不需再包一層
+	case errors.Is(err, fs.ErrPermission): // local:沒有 auth / rate limit / restricted 這三族(計畫 §2 A2),只有檔案系統的錯
+		return fmt.Errorf("沒有讀取權限(%v)— 檢查 local_root 目錄與檔案的權限", err)
 	default:
 		return err
 	}
