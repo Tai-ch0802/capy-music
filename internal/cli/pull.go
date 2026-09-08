@@ -733,6 +733,14 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			if removalBlocked(removes, res.VisibleCount) {
 				blocked = append(blocked, fmt.Sprintf("%s 在 %s 要移除 %d 首(可見 %d 首),超過閾值", pl.Name, prov, removes, res.VisibleCount))
 			}
+			if slices.ContainsFunc(res.Changes, func(ch canon.Change) bool { return ch.Action == "rename" }) {
+				// 改名落地的這一輪說一次:push 不會把 rename 排給不支援改名的平台(規則 4、P6 §2 A13),之後也不再提(每輪都印太吵——PR #38 review)
+				for _, other := range slices.Sorted(maps.Keys(pl.Links)) {
+					if op, err := pf.provider(other); other != prov && err == nil && !op.Caps().Has(provider.CapPlaylistRename) {
+						fmt.Fprintf(stderr, "提示:%s 改名為 %s,但 %s 不支援改名,它那邊仍叫 %s(要一致請自己在那邊改名再重新 capy pl link)\n", pl.Name, res.Playlist.Name, other, pl.Name)
+					}
+				}
+			}
 			if res.Gone {
 				fmt.Fprintf(stderr, "警告:%s 端找不到清單 %s,%s 將取消連結(Q6);canonical 內容不動\n", prov, link, pl.Name)
 				delete(pl.Links, prov)

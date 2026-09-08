@@ -222,7 +222,11 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				m := s.tracks.Tracks[cid].Mappings[prov]
 				return m.ID, m.ID != "" && w.Pushable(m.ID)
 			}
-			ops, skipped := canon.PushPlan(items, pl.Items, live.Name, pl.Name, mappingID)
+			wantName := pl.Name
+			if !p.Caps().Has(provider.CapPlaylistRename) { // 規則 4:rename 只在 provider 支援時排;不然 base 會記成新名字而平台還是舊的,下一輪規則 7 把 C 改回去(計畫 §2 A13)
+				wantName = ""
+			}
+			ops, skipped := canon.PushPlan(items, pl.Items, live.Name, wantName, mappingID)
 			plan := &pushPlan{pl: pl, prov: prov, link: link, reader: r, writer: w, liveName: live.Name, base: b.Snapshot, current: snap.Items, ops: ops}
 			itemsChange := false
 			for _, op := range ops {
@@ -291,7 +295,7 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		t := s.tracks.Tracks[sk.CID]
 		reason, id := sk.Reason, ""
 		if m := t.Mappings[plan.prov]; m.ID != "" { // 有 mapping 但推不出去:resolve 修不了,提示也不會算它
-			reason, id = "有 mapping 但推不出去(local file / library-only),只能在平台手動加", m.ID
+			reason, id = "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加", m.ID // ponytail: Pushable 只回 bool,理由三選一由使用者看平台判斷;第三個平台時讓 Pushable 回原因(P6 §2 A10)
 		}
 		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
 	}
@@ -325,6 +329,9 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 		werr = friendlyErr(p.prov, werr)
 	}
 	for _, op := range skipped { // ponytail: 平台不支援的 op 先印 stderr;Apple append-only(T6)時再決定 manual 列怎麼進表
+		if op.Kind == provider.OpRename { // 平台沒改名就不能把 base 記成新名字(A13 的第二道防線:planPush 已不排 rename 給不支援的平台)
+			renamed = false
+		}
 		fmt.Fprintf(stderr, "手動:%s 的 %s 不支援 %s(位置 %d),請在平台上自己做\n", p.pl.Name, p.prov, op.Kind, op.Pos)
 	}
 	// 規則 7:成功或失敗都重讀 L′、base := L′。重讀也失敗時 base 記成「我們相信平台現在的樣子」(want 的前 written 首):
