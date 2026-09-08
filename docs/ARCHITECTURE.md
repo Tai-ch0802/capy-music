@@ -876,12 +876,12 @@ capy import <file.json>                                   # 延後;P3 的反向�
 capy drive init --from-local [--dry-run] [--yes]          # P3(已實作):Drive 空 / 部分遺失時唯一允許寫入的命令;只建缺的檔、不覆寫、不動本機;exit 0 完成或沒缺、2 待套用
 capy device list | capy device forget <device_id>         # 延後;P3 只在 manifest 註冊 device_id;forget 是唯一移除裝置檔的路徑(§6.3),尚未排程
 capy db rebuild                                           # 延後;P3 的重建 = 刪 state.db 後由 hydrate 從 Drive 重建(§7,有測試)
-capy config get|set|list       # 目前只有 default_provider
+capy config get|set|list       # default_provider;P6 加 local_root
+capy config set local_root <目錄>   # P6(決策 35):本機曲庫;之後 capy pl link 通勤 local:<M3U 檔名>(只能連本機的,決策 33)
 capy history clear             # 清空本機快取(state.db)的最近搜尋
 capy update                    # P3(T10 已實作):GitHub Releases 最新正式版 → 下載本平台檔 + checksums.txt SHA-256 校驗 + 新 binary --version 自檢,才覆蓋自己;沒有簽章,校驗只保證下載完整
 capy update --dev              # 從 main 最新節點 go install 重建並覆蓋自己(需 Go toolchain;沒有內建 Google client)
 capy completion <shell>        # cobra 內建;候選只讀本機快取
-capy config set local_root <目錄>   # P6(決策 35):本機曲庫;之後 capy pl link 通勤 local:<M3U 檔名>(只能連本機的,決策 33)
 capy doctor
 ```
 
