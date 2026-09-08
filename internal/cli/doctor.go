@@ -14,7 +14,6 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
-	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -227,7 +226,11 @@ func localChecks() []check {
 			if err := p.Health(ctx); err != nil {
 				return "", err
 			}
-			refs, err := p.(provider.PlaylistReader).ListPlaylists(ctx)
+			r, err := asPlaylistReader(p) // doctor 是救命用的,不用會 panic 的型別斷言
+			if err != nil {
+				return "", err
+			}
+			refs, err := r.ListPlaylists(ctx)
 			if err != nil {
 				return "", err
 			}

@@ -80,9 +80,9 @@ func TestPlLocalLinkPullAndRebuild(t *testing.T) {
 	if strings.Count(out, "add\t") != 3 {
 		t.Fatalf("pull 三首:%s", out)
 	}
-	want := []string{"i:TW000000000A", "i:TW000000000B", "p:local:" + devA + "/with space.mp3"}
+	want := []string{"i:TW000000000A", "i:TW000000000B", "p:local:with space.mp3"}
 	if got := cidsOf(drivePlaylist(t, dc)); !slices.Equal(got, want) {
-		t.Fatalf("cid:有 ISRC 用 i:、沒有用 p:local:<device>/<路徑>:%v", got)
+		t.Fatalf("cid:有 ISRC 用 i:、沒有用 p:local:<路徑>(不帶 device:接管後不分裂):%v", got)
 	}
 	before, dump := driveFiles(t, dc), dumpBytes(t)
 	deleteDB(t)
@@ -126,8 +126,9 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "不支援寫入") {
 		t.Fatalf("T1 的 local 沒有寫入端,明說 --provider local 是 exit 1:%v", err)
 	}
-	setDevice(t, devB) // 裝置 B:同一份 Drive,自己的 local_root 也有一份 通勤.m3u8(同名不同機器)
-	writeFile(t, root, "通勤.m3u8", "#EXTM3U\na.mp3\n")
+	cidsA := cidsOf(drivePlaylist(t, dc))
+	setDevice(t, devB) // 裝置 B:同一份 Drive,自己的 local_root 也有一份 通勤.m3u8(同名不同機器;沒 ISRC 的 with space 也在——接管後它的 cid 必須跟 A 的同一個)
+	writeFile(t, root, "通勤.m3u8", "#EXTM3U\na.mp3\nwith space.mp3\n")
 	before := driveFiles(t, dc)
 	out, errs := mustPull(t, "pl", "sync", "--all", "--yes")
 	if !strings.Contains(errs, "跳過 通勤 的 local:"+devA+"/通勤.m3u8 屬於裝置") || !strings.Contains(errs, "capy pl link 通勤 local:<檔名>") || strings.Contains(errs, "取消連結") {
@@ -154,8 +155,11 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 			}
 		}
 	}
-	if _, errs, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); err != nil || !strings.Contains(errs, "屬於裝置") {
-		t.Fatalf("B 上單獨 push 別台的 local:跳過並說明、exit 0(不是 refused):%v %s", err, errs)
+	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "屬於裝置") || !strings.Contains(err.Error(), "capy pl link 通勤 local:<檔名>") {
+		t.Fatalf("B 上明說 --provider local 推別台的:exit 1 並指路(不是靜靜的無變更):%v", err)
+	}
+	if _, errs, err := runPull(t, "pl", "push", "通勤", "--yes"); err != nil || !strings.Contains(errs, "屬於裝置") {
+		t.Fatalf("沒指定平台的單獨 push:跳過並說明、exit 0(不是 refused):%v %s", err, errs)
 	}
 	// B 接管
 	out, _ = mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
@@ -166,8 +170,11 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 		t.Fatalf("接管後連到 B:%v", pl.Links)
 	}
 	out, _ = mustPull(t, "pl", "pull", "通勤", "--yes")
-	if strings.Contains(out, "remove\t") { // B 的檔只有 a:沒有 base(A 的不算數)→ 首次 pull 永不移除
+	if strings.Contains(out, "remove\t") { // B 的檔沒有 b:沒有 base(A 的不算數)→ 首次 pull 永不移除
 		t.Fatalf("接管後第一次 pull 是首次 pull、不移除:%s", out)
+	}
+	if got := cidsOf(drivePlaylist(t, dc)); !slices.Equal(got, cidsA) { // 回歸(PR #37 review):cid 不帶 device,接管後沒 ISRC 的 with space 不會變成兩首
+		t.Fatalf("接管後沒 ISRC 的本機曲目不能分裂成兩個 cid:%v(之前 %v)", got, cidsA)
 	}
 	setDevice(t, devA)
 	if _, errs := mustPull(t, "pl", "sync", "--all", "--yes"); !strings.Contains(errs, "跳過 通勤 的 local:"+devB+"/通勤.m3u8 屬於裝置") {
@@ -194,6 +201,11 @@ func TestLocalConfigDoctorAndAuth(t *testing.T) {
 	if _, _, err := runPull(t, "play", "--provider", "local", "x"); err == nil || !strings.Contains(err.Error(), "不支援") {
 		t.Fatalf("play 對 local 是 ErrNotSupported(Q28):%v", err)
 	}
+	setDevice(t, "") // 還沒登入 Google 就沒有裝置 id:指路,不產生 /通勤.m3u8 這種 id
+	if _, _, err := runPull(t, "pl", "list", "--provider", "local"); err == nil || !strings.Contains(err.Error(), "capy auth login google") {
+		t.Fatalf("沒有裝置 id 要指路:%v", err)
+	}
+	setDevice(t, devA)
 	cfg, _ := config.Load()
 	cfg.LocalRoot = ""
 	if err := config.Save(cfg); err != nil {
@@ -216,7 +228,7 @@ func TestPlLocalSyncWithSpotifyReadOnlyHalf(t *testing.T) {
 	if !strings.Contains(errs, "跳過 通勤 的 local:") || !strings.Contains(errs, "不支援寫入") || strings.Contains(out, "push\tremove\tlocal") {
 		t.Fatalf("local 沒有寫入端就只跳過 push 半邊:%s%s", out, errs)
 	}
-	if got := cidsOf(drivePlaylist(t, dc)); !slices.Equal(got, []string{"i:TW000000000A", "p:local:" + devA + "/with space.mp3"}) { // b 靠 ISRC 是同一首,兩邊都算掉
+	if got := cidsOf(drivePlaylist(t, dc)); !slices.Equal(got, []string{"i:TW000000000A", "p:local:with space.mp3"}) { // b 靠 ISRC 是同一首,兩邊都算掉
 		t.Fatalf("Spotify 的刪除進 C:%v", got)
 	}
 }

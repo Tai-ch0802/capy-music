@@ -127,6 +127,9 @@ func newLocalProvider() (provider.Provider, error) {
 	if cfg.LocalRoot == "" {
 		return nil, errors.New("尚未設定本機曲庫目錄 — 先執行 capy config set local_root <目錄>(裡面放 *.m3u8 清單與 library.json)")
 	}
+	if cfg.DeviceID == "" { // 本機清單的 id 帶裝置 id,它在 auth login google 時才產生;空的話 id 會變成 /通勤.m3u8、Foreign 全判本機
+		return nil, errors.New("本機清單的 id 帶裝置 id,而裝置 id 在 capy auth login google 時產生 — 先登入 Google")
+	}
 	return local.New(cfg.LocalRoot, cfg.DeviceID), nil
 }
 
