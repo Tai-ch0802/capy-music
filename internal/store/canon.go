@@ -82,8 +82,8 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 		}
 		for pid, byProv := range d.Base {
 			for prov, b := range byProv {
-				if _, err = tx.Exec("INSERT INTO device_base (device_id, pid, provider, name, items, cids, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-					d.DeviceID, pid, prov, b.Snapshot.Name, mustJSON(nonNil(b.Snapshot.Items)), mustJSON(nonNil(b.Snapshot.CIDs)), b.ObservedAt); err != nil {
+				if _, err = tx.Exec("INSERT INTO device_base (device_id, pid, provider, playlist_id, name, items, cids, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+					d.DeviceID, pid, prov, b.Snapshot.ID, b.Snapshot.Name, mustJSON(nonNil(b.Snapshot.Items)), mustJSON(nonNil(b.Snapshot.CIDs)), b.ObservedAt); err != nil {
 					return err
 				}
 			}
@@ -206,10 +206,10 @@ func (s *Store) Dump() (Canonical, error) {
 	for i := range c.Devices {
 		byDev[c.Devices[i].DeviceID] = &c.Devices[i]
 	}
-	if err := s.query("SELECT device_id, pid, provider, name, items, cids, observed_at FROM device_base", func(r *sql.Rows) error {
+	if err := s.query("SELECT device_id, pid, provider, playlist_id, name, items, cids, observed_at FROM device_base", func(r *sql.Rows) error {
 		var dev, pid, prov, items, cids string
 		var b canon.Base
-		if err := r.Scan(&dev, &pid, &prov, &b.Snapshot.Name, &items, &cids, &b.ObservedAt); err != nil {
+		if err := r.Scan(&dev, &pid, &prov, &b.Snapshot.ID, &b.Snapshot.Name, &items, &cids, &b.ObservedAt); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(items), &b.Snapshot.Items); err != nil {
@@ -232,6 +232,11 @@ func (s *Store) Dump() (Canonical, error) {
 		return c, err
 	}
 	sort.Slice(c.Manifest.Devices, func(i, j int) bool { return c.Manifest.Devices[i].ID < c.Manifest.Devices[j].ID })
+	// manifest.playlists 不另存:它宣告的就是 Drive 上有的 pl__*.json,而 db 裡的 playlists 表正是那組檔——pull 的閘保證
+	// 「manifest 宣告但取不到」的狀態永遠不會被 Hydrate 進來,所以兩者在這裡恆等,由表推回即可。
+	for _, p := range c.Playlists {
+		c.Manifest.AddPlaylist(p.PID)
+	}
 	return c, nil
 }
 

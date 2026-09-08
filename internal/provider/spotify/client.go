@@ -421,6 +421,9 @@ func (c *Client) PlaylistItems(ctx context.Context, id string) ([]provider.Track
 			if errors.As(err, &ae) && ae.Status == http.StatusForbidden {
 				return nil, provider.ErrRestricted
 			}
+			if errors.As(err, &ae) && ae.Status == http.StatusNotFound { // 清單已刪:T8 用「不在清單列表」當 gone,這裡只是讓錯誤可辨認
+				return nil, fmt.Errorf("%w:清單 %s", provider.ErrNotFound, id)
+			}
 			return nil, err
 		}
 		for i := range resp.Items {

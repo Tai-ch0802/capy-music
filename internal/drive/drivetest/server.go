@@ -45,6 +45,16 @@ type Server struct {
 	fails     []failure
 	PageSize  int
 	ListCalls int
+	failOn    func(*http.Request) bool // FailOn 的條件;命中就回 failOnStatus(不進 fails 佇列)
+	failOnSt  int
+	failOnRsn string
+}
+
+// FailOn 讓符合 pred 的請求一律失敗(例:只讓 PATCH 上傳失敗,list / download 照常),pred 為 nil 取消。
+func (s *Server) FailOn(pred func(*http.Request) bool, status int, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failOn, s.failOnSt, s.failOnRsn = pred, status, reason
 }
 
 func New(t testing.TB) *Server {
@@ -86,6 +96,10 @@ var messages = map[string]string{
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failOn != nil && s.failOn(r) {
+		writeErr(w, s.failOnSt, s.failOnRsn, messages[s.failOnRsn])
+		return
+	}
 	if len(s.fails) > 0 {
 		f := s.fails[0]
 		s.fails = s.fails[1:]

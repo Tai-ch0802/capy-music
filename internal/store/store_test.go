@@ -49,8 +49,10 @@ func fixture(t *testing.T) Canonical {
 	}
 	pl.Items = append(pl.Items, canon.Item{IID: canon.NewULID(), CID: up.CID, Rank: front, AddedAt: canon.Now().Unix()})
 	empty := canon.NewPlaylist("空的")
+	m.AddPlaylist(empty.PID) // manifest 宣告的清單 = fixture 的清單(Dump 由 playlists 表推回,兩者必須恆等)
+	m.AddPlaylist(pl.PID)
 	devA := canon.NewDeviceState("devA")
-	devA.SetBase(pl.PID, "spotify", canon.Snapshot{Name: "通勤", Items: []string{"6rq", "x", "6rq"}, CIDs: []string{x.CID, "p:spotify:x", x.CID}})
+	devA.SetBase(pl.PID, "spotify", canon.Snapshot{ID: "37i9", Name: "通勤", Items: []string{"6rq", "x", "6rq"}, CIDs: []string{x.CID, "p:spotify:x", x.CID}})
 	devA.SetBase(pl.PID, "apple", canon.Snapshot{Name: "通勤"})
 	devB := canon.NewDeviceState("devB") // base 全空,但檔案存在
 	devC := canon.NewDeviceState("devC") // 有 dev 檔、manifest 沒登記(登記寫入失敗過)也不能消失
@@ -222,7 +224,7 @@ func TestDumpRejectsOrphanRows(t *testing.T) {
 		{"mappings", "INSERT INTO mappings (cid, provider, provider_id) VALUES ('ghost', 'spotify', 'x')"},
 		{"playlist_items", "INSERT INTO playlist_items (pid, iid, cid, rank, added_at) VALUES ('ghost', 'i', 'c', 'V', 0)"},
 		{"playlist_links", "INSERT INTO playlist_links (pid, provider, provider_id) VALUES ('ghost', 'spotify', 'x')"},
-		{"device_base", "INSERT INTO device_base (device_id, pid, provider, name, items, cids, observed_at) VALUES ('ghost', 'p', 'spotify', '', '[]', '[]', 0)"},
+		{"device_base", "INSERT INTO device_base (device_id, pid, provider, playlist_id, name, items, cids, observed_at) VALUES ('ghost', 'p', 'spotify', '', '', '[]', '[]', 0)"},
 	} {
 		s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
 		if err != nil {

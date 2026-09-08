@@ -11,8 +11,9 @@ import (
 
 // DERIVE(spec §6.5.1):純函式,不碰 IO,不改動傳入的 Playlist / Tracks。
 
-// Observed 是平台清單的現況:名稱與依平台順序的曲目(含 ISRC)。
+// Observed 是平台清單的現況:平台清單 id、名稱與依平台順序的曲目(含 ISRC)。
 type Observed struct {
+	ID     string
 	Name   string
 	Tracks []provider.Track
 }
@@ -241,7 +242,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	for i, t := range L {
 		ids[i] = t.ProviderID
 	}
-	res.Snapshot = Snapshot{Name: in.Live.Name, Items: ids, CIDs: lcid}
+	res.Snapshot = Snapshot{ID: in.Live.ID, Name: in.Live.Name, Items: ids, CIDs: lcid}
 	return res, nil
 }
 
