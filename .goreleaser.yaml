@@ -1,0 +1,38 @@
+# GoReleaser(決策 9):tag v* 推上去,.github/workflows/release.yml 用它建 macOS / Windows 的 binary、
+# 壓縮檔與 checksums.txt,並把專案自己的 Google client 用 -ldflags -X 注入 binary
+# (值來自 repo secrets GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET;repo 裡沒有、也不准有)。
+# 檔名是 internal/cli/update.go 的契約(capy update 靠它找檔;有測試對照這裡的原文)。
+# 本機驗證:CI 的 release-dry-run job 會在每個 PR 跑 `goreleaser release --snapshot`;不必本機裝 goreleaser。
+version: 2
+project_name: capy
+builds:
+  - id: capy
+    main: ./cmd/capy
+    binary: capy
+    env:
+      - CGO_ENABLED=0 # modernc.org/sqlite 是純 Go,關掉 CGO 才能在一台機器交叉編譯四個目標
+    goos: [darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/Tai-ch0802/capy-music/internal/cli.version={{ .Version }}
+      - -X github.com/Tai-ch0802/capy-music/internal/auth.BuiltinGoogleClientID={{ .Env.GOOGLE_CLIENT_ID }}
+      - -X github.com/Tai-ch0802/capy-music/internal/auth.BuiltinGoogleClientSecret={{ .Env.GOOGLE_CLIENT_SECRET }}
+archives:
+  - id: capy
+    ids: [capy]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "capy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+changelog:
+  filters:
+    exclude:
+      - "^Merge pull request"
+release:
+  prerelease: auto # tag 帶 -rc1 之類就標 pre-release;capy update 只跟 releases/latest,不會抓到 pre-release

@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
@@ -19,7 +20,25 @@ func newDebugCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newDebugAppleTokenCmd())
 	cmd.AddCommand(newDebugDriveLsCmd())
+	cmd.AddCommand(newDebugGoogleClientCmd())
 	return cmd
+}
+
+// newDebugGoogleClientCmd:印出這顆 binary 內建的 Google client ID——CI 用它斷言 release 的 -ldflags 注入
+// 真的到得了程式(決策 9)。只印 ID、永遠不印 secret:ID 本來就會出現在授權網址裡,secret 不會。
+func newDebugGoogleClientCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "google-client",
+		Short: "印出內建的 Google client ID(release 注入檢查用;不印 secret)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if auth.BuiltinGoogleClientID == "" {
+				return errors.New("這顆 binary 沒有內建 Google client(go install / 自己 build 的都沒有):auth login google 會走 BYO 精靈")
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), auth.BuiltinGoogleClientID)
+			return nil
+		},
+	}
 }
 
 // newDebugAppleTokenCmd:印出 keychain 裡已登入的 Apple token(dev 或 --user),

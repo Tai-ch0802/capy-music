@@ -1,0 +1,36 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write # 建 GitHub Release 與上傳檔案
+jobs:
+  goreleaser:
+    runs-on: macos-latest # 與 ci.yml 同平台;CGO 關閉,四個目標都在這台交叉編譯
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # changelog 要看得到上一個 tag
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: repo secrets 齊了才發(決策 9:內建 Google client 只從這裡進 binary)
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          for v in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET; do
+            if [ -z "${!v}" ]; then
+              echo "::error::repo secret $v 沒設:發出去的 binary 會沒有內建 Google client、使用者被迫走 BYO。到 Settings → Secrets and variables → Actions 設好,刪掉這個 tag 再重推。"
+              exit 1
+            fi
+          done
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}

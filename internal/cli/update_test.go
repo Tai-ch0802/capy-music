@@ -1,7 +1,14 @@
 package cli
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -67,13 +74,6 @@ func stubVersion(t *testing.T, v string) {
 	orig := version
 	version = v
 	t.Cleanup(func() { version = orig })
-}
-
-func TestUpdateWithoutDevExplains(t *testing.T) {
-	_, err := runCLI(t, "update")
-	if err == nil || !strings.Contains(err.Error(), "--dev") {
-		t.Fatalf("沒有正式版時應指向 --dev:%v", err)
-	}
 }
 
 func TestUpdateDevReplacesExecutable(t *testing.T) {
@@ -150,5 +150,337 @@ func TestReplaceExecutableRollsBackWhenSourceMissing(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(dst); string(b) != "old" {
 		t.Fatalf("失敗時舊 binary 要放回原位:%q", b)
+	}
+}
+
+// ---- 正式版路徑(GitHub Releases) ----
+
+// fakeArchive 做一個 GoReleaser 形狀的壓縮檔:README.md + capy(或 capy.exe),內容 release:<ver>;
+// zipped 為 true 做 .zip、否則 .tar.gz(Windows 的 release 是 zip,其餘 tar.gz)。
+func fakeArchive(t *testing.T, ver, name string, zipped bool) []byte {
+	t.Helper()
+	entries := []struct {
+		n string
+		b []byte
+	}{{"README.md", []byte("readme")}, {name, []byte("release:" + ver)}}
+	var buf bytes.Buffer
+	if zipped {
+		zw := zip.NewWriter(&buf)
+		for _, e := range entries {
+			w, err := zw.Create(e.n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write(e.b)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, e := range entries {
+		if err := tw.WriteHeader(&tar.Header{Name: e.n, Mode: 0o755, Size: int64(len(e.b)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = tw.Write(e.b)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// stubRelease 假 GitHub:releases/latest 回 tag 與 assets(每個 asset 的下載網址指回這台假伺服器);
+// status 非 200 時只回狀態碼。回傳下載計數(assets 被抓幾次)。
+func stubRelease(t *testing.T, status int, tag string, assets map[string][]byte) *int {
+	t.Helper()
+	downloads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if name, ok := strings.CutPrefix(r.URL.Path, "/dl/"); ok {
+			b, ok := assets[name]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			downloads++
+			_, _ = w.Write(b)
+			return
+		}
+		if r.URL.Path != "/repos/Tai-ch0802/capy-music/releases/latest" {
+			t.Errorf("問錯端點:%s", r.URL.Path)
+		}
+		w.WriteHeader(status)
+		if status != http.StatusOK {
+			return
+		}
+		rel := ghRelease{Tag: tag}
+		for name := range assets {
+			rel.Assets = append(rel.Assets, struct {
+				Name string `json:"name"`
+				URL  string `json:"browser_download_url"`
+			}{name, "http://" + r.Host + "/dl/" + name})
+		}
+		_ = json.NewEncoder(w).Encode(rel)
+	}))
+	t.Cleanup(srv.Close)
+	orig := updateGitHubAPI
+	updateGitHubAPI = srv.URL
+	t.Cleanup(func() { updateGitHubAPI = orig })
+	return &downloads
+}
+
+// releaseAssets:本平台的壓縮檔 + 對得上的 checksums.txt(另附一個別平台的檔,證明會挑對)。
+func releaseAssets(t *testing.T, ver string) map[string][]byte {
+	t.Helper()
+	name := updateAssetName(ver)
+	archive := fakeArchive(t, ver, binaryName(), strings.HasSuffix(name, ".zip"))
+	other := "capy_" + ver + "_plan9_mips.tar.gz"
+	sums := sha256Hex(archive) + "  " + name + "\n" + sha256Hex([]byte("x")) + "  " + other + "\n"
+	return map[string][]byte{name: archive, other: []byte("x"), updateChecksums: []byte(sums)}
+}
+
+func stubVerify(t *testing.T, fail error) *[]string {
+	t.Helper()
+	var calls []string
+	orig := updateVerify
+	updateVerify = func(bin, want string) error {
+		b, _ := os.ReadFile(bin)
+		calls = append(calls, want+" "+string(b))
+		return fail
+	}
+	t.Cleanup(func() { updateVerify = orig })
+	return &calls
+}
+
+func TestUpdateReleaseReplacesExecutable(t *testing.T) {
+	downloads := stubRelease(t, http.StatusOK, "v1.2.3", releaseAssets(t, "1.2.3"))
+	exe := stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	verified := stubVerify(t, nil)
+	out, err := runCLI(t, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "release:1.2.3" {
+		t.Fatalf("binary 應被換成 release 裡的 capy:%q", b)
+	}
+	if *downloads != 2 {
+		t.Fatalf("只該下載 checksums.txt 與本平台那一個檔:%d", *downloads)
+	}
+	if len(*verified) != 1 || (*verified)[0] != "1.2.3 release:1.2.3" {
+		t.Fatalf("換掉之前要對解出來的 binary 跑自檢:%v", *verified)
+	}
+	if !strings.Contains(out, "已更新") || !strings.Contains(out, "v1.2.3") || strings.Contains(out, "dev 版") {
+		t.Fatalf("輸出:%s", out)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(exe), ".capy-update-*")); len(left) != 0 {
+		t.Fatalf("暫存目錄應清掉:%v", left)
+	}
+	if _, err := os.Stat(exe + ".old"); runtime.GOOS != "windows" && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(".old 應被刪掉")
+	}
+}
+
+func TestUpdateReleaseFromDevBuildSaysSo(t *testing.T) {
+	for _, v := range []string{"dev", "2026.09.08-9698382"} {
+		stubRelease(t, http.StatusOK, "v1.2.3", releaseAssets(t, "1.2.3"))
+		exe := stubExecutable(t)
+		stubVersion(t, v)
+		stubVerify(t, nil)
+		out, err := runCLI(t, "update")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "dev 版 "+v+",換到正式版") {
+			t.Fatalf("%s:要講明是從 dev 版換到正式版:%s", v, out)
+		}
+		if b, _ := os.ReadFile(exe); string(b) != "release:1.2.3" {
+			t.Fatalf("%s:binary 應被換掉:%q", v, b)
+		}
+	}
+}
+
+func TestUpdateReleaseAlreadyLatest(t *testing.T) {
+	downloads := stubRelease(t, http.StatusOK, "v1.2.3", releaseAssets(t, "1.2.3"))
+	exe := stubExecutable(t)
+	stubVersion(t, "1.2.3")
+	verified := stubVerify(t, nil)
+	out, err := runCLI(t, "update")
+	if err != nil || !strings.Contains(out, "已是最新:v1.2.3") {
+		t.Fatalf("版本與 tag(去掉 v)相同時不該動:%q %v", out, err)
+	}
+	if *downloads != 0 || len(*verified) != 0 {
+		t.Fatalf("已是最新不該下載或自檢:%d %v", *downloads, *verified)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatal("不該動到 binary")
+	}
+}
+
+func TestUpdateReleaseChecksumMismatchLeavesBinary(t *testing.T) {
+	assets := releaseAssets(t, "1.2.3")
+	name := updateAssetName("1.2.3")
+	assets[updateChecksums] = []byte(strings.Repeat("0", 64) + "  " + name + "\n")
+	stubRelease(t, http.StatusOK, "v1.2.3", assets)
+	exe := stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	verified := stubVerify(t, nil)
+	_, err := runCLI(t, "update")
+	if err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("校驗不符要明講:%v", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" || len(*verified) != 0 {
+		t.Fatalf("校驗失敗不能碰 binary、不該跑到自檢:%q %v", b, *verified)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(exe), ".capy-update-*")); len(left) != 0 {
+		t.Fatalf("失敗也要清暫存目錄:%v", left)
+	}
+}
+
+func TestUpdateReleaseMissingChecksumLine(t *testing.T) {
+	assets := releaseAssets(t, "1.2.3")
+	assets[updateChecksums] = []byte(sha256Hex([]byte("x")) + "  capy_1.2.3_plan9_mips.tar.gz\n")
+	downloads := stubRelease(t, http.StatusOK, "v1.2.3", assets)
+	exe := stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	stubVerify(t, nil)
+	if _, err := runCLI(t, "update"); err == nil || !strings.Contains(err.Error(), "沒有 "+updateAssetName("1.2.3")+" 這一行") {
+		t.Fatalf("checksums.txt 缺這個檔那行要拒絕:%v", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" || *downloads != 1 {
+		t.Fatalf("不該碰 binary、不該再下載壓縮檔:%q %d", b, *downloads)
+	}
+}
+
+func TestUpdateReleaseMissingPlatformAsset(t *testing.T) {
+	assets := releaseAssets(t, "1.2.3")
+	delete(assets, updateAssetName("1.2.3"))
+	downloads := stubRelease(t, http.StatusOK, "v1.2.3", assets)
+	exe := stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	_, err := runCLI(t, "update")
+	if err == nil || !strings.Contains(err.Error(), runtime.GOOS+"/"+runtime.GOARCH) || !strings.Contains(err.Error(), "releases") {
+		t.Fatalf("缺本平台的檔要點名平台並指向 releases 頁:%v", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" || *downloads != 0 {
+		t.Fatalf("不該下載也不該碰 binary:%q %d", b, *downloads)
+	}
+}
+
+func TestUpdateReleaseVerifyFailureKeepsOld(t *testing.T) {
+	stubRelease(t, http.StatusOK, "v1.2.3", releaseAssets(t, "1.2.3"))
+	exe := stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	stubVerify(t, errors.New("exec format error"))
+	_, err := runCLI(t, "update")
+	if err == nil || !strings.Contains(err.Error(), "自檢失敗") || !strings.Contains(err.Error(), "exec format error") {
+		t.Fatalf("自檢失敗要帶原因:%v", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatalf("自檢失敗不能換掉舊 binary:%q", b)
+	}
+}
+
+func TestUpdateReleaseNoneYetPointsToDev(t *testing.T) {
+	downloads := stubRelease(t, http.StatusNotFound, "", nil)
+	exe := stubExecutable(t)
+	stubVersion(t, "dev")
+	_, err := runCLI(t, "update")
+	if err == nil || !strings.Contains(err.Error(), "--dev") {
+		t.Fatalf("沒有 release 時應指向 --dev:%v", err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" || *downloads != 0 {
+		t.Fatal("不該動 binary")
+	}
+}
+
+func TestUpdateReleaseRateLimited(t *testing.T) {
+	stubRelease(t, http.StatusForbidden, "", nil)
+	stubExecutable(t)
+	stubVersion(t, "1.0.0")
+	if _, err := runCLI(t, "update"); err == nil || !strings.Contains(err.Error(), "額度") {
+		t.Fatalf("403 應說明額度:%v", err)
+	}
+}
+
+// TestExtractCapyBothFormats:tar.gz 與 zip 都只解出叫 name 的那個檔(README 不理),與平台無關。
+func TestExtractCapyBothFormats(t *testing.T) {
+	for _, tc := range []struct {
+		ext    string
+		zipped bool
+	}{{".tar.gz", false}, {".zip", true}} {
+		dir := t.TempDir()
+		archive := filepath.Join(dir, "capy_1.2.3_x_y"+tc.ext)
+		if err := os.WriteFile(archive, fakeArchive(t, "1.2.3", "capy.exe", tc.zipped), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := extractCapy(archive, dir, "capy.exe")
+		if err != nil {
+			t.Fatalf("%s:%v", tc.ext, err)
+		}
+		if b, _ := os.ReadFile(got); string(b) != "release:1.2.3" || filepath.Base(got) != "capy.exe" {
+			t.Fatalf("%s:解出 %s = %q", tc.ext, got, b)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "README.md")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s:不該解出 README", tc.ext)
+		}
+		if st, _ := os.Stat(got); runtime.GOOS != "windows" && st.Mode().Perm()&0o100 == 0 {
+			t.Fatalf("%s:解出來的 binary 要可執行:%v", tc.ext, st.Mode())
+		}
+		if _, err := extractCapy(archive, dir, "nope"); err == nil || !strings.Contains(err.Error(), "沒有 nope") {
+			t.Fatalf("%s:壓縮檔裡沒那個檔要回錯:%v", tc.ext, err)
+		}
+	}
+}
+
+// TestVerifyBinaryRunsVersion:真的執行 --version(用 shell script 假扮 binary;Windows 不跑 script)。
+func TestVerifyBinaryRunsVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script 在 Windows 不可執行")
+	}
+	bin := filepath.Join(t.TempDir(), "capy")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'capy version 1.2.3'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBinary(bin, "1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBinary(bin, "9.9.9"); err == nil || !strings.Contains(err.Error(), "1.2.3") {
+		t.Fatalf("版本不符要把實際輸出帶出來:%v", err)
+	}
+	if err := verifyBinary(filepath.Join(t.TempDir(), "missing"), "1.2.3"); err == nil {
+		t.Fatal("跑不起來要回錯")
+	}
+}
+
+// TestReleaseAssetNamesMatchGoreleaserConfig:update.go 的檔名契約要與 .goreleaser.yaml 原文一致——
+// 任一邊改了名,這裡先紅,不必等第一個真 release 才發現 capy update 抓不到檔。
+func TestReleaseAssetNamesMatchGoreleaserConfig(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	yaml := string(b)
+	for _, want := range []string{
+		`name_template: "capy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"`,
+		`name_template: ` + updateChecksums,
+		`binary: capy`,
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf(".goreleaser.yaml 找不到 %q(update.go 的檔名契約靠它)", want)
+		}
+	}
+	if got := updateAssetName("1.2.3"); !strings.HasPrefix(got, "capy_1.2.3_"+runtime.GOOS+"_"+runtime.GOARCH+".") {
+		t.Errorf("updateAssetName:%s", got)
 	}
 }

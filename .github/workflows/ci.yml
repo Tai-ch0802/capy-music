@@ -23,3 +23,33 @@ jobs:
       - run: go test -race ./...
       - run: bash -n scripts/p0/*.sh
         shell: bash
+      - name: 決策 9:-ldflags 注入的內建 Google client 要真的到得了程式(debug google-client 只印 ID)
+        run: test "$(go run -ldflags '-X github.com/Tai-ch0802/capy-music/internal/auth.BuiltinGoogleClientID=ci-test' ./cmd/capy debug google-client)" = ci-test
+        shell: bash
+  release-dry-run:
+    # 每個 PR 都把 .goreleaser.yaml 整套跑一遍(四個目標交叉編譯、壓縮檔命名、checksums、注入),
+    # 不必等到推 tag 才發現 release 壞掉;--snapshot 不建 Release、不上傳。
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+        env:
+          GOOGLE_CLIENT_ID: ci-test
+          GOOGLE_CLIENT_SECRET: ci-test
+      - name: 產物齊全、檔名照契約、注入到位
+        run: |
+          ls -l dist/
+          ls dist/capy_*_darwin_amd64.tar.gz dist/capy_*_darwin_arm64.tar.gz dist/capy_*_windows_amd64.zip dist/capy_*_windows_arm64.zip dist/checksums.txt
+          bin=$(find dist -type f -name capy -path '*darwin_arm64*')
+          test -n "$bin"
+          "$bin" --version
+          test "$("$bin" debug google-client)" = ci-test
