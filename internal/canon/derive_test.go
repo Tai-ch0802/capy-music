@@ -2,6 +2,10 @@ package canon_test
 
 import (
 	"bytes"
+	"fmt"
+	"math/rand/v2"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -159,6 +163,121 @@ func TestDeriveDuplicateRemovesLastOccurrence(t *testing.T) {
 }
 
 // C 有三份、base 只看過兩份(第三份是別的 provider 加的)、平台刪到剩一份 → 只移除 base 記的差額,且由後往前。
+// PR #19 review 的最小反例:C 有兩份 b、L 只有一份且換了序。盲配「第 n 次出現」會這輪搬這份、下輪搬那份,第二輪多一筆 move。
+func TestDeriveDuplicateReorderConverges(t *testing.T) {
+	pl, tracks := world(t, "b", "b", "c", "e")
+	in := canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("通勤", "b", "c", "e"), Live: live("通勤", "c", "e", "b")}
+	res := mustDerive(t, in)
+	if actions(res.Changes) != "move:"+cidOf("b") {
+		t.Fatalf("恰一個 move:%s", actions(res.Changes))
+	}
+	if got := cids(res.Playlist); strings.Join(got, " ") != strings.Join([]string{cidOf("b"), cidOf("c"), cidOf("e"), cidOf("b")}, " ") {
+		t.Fatalf("落單的那份留在原位、被配對的那份搬到最後:%v", got)
+	}
+	converges(t, in, res)
+}
+
+// 同一個 provider id 先後落到兩個 cid(先沒 ISRC → p:spotify:x,後來補上 → i:…):結果必須是輸入的函數。
+// base 快照記 cid 之後這裡沒有任何 map 反查,所以是決定性的一次性 remove + add,下一輪收斂。
+func TestDeriveProviderIDSharedByTwoCidsIsDeterministic(t *testing.T) {
+	pin(t)
+	bare := ptrack("x")
+	bare.ISRC = ""
+	first := mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: *canon.NewPlaylist("通勤"), Tracks: map[string]canon.Track{}, Live: &canon.Observed{Name: "通勤", Tracks: []provider.Track{bare}}})
+	if actions(first.Changes) != "add:p:spotify:x" {
+		t.Fatalf("沒 ISRC 先落到 provider 型 cid:%s", actions(first.Changes))
+	}
+	in := canon.DeriveInput{Provider: prov, Playlist: first.Playlist, Tracks: first.Tracks, Base: &first.Snapshot, Live: live("通勤", "x")}
+	want := "remove:p:spotify:x add:" + cidOf("x")
+	var res canon.DeriveResult
+	for i := 0; i < 200; i++ {
+		if res = mustDerive(t, in); actions(res.Changes) != want {
+			t.Fatalf("第 %d 次:%s(要 %s)", i, actions(res.Changes), want)
+		}
+	}
+	if first.Tracks["p:spotify:x"].Mappings[prov] != "x" || res.Tracks[cidOf("x")].Mappings[prov] != "x" {
+		t.Fatal("兩個 cid 應同時指著 provider id x")
+	}
+	converges(t, in, res)
+}
+
+// 隨機性質測試(PR #19 review 給的骨架):隨機 (C, base, L),universe 6 首、長度 0–6、允許重複,base 四分之一機率沒有;
+// 檢查 rank 嚴格遞增、決定性(變更集、cid 序列、rank)、第二輪零變更且逐位元相同。固定種子,壞掉時子測試名稱就是案例。
+func TestDeriveRandomProperties(t *testing.T) {
+	pin(t)
+	rng := rand.New(rand.NewPCG(2026, 9))
+	universe := []string{"a", "b", "c", "d", "e", "f"}
+	pick := func() []string {
+		ids := make([]string, rng.IntN(7))
+		for i := range ids {
+			ids[i] = universe[rng.IntN(len(universe))]
+		}
+		return ids
+	}
+	ranks := func(pl canon.Playlist) []string {
+		var out []string
+		for _, it := range pl.Items {
+			out = append(out, it.Rank)
+		}
+		return out
+	}
+	for n := 0; n < 3000; n++ {
+		cIDs, bIDs, lIDs := pick(), pick(), pick()
+		hasBase := rng.IntN(4) != 0
+		t.Run(fmt.Sprintf("%d C=%v base=%v/%t L=%v", n, cIDs, bIDs, hasBase, lIDs), func(t *testing.T) {
+			tracks := map[string]canon.Track{}
+			pl := canon.NewPlaylist("通勤")
+			for _, id := range cIDs {
+				tr := canon.NewTrack(prov, ptrack(id))
+				tracks[tr.CID] = tr
+				if _, err := pl.Append(tr.CID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var base *canon.Snapshot
+			if hasBase {
+				base = snap("通勤", bIDs...)
+			}
+			in := canon.DeriveInput{Provider: prov, Playlist: *pl, Tracks: tracks, Base: base, Live: live("通勤", lIDs...)}
+			res := mustDerive(t, in)
+			for i := 1; i < len(res.Playlist.Items); i++ {
+				if res.Playlist.Items[i-1].Rank >= res.Playlist.Items[i].Rank {
+					t.Fatalf("rank 沒有嚴格遞增:%v", ranks(res.Playlist))
+				}
+			}
+			again := mustDerive(t, in)
+			if actions(again.Changes) != actions(res.Changes) || !slices.Equal(cids(again.Playlist), cids(res.Playlist)) || !slices.Equal(ranks(again.Playlist), ranks(res.Playlist)) {
+				t.Fatalf("同一輸入兩次結果不同:%s vs %s", actions(res.Changes), actions(again.Changes))
+			}
+			converges(t, in, res)
+		})
+	}
+}
+
+// 萬首清單(Spotify 單一清單上限)只把頭尾對調:O(n·m) 的 DP 要配置 855 MB,LIS 版本應在幾 MB 內,且只報兩個 move。
+func TestDeriveTenThousandItems(t *testing.T) {
+	pin(t)
+	ids := make([]string, 10000)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("t%04d", i)
+	}
+	first := mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: *canon.NewPlaylist("通勤"), Tracks: map[string]canon.Track{}, Live: live("通勤", ids...)})
+	swapped := slices.Clone(ids)
+	swapped[0], swapped[len(swapped)-1] = swapped[len(swapped)-1], swapped[0]
+	in := canon.DeriveInput{Provider: prov, Playlist: first.Playlist, Tracks: first.Tracks, Base: &first.Snapshot, Live: live("通勤", swapped...)}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	res := mustDerive(t, in)
+	runtime.ReadMemStats(&after)
+	if got := after.TotalAlloc - before.TotalAlloc; got > 64<<20 {
+		t.Fatalf("Derive 配置了 %d MB", got>>20)
+	}
+	if len(res.Changes) != 2 || res.Changes[0].Action != "move" || res.Changes[1].Action != "move" {
+		t.Fatalf("頭尾對調 = 兩個 move:%d 筆", len(res.Changes))
+	}
+	converges(t, in, res)
+}
+
 func TestDeriveRemoveCountFollowsBaseNotC(t *testing.T) {
 	pl, tracks := world(t, "a", "a", "a")
 	in := canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("通勤", "a", "a"), Live: live("通勤", "a")}

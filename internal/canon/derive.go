@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sort"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
@@ -40,7 +41,7 @@ type Change struct {
 type DeriveResult struct {
 	Playlist     Playlist         // 套用後的 C;沒有變更時與輸入逐位元相同
 	Tracks       map[string]Track // 新建或加了 mapping / 衝突的 track
-	Snapshot     Snapshot         // 新的 base = L 的 provider id 原文(Gone 時為零值)
+	Snapshot     Snapshot         // 新的 base = L 的 provider id 原文與觀測當時的 cid(Gone 時為零值)
 	Changes      []Change         // 順序:rename、remove(依 C 位置)、add(依 L 位置)、move(依 L 位置)
 	Gone         bool
 	VisibleCount int // 變更前 cid 有該 provider mapping 的 item 數(Q3 閾值分母)
@@ -90,28 +91,33 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 		}
 	}
 
-	// 規則 2:同 cid 第 n 次出現互相配對。
+	// 規則 2、6:配對由 LCS 決定。先以 cid 序列(C 依 rank、L 依位置,重複照算)找最長共同子序列,對上的留在原位;
+	// L 裡沒對上的出現依 L 順序拿同 cid 剩下的 C item(rank 序最前者)配對並搬動;沒有剩下的才是新增。
+	// 盲配「第 n 次出現」會在重複曲目換序時這輪搬這份、下輪搬那份,永遠多報一筆 move。
 	cOcc := map[string][]int{} // cid → C 的 item 索引(rank 序)
 	for i, it := range c.Items {
 		cOcc[it.CID] = append(cOcc[it.CID], i)
 	}
-	lOcc := map[string][]int{} // cid → L 的位置
+	pairedItem, pairedL := lcsPairs(len(c.Items), lcid, cOcc) // item → L 位置 / L 位置 → item,-1 = 未配對
+	moved := map[int]bool{}
+	cursor := map[string]int{} // cid → cOcc 裡下一個還沒配對的候選
 	for pos, cid := range lcid {
-		lOcc[cid] = append(lOcc[cid], pos)
-	}
-	pairedItem := make([]int, len(c.Items)) // item → L 位置,-1 = 未配對
-	pairedL := make([]int, len(L))          // L 位置 → item,-1 = 未配對
-	for i := range pairedItem {
-		pairedItem[i] = -1
-	}
-	for i := range pairedL {
-		pairedL[i] = -1
-	}
-	for cid, lp := range lOcc {
-		co := cOcc[cid]
-		for i := 0; i < min(len(co), len(lp)); i++ {
-			pairedL[lp[i]], pairedItem[co[i]] = co[i], lp[i]
+		if pairedL[pos] >= 0 {
+			continue
 		}
+		co, k := cOcc[cid], cursor[cid]
+		for k < len(co) && pairedItem[co[k]] >= 0 {
+			k++
+		}
+		cursor[cid] = k
+		if k < len(co) {
+			pairedL[pos], pairedItem[co[k]] = co[k], pos
+			moved[co[k]] = true
+		}
+	}
+	lCnt := map[string]int{}
+	for _, cid := range lcid {
+		lCnt[cid]++
 	}
 
 	// 規則 5:只在 base 存在時移除;計數用 base 快照裡觀測當時的 cid(不經 mapping 反查:重新連結過的版本反查不到)。
@@ -122,33 +128,14 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 			bCnt[cid]++
 		}
 		for cid, b := range bCnt {
-			extra := b - len(lOcc[cid])
+			extra := b - lCnt[cid]
 			co := cOcc[cid]
-			unpaired := co[min(len(co), len(lOcc[cid])):]
-			for i := len(unpaired) - 1; i >= 0 && extra > 0; i-- {
-				removed[unpaired[i]] = true
-				extra--
+			for i := len(co) - 1; i >= 0 && extra > 0; i-- {
+				if pairedItem[co[i]] < 0 {
+					removed[co[i]] = true
+					extra--
+				}
 			}
-		}
-	}
-
-	// 規則 6:配對的 item 依 L 順序;LCS 找最少搬動。
-	var current, target []int
-	for i := range c.Items {
-		if pairedItem[i] >= 0 {
-			current = append(current, i)
-		}
-	}
-	for pos := range L {
-		if pairedL[pos] >= 0 {
-			target = append(target, pairedL[pos])
-		}
-	}
-	kept := lcsKeep(current, target)
-	moved := map[int]bool{}
-	for _, i := range current {
-		if !kept[i] {
-			moved[i] = true
 		}
 	}
 
@@ -258,37 +245,46 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	return res, nil
 }
 
-// lcsKeep 回 current 與 target 的最長共同子序列成員(不用搬的 item);多解時保留 current 中較前者。
-// ponytail: O(n·m) 的 DP,清單幾百首沒問題;上萬首再換 patience diff。
-func lcsKeep(current, target []int) map[int]bool {
-	n, m := len(current), len(target)
-	dp := make([][]int, n+1)
-	for i := range dp {
-		dp[i] = make([]int, m+1)
+// lcsPairs 找 C(rank 序,cOcc 是 cid → item 索引)與 L(lcid)的最長共同 cid 子序列,回傳兩邊的配對索引(-1 = 沒對上)。
+// Hunt–Szymanski:對 L 的每個位置列出 C 裡同 cid 的索引(遞減,免得同一個 L 位置對到兩份),對索引求最長嚴格遞增子序列
+// (patience:tails 存每個長度的最小索引,lower_bound 取代)。時間 O((n + r)·log n)、記憶體 O(n + r),r = 同 cid 的配對點數
+// (沒有重複曲目時 r ≤ len(L));O(n·m) 的 DP 在萬首清單(Spotify 單一清單上限)要配置 855 MB。多解時偏好 C 較前的 item。
+// ponytail: r = Σ(C 裡的份數 × L 裡的次數),整份清單同一首上千份才會爆,不處理。
+func lcsPairs(n int, lcid []string, cOcc map[string][]int) (pairedItem, pairedL []int) {
+	pairedItem, pairedL = make([]int, n), make([]int, len(lcid))
+	for i := range pairedItem {
+		pairedItem[i] = -1
 	}
-	for i := 1; i <= n; i++ {
-		for j := 1; j <= m; j++ {
-			if current[i-1] == target[j-1] {
-				dp[i][j] = dp[i-1][j-1] + 1
+	for i := range pairedL {
+		pairedL[i] = -1
+	}
+	type node struct{ item, pos, prev int }
+	var nodes []node
+	var tails []int // tails[k] = 長度 k+1 的鏈尾(nodes 索引),其 item 最小
+	for pos, cid := range lcid {
+		co := cOcc[cid]
+		for k := len(co) - 1; k >= 0; k-- {
+			i := co[k]
+			at := sort.Search(len(tails), func(t int) bool { return nodes[tails[t]].item >= i })
+			prev := -1
+			if at > 0 {
+				prev = tails[at-1]
+			}
+			nodes = append(nodes, node{i, pos, prev})
+			if at == len(tails) {
+				tails = append(tails, len(nodes)-1)
 			} else {
-				dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+				tails[at] = len(nodes) - 1
 			}
 		}
 	}
-	keep := map[int]bool{}
-	for i, j := n, m; i > 0 && j > 0; {
-		switch {
-		case current[i-1] == target[j-1]:
-			keep[current[i-1]] = true
-			i--
-			j--
-		case dp[i-1][j] >= dp[i][j-1]: // 平手時先捨棄 current 較後的元素
-			i--
-		default:
-			j--
-		}
+	if len(tails) == 0 {
+		return pairedItem, pairedL
 	}
-	return keep
+	for x := tails[len(tails)-1]; x >= 0; x = nodes[x].prev {
+		pairedItem[nodes[x].item], pairedL[nodes[x].pos] = nodes[x].pos, nodes[x].item
+	}
+	return pairedItem, pairedL
 }
 
 func cloneTrack(t Track) Track {

@@ -565,14 +565,14 @@ capy pl sync 的一輪:
 純函式、不碰 IO、不改動傳入的物件。輸入:canonical 清單 C(items 依 `(rank, iid)`)、`tracks.json` 的 cid → track(只讀)、本裝置上次觀測 base = `base[pid][provider]`(可能沒有)、平台現況 L(名稱 + 依平台順序的曲目,含 ISRC)。
 
 1. **對齊鍵是 cid,不是 provider id。** L 的每首依 §6.2 算 cid;base 的快照同時存 provider id 與**觀測當時算出的 cid**(§6.3),移除計數直接用快照裡的 cid,不經 mapping 反查——cid 由 (id, ISRC) 決定、不隨 mapping 變,所以平台把曲目重新連結成另一個版本(X → Y,同 ISRC)是**零變更**,而之後再刪除仍然刪得掉(只靠 id 反查時 mapping 還是 X、查不到 Y,會永遠刪不掉)。
-2. **配對**:同一 cid 的第 n 次出現(L 依位置、C 依 rank)互相配對。配對不看 mapping——別的 provider 建的 cid 在這個 provider 第一次被觀測到時要能配上(見第 3 點),否則每次 pull 都會多一份。
+2. **配對由 LCS 決定,不是「第 n 次出現」。** 以 cid 序列(C 依 rank、L 依位置,重複照算)求最長共同子序列,對上的 item 留在原位;L 裡沒對上的出現,依 L 順序拿同 cid 剩下的 C item(rank 序最前者)配對並搬動;沒有剩下的才是新增。盲配「第 n 次出現」會在重複曲目換序時這輪搬這份、下輪搬那份,永遠多報一筆 move(2026-09-08 PR #19 review 抓到)。配對不看 mapping——別的 provider 建的 cid 在這個 provider 第一次被觀測到時要能配上(見第 3 點),否則每次 pull 都會多一份。
 3. **觀測寫回 tracks**:L 的每首都 `Observe`:`tracks` 沒有這個 cid → 新建 track(含這個 provider 的 mapping);有 cid 但沒這個 provider 的 mapping → 加 mapping(metadata 不符則記 `conflicts[]`,§6.2);已有 mapping → 不動(mapping 不抖動)。
 4. **新增**:L 裡配對不到的出現 → add,插在它在 L 的前一個元素所配對的 C 位置之後;`iid` = 新 ULID、`added_at` = 現在。C 全空(首次 pull)時 rank 用 `Ranks(n)` 均分,其餘用 `RankBetween`。
 5. **移除**:**只在 base 存在時**發生:某 cid 在 base 出現 b 次、在 L 出現 l 次、b > l,才把 C 裡配對不到的該 cid 出現**依 rank 由後往前**移除至多 b − l 個。沒有 base(首次 pull)永不移除。這條同時保護「在 Apple 加入、經 ISRC 對到 Spotify id、但從沒 push 到 Spotify」的曲目:它不在 Spotify 的 base 裡,所以不會被讀成「Spotify 刪了它」。
-6. **換序**:配對成功的 item 依 L 的順序排列;以 LCS 找最少需要搬動的 item,只給它們新 rank(`RankBetween` 於最終整體順序的鄰居之間,鄰居可以是沒配對的 item),其餘 rank 不動;LCS 多解時保留 C 中較前者、搬動較後者。沒配對的 item 留在原 rank。P3 沒有 HLC,順序以最後一次 pull 的 provider 為準。
+6. **換序**:配對成功的 item 依 L 的順序排列;LCS 對上的留在原位,其餘配對的 item 搬動並只給它們新 rank(`RankBetween` 於最終整體順序的鄰居之間,鄰居可以是沒配對的 item),其餘 rank 不動;LCS 多解時偏好 C 中較前者。沒配對的 item 留在原 rank。LCS 用 Hunt–Szymanski(對配對點求 LIS):時間 O((n + r) log n)、記憶體 O(n + r),萬首清單(Spotify 單一清單上限)不會像 O(n·m) 的 DP 吃掉 855 MB。P3 沒有 HLC,順序以最後一次 pull 的 provider 為準。
 7. **改名**:base 存在且 `L.name ≠ base.name` → `C.name := L.name`(C 已經是那個名字就不算變更);首次 pull 不改名,C 的名字由建立者決定。
 8. **清單消失**:平台回 404 / 不在清單列表 → 回 gone、零 item 變更;T8 依 Q6(B)自動 unlink 並警告。開發模式讀不到的清單(Spotify 編輯清單)從不會被連結,pull 直接跳過並說明,**不是 gone**。
-9. **輸出**:變更集(add / remove / move / rename / unlink,欄位對齊 T8 的 TSV:`action pos cid provider_id title artists reason`)、套用後的 C、新建或更新的 tracks、新的 base 快照(= L 的 provider id 原文)、變更前該 provider **可見**的 item 數(cid 有該 provider mapping 的數量,Q3 的閾值分母)。
+9. **輸出**:變更集(add / remove / move / rename / unlink,欄位對齊 T8 的 TSV:`action pos cid provider_id title artists reason`)、套用後的 C、新建或更新的 tracks、新的 base 快照(= L 的 provider id 原文與觀測當時的 cid)、變更前該 provider **可見**的 item 數(cid 有該 provider mapping 的數量,Q3 的閾值分母)。
 10. **無變更時 C 逐位元不變**(`updated_at` 不動),T8 的 exit 0「無變更」才不會說謊。rank 資料髒掉(兩個 item 同 rank 又需要插入)→ 回錯,不靜默重排。
 
 
