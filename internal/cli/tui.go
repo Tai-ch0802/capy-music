@@ -67,29 +67,30 @@ type (
 )
 
 type tuiModel struct {
-	ctx      context.Context
-	theme    ui.Theme
-	exe      string // 重新執行自己用;空 = 取不到,命令列停用
-	provID   string
-	provFlag string // 使用者在 capy --provider X 明指的平台;命令列要把它一起帶給子命令
-	pc       provider.PlaybackController
-	pcErr    error // 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
-	interval time.Duration
-	width    int
-	frame    int
-	input    textinput.Model
-	typing   bool
-	st       *provider.PlaybackState
-	errShort string // 狀態列用的短版。完整那段在發生當下就進捲動區了,model 不留
-	lastErr  string // 上一則交代過的錯誤:同一則每兩秒印一次會把捲動區洗掉
-	fails    int
-	gen      int  // 目前的輪詢世代
-	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
-	frozen   bool // 開場結束:水豚已進捲動區,View 只剩底部四行
-	cmds     []tuiCmdItem
-	menuSel  int      // 斜線選單選到第幾列(選單開著才有意義)
-	hist     []string // 這次 session 打過的命令,↑↓ 翻;只在記憶體裡,離開就沒了
-	histAt   int      // 翻到哪:len(hist) = 還沒開始翻
+	ctx       context.Context
+	theme     ui.Theme
+	exe       string // 重新執行自己用;空 = 取不到,命令列停用
+	provID    string
+	provFlag  string // 使用者在 capy --provider X 明指的平台;命令列要把它一起帶給子命令
+	pc        provider.PlaybackController
+	pcErr     error // 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
+	interval  time.Duration
+	width     int
+	frame     int
+	input     textinput.Model
+	typing    bool
+	st        *provider.PlaybackState
+	errShort  string // 狀態列用的短版。完整那段在發生當下就進捲動區了,model 不留
+	lastErr   string // 上一則交代過的錯誤:同一則每兩秒印一次會把捲動區洗掉
+	fails     int
+	gen       int  // 目前的輪詢世代
+	stalled   bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
+	frozen    bool // 開場結束:水豚已進捲動區,View 只剩底部四行
+	cmds      []tuiCmdItem
+	menuSel   int      // 斜線選單選到第幾列(選單開著才有意義)
+	hist      []string // 這次 session 打過的命令,↑↓ 翻;只在記憶體裡,離開就沒了
+	histAt    int      // 翻到哪:len(hist) = 還沒開始翻
+	histDraft string   // 開始翻之前打到一半的那行,翻回最新時要拿回來(shell 的行為)
 }
 
 func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
@@ -348,15 +349,19 @@ func (m tuiModel) menu() ([]tuiCmdItem, bool) {
 	return tuiMenuFilter(m.cmds, q), true
 }
 
-// recall:↑↓ 翻命令歷史。d 為 -1 往回、+1 往前;翻到底就回到空的輸入行。
+// recall:↑↓ 翻命令歷史。d 為 -1 往回、+1 往前;翻回最新時拿回開始翻之前打到一半的那行
+// (bash / zsh 就是這樣;直接清成空行的話,打了一半想查歷史就等於把字弄丟)。
 func (m tuiModel) recall(d int) tuiModel {
 	if len(m.hist) == 0 {
 		return m
 	}
+	if m.histAt == len(m.hist) { // 還沒開始翻:先把打到一半的收起來
+		m.histDraft = m.input.Value()
+	}
 	at := min(len(m.hist), max(0, m.histAt+d))
 	m.histAt = at
 	if at == len(m.hist) {
-		m.input.SetValue("")
+		m.input.SetValue(m.histDraft)
 	} else {
 		m.input.SetValue(m.hist[at])
 	}
@@ -418,8 +423,12 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.exe == "" {
 				return m, m.println(tuiSeg{"✗ 找不到 capy 自己的執行檔,命令列停用", m.theme.Mutedly})
 			}
-			m.hist = append(m.hist, raw) // 只在記憶體裡:存檔要決定寫哪、要不要清,是另一個決定
-			m.histAt = len(m.hist)
+			// 只在記憶體裡:存檔要決定寫哪、要不要清,是另一個決定。
+			// 連續重複的不記:↑ 翻出來再送出一次,不該讓下一次要多按幾下才走得回去。
+			if len(m.hist) == 0 || m.hist[len(m.hist)-1] != raw {
+				m.hist = append(m.hist, raw)
+			}
+			m.histAt, m.histDraft = len(m.hist), ""
 			// 回音先進捲動區再讓出終端機:Sequence 保序,而 exec 交出終端機前會 flush 一次
 			// (releaseTerminal → stopRenderer(false) → flush),所以回音一定在子命令輸出上面。
 			return m, tea.Sequence(

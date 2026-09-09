@@ -38,7 +38,21 @@ func TestTUICommandsComeFromCobra(t *testing.T) {
 	}
 	for _, unwanted := range []string{"pl", "auth"} {
 		if _, ok := paths[unwanted]; ok {
-			t.Errorf("%q 不該進清單:它不是葉節點,自己不能執行", unwanted)
+			t.Errorf("%q 不該進清單:它自己不能執行", unwanted)
+		}
+	}
+	// 判準是 Runnable(),不是「葉節點」:resolve 自己吃參數能跑,底下卻掛了 resolve pin。
+	// 用葉節點當判準會把它整個丟掉,而且是靜靜地丟——正是這份清單號稱不會發生的走鏢。
+	if _, ok := paths["resolve"]; !ok {
+		t.Error("resolve 自己可執行(Args: MaximumNArgs(1)),要進清單")
+	}
+	if _, ok := paths["resolve pin"]; !ok {
+		t.Error("resolve pin 也要在(父節點可執行不影響子節點)")
+	}
+	// debug 是 Hidden,它與它的子命令都不可進選單:debug apple-token 會印 keychain 裡的 token。
+	for p := range paths {
+		if strings.HasPrefix(p, "debug") {
+			t.Errorf("Hidden 的命令不可進選單:%q", p)
 		}
 	}
 	// help / completion 是 cobra 在 Execute 時才掛上去的,新建的樹上還沒有——直接餵一棵掛好的樹,
@@ -183,6 +197,43 @@ func TestTUICommandHistory(t *testing.T) {
 	m2 = step(t, m2, tea.KeyPressMsg{Code: tea.KeyUp}, false)
 	if m2.typing {
 		t.Error("沒有歷史時 ↑ 不該進輸入模式")
+	}
+}
+
+// 翻歷史不該把打到一半的字吃掉(bash / zsh 會把它留在「最新」那格),
+// 連續重複的命令也不該各記一筆(不然 ↑ 要多按幾次才走得回去)。
+func TestTUIHistoryKeepsDraftAndDedupes(t *testing.T) {
+	orig := tuiExecProcess
+	tuiExecProcess = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
+	t.Cleanup(func() { tuiExecProcess = orig })
+
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	run := func(m tuiModel, cmd string) tuiModel {
+		m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+		m.input.SetValue(cmd)
+		return step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	}
+	m = run(m, "pl list")
+	m = run(m, "pl list") // 連續重複
+	if len(m.hist) != 1 {
+		t.Fatalf("連續重複的命令只記一筆:%v", m.hist)
+	}
+	m = run(m, "doctor")
+	m = run(m, "pl list") // 不連續的重複要記
+	if len(m.hist) != 3 {
+		t.Fatalf("不連續的重複要各記一筆:%v", m.hist)
+	}
+
+	// 打到一半按 ↑ 查歷史,再 ↓ 翻回來要拿得回原本那串
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m.input.SetValue("search 派對")
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyUp}, false)
+	if m.input.Value() != "pl list" {
+		t.Fatalf("↑ 要帶出最後一個:%q", m.input.Value())
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyDown}, false)
+	if m.input.Value() != "search 派對" {
+		t.Errorf("翻回最新要拿回打到一半的那串:%q", m.input.Value())
 	}
 }
 

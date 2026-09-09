@@ -24,9 +24,10 @@ type tuiCmdItem struct{ path, short string }
 // tuiCommands:從 cobra 的命令樹長出來,不另外維護一份清單 —— 手寫的那份一定會跟實作走鏢。
 func tuiCommands() []tuiCmdItem { return tuiCommandsOf(newRootCmd()) }
 
-// tuiCommandsOf:只收葉節點(pl 自己不能執行,pl list 才能),隱藏的與 help / completion 不收。
-// 後兩個是 cobra 在 Execute 時才掛上去的,newRootCmd() 這棵新樹上還沒有 —— 但它們是 cobra 自己
-// 加的東西,不是 capy 的命令,擋在這裡才不會哪天默默冒出來(測試直接餵一棵掛好的樹驗這件事)。
+// tuiCommandsOf:判準是 Runnable(),不是「葉節點」—— resolve 自己吃參數能跑,底下卻掛了
+// resolve pin,用葉節點當判準會把它整個丟掉。隱藏的與 help / completion 不收:後兩個是 cobra
+// 在 Execute 時才掛上去的,newRootCmd() 這棵新樹上還沒有,但它們是 cobra 自己加的東西、不是
+// capy 的命令,擋在這裡才不會哪天默默冒出來(測試直接餵一棵掛好的樹驗這件事)。
 func tuiCommandsOf(root *cobra.Command) []tuiCmdItem {
 	var out []tuiCmdItem
 	var walk func(c *cobra.Command, prefix string)
@@ -36,13 +37,10 @@ func tuiCommandsOf(root *cobra.Command) []tuiCmdItem {
 				continue
 			}
 			path := strings.TrimSpace(prefix + " " + sub.Name())
-			if len(sub.Commands()) > 0 {
-				walk(sub, path)
-				continue
-			}
 			if sub.Runnable() {
 				out = append(out, tuiCmdItem{path, sub.Short})
 			}
+			walk(sub, path)
 		}
 	}
 	walk(root, "")
