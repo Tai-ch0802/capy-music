@@ -1,0 +1,532 @@
+<title>capy 使用指南</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+  /* 這一頁刻意只有一個深色主題:capy 活在終端機裡,配色直接取自 internal/ui/theme.go 的 GeekGreen,
+     不做淺色版。所有顏色都明確畫出來,不依賴宿主背景。 */
+  :root {
+    --ink: #0D1117;
+    --surface: #161B22;
+    --surface-2: #1C232B;
+    --line: #2A323C;
+    --accent: #3FB27F;
+    --accent-dim: #2A6E52;
+    --text: #C9D1D9;
+    --muted: #7D8794;
+    --warn: #D9A441;
+
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "IBM Plex Sans", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+
+    --step--1: 0.8125rem;
+    --step-0: 0.9375rem;
+    --step-1: 1.125rem;
+    --step-2: 1.5rem;
+    --step-3: 2rem;
+    --step-4: 2.75rem;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: var(--step-0);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  /* ── 開場 ───────────────────────────────────────── */
+  .hero {
+    display: grid;
+    gap: 2.5rem;
+    padding: 3.5rem 0 3rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 60rem) {
+    .hero {
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 3.5rem;
+    }
+  }
+
+  /* 全域的 pre 有底色與外框,水豚不要那些:牠是圖不是程式碼區塊。
+     line-height 壓到 1 讓方框繪製字元上下接得起來。 */
+  #capy {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    line-height: 1;
+    color: var(--accent);
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .hero h1 {
+    font-family: var(--mono);
+    font-size: var(--step-4);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin: 0 0 0.75rem;
+    color: #fff;
+    text-wrap: balance;
+  }
+  .hero h1 .dot { color: var(--accent); }
+
+  .lede {
+    font-size: var(--step-1);
+    color: var(--text);
+    margin: 0 0 1.5rem;
+    max-width: 44ch;
+  }
+
+  .install {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.65rem 0.9rem;
+    display: inline-block;
+    color: var(--text);
+  }
+  .install .p { color: var(--accent); user-select: none; }
+
+  .platforms {
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.25rem;
+    font-size: var(--step--1);
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  /* ── 通用區塊 ───────────────────────────────────── */
+  section { padding: 3rem 0; border-top: 1px solid var(--line); }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: var(--step-2);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.5rem;
+    color: #fff;
+  }
+  h3 {
+    font-family: var(--mono);
+    font-size: var(--step-1);
+    font-weight: 500;
+    margin: 0 0 0.5rem;
+    color: var(--accent);
+    letter-spacing: -0.01em;
+  }
+  .sub { color: var(--muted); margin: 0 0 2rem; max-width: 62ch; }
+  p { max-width: 66ch; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    color: var(--text);
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c-p { color: var(--accent); }
+  .c-m { color: var(--muted); }
+  .c-w { color: var(--warn); }
+
+  /* ── 開始使用:真的是一連串步驟,所以編號有意義 ── */
+  .steps { display: grid; gap: 1.75rem; counter-reset: s; }
+  .step { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 1rem; }
+  .step::before {
+    counter-increment: s;
+    content: counter(s);
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+    border-radius: 50%;
+    width: 1.75rem;
+    height: 1.75rem;
+    display: grid;
+    place-items: center;
+    align-self: start;
+  }
+  .step h3 { margin-top: 0.15rem; }
+  .step p { margin: 0 0 0.75rem; }
+
+  /* ── 互動式介面 ─────────────────────────────────── */
+  .keys {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.5rem 2rem;
+    margin: 1.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .keys li {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--step--1);
+  }
+  .keys kbd {
+    font-family: var(--mono);
+    color: var(--accent);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.05em 0.4em;
+    font-size: 0.85em;
+    white-space: nowrap;
+  }
+  .keys span { color: var(--muted); }
+
+  /* ── 命令參考:依主題分組,不是一張四十列的表 ── */
+  .groups { display: grid; gap: 2.5rem; }
+  @media (min-width: 48rem) {
+    .groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.5rem 3rem; }
+  }
+  .group h3 { margin-bottom: 0.85rem; }
+  .cmds { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.7rem; }
+  .cmds li { display: grid; gap: 0.15rem; }
+  .cmds b {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: var(--step--1);
+    color: var(--text);
+    word-break: break-word;
+  }
+  .cmds span { color: var(--muted); font-size: var(--step--1); line-height: 1.55; }
+
+  /* ── 平台能做什麼 ───────────────────────────────── */
+  .matrix-wrap { overflow-x: auto; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 34rem;
+    font-size: var(--step--1);
+  }
+  th, td { text-align: left; padding: 0.6rem 0.9rem 0.6rem 0; vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--accent);
+    border-bottom: 1px solid var(--accent-dim);
+    white-space: nowrap;
+  }
+  tbody th { font-weight: 500; color: var(--text); white-space: nowrap; }
+  tbody tr + tr th, tbody tr + tr td { border-top: 1px solid var(--line); }
+  td { color: var(--muted); }
+  .yes { color: var(--accent); }
+  .no { color: var(--muted); }
+  .part { color: var(--warn); }
+
+  /* ── 注意事項 ───────────────────────────────────── */
+  .notes { display: grid; gap: 1.25rem; }
+  .note {
+    border-left: 2px solid var(--accent-dim);
+    padding: 0.1rem 0 0.1rem 1.1rem;
+  }
+  .note.caution { border-left-color: var(--warn); }
+  .note h3 { color: var(--text); font-size: var(--step-0); margin-bottom: 0.25rem; }
+  .note p { margin: 0; color: var(--muted); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 2rem 0 3rem;
+    color: var(--muted);
+    font-size: var(--step--1);
+  }
+  footer a { color: var(--accent); }
+
+  a:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <pre id="capy" aria-label="水豚吉祥物,正看著你,嘴角叼著一根牧草"></pre>
+    <div>
+      <h1>capy<span class="dot">.</span></h1>
+      <p class="lede">一支住在終端機裡的音樂 CLI。搜尋、遙控播放,把 Spotify 與 Apple Music 的播放清單同步到你自己的 Google Drive。</p>
+      <div class="install"><span class="p">$</span> go install github.com/Tai-ch0802/capy-music/cmd/capy@latest</div>
+      <ul class="platforms">
+        <li>macOS</li>
+        <li>Windows</li>
+        <li>憑證全部是你自己的</li>
+      </ul>
+    </div>
+  </header>
+
+  <section>
+    <h2>開始使用</h2>
+    <p class="sub">三個步驟,由下而上:先讓 capy 能碰到你的音樂平台,再決定要不要把清單同步到雲端。</p>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>建立你自己的 Spotify app</h3>
+          <p>capy 不代持任何人的憑證,所以 Spotify 那一半要用你自己的 app。到 Spotify Developer Dashboard 建一個,把 redirect URI 設成 <code>http://127.0.0.1:8888/callback</code>。這裡必須是 <code>127.0.0.1</code>,寫 <code>localhost</code> Spotify 會拒絕。</p>
+<pre><code><span class="c-p">$</span> capy auth login spotify
+<span class="c-m"># 精靈會問 client ID,然後開瀏覽器完成授權</span></code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>試第一個命令</h3>
+          <p>不需要其他設定就能開始用。搜尋會直接印出結果,在終端機裡是對齊的表格,在管線裡是乾淨的 TSV。</p>
+<pre><code><span class="c-p">$</span> capy search 派對動物
+<span class="c-p">$</span> capy play 五月天          <span class="c-m"># 藝人:播熱門歌曲</span>
+<span class="c-p">$</span> capy now                  <span class="c-m"># 現在在播什麼</span></code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>要同步清單才需要 Google</h3>
+          <p>播放清單的正本存在你自己 Google Drive 的應用程式資料夾裡(只有 capy 看得到,你隨時可以清空)。只有這一步需要登入 Google,而且權限只有三個:身分、電子郵件、應用程式資料夾。</p>
+<pre><code><span class="c-p">$</span> capy auth login google
+<span class="c-p">$</span> capy pl link 通勤 spotify:通勤   <span class="c-m"># 把平台清單連上來</span>
+<span class="c-p">$</span> capy pl sync 通勤                <span class="c-m"># 雙向同步</span></code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>互動式介面</h2>
+    <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。上面是水豚,中間是現在在播什麼,最下面一行可以輸入任何 capy 子命令。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
+<pre><code>    __            __
+   /  \__________/  \
+  |                  |
+  |   O          O   |
+  |                  |
+  |      ______      |
+  |     (__..__)~~~~~~~~~
+   \________________/
+
+<span class="c-m">capy · spotify</span>
+
+<span class="c-p">▶</span> 派對動物
+  五月天 · 自傳
+  <span class="c-p">▌▌▌▌▌▌▌▌▌</span><span class="c-m">░░░░░░░░░░░░░</span> 1:23 / 4:09
+  MacBook Pro(Computer) · 音量 50
+
+<span class="c-p">›</span> pl sync 通勤
+  space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸入命令 · q 離開</code></pre>
+    <ul class="keys">
+      <li><kbd>space</kbd><span>播放與暫停</span></li>
+      <li><kbd>n</kbd> <kbd>p</kbd><span>下一首、上一首</span></li>
+      <li><kbd>←</kbd> <kbd>→</kbd><span>前後各十秒</span></li>
+      <li><kbd>+</kbd> <kbd>-</kbd><span>音量升降五格</span></li>
+      <li><kbd>/</kbd><span>輸入子命令</span></li>
+      <li><kbd>q</kbd><span>離開</span></li>
+    </ul>
+    <p style="margin-top:1.5rem">在那一行輸入的命令會重新執行 capy 自己,不是在同一個行程裡跑。所以每個子命令都保有它原本的樣子:該有表格的有表格,該問你確認的會問,輸出留在畫面上方可以往回捲。清單名有空白時用雙引號,例如 <code>pl show "上班 通勤"</code>。</p>
+  </section>
+
+  <section>
+    <h2>它能做什麼</h2>
+    <p class="sub">下面按主題分組。每個命令在終端機裡是給人看的表格,在管線裡是 TSV,可以直接餵給 cut 與 awk。</p>
+    <div class="groups">
+      <div class="group">
+        <h3>搜尋與播放</h3>
+        <ul class="cmds">
+          <li><b>capy search &lt;關鍵字&gt;</b><span>搜尋曲目。加 <code>--provider apple</code> 換平台,<code>--limit</code> 控制筆數。</span></li>
+          <li><b>capy play &lt;關鍵字&gt;</b><span>一個入口涵蓋曲目、藝人熱門歌曲、你自己的清單。同名時在終端機開挑選器,在腳本裡則回結束碼 2 並印出候選,不會隨便挑一個播。</span></li>
+          <li><b>capy play artist:五月天</b><span>前綴可以指定類型,<code>artist:</code> <code>pl:</code> <code>track:</code> 三種,等同 <code>--type</code>。</span></li>
+          <li><b>capy pause / next / prev</b><span>基本遙控。</span></li>
+          <li><b>capy seek 1:23</b><span>跳到曲目內的位置。長一點的內容用 <code>1:05:30</code>,腳本裡用純秒數 <code>83</code> 也可以。</span></li>
+          <li><b>capy vol 40</b><span>音量 0 到 100。手機與部分喇叭不允許遠端調整,這時候會明講是裝置擋的。</span></li>
+          <li><b>capy now</b><span>現在在播什麼。加 <code>--watch</code> 會持續更新並顯示進度條。</span></li>
+          <li><b>capy devices</b><span>列出可以播放的裝置,配合 <code>play --device</code> 指定。</span></li>
+        </ul>
+      </div>
+
+      <div class="group">
+        <h3>播放清單</h3>
+        <ul class="cmds">
+          <li><b>capy pl list</b><span>列出平台上的清單。</span></li>
+          <li><b>capy pl show &lt;名稱&gt;</b><span>看某個清單的曲目。</span></li>
+          <li><b>capy pl link &lt;名稱&gt; &lt;平台&gt;:&lt;清單&gt;</b><span>把平台上的清單連到 capy 的正本。只認你明確指定的,不會自動猜同名清單。</span></li>
+          <li><b>capy pl pull</b><span>平台的變更拉進正本。先列出要改什麼,你確認後才寫。</span></li>
+          <li><b>capy pl push</b><span>反方向:正本推回平台。前提是這台裝置先前 pull 過,而且平台上沒有還沒拉下來的變更。</span></li>
+          <li><b>capy pl sync</b><span>先 pull 再 push,一張表、一次確認。日常用這個就好。</span></li>
+          <li><b>capy pl unlink &lt;名稱&gt; &lt;平台&gt;</b><span>解除連結,正本內容不動。</span></li>
+        </ul>
+      </div>
+
+      <div class="group">
+        <h3>跨平台對應</h3>
+        <ul class="cmds">
+          <li><b>capy resolve</b><span>把正本裡的曲目對應到各平台的 id。先用 ISRC 精準比對,比不到才用模糊比對,分數夠高才自動寫入。</span></li>
+          <li><b>capy resolve --review</b><span>分數不夠的排成佇列,在終端機裡一筆一筆由你裁決。</span></li>
+          <li><b>capy resolve pin &lt;cid&gt; &lt;平台&gt;:&lt;id&gt;</b><span>手動釘死某個對應,給腳本用。釘成 <code>none</code> 表示這首在那個平台沒有。</span></li>
+        </ul>
+      </div>
+
+      <div class="group">
+        <h3>設定與維護</h3>
+        <ul class="cmds">
+          <li><b>capy auth login / status / logout</b><span>三個平台各自的授權。憑證只進作業系統的鑰匙圈,不會寫進設定檔或 Drive。</span></li>
+          <li><b>capy doctor</b><span>一站式診斷:設定、憑證、連線各自哪裡有問題,每項都給可以照做的下一步。</span></li>
+          <li><b>capy config get / set / list</b><span>非機密設定,例如預設平台與本機曲庫目錄。</span></li>
+          <li><b>capy export</b><span>把本機快取的正本原樣印到標準輸出。不碰網路、不碰鑰匙圈。</span></li>
+          <li><b>capy update</b><span>更新 capy 自己。</span></li>
+          <li><b>capy completion &lt;shell&gt;</b><span>產生 shell 補全。</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>三個平台各自能做什麼</h2>
+    <p class="sub">能力差異來自平台本身,不是 capy 偷懶。差在哪裡,命令會直接告訴你,而不是靜靜跳過。</p>
+    <div class="matrix-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">能力</th>
+            <th scope="col">Spotify</th>
+            <th scope="col">Apple Music</th>
+            <th scope="col">本機曲庫</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">搜尋</th>
+            <td class="yes">可以</td>
+            <td class="yes">可以</td>
+            <td class="yes">曲庫內比對</td>
+          </tr>
+          <tr>
+            <th scope="row">播放遙控</th>
+            <td class="yes">Connect</td>
+            <td class="part">只有 macOS</td>
+            <td class="no">不支援</td>
+          </tr>
+          <tr>
+            <th scope="row">讀取清單</th>
+            <td class="yes">可以</td>
+            <td class="yes">可以</td>
+            <td class="yes">M3U 檔案</td>
+          </tr>
+          <tr>
+            <th scope="row">寫回清單</th>
+            <td class="yes">可以</td>
+            <td class="part">尚未開放</td>
+            <td class="yes">可以</td>
+          </tr>
+          <tr>
+            <th scope="row">憑證來源</th>
+            <td>你自建的 app</td>
+            <td>你從網頁播放器複製的權杖</td>
+            <td>不需要</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>本機曲庫</h2>
+    <p class="sub">硬碟裡的 M3U 檔案也可以當成一個平台,跟 Spotify 雙向同步。它綁在這台機器上:換一台電腦,那邊的 capy 會跳過這個連結,不會把它當成清單被刪掉了。</p>
+<pre><code><span class="c-p">$</span> capy config set local_root ~/Music/playlists
+<span class="c-p">$</span> capy pl link 通勤 local:通勤.m3u8
+<span class="c-p">$</span> capy pl sync 通勤</code></pre>
+    <p style="margin-top:1.25rem">曲目的中繼資料放在同一個目錄的 <code>library.json</code> 裡,由你自己維護。有填 ISRC 的曲目才能跟串流平台上的同一首歌自動對上,沒填的就是各自獨立的一首。寫回時是整檔重寫,別的工具寫在 M3U 裡的註解與 <code>#EXTINF</code> 會被蓋掉。</p>
+  </section>
+
+  <section>
+    <h2>幾件先知道比較好的事</h2>
+    <div class="notes">
+      <div class="note">
+        <h3>你的清單正本在你自己的 Drive</h3>
+        <p>不是在我們的伺服器上,因為沒有伺服器。本機的 SQLite 只是快取:刪掉它,下一次執行會從 Drive 完整重建。</p>
+      </div>
+      <div class="note caution">
+        <h3>刪除永遠要先看過</h3>
+        <p>任何會刪掉清單曲目的操作都會先列出來讓你確認,而且超過門檻時會直接擋下來,要加 <code>--force</code> 才放行。<code>--dry-run</code> 可以只看不做。</p>
+      </div>
+      <div class="note">
+        <h3>Apple Music 的權杖是你從網頁複製的</h3>
+        <p>那不是 Apple 官方支援的用法,會過期,風險由你自己承擔。capy 只會指導你怎麼複製,不會去讀你的瀏覽器 cookie,也不會注入任何指令碼。</p>
+      </div>
+      <div class="note caution">
+        <h3>Apple Music 目前只讀不寫</h3>
+        <p>寫回 Apple 的清單還沒開放,要先驗證過那組 API 真的能移除與重排曲目。在那之前,<code>pl push --provider apple</code> 會明講不支援,<code>--all</code> 則會跳過它並說明原因。</p>
+      </div>
+      <div class="note">
+        <h3>每個命令都能放進管線</h3>
+        <p>不在終端機的時候一律輸出純文字 TSV,沒有顏色也沒有互動提示。結束碼有意義:0 成功,2 需要你介入,3 是安全閥擋下來了。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>capy 是開源的,原始碼在 <a href="https://github.com/Tai-ch0802/capy-music">github.com/Tai-ch0802/capy-music</a>。憑證全部是你自己的:本專案不代持任何權杖,也沒有任何需要註冊的服務。</p>
+  </footer>
+</div>
+
+<script>
+  // 水豚:直接用 CLI 裡那幾幀(internal/cli/tui_capybara.go),連字元都一樣。
+  // 全 ASCII 的原因在那個檔案裡:方框繪製字元在 CJK 語系的終端機寬度是 2,矩形會垮。
+  const HEAD = [
+    "    __            __      ",
+    "   /  \\__________/  \\     ",
+    "  |                  |    ",
+  ];
+  const MID = "  |                  |    ";
+  const NOSE = "  |      ______      |    ";
+  const CHIN = "   \\________________/     ";
+  const EYES_OPEN = "  |   O          O   |    ";
+  const EYES_SHUT = "  |   -          -   |    ";
+  const MOUTH_OUT = "  |     (__..__)~~~~~~~~~ ";
+  const MOUTH_CHEW = "  |     (__--__)~~~~~~    ";
+
+  function frame(n) {
+    const eyes = n % 12 === 0 ? EYES_SHUT : EYES_OPEN;
+    const mouth = Math.floor(n / 3) % 2 === 1 ? MOUTH_CHEW : MOUTH_OUT;
+    return [...HEAD, eyes, MID, NOSE, mouth, CHIN].join("\n");
+  }
+
+  const el = document.getElementById("capy");
+  el.textContent = frame(1);
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    let n = 1;
+    setInterval(() => { el.textContent = frame(++n); }, 350);
+  }
+</script>

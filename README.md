@@ -2,6 +2,8 @@
 
 跨平台音樂 CLI:搜尋、播放遙控、播放清單同步(Spotify、Apple Music;播放清單同步到你自己的 Google Drive)。開源、免費,**所有憑證都是你自己的(BYO)** —— 本專案不代持任何 token、不架任何服務。
 
+完整的使用說明(含互動式介面、命令參考與三個平台的能力差異)在 [docs/guide.html](docs/guide.html) —— 用瀏覽器開就好,不需要任何伺服器。
+
 ## 安裝
 
 ### A. 從 GitHub Releases 下載(macOS / Windows;Google 登入零設定)
