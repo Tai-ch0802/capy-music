@@ -11,17 +11,24 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
-// capy(無參數、在終端機裡)= 互動式介面:上面是水豚橫幅,中間是現在播什麼,下面一行輸入任何 capy 子命令。
+// capy(無參數、在終端機裡)= 互動式介面。形態是**訊息流 + 固定底部區**(Claude Code 那種),
+// 不是全螢幕接管:
+//
+//   - 開場水豚動兩秒,然後定格印進捲動區,之後永不重繪。
+//   - TUI 只管底部四行(分隔線 / 狀態 / 輸入 / 提示),其餘全部是終端機自己的捲動區。
+//   - 命令的回音、錯誤、結束碼都用 tea.Println 推進捲動區:永久、可往回捲、可複製。
+//
+// 前一版把 19 行(其中 8 行是水豚)每 350 毫秒整塊重繪,視窗放不下時游標上移被頂端截斷,
+// 舊畫面留在上面 —— 使用者看到的是水豚頭重複三次、歷程完全不可讀。核心錯誤是重繪面積,
+// 所以這一版把 TUI 管的區域壓到四行(計畫 docs/superpowers/plans/2026-09-09-tui-redesign.md)。
 //
 // 命令**不在行程內跑**,而是用 tea.ExecProcess 重新執行 capy 自己(os.Executable)。理由:行程內跑的話
 // stdout 不是 TTY,每個命令都會退成 TSV,而 huh 的確認提示會搶 stdin 直接卡死。重新執行 = 每個子命令
@@ -32,6 +39,7 @@ import (
 
 const (
 	tuiFrameInterval = 350 * time.Millisecond // 水豚的動作
+	tuiIntro         = 2 * time.Second        // 動這麼久就定格。不是「動到第一個命令」:那會讓重繪延續到不確定的時間點
 	tuiSeekStep      = 10000                  // ←/→ 一次 10 秒
 	tuiVolStep       = 5                      // +/- 一次 5
 	tuiMaxFails      = 5
@@ -39,7 +47,8 @@ const (
 )
 
 type (
-	tuiFrameMsg time.Time
+	tuiFrameMsg  time.Time
+	tuiFreezeMsg struct{} // 開場結束:水豚定格進捲動區
 	// tuiPollMsg / tuiStateMsg 帶 gen:輪詢是一條「tick → 讀狀態 → 再排一個 tick」的鏈,而控制鍵
 	// 為了讓畫面立刻跟上會另外起一次讀取。沒有世代編號的話那次讀取會長出第二條鏈,而舊鏈沒人取消——
 	// 方向鍵會自動重複,按住兩秒就是三十幾條鏈同時打 /me/player,穩定觸發 429(PR #41 review)。
@@ -68,21 +77,23 @@ type tuiModel struct {
 	interval time.Duration
 	width    int
 	frame    int
-	bar      progress.Model
 	input    textinput.Model
 	typing   bool
 	st       *provider.PlaybackState
 	err      error
-	note     string
+	lastErr  string // 上一則印進捲動區的錯誤:同一則每兩秒印一次會把捲動區洗掉
 	fails    int
 	gen      int  // 目前的輪詢世代
 	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
+	frozen   bool // 開場結束:水豚已進捲動區,View 只剩底部四行
 }
 
 func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
 	in := textinput.New()
-	in.Prompt = "› "
-	in.Placeholder = "輸入任何 capy 子命令,例如 search 派對動物"
+	// 提示符刻意用 ASCII:textinput 會把整行填滿到它自己算的 w-1,而 › 是 East Asian Ambiguous,
+	// 在 CJK 終端機多佔一欄 = 剛好寫滿最後一欄 = 多換一行,底部就變五行(設計文件 §1 的第四個問題)。
+	in.Prompt = "> "
+	in.Placeholder = "輸入 capy 子命令,例如 pl list"
 	in.CharLimit = 240
 	in.SetWidth(76) // WindowSizeMsg 進來前的預設;不設會被截成一個字
 	st := textinput.DefaultDarkStyles()
@@ -94,13 +105,13 @@ func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag stri
 	in.SetStyles(st)
 	return tuiModel{
 		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, pc: pc, pcErr: pcErr,
-		interval: interval, width: 80,
-		bar:   progress.New(progress.WithoutPercentage(), progress.WithColors(theme.Accent)), // 單色;給兩個顏色會變成漸層,俐落度輸給純色
-		input: in,
+		interval: interval, width: 80, input: in,
 	}
 }
 
-func (m tuiModel) Init() tea.Cmd { return tea.Batch(m.frameTick(), m.poll()) }
+func (m tuiModel) Init() tea.Cmd {
+	return tea.Batch(m.frameTick(), tea.Tick(tuiIntro, func(time.Time) tea.Msg { return tuiFreezeMsg{} }), m.poll())
+}
 
 func (m tuiModel) frameTick() tea.Cmd {
 	return tea.Tick(tuiFrameInterval, func(t time.Time) tea.Msg { return tuiFrameMsg(t) })
@@ -147,6 +158,66 @@ func (m tuiModel) newChain() tuiModel {
 	return m
 }
 
+// freeze:開場結束。水豚定格印進捲動區,之後 View 只剩底部四行、frame ticker 停掉。
+// 兩秒到會呼叫,任何一個按鍵也會——不然「開場期間按 Enter」會在水豚還在 View 裡時 Exec,
+// 子命令的輸出印在它下面,兩秒到再定格印一次,就又變成使用者回報的「水豚頭重複」。
+func (m tuiModel) freeze() (tuiModel, tea.Cmd) {
+	if m.frozen {
+		return m, nil
+	}
+	m.frozen = true
+	lines := capybaraStill()
+	if m.viewWidth() < max(tuiMinWidth, capybaraWidth()) {
+		lines = []string{capyOneLine}
+	}
+	banner := m.theme.Accented(strings.Join(lines, "\n")) + "\n\n  " + m.theme.Mutedly(capyTagline(m.provID))
+	return m, tuiPrintln(banner)
+}
+
+// execResult:子命令跑完。成功不印;非零結束碼推一行進捲動區。
+// capy 的 2(有待套用的變更)與 3(安全閥擋下)是設計出來的結束碼、不是壞掉,所以不掛 ✗。
+func (m tuiModel) execResult(msg tuiExecMsg) tea.Cmd {
+	if msg.err == nil {
+		return nil
+	}
+	head := "capy " + strings.Join(msg.args, " ")
+	var ee *exec.ExitError
+	if !errors.As(msg.err, &ee) {
+		return m.println(tuiSeg{"✗ " + head + ":" + msg.err.Error(), m.theme.Mutedly})
+	}
+	mark := "✗ "
+	if c := ee.ExitCode(); c == 2 || c == 3 {
+		mark = "· "
+	}
+	return m.println(tuiSeg{fmt.Sprintf("%s%s 結束碼 %d", mark, head, ee.ExitCode()), m.theme.Mutedly})
+}
+
+func (m tuiModel) viewWidth() int {
+	if m.width <= 0 {
+		return 80
+	}
+	return m.width
+}
+
+// tuiPrintln:把一行推進捲動區(不歸 TUI 管、不會被重繪蓋掉)。測試替換點——tea.Println 產生的
+// printLineMessage 是 bubbletea 的私有型別,外面認不出來,換掉它才能斷言「哪些東西進了捲動區」。
+// 一定要夾寬度:insertAbove 用 ansi.StringWidth 算要捲幾行,量不到 ambiguous 字元(見 tui_width.go)。
+var tuiPrintln = func(s string) tea.Cmd { return tea.Println(s) }
+
+func (m tuiModel) println(segs ...tuiSeg) tea.Cmd {
+	return tuiPrintln(tuiJoin(m.viewWidth()-1, segs...))
+}
+
+// printErr:錯誤第一次出現時整段推進捲動區(永久記錄,可以回頭看);狀態列只留短版。
+// 同一則不重複印——輪詢每兩秒一次,重複印會把捲動區洗掉。
+func (m *tuiModel) printErr(err error) tea.Cmd {
+	if err == nil || err.Error() == m.lastErr {
+		return nil
+	}
+	m.lastErr = err.Error()
+	return m.println(tuiSeg{"⚠ " + err.Error(), m.theme.Mutedly})
+}
+
 // tuiExecProcess:測試替換點——真的 fork 一個行程沒辦法在單元測試裡驗證,換掉它才能斷言「這一行
 // 被切成哪些參數」。正式路徑就是 tea.ExecProcess。
 var tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd { return tea.ExecProcess(c, fn) }
@@ -179,8 +250,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(max(20, msg.Width-4)) // 不設的話 textinput 用預設寬度,placeholder 會被截成一個字
 		return m, nil
 	case tuiFrameMsg:
+		if m.frozen { // 定格後不再有動畫,frame ticker 就此停掉:底部四行只在狀態變動與按鍵時重畫
+			return m, nil
+		}
 		m.frame++
 		return m, m.frameTick()
+	case tuiFreezeMsg:
+		return m.freeze()
 	case tuiPollMsg:
 		if msg.gen != m.gen || m.stalled { // 舊鏈:停在這裡,不要再排下一個 tick
 			return m, nil
@@ -189,14 +265,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiStateMsg:
 		return m.applyState(msg)
 	case tuiExecMsg:
-		if msg.err != nil {
-			m.note = fmt.Sprintf("capy %s:%v", strings.Join(msg.args, " "), msg.err)
-		} else {
-			m.note = "capy " + strings.Join(msg.args, " ") + " 執行完畢"
-		}
+		// 成功不印:子命令的輸出本身就是證據,多一行是雜訊。
 		// 不重排 tick:tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer(各自的 goroutine)。
 		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
-		return m, nil
+		return m, m.execResult(msg)
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 	}
@@ -218,7 +290,7 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
 		m.err = msg.err
-		return m, tick()
+		return m, tea.Batch(m.printErr(msg.err), tick())
 	}
 	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
 		return m, nil
@@ -229,46 +301,65 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		m.st, m.err, m.fails = nil, msg.err, 0
 		return m, tick()
 	case errors.As(msg.err, &rl):
-		m.err, m.fails = fmt.Errorf("rate limited,等待中…(%s)", rl.Message), 0
+		m.err, m.fails = fmt.Errorf("rate limited,等待中(%s)", rl.Message), 0
 		return m, tick()
 	}
 	if msg.err != nil {
 		m.err, m.fails = msg.err, m.fails+1
+		// 整段錯誤推進捲動區(第一次、或內容變了才印),狀態列只留短版:
+		// 前一版把整段留在畫面上,osascript 那種長訊息會一直佔著看不到別的。
+		pr := m.printErr(msg.err)
 		if m.fails >= tuiMaxFails {
 			// 不關介面:這裡的定位是「一行可以跑任何子命令」,播放狀態只是其中一格。連不上的時候
 			// 使用者最需要的正是那行命令列(auth login、doctor),把整個介面收掉等於把人關在門外
 			// (PR #41 review)。輪詢先停,按 r 重試。
-			m.err = fmt.Errorf("連續 %d 次讀不到播放狀態:%w(按 r 重試,或 / 打 doctor)", m.fails, msg.err)
 			m.stalled = true
-			return m, nil
+			return m, pr
 		}
-		return m, tick()
+		return m, tea.Batch(pr, tick())
 	}
-	m.st, m.err, m.fails = msg.st, nil, 0
+	// 恢復了就把去重的記憶清掉:同一則錯誤在恢復之後再發生,是新的一件事,要再印一次。
+	m.st, m.err, m.fails, m.lastErr = msg.st, nil, 0, ""
 	return m, tick()
 }
 
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
+	// 兩秒到再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
+	if !m.frozen {
+		var freeze tea.Cmd
+		m, freeze = m.freeze()
+		next, cmd := m.onKey(msg)
+		return next, tea.Sequence(freeze, cmd)
+	}
 	if m.typing {
 		switch msg.String() {
 		case "ctrl+c": // raw mode 下 ctrl+c 不是 SIGINT 而是一個按鍵;不攔的話打字打到一半按它毫無反應
 			return m, tea.Quit
-		case "esc":
+		case "esc": // 有字先清空,空的再離開輸入(打錯一長串時不必連按退格)
+			if m.input.Value() != "" {
+				m.input.SetValue("")
+				return m, nil
+			}
 			m.typing, m.input = false, blurred(m.input)
 			return m, nil
 		case "enter":
-			args := splitArgs(m.input.Value())
+			raw := m.input.Value()
+			args := splitArgs(raw)
 			m.typing, m.input = false, blurred(m.input)
 			m.input.SetValue("")
 			if len(args) == 0 {
 				return m, nil
 			}
 			if m.exe == "" {
-				m.note = "找不到 capy 自己的執行檔,命令列停用"
-				return m, nil
+				return m, m.println(tuiSeg{"✗ 找不到 capy 自己的執行檔,命令列停用", m.theme.Mutedly})
 			}
-			m.note = ""
-			return m, m.runArgs(args)
+			// 回音先進捲動區再讓出終端機:Sequence 保序,而 exec 交出終端機前會 flush 一次
+			// (releaseTerminal → stopRenderer(false) → flush),所以回音一定在子命令輸出上面。
+			return m, tea.Sequence(
+				m.println(tuiSeg{"> ", m.theme.Accented}, tuiSeg{raw, m.theme.Strong}), // 與輸入行的提示符一致
+				m.runArgs(args),
+			)
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -281,6 +372,8 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.typing = true
 		m.input.Focus()
 		return m, textinput.Blink
+	case "?": // 完整鍵位推進捲動區,不佔底部的行數
+		return m, m.println(tuiSeg{tuiKeymap, m.theme.Mutedly})
 	}
 	if m.pc == nil {
 		return m, nil
@@ -307,16 +400,14 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		m = m.newChain()
-		m.note = "跳到 " + ui.FormatDuration(pos)
+		m = m.newChain() // 不印提示:下一次輪詢就會把新位置寫進狀態列,那才是真的發生了
 		return m, m.control(func(ctx context.Context) error { return m.pc.Seek(ctx, pos) })
 	case "+", "=", "-":
 		pct, ok := m.volTarget(msg.String() != "-")
 		if !ok {
 			return m, nil
 		}
-		m = m.newChain()
-		m.note = fmt.Sprintf("音量 %d", pct)
+		m = m.newChain() // 同上:狀態列的「音量 N」會跟著更新
 		return m, m.control(func(ctx context.Context) error { return m.pc.SetVolume(ctx, pct) })
 	}
 	return m, nil
@@ -386,78 +477,98 @@ func splitArgs(line string) []string {
 	return out
 }
 
+// View 只回兩種畫面:開場的水豚(兩秒),之後永遠是底部四行。
+// 四行 = 分隔線 / 狀態 / 輸入 / 提示。每一行都夾在 w-1 欄:寫滿最後一欄時某些終端機會多換一行,
+// 底部就多佔一行、上緣被頂掉(前一版 19 行畫面崩掉的成因之一)。
 func (m tuiModel) View() tea.View {
-	w := m.width
-	if w <= 0 {
-		w = 80
+	w := m.viewWidth()
+	if !m.frozen {
+		return tea.NewView(m.intro(w))
 	}
-	t := m.theme
-	var b strings.Builder
-	line := func(s string) { b.WriteString(ansi.Truncate(s, w, "…")); b.WriteByte('\n') }
+	lines := []string{
+		// 分隔線刻意用 ASCII:U+2500 那排方框繪製字元是 East Asian Ambiguous,
+		// 在 CJK 終端機會變兩欄,一條滿版的線剛好翻倍成兩行(水豚踩過同一個坑)。
+		m.theme.Mutedly(strings.Repeat("-", max(1, w-1))),
+		m.statusLine(w - 1),
+		// 輸入行不進 tuiClip:它已經帶著樣式,而 tuiClip 只會量純文字的寬度
+		// (跳脫碼會被逐位元組算進去,整行被截成一小截)。textinput 自己依 SetWidth 收邊,
+		// 而 SetWidth 給的是 w-4,留了餘裕吸收 › 這個 ambiguous 字元可能多佔的一欄。
+		m.input.View(),
+		tuiJoin(w-1, tuiSeg{"  " + m.hints(), m.theme.Mutedly}),
+	}
+	v := tea.NewView(strings.Join(lines, "\n")) // 不留結尾換行:那會被當成第五行
+	if c := m.input.Cursor(); c != nil {
+		c.Y += 2 // 分隔線與狀態列在輸入行上面
+		v.Cursor = c
+	}
+	return v
+}
 
+// intro:開場的兩秒。只有水豚與招牌,底部四行還沒出現(定格之後它才是常駐的畫面)。
+func (m tuiModel) intro(w int) string {
+	var lines []string
 	if w >= tuiMinWidth && w >= capybaraWidth() {
 		for _, l := range capybaraFrame(m.frame) {
-			line(t.Accented(l))
+			lines = append(lines, m.theme.Accented(l))
 		}
-		line("")
 	} else {
-		line(t.Accented(capyOneLine))
+		lines = append(lines, m.theme.Accented(capyOneLine))
 	}
-	line(t.Mutedly(capyTagline(m.provID)))
-	line("")
+	return strings.Join(append(lines, "", "  "+m.theme.Mutedly(capyTagline(m.provID))), "\n")
+}
 
+// statusLine:一行講完「現在怎麼了」。錯誤只留短版——整段在發生當下已經進捲動區了。
+func (m tuiModel) statusLine(w int) string {
+	t := m.theme
 	switch {
 	case m.pc == nil:
-		line(t.Mutedly("沒有播放遙控:" + errText(m.pcErr, "這個平台不支援")))
+		return tuiJoin(w, tuiSeg{"  沒有播放遙控:" + errText(m.pcErr, "這個平台不支援"), t.Mutedly})
+	case m.stalled:
+		return tuiJoin(w, tuiSeg{"  已停止輪詢(r 重試)", t.Mutedly})
 	case m.st == nil || m.st.Track == nil:
-		line(t.Mutedly("目前沒有播放內容"))
-	default:
-		st := m.st
-		mark := "⏸"
-		if st.Playing {
-			mark = "▶"
+		if m.err != nil {
+			return tuiJoin(w, tuiSeg{"  讀不到播放狀態(r 重試)", t.Mutedly})
 		}
-		line(t.Accented(mark) + " " + t.Strong(st.Track.Title))
-		line(t.Mutedly("  " + strings.Join(st.Track.Artists, ", ") + " · " + st.Track.Album))
-		pct := 0.0
-		if st.Track.DurationMS > 0 {
-			pct = min(1, float64(st.ProgressMS)/float64(st.Track.DurationMS))
-		}
-		times := fmt.Sprintf(" %s / %s", ui.FormatDuration(st.ProgressMS), ui.FormatDuration(st.Track.DurationMS))
-		bar := m.bar
-		bar.SetWidth(max(10, w-2-ansi.StringWidth(times)))
-		line("  " + bar.ViewAs(pct) + t.Mutedly(times))
-		if st.Device.Name != "" {
-			dev := fmt.Sprintf("  %s(%s)", st.Device.Name, st.Device.Type)
-			if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,不是整行消失
-				dev += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
-			}
-			line(t.Mutedly(dev))
-		}
+		return tuiJoin(w, tuiSeg{"  沒有播放內容", t.Mutedly})
 	}
-	line("")
-	if m.err != nil {
-		line(t.Mutedly("⚠ " + m.err.Error()))
+	st := m.st
+	mark := "⏸"
+	if st.Playing {
+		mark = "▶"
 	}
-	if m.note != "" {
-		line(t.Mutedly("· " + m.note))
+	tail := " · " + ui.FormatDuration(st.ProgressMS) + " / " + ui.FormatDuration(st.Track.DurationMS)
+	if st.Device.Name != "" {
+		tail += " · " + st.Device.Name
 	}
-	line(m.input.View())
-	line(t.Mutedly(m.hints()))
-	return tea.NewView(b.String())
+	if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,+/- 也才有可見的回饋
+		tail += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
+	}
+	// 曲名是唯一沒有上限的段,留給它剩下的空間;tuiJoin 會在它那一段截斷。
+	return tuiJoin(w,
+		tuiSeg{"  " + mark + " ", t.Accented},
+		tuiSeg{st.Track.Title, t.Strong},
+		tuiSeg{tail, t.Mutedly},
+	)
 }
+
+// tuiKeymap:? 印進捲動區的完整鍵位。底部只放最常用的幾個,其餘查這裡。
+const tuiKeymap = `按鍵:
+  space 播放/暫停    n / p 下一首 / 上一首
+  <- / ->  +-10 秒   + / -  音量 +-5
+  /      輸入命令    r     停擺後重新連上
+  ?      這張表      q     離開(輸入中用 Ctrl-C)`
 
 func (m tuiModel) hints() string {
 	if m.typing {
-		return "  Enter 執行 · Esc 取消"
+		return "Enter 執行 · Esc 清空 · Ctrl-C 離開"
 	}
 	if m.pc == nil {
-		return "  / 輸入命令 · q 離開"
+		return "/ 命令 · ? 按鍵 · q 離開"
 	}
 	if m.stalled {
-		return "  r 重新連上 · / 輸入命令 · q 離開"
+		return "r 重新連上 · / 命令 · ? 按鍵 · q 離開"
 	}
-	return "  space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸入命令 · q 離開"
+	return "space 播放/暫停 · ←→ ±10 秒 · / 命令 · ? 按鍵 · q 離開"
 }
 
 func errText(err error, fallback string) string {

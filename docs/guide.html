@@ -338,7 +338,7 @@
 
   <section>
     <h2>互動式介面</h2>
-    <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。上面是水豚,中間是現在在播什麼,最下面一行可以輸入任何 capy 子命令。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
+    <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。開場的水豚動兩秒後定格,之後畫面只有底部四行會變動,上面那一整片是終端機自己的捲動區——你打過的命令、它們的輸出、發生過的錯誤都留在那裡,可以往回捲、可以複製。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
 <pre><code>    __            __
    /  \__________/  \
   |                  |
@@ -350,22 +350,27 @@
 
 <span class="c-m">capy · spotify</span>
 
-<span class="c-p">▶</span> 派對動物
-  五月天 · 自傳
-  <span class="c-p">▌▌▌▌▌▌▌▌▌</span><span class="c-m">░░░░░░░░░░░░░</span> 1:23 / 4:09
-  MacBook Pro(Computer) · 音量 50
+<span class="c-p">&gt;</span> pl list
+<span class="c-m">ID                名稱              曲數</span>
+p.b16G4rbSY0DzME  日本都會之聲      -
+p.JL68l7EhogEeXd  冬日暖調          -
 
-<span class="c-p">›</span> pl sync 通勤
-  space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸入命令 · q 離開</code></pre>
+<span class="c-m">------------------------------------------------------</span>
+  <span class="c-p">▶</span> 派對動物 <span class="c-m">· 1:23 / 4:09 · MacBook Pro · 音量 50</span>
+<span class="c-p">&gt;</span> _
+  <span class="c-m">space 播放/暫停 · ←→ ±10 秒 · / 命令 · ? 按鍵 · q 離開</span></code></pre>
     <ul class="keys">
       <li><kbd>space</kbd><span>播放與暫停</span></li>
       <li><kbd>n</kbd> <kbd>p</kbd><span>下一首、上一首</span></li>
       <li><kbd>←</kbd> <kbd>→</kbd><span>前後各十秒</span></li>
       <li><kbd>+</kbd> <kbd>-</kbd><span>音量升降五格</span></li>
       <li><kbd>/</kbd><span>輸入子命令</span></li>
+      <li><kbd>?</kbd><span>把完整鍵位印進捲動區</span></li>
+      <li><kbd>r</kbd><span>讀不到播放狀態而停擺後,重新連上</span></li>
       <li><kbd>q</kbd><span>離開</span></li>
     </ul>
-    <p style="margin-top:1.5rem">在那一行輸入的命令會重新執行 capy 自己,不是在同一個行程裡跑。所以每個子命令都保有它原本的樣子:該有表格的有表格,該問你確認的會問,輸出留在畫面上方可以往回捲。清單名有空白時用雙引號,例如 <code>pl show "上班 通勤"</code>。</p>
+    <p style="margin-top:1.5rem">在那一行輸入的命令會重新執行 capy 自己,不是在同一個行程裡跑。所以每個子命令都保有它原本的樣子:該有表格的有表格,該問你確認的會問。清單名有空白時用雙引號,例如 <code>pl show "上班 通勤"</code>。</p>
+    <p>讀不到播放狀態時,完整的錯誤會印進捲動區留著,底下那行只留一句短的;連續五次讀不到就停止輪詢,按 <kbd>r</kbd> 重新連上。命令列在任何情況下都能用——連不上的時候,你最需要的正是它(<code>doctor</code>、<code>auth login</code>)。</p>
   </section>
 
   <section>
