@@ -53,7 +53,7 @@ func providerFlag(cmd *cobra.Command) {
 
 // defaultProvider:config 的 default_provider;沒設、config 讀不到、或值不在 providerIDs(手改檔案、別版 binary)
 // 都退回 spotify——這在建構命令時就要決定(cobra flag 預設值),--help 不得因 config 壞掉而失敗或自相矛盾。
-// 每個 process 只讀一次 config(8 個子命令都掛 --provider,不然一次 capy --help 就讀 8 次);
+// 每個 process 只讀一次 config(十來個命令都掛 --provider,含 root 自己,不然一次 capy --help 就讀十幾次);
 // config set 與測試用 resetDefaultProvider 重置。
 var defaultProvider = sync.OnceValue(loadDefaultProvider)
 
