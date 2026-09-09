@@ -263,6 +263,7 @@
     padding: 0.1rem 0 0.1rem 1.1rem;
   }
   .note.caution { border-left-color: var(--warn); }
+  .group > .note { margin-top: 1rem; color: var(--muted); }
   .note h3 { color: var(--text); font-size: var(--step-0); margin-bottom: 0.25rem; }
   .note p { margin: 0; color: var(--muted); }
 
@@ -396,6 +397,7 @@
           <li><b>capy pl sync</b><span>先 pull 再 push,一張表、一次確認。日常用這個就好。</span></li>
           <li><b>capy pl unlink &lt;名稱&gt; &lt;平台&gt;</b><span>解除連結,正本內容不動。</span></li>
         </ul>
+        <p class="note">這一組命令<b>不帶清單名字直接打</b>,在終端機裡會開挑選器讓你選:<code>pl link</code> 問三次(平台 → 那個平台上的哪個清單 → 連到哪個正本,也可以當場建一個新的),<code>pl unlink</code> 問兩次。接在管線後面或放進 cron 時不會問,照舊要求你把參數寫齊。</p>
       </div>
 
       <div class="group">

@@ -467,9 +467,9 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 
 func resolveTargets(s *canonState, args []string, prov string) ([]*canon.Playlist, error) {
 	if len(args) == 0 {
-		return pullTargets(s, nil, true, prov)
+		return pullTargets(s, nil, true, prov, "")
 	}
-	return pullTargets(s, args, false, prov)
+	return pullTargets(s, args, false, prov, "") // 這裡 args 一定有一個(上面擋掉 0 個)
 }
 
 // resolveHint:pl pull 結尾提示尚未對應的曲目數(pull 不做 resolve:API 成本與關注點分離,決策 22)。

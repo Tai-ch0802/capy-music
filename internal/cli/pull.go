@@ -436,12 +436,17 @@ func splitProviderRef(arg string) (prov, ref string, err error) {
 
 func newPlLinkCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "link <name|pid> <provider>:<playlist ID|名稱>", Short: "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link)", Args: cobra.ExactArgs(2),
+		Use: "link [name|pid] [provider]:[playlist ID|名稱]", Short: "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link。不帶參數且在終端機裡會三段挑選)", Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			prov, ref, err := splitProviderRef(args[1])
-			if err != nil {
-				return err
+			prov, ref := "", ""
+			var err error
+			if len(args) == 2 {
+				if prov, ref, err = splitProviderRef(args[1]); err != nil {
+					return err
+				}
+			} else if prov, err = pickProvider("連到哪個平台?"); err != nil { // 第一段。三個平台全列,不先探測誰有登入:
+				return err // 探測要建 provider 又慢,選到沒登入的,下面的錯誤本來就會指路 auth login
 			}
 			p, err := newProvider(ctx, prov)
 			if err != nil {
@@ -451,9 +456,19 @@ func newPlLinkCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := resolvePlaylistID(ctx, r, prov, ref)
-			if err != nil {
-				return err
+			var id string
+			if ref != "" {
+				if id, err = resolvePlaylistID(ctx, r, prov, ref); err != nil {
+					return err
+				}
+			} else { // 第二段
+				refs, err := r.ListPlaylists(ctx)
+				if err != nil {
+					return friendlyErr(prov, err)
+				}
+				if id, err = pickPlatformPlaylist(prov, refs); err != nil {
+					return err
+				}
 			}
 			// 「存在」的定義要跟 pull 的 gone 判準一致(在 ListPlaylists 裡):像 base62 的 ID 會被 resolvePlaylistID 直接放行,
 			// 別人的公開清單讀得到卻不在自己的列表裡,連了第一次 pull 就會被當成已刪除而自動 unlink。
@@ -472,7 +487,16 @@ func newPlLinkCmd() *cobra.Command {
 				return friendlyErr(prov, err)
 			}
 			return withCanonical(ctx, cmd.ErrOrStderr(), func(s *canonState) error {
-				pl, err := s.find(args[0])
+				arg := ""
+				if len(args) == 2 {
+					arg = args[0]
+				} else { // 第三段:挑 canonical 清單,或建一個新的
+					var err error
+					if arg, err = pickLinkTarget(s, prov, id); err != nil {
+						return err
+					}
+				}
+				pl, err := s.find(arg)
 				if err != nil {
 					return err
 				}
@@ -482,10 +506,10 @@ func newPlLinkCmd() *cobra.Command {
 					}
 				}
 				if pl == nil {
-					if _, err := ulid.Time(args[0]); err == nil && strings.ToUpper(args[0]) == args[0] { // 合法 ULID 卻不存在:別把它當名字建清單
-						return fmt.Errorf("找不到 pid %s 的 canonical 清單", args[0])
+					if _, err := ulid.Time(arg); err == nil && strings.ToUpper(arg) == arg { // 合法 ULID 卻不存在:別把它當名字建清單
+						return fmt.Errorf("找不到 pid %s 的 canonical 清單", arg)
 					}
-					pl = canon.NewPlaylist(args[0])
+					pl = canon.NewPlaylist(arg)
 					s.playlists[pl.PID] = pl
 					fmt.Fprintf(cmd.ErrOrStderr(), "建立 canonical 清單 %s(%s)\n", pl.Name, pl.PID)
 				}
@@ -510,26 +534,47 @@ func newPlLinkCmd() *cobra.Command {
 
 func newPlUnlinkCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "unlink <name|pid> <provider>", Short: "取消 canonical 清單與平台清單的連結(canonical 內容不動)", Args: cobra.ExactArgs(2),
+		Use: "unlink [name|pid] [provider]", Short: "取消 canonical 清單與平台清單的連結(canonical 內容不動;不帶參數且在終端機裡會兩段挑選)", Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !isProviderID(args[1]) {
+			if len(args) == 2 && !isProviderID(args[1]) {
 				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), args[1])
 			}
 			return withCanonical(cmd.Context(), cmd.ErrOrStderr(), func(s *canonState) error {
-				pl, err := s.find(args[0])
+				arg, prov := "", ""
+				if len(args) == 2 {
+					arg, prov = args[0], args[1]
+				} else {
+					var err error
+					if arg, err = pickLinkedPlaylist(s, "", "選一個要取消連結的清單"); err != nil {
+						return err
+					}
+				}
+				pl, err := s.find(arg)
 				if err != nil {
 					return err
 				}
 				if pl == nil {
-					return fmt.Errorf("找不到 canonical 清單 %q", args[0])
+					return fmt.Errorf("找不到 canonical 清單 %q", arg)
 				}
-				id, ok := pl.Links[args[1]]
+				if prov == "" { // 第二段:只列這個清單真的連了的平台,選了不會撲空
+					provs := slices.Sorted(maps.Keys(pl.Links))
+					labels := make([]string, len(provs))
+					for i, pv := range provs {
+						labels[i] = pv + ":" + pl.Links[pv]
+					}
+					i, err := pickOne("取消哪一個平台的連結?", labels)
+					if err != nil {
+						return err
+					}
+					prov = provs[i]
+				}
+				id, ok := pl.Links[prov]
 				if !ok {
-					return fmt.Errorf("%s(%s)沒有連結 %s", pl.Name, pl.PID, args[1])
+					return fmt.Errorf("%s(%s)沒有連結 %s", pl.Name, pl.PID, prov)
 				}
-				delete(pl.Links, args[1])
+				delete(pl.Links, prov)
 				pl.UpdatedAt = canon.Now().Unix()
-				fmt.Fprintf(cmd.OutOrStdout(), "已取消連結 %s(%s)↔ %s:%s\n", pl.Name, pl.PID, args[1], id)
+				fmt.Fprintf(cmd.OutOrStdout(), "已取消連結 %s(%s)↔ %s:%s\n", pl.Name, pl.PID, prov, id)
 				return nil
 			})
 		},
@@ -570,8 +615,8 @@ func newPlPullCmd() *cobra.Command {
 3 安全閥擋下(Drive 不完整;刪除 >10 首或 >30% 且 >3 首)。--yes 跳過確認、--force 才越過刪除閾值,兩者都不放行「Drive 不完整」。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if all == (len(args) == 1) {
-				return errors.New("指定一個清單(名稱或 pid),或用 --all 拉全部已連結的清單")
+			if err := needTarget(cmd, args, all, "拉"); err != nil {
+				return err
 			}
 			if prov != "" && !isProviderID(prov) {
 				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), prov)
@@ -581,7 +626,7 @@ func newPlPullCmd() *cobra.Command {
 			}
 			ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 			return withCanonical(ctx, stderr, func(s *canonState) error {
-				targets, err := pullTargets(s, args, all, prov)
+				targets, err := pullTargets(s, args, all, prov, "拉")
 				if err != nil {
 					return err
 				}
@@ -632,7 +677,8 @@ func newPlPullCmd() *cobra.Command {
 }
 
 // pullTargets:--all = 所有有連結的清單(可用 --provider 篩),否則指定的那一個;依 (name, pid) 排序,輸出才決定性。
-func pullTargets(s *canonState, args []string, all bool, prov string) ([]*canon.Playlist, error) {
+// verb:挑選器標題用的動詞(拉 / 推 / 同步);len(args) == 1 或 --all 時用不到。
+func pullTargets(s *canonState, args []string, all bool, prov, verb string) ([]*canon.Playlist, error) {
 	linked := func(pl *canon.Playlist) bool {
 		if prov != "" {
 			return pl.Links[prov] != ""
@@ -647,12 +693,21 @@ func pullTargets(s *canonState, args []string, all bool, prov string) ([]*canon.
 			}
 		}
 	} else {
-		pl, err := s.find(args[0])
+		arg := ""
+		if len(args) == 1 {
+			arg = args[0]
+		} else { // 不帶參數 + 終端機:挑選器補(呼叫端的 needTarget 已擋掉非 TTY)
+			var err error
+			if arg, err = pickLinkedPlaylist(s, prov, "選一個清單來"+verb); err != nil {
+				return nil, err
+			}
+		}
+		pl, err := s.find(arg)
 		if err != nil {
 			return nil, err
 		}
 		if pl == nil {
-			return nil, fmt.Errorf("找不到 canonical 清單 %q — 先 capy pl link %s <provider>:<清單>", args[0], args[0])
+			return nil, fmt.Errorf("找不到 canonical 清單 %q — 先 capy pl link %s <provider>:<清單>", arg, arg)
 		}
 		if !linked(pl) {
 			return nil, fmt.Errorf("%s(%s)沒有連結任何平台清單 — 先 capy pl link", pl.Name, pl.PID)

@@ -97,7 +97,7 @@ func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, provider
 
 func newPlShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "show <name|playlist ID>", Short: "顯示清單內容", Args: cobra.ExactArgs(1),
+		Use: "show [name|playlist ID]", Short: "顯示清單內容(不帶參數且在終端機裡會開挑選器)", Args: argsOrPicker(1),
 		ValidArgsFunction: plShowCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -109,9 +109,19 @@ func newPlShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := resolvePlaylistID(ctx, r, p.ID(), args[0])
-			if err != nil {
-				return err
+			var id string
+			if len(args) == 1 {
+				if id, err = resolvePlaylistID(ctx, r, p.ID(), args[0]); err != nil {
+					return err
+				}
+			} else { // 標題點名平台:沒給 --provider 時列的是 default_provider 的清單
+				refs, err := r.ListPlaylists(ctx)
+				if err != nil {
+					return friendlyErr(p.ID(), err)
+				}
+				if id, err = pickPlatformPlaylist(p.ID(), refs); err != nil {
+					return err
+				}
 			}
 			tracks, err := r.GetPlaylistItems(ctx, id)
 			if errors.Is(err, provider.ErrRestricted) {

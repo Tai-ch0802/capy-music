@@ -429,8 +429,8 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 「動了幾筆」看 stdout 行數時要扣掉 skip 列。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if all == (len(args) == 1) {
-				return errors.New("指定一個清單(名稱或 pid),或用 --all 推全部已連結的清單")
+			if err := needTarget(cmd, args, all, "推"); err != nil {
+				return err
 			}
 			if prov != "" && !isProviderID(prov) {
 				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), prov)
@@ -442,7 +442,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 			var deferred error // ApplyOps 失敗 / 確認期間平台變了:base 要落地(COMMIT 要走),所以 fn 回 nil、這裡收尾再回錯
 			applied, touched := 0, false
 			err := withCanonical(ctx, stderr, func(s *canonState) error {
-				targets, err := pullTargets(s, args, all, prov)
+				targets, err := pullTargets(s, args, all, prov, "推")
 				if err != nil {
 					return err
 				}
