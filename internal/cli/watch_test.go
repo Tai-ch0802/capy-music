@@ -44,7 +44,7 @@ func playingState() *provider.PlaybackState {
 		Playing:    true,
 		Track:      &provider.Track{Title: "派對動物", Artists: []string{"五月天"}, Album: "自傳", DurationMS: 249000},
 		ProgressMS: 83000,
-		Device:     provider.Device{Name: "MacBook Pro", Type: "Computer", VolumePct: 50},
+		Device:     provider.Device{Name: "MacBook Pro", Type: "Computer", VolumePct: 50, VolumeKnown: true},
 	}
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"slices"
 	"strings"
@@ -104,6 +105,97 @@ func TestTUISeekAndVolumeKeys(t *testing.T) {
 	}
 }
 
+// 音量 0 是「靜音」不是「不知道」:+ 要能把它拉回來。平台沒回報音量(VolumeKnown = false)才不猜。
+func TestTUIVolumeDistinguishesMuteFromUnknown(t *testing.T) {
+	muted := &watchFake{st: playingState()}
+	muted.st.Device.VolumePct = 0 // 真的靜音,平台有回報
+	m := newTestTUI(t, muted)
+	m = step(t, m, tea.KeyPressMsg{Code: '+'}, true)
+	if !slices.Equal(muted.calls, []string{"vol:5"}) {
+		t.Fatalf("靜音之後 + 要解得開:%v", muted.calls)
+	}
+	if got := m.View().Content; !strings.Contains(got, "音量 0") {
+		t.Errorf("靜音要顯示成「音量 0」而不是整行消失:%q", got)
+	}
+	unknown := &watchFake{st: playingState()}
+	unknown.st.Device.VolumeKnown = false // Apple 的 State 不帶音量
+	m2 := newTestTUI(t, unknown)
+	m2 = step(t, m2, tea.KeyPressMsg{Code: '+'}, true)
+	if len(unknown.calls) != 0 {
+		t.Fatalf("平台沒回報音量時不猜:%v", unknown.calls)
+	}
+	if strings.Contains(m2.View().Content, "· 音量") { // 提示列也有「音量」兩字,只看裝置那行的寫法
+		t.Error("沒回報音量就不要顯示音量")
+	}
+}
+
+// 輪詢是一條鏈,控制鍵會另外起一次讀取。沒有世代編號的話舊鏈不會停,按幾次就多幾條,方向鍵
+// 自動重複時直接撞 429。這條守住「同一時間只有一條鏈在跑」。
+func TestTUIPollChainDoesNotMultiply(t *testing.T) {
+	f := &watchFake{st: playingState()}
+	m := newTestTUI(t, f)
+	// 第一條鏈:gen 0 的 tick 到期 → 會排下一次讀取
+	if _, cmd := m.Update(tuiPollMsg{gen: m.gen}); cmd == nil {
+		t.Fatal("目前世代的 tick 應該接著讀狀態")
+	}
+	before := m.gen
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyRight}, true) // 控制鍵推進世代
+	if m.gen == before {
+		t.Fatal("控制鍵要推進輪詢世代")
+	}
+	// 舊鏈的 tick 現在到期:必須停在這裡,不能再排一次讀取
+	if _, cmd := m.Update(tuiPollMsg{gen: before}); cmd != nil {
+		t.Error("舊世代的 tick 應該自己停掉,否則鏈會愈積愈多")
+	}
+	// 舊鏈的狀態回覆同理:不能拿它排新的 tick
+	if _, cmd := m.Update(tuiStateMsg{st: f.st, gen: before}); cmd != nil {
+		t.Error("舊世代的狀態回覆應該丟掉")
+	}
+	// 新世代照常運作
+	if _, cmd := m.Update(tuiPollMsg{gen: m.gen}); cmd == nil {
+		t.Error("目前世代要照常輪詢")
+	}
+}
+
+// tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer——回來時再排一次 tick 會讓鏈變兩條。
+func TestTUIExecDoesNotReArmTicks(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	next, cmd := m.Update(tuiExecMsg{args: []string{"pl", "list"}})
+	if cmd != nil {
+		t.Error("執行完子命令不該再排 tick(排隊中的訊息會自己把鏈接回去)")
+	}
+	if !strings.Contains(next.(tuiModel).note, "pl list") {
+		t.Error("要留下執行過什麼的紀錄")
+	}
+}
+
+// 讀不到播放狀態不該關掉整個介面:命令列正是這時候最需要的(auth login、doctor)。
+func TestTUIStallsInsteadOfQuitting(t *testing.T) {
+	f := &watchFake{err: errors.New("dial tcp: no route to host")}
+	m := newTestTUI(t, f)
+	var cmd tea.Cmd
+	for i := 0; i < tuiMaxFails; i++ {
+		var next tea.Model
+		next, cmd = m.Update(tuiStateMsg{err: f.err, gen: m.gen})
+		m = next.(tuiModel)
+	}
+	if cmd != nil {
+		t.Error("達到上限後應該停下輪詢,而不是排下一次(更不是 tea.Quit)")
+	}
+	if !m.stalled {
+		t.Fatal("應該進入停擺狀態")
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "按 r 重試") || !strings.Contains(view, "/ 輸入命令") {
+		t.Errorf("要指路且保留命令列:%q", view)
+	}
+	// r 重新接上
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, false)
+	if m.stalled || m.fails != 0 {
+		t.Errorf("r 之後要重新開始:stalled=%v fails=%d", m.stalled, m.fails)
+	}
+}
+
 // 沒有播放內容時,seek / vol 沒有基準點可以加減——不做事,而不是跳到 10 秒或把音量設成 5。
 func TestTUISeekAndVolumeNoopWithoutState(t *testing.T) {
 	f := &watchFake{}
@@ -167,13 +259,16 @@ func TestTUICommandLine(t *testing.T) {
 func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	wide := m.View().Content
-	if !strings.Contains(wide, "╭") {
+	if !strings.Contains(wide, capyChin) { // 下巴那行每一幀都一樣,不受眨眼／嚼草影響
 		t.Error("寬螢幕要有水豚橫幅")
 	}
 	m.width = 30
 	narrow := m.View().Content
-	if strings.Contains(narrow, "╭──╮") {
+	if strings.Contains(narrow, capyChin) {
 		t.Error("窄螢幕不該畫整隻水豚")
+	}
+	if !strings.Contains(narrow, capyOneLine) {
+		t.Error("窄螢幕要用一行的替代品")
 	}
 	if !strings.Contains(narrow, "capy") {
 		t.Errorf("窄螢幕仍要有一行招牌:%q", narrow)

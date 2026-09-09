@@ -25,6 +25,14 @@ func TestNoDuplicateCommandNames(t *testing.T) {
 	walk("capy", newRootCmd())
 }
 
+// root 現在可執行(無參數開互動式介面),連帶讓打錯的子命令回非零 exit code——在此之前
+// cobra 對不可執行的 root 是印 help 然後成功返回,腳本裡的 capy pasue && echo ok 會印 ok。
+func TestUnknownSubcommandFails(t *testing.T) {
+	if _, err := runCLI(t, "pasue"); err == nil {
+		t.Error("打錯的子命令要回非零 exit code,不能靜靜印 help 然後成功")
+	}
+}
+
 func TestRootVersion(t *testing.T) {
 	cmd := newRootCmd()
 	buf := &bytes.Buffer{}
