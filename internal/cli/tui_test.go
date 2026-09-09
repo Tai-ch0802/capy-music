@@ -315,7 +315,7 @@ func TestTUIStaleRepliesNeverReviveTheChain(t *testing.T) {
 	}
 	// 控制指令自己的錯誤仍然要顯示(使用者剛按的鍵失敗了)
 	next, _ = m.Update(tuiStateMsg{err: errors.New("裝置拒絕"), fromCtl: true, gen: old})
-	if next.(tuiModel).err == nil {
+	if next.(tuiModel).errShort == "" {
 		t.Error("控制指令的錯誤要說,即使已經 stale")
 	}
 }

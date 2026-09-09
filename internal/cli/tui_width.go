@@ -66,22 +66,27 @@ type tuiSeg struct {
 }
 
 // tuiJoin:把幾段接成總寬不超過 w 的一行。哪一段超出就在那裡截斷,後面的段丟掉。
+// 「丟掉」要看有沒有截斷,不能只看 used >= w:tuiClip 遇到寬字元常常停在 w-1,
+// 下一段就會拿到 1 格預算再吐一顆點出來,變成三個點。
 func tuiJoin(w int, segs ...tuiSeg) string {
 	var b strings.Builder
 	used := 0
 	for _, sg := range segs {
-		if used >= w {
+		rem := w - used
+		if rem <= 0 {
 			break
 		}
-		t := tuiClip(sg.text, w-used)
-		if t == "" {
-			continue
+		t := tuiClip(sg.text, rem)
+		if t != "" {
+			used += tuiWidth(t)
+			if sg.style != nil {
+				t = sg.style(t)
+			}
+			b.WriteString(t)
 		}
-		used += tuiWidth(t)
-		if sg.style != nil {
-			t = sg.style(t)
+		if tuiWidth(sg.text) > rem { // 這一段放不完,後面的段沒有意義
+			break
 		}
-		b.WriteString(t)
 	}
 	return b.String()
 }

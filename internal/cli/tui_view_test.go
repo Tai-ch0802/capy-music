@@ -2,7 +2,9 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,7 +34,8 @@ func wantWidth(s string) int {
 // 舊畫面留在上面 —— 使用者看到的「水豚頭重複三次、歷程不可讀」就是這麼來的。
 func TestTUIViewIsFourLines(t *testing.T) {
 	long := strings.Repeat("超長的曲名", 40)
-	for _, w := range []int{40, 80} {
+	// 24 / 30 是窄視窗的門檻:輸入行的下限寬度與 placeholder 都會在這裡把底部撐成五行。
+	for _, w := range []int{24, 30, 40, 80} {
 		for _, name := range []string{"playing", "nostate", "stalled", "typing", "noplayback"} {
 			f := &watchFake{st: playingState()}
 			f.st.Track.Title = long
@@ -42,7 +45,7 @@ func TestTUIViewIsFourLines(t *testing.T) {
 			case "nostate":
 				m.st = nil
 			case "stalled":
-				m.st, m.stalled, m.err = nil, true, errors.New("dial tcp: no route to host")
+				m.st, m.stalled, m.errShort = nil, true, "讀不到播放狀態(r 重試)"
 			case "typing":
 				m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
 				m.input.SetValue(long)
@@ -142,10 +145,25 @@ func TestTUIEchoesCommandAndExitCode(t *testing.T) {
 	}
 }
 
+// TestHelperExit:只在被 exitErr 叫起來時生效的空殼,用來當一個「會回指定結束碼」的行程。
+func TestHelperExit(t *testing.T) {
+	if c := os.Getenv("CAPY_TEST_EXIT"); c != "" {
+		n, err := strconv.Atoi(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Exit(n)
+	}
+}
+
 // exitErr:真的跑一個會回指定結束碼的行程,拿到貨真價實的 *exec.ExitError。
+// 用測試自己的執行檔,不用 sh -c —— Windows 上沒有 sh 可以假設(CI 有 windows-latest),
+// 現在能過只是因為 runner image 把 Git for Windows 的 sh.exe 放在 PATH 上。
 func exitErr(t *testing.T, code int) error {
 	t.Helper()
-	err := exec.Command("sh", "-c", "exit "+string(rune('0'+code))).Run()
+	c := exec.Command(os.Args[0], "-test.run=^TestHelperExit$")
+	c.Env = append(os.Environ(), "CAPY_TEST_EXIT="+strconv.Itoa(code))
+	err := c.Run()
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) || ee.ExitCode() != code {
 		t.Fatalf("造不出結束碼 %d 的錯誤:%v", code, err)
@@ -224,5 +242,66 @@ func TestTUINormalModeKeysStayHotkeys(t *testing.T) {
 	}
 	if m.input.Value() != "" {
 		t.Errorf("熱鍵不該把字元帶進輸入行:%q", m.input.Value())
+	}
+}
+
+// 有曲目時也可能同時有狀況。限流最典型:上一首歌還在播,只換掉整行的話畫面看起來一切正常,
+// 實際上正在被限流 —— 前一版無條件印 ⚠ m.err 看得到,壓成四行之後差點漏掉。
+func TestTUIStatusLineCarriesErrorAlongsideTrack(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	got := recordPrintln(t)
+	rl := &provider.RateLimitError{Seconds: 30, Message: "retry after 30s"}
+	m = step(t, m, tuiStateMsg{st: playingState(), err: rl, gen: m.gen}, false)
+	v := m.View().Content
+	if !strings.Contains(v, "派對動物") || !strings.Contains(v, "限流") {
+		t.Errorf("曲目與限流狀態要同時看得到:%q", v)
+	}
+	if len(*got) != 0 {
+		t.Errorf("限流會持續一陣子,不該每兩秒往捲動區印一次:%v", *got)
+	}
+	// 播放器未執行是狀態不是失敗:用它自己的措辭,不要退回通用的「讀不到播放狀態(r 重試)」。
+	m2 := newTestTUI(t, &watchFake{st: playingState()})
+	m2 = step(t, m2, tuiStateMsg{err: provider.ErrPlayerNotRunning, gen: m2.gen}, false)
+	v2 := m2.View().Content
+	if !strings.Contains(v2, "播放器未執行") || strings.Contains(v2, "r 重試") {
+		t.Errorf("播放器未執行要有自己的說法,r 也不是解法:%q", v2)
+	}
+}
+
+// 明確按 r 重試是新的一件事:又撞到同一則錯誤時要再印一次,不然使用者按了鍵,
+// 十秒內畫面上完全沒有任何事情發生過的痕跡。
+func TestTUIRetryClearsErrorMemory(t *testing.T) {
+	boom := errors.New("dial tcp: no route to host")
+	m := newTestTUI(t, &watchFake{err: boom})
+	got := recordPrintln(t)
+	for i := 0; i < tuiMaxFails; i++ {
+		m = step(t, m, tuiStateMsg{err: boom, gen: m.gen}, false)
+	}
+	if len(*got) != 1 || !m.stalled {
+		t.Fatalf("前置條件:%v stalled=%v", *got, m.stalled)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, false)
+	m = step(t, m, tuiStateMsg{err: boom, gen: m.gen}, false)
+	if len(*got) != 2 {
+		t.Errorf("r 之後再撞到同一則錯誤要再印一次:%v", *got)
+	}
+}
+
+// tuiJoin 說「後面的段丟掉」就要真的丟掉:某段被截在 w-1 時,下一段會拿到 1 格預算
+// 再吐一顆點出來,變成三個點。
+func TestTUIJoinStopsAtTruncation(t *testing.T) {
+	long := strings.Repeat("曲", 30)
+	for w := 12; w <= 40; w++ {
+		out := tuiJoin(w, tuiSeg{"  ▶ ", nil}, tuiSeg{long, nil}, tuiSeg{" · 1:23 / 4:09", nil})
+		if strings.HasSuffix(out, "...") {
+			t.Errorf("w=%d 截斷後多漏一顆點:%q", w, out)
+		}
+		if wd := wantWidth(out); wd > w {
+			t.Errorf("w=%d 寬 %d 超出:%q", w, wd, out)
+		}
+	}
+	// 沒截斷時每一段都要在
+	if out := tuiJoin(40, tuiSeg{"a", nil}, tuiSeg{"b", nil}, tuiSeg{"c", nil}); out != "abc" {
+		t.Errorf("放得下就不該丟段:%q", out)
 	}
 }

@@ -80,8 +80,8 @@ type tuiModel struct {
 	input    textinput.Model
 	typing   bool
 	st       *provider.PlaybackState
-	err      error
-	lastErr  string // 上一則印進捲動區的錯誤:同一則每兩秒印一次會把捲動區洗掉
+	errShort string // 狀態列用的短版。完整那段在發生當下就進捲動區了,model 不留
+	lastErr  string // 上一則交代過的錯誤:同一則每兩秒印一次會把捲動區洗掉
 	fails    int
 	gen      int  // 目前的輪詢世代
 	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
@@ -93,9 +93,9 @@ func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag stri
 	// 提示符刻意用 ASCII:textinput 會把整行填滿到它自己算的 w-1,而 › 是 East Asian Ambiguous,
 	// 在 CJK 終端機多佔一欄 = 剛好寫滿最後一欄 = 多換一行,底部就變五行(設計文件 §1 的第四個問題)。
 	in.Prompt = "> "
-	in.Placeholder = "輸入 capy 子命令,例如 pl list"
 	in.CharLimit = 240
-	in.SetWidth(76) // WindowSizeMsg 進來前的預設;不設會被截成一個字
+	in.Placeholder = tuiPlaceholder(80) // WindowSizeMsg 進來前的預設,與下面的 width 一致
+	in.SetWidth(76)
 	st := textinput.DefaultDarkStyles()
 	st.Focused.Prompt = st.Focused.Prompt.Foreground(theme.Accent)
 	st.Blurred.Prompt = st.Blurred.Prompt.Foreground(theme.Muted)
@@ -247,7 +247,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.input.SetWidth(max(20, msg.Width-4)) // 不設的話 textinput 用預設寬度,placeholder 會被截成一個字
+		// 下限不能寫死:比終端機還寬的輸入行會換行,底部就從四行變五行 —— 正是這次要修掉的症狀。
+		m.input.SetWidth(max(8, msg.Width-4))
+		m.input.Placeholder = tuiPlaceholder(msg.Width)
 		return m, nil
 	case tuiFrameMsg:
 		if m.frozen { // 定格後不再有動畫,frame ticker 就此停掉:底部四行只在狀態變動與按鍵時重畫
@@ -289,26 +291,30 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	}
 	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
-		m.err = msg.err
-		return m, tea.Batch(m.printErr(msg.err), tick())
+		pr := m.printErr(msg.err) // printErr 是指標 receiver,先叫再 return:
+		m.errShort = "剛才那個操作失敗了(詳見上方)"
+		return m, tea.Batch(pr, tick()) // 寫在 return 的運算式裡,m 有沒有帶到更新是規格未定義的
 	}
 	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
 		return m, nil
 	}
+	// 這兩條是狀態不是失敗,不進捲動區(Music.app 沒開、被限流都會持續好一陣子),但狀態列要說。
+	// lastErr 仍然記帳:換過狀態再換回同一則錯誤,是新的一件事,要能再印一次。
 	var rl *provider.RateLimitError
 	switch {
-	case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗
-		m.st, m.err, m.fails = nil, msg.err, 0
+	case errors.Is(msg.err, provider.ErrPlayerNotRunning):
+		m.st, m.errShort, m.fails, m.lastErr = nil, "播放器未執行", 0, msg.err.Error()
 		return m, tick()
 	case errors.As(msg.err, &rl):
-		m.err, m.fails = fmt.Errorf("rate limited,等待中(%s)", rl.Message), 0
+		m.errShort, m.fails, m.lastErr = "限流中,等待重試", 0, msg.err.Error()
 		return m, tick()
 	}
 	if msg.err != nil {
-		m.err, m.fails = msg.err, m.fails+1
+		m.fails++
+		m.errShort = "讀不到播放狀態(r 重試)"
 		// 整段錯誤推進捲動區(第一次、或內容變了才印),狀態列只留短版:
 		// 前一版把整段留在畫面上,osascript 那種長訊息會一直佔著看不到別的。
-		pr := m.printErr(msg.err)
+		pr := m.printErr(msg.err) // 指標 receiver:一定要在 return 之前叫
 		if m.fails >= tuiMaxFails {
 			// 不關介面:這裡的定位是「一行可以跑任何子命令」,播放狀態只是其中一格。連不上的時候
 			// 使用者最需要的正是那行命令列(auth login、doctor),把整個介面收掉等於把人關在門外
@@ -319,7 +325,7 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(pr, tick())
 	}
 	// 恢復了就把去重的記憶清掉:同一則錯誤在恢復之後再發生,是新的一件事,要再印一次。
-	m.st, m.err, m.fails, m.lastErr = msg.st, nil, 0, ""
+	m.st, m.errShort, m.fails, m.lastErr = msg.st, "", 0, ""
 	return m, tick()
 }
 
@@ -381,7 +387,9 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "r": // 輪詢停下來之後重新接上
 		m = m.newChain()
-		m.err, m.fails = nil, 0
+		// lastErr 也清掉:明確的重試是新的一件事,重試又撞到同一則錯誤時要再印一次,
+		// 不然使用者按了鍵,十秒內畫面上完全沒有任何事情發生過的痕跡。
+		m.errShort, m.fails, m.lastErr = "", 0, ""
 		return m, m.poll()
 	case "space":
 		m = m.newChain()
@@ -518,18 +526,21 @@ func (m tuiModel) intro(w int) string {
 }
 
 // statusLine:一行講完「現在怎麼了」。錯誤只留短版——整段在發生當下已經進捲動區了。
+// 短版要能接在曲目後面:限流時上一首歌還在播,只換掉整行的話畫面看起來一切正常,實際上正在被限流。
 func (m tuiModel) statusLine(w int) string {
 	t := m.theme
-	switch {
-	case m.pc == nil:
+	if m.pc == nil {
 		return tuiJoin(w, tuiSeg{"  沒有播放遙控:" + errText(m.pcErr, "這個平台不支援"), t.Mutedly})
-	case m.stalled:
-		return tuiJoin(w, tuiSeg{"  已停止輪詢(r 重試)", t.Mutedly})
-	case m.st == nil || m.st.Track == nil:
-		if m.err != nil {
-			return tuiJoin(w, tuiSeg{"  讀不到播放狀態(r 重試)", t.Mutedly})
+	}
+	short := m.errShort
+	if m.stalled {
+		short = "已停止輪詢(r 重試)"
+	}
+	if m.st == nil || m.st.Track == nil {
+		if short == "" {
+			short = "沒有播放內容"
 		}
-		return tuiJoin(w, tuiSeg{"  沒有播放內容", t.Mutedly})
+		return tuiJoin(w, tuiSeg{"  " + short, t.Mutedly})
 	}
 	st := m.st
 	mark := "⏸"
@@ -543,12 +554,26 @@ func (m tuiModel) statusLine(w int) string {
 	if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,+/- 也才有可見的回饋
 		tail += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
 	}
+	if short != "" { // 有曲目也可能同時有狀況(限流最典型):接在後面,不要蓋掉曲目
+		tail += " · " + short
+	}
 	// 曲名是唯一沒有上限的段,留給它剩下的空間;tuiJoin 會在它那一段截斷。
 	return tuiJoin(w,
 		tuiSeg{"  " + mark + " ", t.Accented},
 		tuiSeg{st.Track.Title, t.Strong},
 		tuiSeg{tail, t.Mutedly},
 	)
+}
+
+// tuiPlaceholder:挑最長的、放得下的那句提示。textinput 不會把 placeholder 收得比它自己短,
+// 放不下就整行撐出終端機外 —— 底部從四行變五行。窄到連最短的都放不下就不放。
+func tuiPlaceholder(w int) string {
+	for _, s := range []string{"輸入 capy 子命令,例如 pl list", "capy 子命令", "pl list"} {
+		if tuiWidth(s)+4 <= w { // +4:提示符 "> " 與右邊的餘裕
+			return s
+		}
+	}
+	return ""
 }
 
 // tuiKeymap:? 印進捲動區的完整鍵位。底部只放最常用的幾個,其餘查這裡。
