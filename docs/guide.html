@@ -1,7 +1,8 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>capy 使用指南</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <style>
   /* 這一頁刻意只有一個深色主題:capy 活在終端機裡,配色直接取自 internal/ui/theme.go 的 GeekGreen,
      不做淺色版。所有顏色都明確畫出來,不依賴宿主背景。 */
@@ -16,8 +17,10 @@
     --muted: #7D8794;
     --warn: #D9A441;
 
-    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --sans: "IBM Plex Sans", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+    /* 全部走系統字型:這一頁的賣點是「用瀏覽器開就好,不需要伺服器」,那就不該每次開都去 Google 抓字檔、
+       離線時又長得不一樣。系統等寬字型對一個住在終端機裡的工具來說也更貼題。 */
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
 
     --step--1: 0.8125rem;
     --step-0: 0.9375rem;
@@ -60,8 +63,7 @@
     }
   }
 
-  /* 全域的 pre 有底色與外框,水豚不要那些:牠是圖不是程式碼區塊。
-     line-height 壓到 1 讓方框繪製字元上下接得起來。 */
+  /* 全域的 pre 有底色與外框,水豚不要那些:牠是圖不是程式碼區塊。line-height 壓到 1 讓上下行接得起來。 */
   #capy {
     font-family: var(--mono);
     font-size: 0.9rem;
@@ -280,7 +282,14 @@
 
 <div class="wrap">
   <header class="hero">
-    <pre id="capy" aria-label="水豚吉祥物,正看著你,嘴角叼著一根牧草"></pre>
+    <pre id="capy" role="img" aria-label="水豚吉祥物,正看著你,嘴角叼著一根牧草">    __            __
+   /  \__________/  \
+  |                  |
+  |   O          O   |
+  |                  |
+  |      ______      |
+  |     (__..__)~~~~~~~~~
+   \________________/</pre>
     <div>
       <h1>capy<span class="dot">.</span></h1>
       <p class="lede">一支住在終端機裡的音樂 CLI。搜尋、遙控播放,把 Spotify 與 Apple Music 的播放清單同步到你自己的 Google Drive。</p>
@@ -491,7 +500,7 @@
       </div>
       <div class="note">
         <h3>每個命令都能放進管線</h3>
-        <p>不在終端機的時候一律輸出純文字 TSV,沒有顏色也沒有互動提示。結束碼有意義:0 成功,2 需要你介入,3 是安全閥擋下來了。</p>
+        <p>不在終端機的時候一律輸出純文字 TSV,沒有顏色也沒有互動提示。結束碼有意義:0 成功,1 錯誤,2 需要你介入,3 是安全閥擋下來了。</p>
       </div>
     </div>
   </section>
@@ -523,10 +532,11 @@
     return [...HEAD, eyes, MID, NOSE, mouth, CHIN].join("\n");
   }
 
+  // 第一幀已經寫在 HTML 裡(JS 沒跑到也看得到水豚),這裡從第二幀接手。
   const el = document.getElementById("capy");
-  el.textContent = frame(1);
   if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     let n = 1;
     setInterval(() => { el.textContent = frame(++n); }, 350);
   }
 </script>
+</html>
