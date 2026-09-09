@@ -93,6 +93,7 @@ capy play 派對動物                      # 統一搜尋:曲目、藝人熱門
 capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify 開發模式 app 拿不到 top-tracks,退回依熱門度排序的搜尋);清單名完全相符 = 播清單(先 capy pl list 一次)
 capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
 capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
+capy                    # 直接打 capy(在終端機裡)= 互動式介面;pipe / cron 下仍是印 help
 capy pause / next / prev / now / devices
 capy seek 1:23          # 跳到曲目內的位置;也吃 h:mm:ss(1:05:30)與純秒數(83)
 capy vol 40             # 音量 0-100
@@ -111,6 +112,27 @@ capy doctor [--provider apple]
 capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
 capy update [--dev]                      # 見上方「更新」
 ```
+
+### 互動式介面
+
+在終端機直接執行 `capy`(不帶任何參數)會開互動式介面:上面是水豚橫幅,中間是現在在播什麼(含進度條),
+最下面一行可以輸入**任何** capy 子命令。
+
+```
+space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸入命令 · q 離開
+```
+
+輸入的命令**不是在同一個行程裡跑**,而是重新執行 `capy` 自己——所以每個子命令完整保有它原本的行為
+(表格、挑選器、確認提示),輸出也留在畫面上方,可以往回捲。清單名有空白時用雙引號:`pl show "上班 通勤"`。
+
+還沒登入也可以開:狀態區會說明原因,你可以直接在那行輸入 `auth login spotify`。
+
+`capy --provider apple` 開的介面會把 `--provider` 一起帶給你在那行輸入的子命令(只對吃這個參數的命令加),
+所以整個畫面是同一個平台。
+
+顏色是冷冽的 geek 綠(`internal/ui/theme.go` 的 `GeekGreen`);換色的接縫就是那個 `Theme` struct,
+之後開放切換時從那裡加。
+
 
 所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
 

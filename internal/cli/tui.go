@@ -1,0 +1,510 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"slices"
+	"strings"
+	"time"
+
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/spf13/cobra"
+
+	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/ui"
+)
+
+// capy(無參數、在終端機裡)= 互動式介面:上面是水豚橫幅,中間是現在播什麼,下面一行輸入任何 capy 子命令。
+//
+// 命令**不在行程內跑**,而是用 tea.ExecProcess 重新執行 capy 自己(os.Executable)。理由:行程內跑的話
+// stdout 不是 TTY,每個命令都會退成 TSV,而 huh 的確認提示會搶 stdin 直接卡死。重新執行 = 每個子命令
+// 完整保有它原本的行為(表格、挑選器、確認提示),輸出也自然留在上方的捲動區(所以刻意不進 alt screen,
+// 與 now --watch 的既有決定一致)。
+//
+// Update 是純函式(tea.Msg 進、model 出),測試不需要 TTY。
+
+const (
+	tuiFrameInterval = 350 * time.Millisecond // 水豚的動作
+	tuiSeekStep      = 10000                  // ←/→ 一次 10 秒
+	tuiVolStep       = 5                      // +/- 一次 5
+	tuiMaxFails      = 5
+	tuiMinWidth      = 46 // 窄於此:橫幅換成一行
+)
+
+type (
+	tuiFrameMsg time.Time
+	// tuiPollMsg / tuiStateMsg 帶 gen:輪詢是一條「tick → 讀狀態 → 再排一個 tick」的鏈,而控制鍵
+	// 為了讓畫面立刻跟上會另外起一次讀取。沒有世代編號的話那次讀取會長出第二條鏈,而舊鏈沒人取消——
+	// 方向鍵會自動重複,按住兩秒就是三十幾條鏈同時打 /me/player,穩定觸發 429(PR #41 review)。
+	// 控制鍵讓 gen 前進,舊鏈的 tick 到期時發現世代不符就停下來。
+	tuiPollMsg  struct{ gen int }
+	tuiStateMsg struct {
+		st      *provider.PlaybackState
+		err     error
+		fromCtl bool // 控制指令的錯:顯示但不計入 fails(那個預算是給「連不上」用的)
+		gen     int
+	}
+	tuiExecMsg struct {
+		args []string
+		err  error
+	}
+)
+
+type tuiModel struct {
+	ctx      context.Context
+	theme    ui.Theme
+	exe      string // 重新執行自己用;空 = 取不到,命令列停用
+	provID   string
+	provFlag string // 使用者在 capy --provider X 明指的平台;命令列要把它一起帶給子命令
+	pc       provider.PlaybackController
+	pcErr    error // 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
+	interval time.Duration
+	width    int
+	frame    int
+	bar      progress.Model
+	input    textinput.Model
+	typing   bool
+	st       *provider.PlaybackState
+	err      error
+	note     string
+	fails    int
+	gen      int  // 目前的輪詢世代
+	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
+}
+
+func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
+	in := textinput.New()
+	in.Prompt = "› "
+	in.Placeholder = "輸入任何 capy 子命令,例如 search 派對動物"
+	in.CharLimit = 240
+	in.SetWidth(76) // WindowSizeMsg 進來前的預設;不設會被截成一個字
+	st := textinput.DefaultDarkStyles()
+	st.Focused.Prompt = st.Focused.Prompt.Foreground(theme.Accent)
+	st.Blurred.Prompt = st.Blurred.Prompt.Foreground(theme.Muted)
+	st.Focused.Placeholder = st.Focused.Placeholder.Foreground(theme.Muted)
+	st.Blurred.Placeholder = st.Blurred.Placeholder.Foreground(theme.Muted)
+	st.Cursor.Color = theme.Accent
+	in.SetStyles(st)
+	return tuiModel{
+		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, pc: pc, pcErr: pcErr,
+		interval: interval, width: 80,
+		bar:   progress.New(progress.WithoutPercentage(), progress.WithColors(theme.Accent)), // 單色;給兩個顏色會變成漸層,俐落度輸給純色
+		input: in,
+	}
+}
+
+func (m tuiModel) Init() tea.Cmd { return tea.Batch(m.frameTick(), m.poll()) }
+
+func (m tuiModel) frameTick() tea.Cmd {
+	return tea.Tick(tuiFrameInterval, func(t time.Time) tea.Msg { return tuiFrameMsg(t) })
+}
+
+func (m tuiModel) pollTick() tea.Cmd {
+	gen := m.gen
+	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
+}
+
+func (m tuiModel) poll() tea.Cmd {
+	ctx, pc, interval, gen := m.ctx, m.pc, m.interval, m.gen
+	if pc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		c, cancel := context.WithTimeout(ctx, pollTimeout(interval))
+		defer cancel()
+		st, err := pc.State(c)
+		return tuiStateMsg{st: st, err: err, gen: gen}
+	}
+}
+
+// control:送控制指令後立刻重新輪詢,畫面才會跟上。呼叫端要先把 gen 推進(newChain),
+// 這次讀取才會取代舊鏈而不是疊上去。
+func (m tuiModel) control(f func(context.Context) error) tea.Cmd {
+	ctx, gen := m.ctx, m.gen
+	poll := m.poll()
+	return func() tea.Msg {
+		if err := f(ctx); err != nil {
+			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
+		}
+		if poll == nil {
+			return nil
+		}
+		return poll()
+	}
+}
+
+// newChain:讓輪詢世代前進(舊鏈的 tick 到期時會被丟掉),回傳推進後的 model。
+func (m tuiModel) newChain() tuiModel {
+	m.gen++
+	m.stalled = false
+	return m
+}
+
+// tuiExecProcess:測試替換點——真的 fork 一個行程沒辦法在單元測試裡驗證,換掉它才能斷言「這一行
+// 被切成哪些參數」。正式路徑就是 tea.ExecProcess。
+var tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd { return tea.ExecProcess(c, fn) }
+
+// withProviderFlag:capy --provider apple 開的介面是 Apple,命令列跑的卻是 config 的 default_provider——
+// 同一個畫面兩個平台,而且 pause 停的不是上面在播的那首。只在使用者明指時附加,而且要先確認目標子命令
+// 真的吃這個 flag:auth / config / export / resolve 沒掛 --provider,多送一個會直接 unknown flag 退出。
+func (m tuiModel) withProviderFlag(args []string) []string {
+	if m.provFlag == "" {
+		return args
+	}
+	c, _, err := newRootCmd().Find(args)
+	if err != nil || c.Flags().Lookup(flagProvider) == nil {
+		return args
+	}
+	return append(slices.Clone(args), "--"+flagProvider, m.provFlag)
+}
+
+// runArgs:把輸入的一行拿去重新執行 capy 自己。執行期間 bubbletea 讓出終端機,子命令拿到真的 TTY。
+func (m tuiModel) runArgs(args []string) tea.Cmd {
+	full := m.withProviderFlag(args)
+	c := exec.CommandContext(m.ctx, m.exe, full...)
+	return tuiExecProcess(c, func(err error) tea.Msg { return tuiExecMsg{args: args, err: err} })
+}
+
+func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.input.SetWidth(max(20, msg.Width-4)) // 不設的話 textinput 用預設寬度,placeholder 會被截成一個字
+		return m, nil
+	case tuiFrameMsg:
+		m.frame++
+		return m, m.frameTick()
+	case tuiPollMsg:
+		if msg.gen != m.gen || m.stalled { // 舊鏈:停在這裡,不要再排下一個 tick
+			return m, nil
+		}
+		return m, m.poll()
+	case tuiStateMsg:
+		return m.applyState(msg)
+	case tuiExecMsg:
+		if msg.err != nil {
+			m.note = fmt.Sprintf("capy %s:%v", strings.Join(msg.args, " "), msg.err)
+		} else {
+			m.note = "capy " + strings.Join(msg.args, " ") + " 執行完畢"
+		}
+		// 不重排 tick:tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer(各自的 goroutine)。
+		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
+		return m, nil
+	case tea.KeyPressMsg:
+		return m.onKey(msg)
+	}
+	return m, nil
+}
+
+func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
+	// stale = 舊世代的回覆(控制鍵已經開了新鏈)。判斷要在所有分支之前:pollTick() 抓的是**目前**的
+	// gen,所以任何一條路徑只要排了 tick,舊鏈就復活成一條完全合法的新鏈——429 那條還會自我增強
+	// (鏈愈多愈容易 429,愈常走那條路徑,鏈又愈多)。停擺中同理:一則遲到的訊息不該把輪詢默默接回去,
+	// 畫面卻還在叫使用者按 r(PR #42 review)。
+	stale := msg.gen != m.gen
+	tick := func() tea.Cmd {
+		if stale || m.stalled {
+			return nil
+		}
+		return m.pollTick()
+	}
+	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
+	if msg.fromCtl && msg.err != nil {
+		m.err = msg.err
+		return m, tick()
+	}
+	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
+		return m, nil
+	}
+	var rl *provider.RateLimitError
+	switch {
+	case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗
+		m.st, m.err, m.fails = nil, msg.err, 0
+		return m, tick()
+	case errors.As(msg.err, &rl):
+		m.err, m.fails = fmt.Errorf("rate limited,等待中…(%s)", rl.Message), 0
+		return m, tick()
+	}
+	if msg.err != nil {
+		m.err, m.fails = msg.err, m.fails+1
+		if m.fails >= tuiMaxFails {
+			// 不關介面:這裡的定位是「一行可以跑任何子命令」,播放狀態只是其中一格。連不上的時候
+			// 使用者最需要的正是那行命令列(auth login、doctor),把整個介面收掉等於把人關在門外
+			// (PR #41 review)。輪詢先停,按 r 重試。
+			m.err = fmt.Errorf("連續 %d 次讀不到播放狀態:%w(按 r 重試,或 / 打 doctor)", m.fails, msg.err)
+			m.stalled = true
+			return m, nil
+		}
+		return m, tick()
+	}
+	m.st, m.err, m.fails = msg.st, nil, 0
+	return m, tick()
+}
+
+func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.typing {
+		switch msg.String() {
+		case "ctrl+c": // raw mode 下 ctrl+c 不是 SIGINT 而是一個按鍵;不攔的話打字打到一半按它毫無反應
+			return m, tea.Quit
+		case "esc":
+			m.typing, m.input = false, blurred(m.input)
+			return m, nil
+		case "enter":
+			args := splitArgs(m.input.Value())
+			m.typing, m.input = false, blurred(m.input)
+			m.input.SetValue("")
+			if len(args) == 0 {
+				return m, nil
+			}
+			if m.exe == "" {
+				m.note = "找不到 capy 自己的執行檔,命令列停用"
+				return m, nil
+			}
+			m.note = ""
+			return m, m.runArgs(args)
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+	switch msg.String() {
+	case "q", "ctrl+c", "esc":
+		return m, tea.Quit
+	case "/", ":":
+		m.typing = true
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	if m.pc == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "r": // 輪詢停下來之後重新接上
+		m = m.newChain()
+		m.err, m.fails = nil, 0
+		return m, m.poll()
+	case "space":
+		m = m.newChain()
+		if m.st != nil && m.st.Playing {
+			return m, m.control(m.pc.Pause)
+		}
+		return m, m.control(func(ctx context.Context) error { return m.pc.Play(ctx, provider.PlayRequest{}) })
+	case "n":
+		m = m.newChain()
+		return m, m.control(m.pc.Next)
+	case "p":
+		m = m.newChain()
+		return m, m.control(m.pc.Prev)
+	case "left", "right":
+		pos, ok := m.seekTarget(msg.String() == "right")
+		if !ok {
+			return m, nil
+		}
+		m = m.newChain()
+		m.note = "跳到 " + ui.FormatDuration(pos)
+		return m, m.control(func(ctx context.Context) error { return m.pc.Seek(ctx, pos) })
+	case "+", "=", "-":
+		pct, ok := m.volTarget(msg.String() != "-")
+		if !ok {
+			return m, nil
+		}
+		m = m.newChain()
+		m.note = fmt.Sprintf("音量 %d", pct)
+		return m, m.control(func(ctx context.Context) error { return m.pc.SetVolume(ctx, pct) })
+	}
+	return m, nil
+}
+
+// seekTarget:目前位置 ±10 秒,夾在 [0, 長度]。沒有播放內容時不做事(沒有基準點可以加減)。
+func (m tuiModel) seekTarget(forward bool) (int, bool) {
+	if m.st == nil || m.st.Track == nil {
+		return 0, false
+	}
+	pos := m.st.ProgressMS + tuiSeekStep
+	if !forward {
+		pos = m.st.ProgressMS - tuiSeekStep
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if d := m.st.Track.DurationMS; d > 0 && pos > d {
+		pos = d
+	}
+	return pos, true
+}
+
+// volTarget:目前音量 ±5,夾在 [0, 100]。平台沒回音量(Apple 的 State 不帶)時不猜——
+// 但音量真的是 0(靜音)要能被 + 拉回來,所以看的是 VolumeKnown 而不是 VolumePct > 0。
+func (m tuiModel) volTarget(up bool) (int, bool) {
+	if m.st == nil || !m.st.Device.VolumeKnown {
+		return 0, false
+	}
+	pct := m.st.Device.VolumePct + tuiVolStep
+	if !up {
+		pct = m.st.Device.VolumePct - tuiVolStep
+	}
+	return min(100, max(0, pct)), true
+}
+
+func blurred(in textinput.Model) textinput.Model {
+	in.Blur()
+	return in
+}
+
+// splitArgs:把輸入的一行切成參數。以空白分隔,雙引號內的空白保留——清單名有空白很常見
+// (capy pl show "上班 通勤")。沒有跳脫、沒有單引號:再多就該用真的 shell 了。
+func splitArgs(line string) []string {
+	var out []string
+	var cur strings.Builder
+	inQuote, started := false, false
+	flush := func() {
+		if started {
+			out = append(out, cur.String())
+			cur.Reset()
+			started = false
+		}
+	}
+	for _, r := range line {
+		switch {
+		case r == '"':
+			inQuote, started = !inQuote, true
+		case (r == ' ' || r == '\t') && !inQuote:
+			flush()
+		default:
+			cur.WriteRune(r)
+			started = true
+		}
+	}
+	flush()
+	return out
+}
+
+func (m tuiModel) View() tea.View {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	t := m.theme
+	var b strings.Builder
+	line := func(s string) { b.WriteString(ansi.Truncate(s, w, "…")); b.WriteByte('\n') }
+
+	if w >= tuiMinWidth && w >= capybaraWidth() {
+		for _, l := range capybaraFrame(m.frame) {
+			line(t.Accented(l))
+		}
+		line("")
+	} else {
+		line(t.Accented(capyOneLine))
+	}
+	line(t.Mutedly(capyTagline(m.provID)))
+	line("")
+
+	switch {
+	case m.pc == nil:
+		line(t.Mutedly("沒有播放遙控:" + errText(m.pcErr, "這個平台不支援")))
+	case m.st == nil || m.st.Track == nil:
+		line(t.Mutedly("目前沒有播放內容"))
+	default:
+		st := m.st
+		mark := "⏸"
+		if st.Playing {
+			mark = "▶"
+		}
+		line(t.Accented(mark) + " " + t.Strong(st.Track.Title))
+		line(t.Mutedly("  " + strings.Join(st.Track.Artists, ", ") + " · " + st.Track.Album))
+		pct := 0.0
+		if st.Track.DurationMS > 0 {
+			pct = min(1, float64(st.ProgressMS)/float64(st.Track.DurationMS))
+		}
+		times := fmt.Sprintf(" %s / %s", ui.FormatDuration(st.ProgressMS), ui.FormatDuration(st.Track.DurationMS))
+		bar := m.bar
+		bar.SetWidth(max(10, w-2-ansi.StringWidth(times)))
+		line("  " + bar.ViewAs(pct) + t.Mutedly(times))
+		if st.Device.Name != "" {
+			dev := fmt.Sprintf("  %s(%s)", st.Device.Name, st.Device.Type)
+			if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,不是整行消失
+				dev += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
+			}
+			line(t.Mutedly(dev))
+		}
+	}
+	line("")
+	if m.err != nil {
+		line(t.Mutedly("⚠ " + m.err.Error()))
+	}
+	if m.note != "" {
+		line(t.Mutedly("· " + m.note))
+	}
+	line(m.input.View())
+	line(t.Mutedly(m.hints()))
+	return tea.NewView(b.String())
+}
+
+func (m tuiModel) hints() string {
+	if m.typing {
+		return "  Enter 執行 · Esc 取消"
+	}
+	if m.pc == nil {
+		return "  / 輸入命令 · q 離開"
+	}
+	if m.stalled {
+		return "  r 重新連上 · / 輸入命令 · q 離開"
+	}
+	return "  space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸入命令 · q 離開"
+}
+
+func errText(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	return err.Error()
+}
+
+// runTUI:互動式介面的進入點。取不到 provider 或播放遙控都不致命——介面照開,使用者可以在命令列
+// 跑 capy auth login。測試替換點。
+var runTUI = func(cmd *cobra.Command) error {
+	ctx := cmd.Context()
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "" // 命令列停用,其餘照常
+	}
+	provID, pcErr := "", error(nil)
+	var pc provider.PlaybackController
+	interval := watchPollSpotify
+	if p, err := getProvider(cmd); err != nil {
+		pcErr = err
+	} else {
+		provID = p.ID()
+		if p.ID() == "apple" {
+			interval = watchPollApple
+		}
+		if c, err := asPlayback(p); err != nil {
+			pcErr = err
+		} else {
+			pc = c
+		}
+	}
+	provFlag := ""
+	if cmd.Flags().Changed(flagProvider) {
+		provFlag, _ = cmd.Flags().GetString(flagProvider)
+	}
+	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, pc, pcErr, interval)
+	origStderr := provider.BackoffStderr // 429 退避的提示不能印進畫面
+	provider.BackoffStderr = io.Discard
+	defer func() { provider.BackoffStderr = origStderr }()
+	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
+	// 離開一律是使用者按 q / Ctrl-C。
+	// 三種「使用者要離開」都不是錯誤:ctx 取消、程式被砍、SIGINT 從 raw mode 以外的地方進來。
+	if _, err := tea.NewProgram(m, tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())).Run(); err != nil &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
+		return err
+	}
+	return nil
+}

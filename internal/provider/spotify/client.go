@@ -157,15 +157,16 @@ func (t *trackJSON) toTrack() provider.Track {
 }
 
 type deviceJSON struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	IsActive  bool   `json:"is_active"`
-	VolumePct int    `json:"volume_percent"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	IsActive       bool   `json:"is_active"`
+	VolumePct      int    `json:"volume_percent"`
+	SupportsVolume bool   `json:"supports_volume"`
 }
 
 func (d *deviceJSON) toDevice() provider.Device {
-	return provider.Device{ID: d.ID, Name: d.Name, Type: d.Type, Active: d.IsActive, VolumePct: d.VolumePct}
+	return provider.Device{ID: d.ID, Name: d.Name, Type: d.Type, Active: d.IsActive, VolumePct: d.VolumePct, VolumeKnown: d.SupportsVolume}
 }
 
 // ── search ──

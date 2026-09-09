@@ -864,6 +864,7 @@ capy play <query...> [--provider P] [--device NAME] [--type track|artist|playlis
 capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;歧義:TTY 挑選器 / 非 TTY exit 2 + TSV
 capy play --pick               # 直接開挑選器(TTY 限定)
 capy play --id <track id>
+capy                                                       # 無參數 + 終端機:互動式介面(水豚橫幅、現在播什麼、一行輸入任何子命令);非 TTY 一律印 help
 capy pause | capy next | capy prev
 capy seek <[h:]mm:ss|秒> | capy vol <0-100>                    # 2026-09-09 實作(P1 計畫原本延後,附錄 A 稽核後補上);Apple 半邊走 Music.app 的 player position / sound volume
 capy now [--watch]
