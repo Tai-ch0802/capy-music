@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,6 +62,7 @@ type tuiModel struct {
 	theme    ui.Theme
 	exe      string // 重新執行自己用;空 = 取不到,命令列停用
 	provID   string
+	provFlag string // 使用者在 capy --provider X 明指的平台;命令列要把它一起帶給子命令
 	pc       provider.PlaybackController
 	pcErr    error // 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
 	interval time.Duration
@@ -77,7 +79,7 @@ type tuiModel struct {
 	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
 }
 
-func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
+func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
 	in := textinput.New()
 	in.Prompt = "› "
 	in.Placeholder = "輸入任何 capy 子命令,例如 search 派對動物"
@@ -91,7 +93,7 @@ func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID string, pc pro
 	st.Cursor.Color = theme.Accent
 	in.SetStyles(st)
 	return tuiModel{
-		ctx: ctx, theme: theme, exe: exe, provID: provID, pc: pc, pcErr: pcErr,
+		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, pc: pc, pcErr: pcErr,
 		interval: interval, width: 80,
 		bar:   progress.New(progress.WithoutPercentage(), progress.WithColors(theme.Accent)), // 單色;給兩個顏色會變成漸層,俐落度輸給純色
 		input: in,
@@ -149,9 +151,24 @@ func (m tuiModel) newChain() tuiModel {
 // 被切成哪些參數」。正式路徑就是 tea.ExecProcess。
 var tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd { return tea.ExecProcess(c, fn) }
 
+// withProviderFlag:capy --provider apple 開的介面是 Apple,命令列跑的卻是 config 的 default_provider——
+// 同一個畫面兩個平台,而且 pause 停的不是上面在播的那首。只在使用者明指時附加,而且要先確認目標子命令
+// 真的吃這個 flag:auth / config / export / resolve 沒掛 --provider,多送一個會直接 unknown flag 退出。
+func (m tuiModel) withProviderFlag(args []string) []string {
+	if m.provFlag == "" {
+		return args
+	}
+	c, _, err := newRootCmd().Find(args)
+	if err != nil || c.Flags().Lookup(flagProvider) == nil {
+		return args
+	}
+	return append(slices.Clone(args), "--"+flagProvider, m.provFlag)
+}
+
 // runArgs:把輸入的一行拿去重新執行 capy 自己。執行期間 bubbletea 讓出終端機,子命令拿到真的 TTY。
 func (m tuiModel) runArgs(args []string) tea.Cmd {
-	c := exec.CommandContext(m.ctx, m.exe, args...)
+	full := m.withProviderFlag(args)
+	c := exec.CommandContext(m.ctx, m.exe, full...)
 	return tuiExecProcess(c, func(err error) tea.Msg { return tuiExecMsg{args: args, err: err} })
 }
 
@@ -187,20 +204,33 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
+	// stale = 舊世代的回覆(控制鍵已經開了新鏈)。判斷要在所有分支之前:pollTick() 抓的是**目前**的
+	// gen,所以任何一條路徑只要排了 tick,舊鏈就復活成一條完全合法的新鏈——429 那條還會自我增強
+	// (鏈愈多愈容易 429,愈常走那條路徑,鏈又愈多)。停擺中同理:一則遲到的訊息不該把輪詢默默接回去,
+	// 畫面卻還在叫使用者按 r(PR #42 review)。
+	stale := msg.gen != m.gen
+	tick := func() tea.Cmd {
+		if stale || m.stalled {
+			return nil
+		}
+		return m.pollTick()
+	}
+	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
+	if msg.fromCtl && msg.err != nil {
+		m.err = msg.err
+		return m, tick()
+	}
+	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
+		return m, nil
+	}
 	var rl *provider.RateLimitError
 	switch {
 	case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗
 		m.st, m.err, m.fails = nil, msg.err, 0
-		return m, m.pollTick()
+		return m, tick()
 	case errors.As(msg.err, &rl):
 		m.err, m.fails = fmt.Errorf("rate limited,等待中…(%s)", rl.Message), 0
-		return m, m.pollTick()
-	case msg.fromCtl && msg.err != nil:
-		m.err = msg.err
-		return m, m.pollTick()
-	}
-	if msg.gen != m.gen { // 舊鏈的回覆:丟掉,不要用它排新的 tick
-		return m, nil
+		return m, tick()
 	}
 	if msg.err != nil {
 		m.err, m.fails = msg.err, m.fails+1
@@ -212,15 +242,17 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 			m.stalled = true
 			return m, nil
 		}
-		return m, m.pollTick()
+		return m, tick()
 	}
 	m.st, m.err, m.fails = msg.st, nil, 0
-	return m, m.pollTick()
+	return m, tick()
 }
 
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.typing {
 		switch msg.String() {
+		case "ctrl+c": // raw mode 下 ctrl+c 不是 SIGINT 而是一個按鍵;不攔的話打字打到一半按它毫無反應
+			return m, tea.Quit
 		case "esc":
 			m.typing, m.input = false, blurred(m.input)
 			return m, nil
@@ -459,14 +491,19 @@ var runTUI = func(cmd *cobra.Command) error {
 			pc = c
 		}
 	}
-	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, pc, pcErr, interval)
+	provFlag := ""
+	if cmd.Flags().Changed(flagProvider) {
+		provFlag, _ = cmd.Flags().GetString(flagProvider)
+	}
+	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, pc, pcErr, interval)
 	origStderr := provider.BackoffStderr // 429 退避的提示不能印進畫面
 	provider.BackoffStderr = io.Discard
 	defer func() { provider.BackoffStderr = origStderr }()
 	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
 	// 離開一律是使用者按 q / Ctrl-C。
+	// 三種「使用者要離開」都不是錯誤:ctx 取消、程式被砍、SIGINT 從 raw mode 以外的地方進來。
 	if _, err := tea.NewProgram(m, tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())).Run(); err != nil &&
-		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
+		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
 		return err
 	}
 	return nil

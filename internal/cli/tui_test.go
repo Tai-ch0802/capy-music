@@ -18,7 +18,7 @@ import (
 
 func newTestTUI(t *testing.T, f *watchFake) tuiModel {
 	t.Helper()
-	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", f, nil, watchPollSpotify)
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", f, nil, watchPollSpotify)
 	m.width = 100
 	m.st = f.st // 正式路徑是第一次 poll 帶進來的;測試直接給,免得每個案例都要先跑一次輪詢
 	return m
@@ -256,6 +256,101 @@ func TestTUICommandLine(t *testing.T) {
 	}
 }
 
+// 舊世代的回覆不管走哪一條路徑都不能排 tick——pollTick 抓的是目前的 gen,排了就等於把舊鏈
+// 復活成一條合法的新鏈。429 那條尤其糟:鏈愈多愈容易 429,愈常走那條路徑(PR #42 review)。
+func TestTUIStaleRepliesNeverReviveTheChain(t *testing.T) {
+	f := &watchFake{st: playingState()}
+	m := newTestTUI(t, f)
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyRight}, false) // 推進世代
+	old := m.gen - 1
+	for _, msg := range []tuiStateMsg{
+		{err: provider.ErrPlayerNotRunning, gen: old},
+		{err: &provider.RateLimitError{Message: "429"}, gen: old},
+		{st: f.st, gen: old},
+		{err: errors.New("boom"), gen: old},
+	} {
+		if _, cmd := m.Update(msg); cmd != nil {
+			t.Errorf("舊世代的回覆不該排 tick:%+v", msg)
+		}
+	}
+	// 遲到的「播放器未執行」也不該抹掉剛拿回來的狀態
+	next, _ := m.Update(tuiStateMsg{err: provider.ErrPlayerNotRunning, gen: old})
+	if next.(tuiModel).st == nil {
+		t.Error("過期的錯誤不該清掉目前的播放狀態")
+	}
+	// 停擺之後,連目前世代的訊息也不該把輪詢默默接回去(畫面還在叫使用者按 r)
+	m2 := newTestTUI(t, f)
+	m2.stalled = true
+	for _, msg := range []tuiStateMsg{
+		{err: provider.ErrPlayerNotRunning, gen: m2.gen},
+		{st: f.st, gen: m2.gen},
+	} {
+		if _, cmd := m2.Update(msg); cmd != nil {
+			t.Errorf("停擺中不該排 tick:%+v", msg)
+		}
+	}
+	// 控制指令自己的錯誤仍然要顯示(使用者剛按的鍵失敗了)
+	next, _ = m.Update(tuiStateMsg{err: errors.New("裝置拒絕"), fromCtl: true, gen: old})
+	if next.(tuiModel).err == nil {
+		t.Error("控制指令的錯誤要說,即使已經 stale")
+	}
+}
+
+// capy --provider apple 開的介面是 Apple,命令列跑的卻是 config 的預設平台——同一個畫面兩個平台。
+func TestTUIPassesProviderFlagToSubcommands(t *testing.T) {
+	var got []string
+	orig := tuiExecProcess
+	tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd {
+		got = c.Args
+		return func() tea.Msg { return tuiExecMsg{} }
+	}
+	t.Cleanup(func() { tuiExecProcess = orig })
+
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", &watchFake{}, nil, watchPollApple)
+	m.width = 100
+	run := func(line string) {
+		m.typing = true
+		m.input.SetValue(line)
+		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = next.(tuiModel)
+		if cmd != nil {
+			cmd()
+		}
+	}
+	run("pl list")
+	if !slices.Equal(got, []string{"/bin/capy", "pl", "list", "--provider", "apple"}) {
+		t.Errorf("吃 --provider 的子命令要帶過去:%#v", got)
+	}
+	run("auth status") // 沒掛 --provider:多送會 unknown flag 直接退出
+	if !slices.Equal(got, []string{"/bin/capy", "auth", "status"}) {
+		t.Errorf("不吃 --provider 的子命令不能亂加:%#v", got)
+	}
+	// 使用者沒明指時完全不附加
+	m2 := newTestTUI(t, &watchFake{})
+	m2.typing = true
+	m2.input.SetValue("pl list")
+	if _, cmd := m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
+		cmd()
+	}
+	if !slices.Equal(got, []string{"/bin/capy", "pl", "list"}) {
+		t.Errorf("沒有 --provider 時不該附加:%#v", got)
+	}
+}
+
+// raw mode 下 ctrl+c 是一個按鍵不是 SIGINT:輸入模式沒攔的話,打到一半想離開會完全沒反應。
+func TestTUICtrlCQuitsWhileTyping(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m.input.SetValue("search x")
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("輸入模式下 ctrl+c 要能離開")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("ctrl+c 應該是 Quit")
+	}
+}
+
 func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	wide := m.View().Content
@@ -282,7 +377,7 @@ func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 
 // 沒有播放遙控(沒登入、平台不支援)不該讓介面開不起來:狀態區說明原因,命令列照樣可用。
 func TestTUIWithoutPlaybackStillUsable(t *testing.T) {
-	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "local", nil, provider.ErrNotSupported, watchPollSpotify)
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "local", "", nil, provider.ErrNotSupported, watchPollSpotify)
 	m.width = 100
 	if got := m.View().Content; !strings.Contains(got, "沒有播放遙控") || !strings.Contains(got, "/ 輸入命令") {
 		t.Errorf("要說明原因並保留命令列:%q", got)

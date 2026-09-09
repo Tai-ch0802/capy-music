@@ -97,6 +97,20 @@ capy                    # 直接打 capy(在終端機裡)= 互動式介面;pipe 
 capy pause / next / prev / now / devices
 capy seek 1:23          # 跳到曲目內的位置;也吃 h:mm:ss(1:05:30)與純秒數(83)
 capy vol 40             # 音量 0-100
+capy pl list / capy pl show <名稱|ID>
+capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
+capy pl unlink 通勤 spotify
+capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
+capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # canonical → 平台(Spotify;Apple 待 P0-2);要先 pull 過、平台沒有未 pull 的變更
+capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
+capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
+capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
+capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個平台沒有這首;id 已屬另一 cid 時合併(非 TTY 要 --yes)
+capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
+capy drive init --from-local [--dry-run] [--yes]   # 逃生口:Drive 空 / 部分遺失時用本機 state.db 補回缺的檔
+capy doctor [--provider apple]
+capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
+capy update [--dev]                      # 見上方「更新」
 ```
 
 ### 互動式介面
@@ -113,25 +127,12 @@ space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸�
 
 還沒登入也可以開:狀態區會說明原因,你可以直接在那行輸入 `auth login spotify`。
 
+`capy --provider apple` 開的介面會把 `--provider` 一起帶給你在那行輸入的子命令(只對吃這個參數的命令加),
+所以整個畫面是同一個平台。
+
 顏色是冷冽的 geek 綠(`internal/ui/theme.go` 的 `GeekGreen`);換色的接縫就是那個 `Theme` struct,
 之後開放切換時從那裡加。
 
-```
-capy pl list / capy pl show <名稱|ID>
-capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
-capy pl unlink 通勤 spotify
-capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
-capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # canonical → 平台(Spotify;Apple 待 P0-2);要先 pull 過、平台沒有未 pull 的變更
-capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
-capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
-capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
-capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個平台沒有這首;id 已屬另一 cid 時合併(非 TTY 要 --yes)
-capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
-capy drive init --from-local [--dry-run] [--yes]   # 逃生口:Drive 空 / 部分遺失時用本機 state.db 補回缺的檔
-capy doctor [--provider apple]
-capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
-capy update [--dev]                      # 見上方「更新」
-```
 
 所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,超寬時 ID 欄先截斷。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
 
