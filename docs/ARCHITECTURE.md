@@ -871,14 +871,20 @@ capy now [--watch]
 capy devices                                              # P1 已實作:列 Spotify Connect 播放裝置(名稱 / 類型 / 狀態 / 音量 / ID);與下面 §6.3 的 device 檔管理無關,只是同名
 
 capy pl list
-capy pl show   <name>
-capy pl link   <name|pid> <provider>:<playlist_id|name>   # P3(2026-09-08 T8 已實作):只認明確 link(Q5 B);canonical 清單不存在就建立;讀不到的清單不可連結
-capy pl unlink <name|pid> <provider>                      # P3(已實作);canonical 內容不動
+capy pl show   [name]                                     # 不帶參數 + TTY:挑選器列這個 provider 的清單(非 TTY 維持 cobra 的參數錯誤)
+capy pl link   [name|pid] [provider]:[playlist_id|name]   # 不帶參數 + TTY:三段挑選(平台 → 該平台的清單 → canonical 清單或建新的);P3(2026-09-08 T8 已實作):只認明確 link(Q5 B);canonical 清單不存在就建立;讀不到的清單不可連結
+capy pl unlink [name|pid] [provider]                      # 不帶參數 + TTY:兩段挑選(清單 → 它連的平台);P3(已實作);canonical 內容不動
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
-capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義
+capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消套用;挑選器取消是 exit 1,那時還沒選到目標)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義
 capy pl push   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(§6.5.2,決策 28):canonical → 平台;exit 同 pull(0/1/2/3);前提:base 存在且平台無未 pull 變更(比快照),否則 exit 3;對齊鍵是 cid,add 缺 mapping 的 item 列 skip;含 local file 的 Spotify 清單 exit 3;provider 不支援的 op 列 manual;push 後(成功或失敗)base := 重讀的平台狀態,pl__ 不變
 capy pl sync   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P5(決策 31;T5 實作於 internal/cli/sync.go):同一把鎖裡每個清單先 pull 各平台再 push 各平台(provider 字典序;--provider 只走一個);一張表(TSV 最前面多一欄 dir = pull / push)、一次確認;--dry-run 的 push 半邊用套用後的 C;push 半邊重用 pull 的 L
 capy pl restore <name> --provider P                       # 延後(決策 31,計畫 Q18):= 把 base 快照 push 回平台,與 pl push 重疊
+# pl show / link / unlink / pull / push / sync 不帶清單參數且 stdin 與 stdout 都是終端機時開挑選器;
+# 非 TTY(管線 / cron)一律維持原本的錯誤訊息,可腳本化不受影響(2026-09-09)。
+# 挑選器取消 = exit 1(還沒選到目標,與「有變更待套用但不套用」的 exit 2 不同)。
+# 已知取捨:挑 canonical 清單的那幾段開在 withCanonical 裡(pull.lock 已拿到、Drive 已 FETCH),
+# 人離開鍵盤時鎖會一直被持有,同時間的 cron capy pl sync 會卡在 LockFile 的等待迴圈。
+# 不是新問題(confirmWrite 本來就在鎖裡),但「不帶參數」這個入口讓它變得容易發生。
 
 capy resolve [<name|pid>] [--provider P] [--dry-run] [--yes]   # P4 後半 T4(已實作,決策 22):預設全部已連結清單;缺 mapping 的 cid → ISRC 反查(95)→ fuzzy(0–100);≥85 自動寫入(Drive 先 SQLite 後,不動 alias set),其餘印 review 佇列 TSV(候選已屬另一 cid、或同一輪已配給別的 cid 也進佇列);exit 0 無事/已寫入(佇列有東西仍 0)、1 錯誤、2 待寫入未確認;--dry-run 永不寫入(連 FETCH 自癒的殘留也不上傳);單次 >200 次 API 在 stderr 提醒(決策 24)
 capy resolve --review                                     # P4 後半 T4(已實作):TTY 逐筆 accept / skip / manual search / not available / keep(conflict 列);決定寫 pinned / 100 / review;accept 對到已屬另一 cid 的 id → 確認後合併,不同意當略過;非 TTY 印佇列 TSV、exit 2

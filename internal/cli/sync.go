@@ -30,8 +30,8 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 推到這個清單連結的每一個平台——先 --dry-run 看清楚。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if all == (len(args) == 1) {
-				return errors.New("指定一個清單(名稱或 pid),或用 --all 同步全部已連結的清單")
+			if err := needTarget(cmd, args, all, "同步"); err != nil {
+				return err
 			}
 			if prov != "" && !isProviderID(prov) {
 				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), prov)
@@ -43,7 +43,7 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 			var deferred error
 			applied, touched, pulled := 0, false, 0
 			err := withCanonical(ctx, stderr, func(s *canonState) error {
-				targets, err := pullTargets(s, args, all, prov)
+				targets, err := pullTargets(s, args, all, prov, "同步")
 				if err != nil {
 					return err
 				}

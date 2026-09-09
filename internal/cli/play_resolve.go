@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/huh/v2"
-
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
@@ -212,19 +210,15 @@ func pickerLabel(c candidate) string {
 
 // runPlayPicker:TTY 挑選器(/ 進入過濾)。Esc 在 huh 裡是清除過濾,不綁成取消;取消用 Ctrl-C。測試替換點。
 var runPlayPicker = func(cands []candidate) (*candidate, error) {
-	opts := make([]huh.Option[int], len(cands))
+	labels := make([]string, len(cands))
 	for i, c := range cands {
-		opts[i] = huh.NewOption(pickerLabel(c), i)
+		labels[i] = pickerLabel(c)
 	}
-	idx := 0
-	sel := huh.NewSelect[int]().Title("選一個播放(/ 過濾,Ctrl-C 取消)").Options(opts...).Filtering(true).Height(12).Value(&idx)
-	if err := huh.NewForm(huh.NewGroup(sel)).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return nil, errors.New("已取消")
-		}
+	i, err := pickOne("選一個播放", labels)
+	if err != nil {
 		return nil, err
 	}
-	return &cands[idx], nil
+	return &cands[i], nil
 }
 
 // cacheCandidates:--pick 用,全部來自本機快取(清單 + 最近項目),不打網路;q 非空時只留相關的。

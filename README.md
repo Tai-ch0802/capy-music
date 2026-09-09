@@ -102,6 +102,7 @@ capy vol 40             # 音量 0-100
 capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl unlink 通勤 spotify
+capy pl show / link / unlink / pull / push / sync   # 不帶清單名且在終端機裡 = 開挑選器(link 三段、unlink 兩段);pipe / cron 維持原本的參數錯誤
 capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
 capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # canonical → 平台(Spotify;Apple 待 P0-2);要先 pull 過、平台沒有未 pull 的變更
 capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
