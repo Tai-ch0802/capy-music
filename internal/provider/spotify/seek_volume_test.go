@@ -43,11 +43,14 @@ func TestVolumeControlDisallowedMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 	err := NewClient(srv.Client(), srv.URL).SetVolume(context.Background(), 40)
-	if err == nil || !strings.Contains(err.Error(), "不允許遠端調整音量") {
-		t.Fatalf("403 VOLUME_CONTROL_DISALLOW 要有自己的說法:%v", err)
+	if !errors.Is(err, provider.ErrVolumeNotAllowed) { // 斷言 sentinel,不是中文訊息:訊息可以改寫、可以翻譯
+		t.Fatalf("403 VOLUME_CONTROL_DISALLOW 要是 ErrVolumeNotAllowed:%v", err)
 	}
 	if errors.Is(err, provider.ErrAuthExpired) {
 		t.Fatal("不能被當成授權過期")
+	}
+	if !strings.Contains(err.Error(), "403") { // 原始的 apiError 留在鏈上,debug 看得到 status
+		t.Errorf("原始錯誤要留在鏈上:%v", err)
 	}
 	// 其他 403 沒有特別說法,原樣往上(不冒充成音量問題)
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +58,7 @@ func TestVolumeControlDisallowedMessage(t *testing.T) {
 		w.Write([]byte(`{"error":{"status":403,"reason":"PREMIUM_REQUIRED","message":"x"}}`))
 	}))
 	defer srv2.Close()
-	if err := NewClient(srv2.Client(), srv2.URL).SetVolume(context.Background(), 40); err == nil || strings.Contains(err.Error(), "不允許遠端調整音量") {
+	if err := NewClient(srv2.Client(), srv2.URL).SetVolume(context.Background(), 40); err == nil || errors.Is(err, provider.ErrVolumeNotAllowed) {
 		t.Fatalf("其他 403 不該套音量的說法:%v", err)
 	}
 }

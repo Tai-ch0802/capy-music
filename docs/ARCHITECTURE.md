@@ -865,7 +865,7 @@ capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;�
 capy play --pick               # 直接開挑選器(TTY 限定)
 capy play --id <track id>
 capy pause | capy next | capy prev
-capy seek <mm:ss|秒> | capy vol <0-100>                    # 2026-09-09 實作(P1 計畫原本延後,附錄 A 稽核後補上);Apple 半邊走 Music.app 的 player position / sound volume
+capy seek <[h:]mm:ss|秒> | capy vol <0-100>                    # 2026-09-09 實作(P1 計畫原本延後,附錄 A 稽核後補上);Apple 半邊走 Music.app 的 player position / sound volume
 capy now [--watch]
 capy devices                                              # P1 已實作:列 Spotify Connect 播放裝置(名稱 / 類型 / 狀態 / 音量 / ID);與下面 §6.3 的 device 檔管理無關,只是同名
 

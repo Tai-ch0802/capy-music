@@ -306,8 +306,9 @@ func mapPlayerErr(err error) error {
 			return provider.ErrNoActiveDevice
 		case ae.Status == http.StatusForbidden && ae.Reason == "VOLUME_CONTROL_DISALLOW":
 			// 手機與部分喇叭不給遠端調音量。不映射成 ErrAuthExpired 那一族:403 在這裡不是授權問題,
-			// 訊息講錯會讓人白跑一次 auth login。
-			return errors.New("這個裝置不允許遠端調整音量(手機與部分喇叭會擋)— 請在該裝置上直接調")
+			// 訊息講錯會讓人白跑一次 auth login。包成 sentinel 讓呼叫端能 errors.Is,原始的
+			// *apiError 也留在鏈上(debug 要看 status / reason 時還在)。
+			return fmt.Errorf("%w(手機與部分喇叭會擋)— 請在該裝置上直接調:%w", provider.ErrVolumeNotAllowed, err)
 		}
 	}
 	return err

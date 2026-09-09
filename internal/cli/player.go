@@ -284,25 +284,27 @@ func ctlWithArg(use, short string, parse func(string) (int, error), do func(cont
 	return cmd
 }
 
-// parseSeekPos:mm:ss 或純秒數 → 毫秒。秒欄位允許一或兩位(1:5 = 1:05),但要 0-59——
-// 「1:75」比較可能是打錯而不是想要 2:15。
+// parseSeekPos:純秒數、mm:ss 或 h:mm:ss → 毫秒。最後兩段要 0-59(「1:75」比較可能是打錯而不是
+// 想要 2:15);最前面那段沒有上界,65:30 是合法的 65 分 30 秒。h:mm:ss 是為了 podcast 與 live 全場——
+// 只收 mm:ss 的話那些內容只能自己換算成秒。
 func parseSeekPos(s string) (int, error) {
-	bad := fmt.Errorf("位置要寫成 mm:ss 或純秒數(例:1:23 或 83),不是 %q", s)
-	s = strings.TrimSpace(s)
-	mm, ss, hasColon := strings.Cut(s, ":")
-	if !hasColon {
-		secs, err := strconv.Atoi(s)
-		if err != nil || secs < 0 {
-			return 0, bad
-		}
-		return secs * 1000, nil
-	}
-	m, err1 := strconv.Atoi(mm)
-	sec, err2 := strconv.Atoi(ss)
-	if err1 != nil || err2 != nil || m < 0 || sec < 0 || sec > 59 {
+	bad := fmt.Errorf("位置要寫成 [h:]mm:ss 或純秒數(例:1:23、1:05:30 或 83),不是 %q", s)
+	parts := strings.Split(strings.TrimSpace(s), ":")
+	if len(parts) > 3 {
 		return 0, bad
 	}
-	return (m*60 + sec) * 1000, nil
+	total := 0
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return 0, bad
+		}
+		if i > 0 && n > 59 { // 第一段是最大的單位,不設上界;後面的是分與秒
+			return 0, bad
+		}
+		total = total*60 + n
+	}
+	return total * 1000, nil
 }
 
 // parseVolPct:0-100 的整數。夾範圍不做:使用者打 150 是想調到 150,靜靜改成 100 會讓人以為壞了。
@@ -315,7 +317,7 @@ func parseVolPct(s string) (int, error) {
 }
 
 func newSeekCmd() *cobra.Command {
-	return ctlWithArg("seek <mm:ss|秒>", "跳到曲目內的指定位置", parseSeekPos,
+	return ctlWithArg("seek <[h:]mm:ss|秒>", "跳到曲目內的指定位置", parseSeekPos,
 		func(ctx context.Context, pc provider.PlaybackController, ms int) error { return pc.Seek(ctx, ms) },
 		func(ms int) string { return "⏩ 已跳到 " + ui.FormatDuration(ms) })
 }

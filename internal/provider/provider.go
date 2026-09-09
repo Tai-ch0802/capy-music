@@ -51,6 +51,9 @@ var (
 	ErrNotFound       = errors.New("找不到資源")
 	// ErrPlayerNotRunning:本機播放器 app 沒開(Apple Music.app)。State 回它而不是把 app 啟動起來;是狀態不是失敗。
 	ErrPlayerNotRunning = errors.New("播放器未執行")
+	// ErrVolumeNotAllowed:這個裝置不給遠端調音量(手機、部分喇叭)。是裝置的限制,不是授權問題,
+	// 也不是「平台不支援」——同一個平台換一台裝置就可以。
+	ErrVolumeNotAllowed = errors.New("這個裝置不允許遠端調整音量")
 )
 
 type Track struct {
