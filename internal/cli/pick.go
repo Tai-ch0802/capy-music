@@ -68,13 +68,12 @@ func argsOrPicker(n int) cobra.PositionalArgs {
 // needTarget:pl pull / push / sync 的參數檢查。清單名與 --all 互斥;兩個都沒給時,
 // 只有終端機能靠挑選器補,非 TTY 維持原本的錯誤。
 func needTarget(cmd *cobra.Command, args []string, all bool, verb string) error {
-	switch {
-	case all && len(args) == 1: // 兩個都給
-	case !all && len(args) == 0 && !isInteractive(cmd): // 都沒給,又不是終端機
-	default:
-		return nil
+	bothGiven := all && len(args) == 1
+	neitherGiven := !all && len(args) == 0
+	if bothGiven || (neitherGiven && !isInteractive(cmd)) { // 都沒給時只有終端機能靠挑選器補
+		return fmt.Errorf("指定一個清單(名稱或 pid),或用 --all %s全部已連結的清單", verb)
 	}
-	return fmt.Errorf("指定一個清單(名稱或 pid),或用 --all %s全部已連結的清單", verb)
+	return nil
 }
 
 // pickPlatformPlaylist:從平台的清單列表挑一個,回它的 provider 端 ID。
@@ -150,7 +149,9 @@ func pickLinkedPlaylist(s *canonState, prov, title string) (string, error) {
 }
 
 // pickLinkTarget:pl link 的第三段 —— 挑要連到哪個 canonical 清單,或建一個新的。
-// 全部清單都列(還沒連過任何平台的也是合法目標),回 pid 或使用者新打的名字。
+// 全部清單都列(還沒連過任何平台的也是合法目標)。選既有回 pid(不回名字,名字會撞同名),
+// 選「建立新的清單」回打進去的名字 —— 呼叫端拿它去 s.find,所以這裡先擋掉會被 find 命中的
+// 兩種輸入(既有的名字、既有的 pid):不擋的話,使用者明明按了「建立新的」,卻被靜靜 link 到舊的那個。
 // 已經佔用這個平台清單的那一列會標出來:選別列會被 RunE 以「只能連一個」擋下。
 func pickLinkTarget(s *canonState, prov, id string) (string, error) {
 	pls := make([]*canon.Playlist, 0, len(s.playlists))
@@ -176,8 +177,17 @@ func pickLinkTarget(s *canonState, prov, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if i == len(pls) {
-		return promptNewName("新清單的名稱")
+	if i < len(pls) {
+		return pls[i].PID, nil
 	}
-	return pls[i].PID, nil
+	name, err := promptNewName("新清單的名稱")
+	if err != nil {
+		return "", err
+	}
+	for _, pl := range pls { // find 認名字也認 pid,兩種都要擋;同名兩個之後也只能用 pid 指名了
+		if strings.EqualFold(pl.Name, name) || pl.PID == name {
+			return "", fmt.Errorf("已經有這個清單了:%s(%s)—— 回去選它,或換一個名字", pl.Name, pl.PID)
+		}
+	}
+	return name, nil
 }

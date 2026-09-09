@@ -109,9 +109,15 @@ func TestPlLinkThreeStagePicker(t *testing.T) {
 	fs.set("p2", "冬日暖調", "t2")
 	stubPickers(t, 0, 1, 0) // spotify → 冬日暖調 → 建立新的清單(清單一個都還沒有,索引 0 就是它)
 	stubNewName(t, "我的最愛")
+	n0 := fs.listCalls()
 	out, _ := mustPull(t, "pl", "link")
 	if !strings.Contains(out, "已連結 我的最愛(") || !strings.Contains(out, "spotify:p2") {
 		t.Fatalf("三段挑選要連成:%q", out)
+	}
+	// 挑選器與下面的存在性檢查沿用同一份 refs:多打一趟不只是浪費,兩次之間清單被刪掉時
+	// 使用者會拿到「不在你的清單列表裡」,指的原因與實際不符。
+	if got := fs.listCalls() - n0; got != 1 {
+		t.Fatalf("挑選器路徑只該讀一次 /me/playlists,實際 %d 次", got)
 	}
 	pl := decodeFile[canon.Playlist](t, driveFiles(t, dc), "pl__")
 	if pl.Name != "我的最愛" || pl.Links["spotify"] != "p2" {
@@ -145,6 +151,69 @@ func TestPlLinkPickerMarksTakenAndCancels(t *testing.T) {
 		}
 		if !sameFiles(before, driveFiles(t, dc)) {
 			t.Fatalf("第 %d 段取消不可寫 Drive", stage+1)
+		}
+	}
+}
+
+// 「+ 建立新的清單」要真的建新的:名字撞到既有清單時明講,不可靜靜 link 到舊的
+// (使用者按的是建立,不是連結)。
+func TestPlLinkNewNameCollides(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "t1")
+	fs.set("p2", "冬日暖調", "t2")
+	mustPull(t, "pl", "link", "上班路上", "spotify:p1")
+	before := driveFiles(t, dc)
+
+	// 撞到既有清單的「名字」與「pid」都要擋 —— 呼叫端拿這個字串去 s.find,兩種它都認,
+	// 不擋就會變成「按了建立新的、卻被靜靜 link 到舊的那個」。
+	pid := decodeFile[canon.Playlist](t, before, "pl__").PID
+	for _, typed := range []string{"上班路上", pid} {
+		stubPickers(t, 0, 1, 1) // spotify → p2 → +建立新的清單(既有一個,索引 1 是建立)
+		stubNewName(t, typed)
+		_, _, err := runPull(t, "pl", "link")
+		if err == nil || !strings.Contains(err.Error(), "已經有這個清單了") {
+			t.Fatalf("新名字打成 %q 要明講,不可默默連到舊的:%v", typed, err)
+		}
+		if !sameFiles(before, driveFiles(t, dc)) {
+			t.Fatalf("打成 %q 不可寫 Drive", typed)
+		}
+	}
+	// 名字不撞時照樣建新的,不會被既有清單吸走。
+	stubPickers(t, 0, 1, 1)
+	stubNewName(t, "冬日")
+	out, _ := mustPull(t, "pl", "link")
+	if !strings.Contains(out, "已連結 冬日(") {
+		t.Fatalf("要建新的清單:%q", out)
+	}
+	n := 0
+	for name := range driveFiles(t, dc) {
+		if strings.HasPrefix(name, "pl__") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("Drive 上該有兩個清單檔,實際 %d", n)
+	}
+}
+
+// --all 與清單名同時給:TTY 下也維持同一句錯誤,且不開挑選器。
+func TestNeedTargetBothGiven(t *testing.T) {
+	pullWorld(t)
+	origTTY, origPick := isInteractive, pickOne
+	isInteractive = func(*cobra.Command) bool { return true }
+	pickOne = func(string, []string) (int, error) {
+		t.Fatal("兩個都給了不該開挑選器")
+		return 0, nil
+	}
+	t.Cleanup(func() { isInteractive, pickOne = origTTY, origPick })
+	for _, c := range []struct{ verb, want string }{
+		{"pull", "指定一個清單(名稱或 pid),或用 --all 拉全部已連結的清單"},
+		{"push", "指定一個清單(名稱或 pid),或用 --all 推全部已連結的清單"},
+		{"sync", "指定一個清單(名稱或 pid),或用 --all 同步全部已連結的清單"},
+	} {
+		_, _, err := runPull(t, "pl", c.verb, "通勤", "--all")
+		if err == nil || err.Error() != c.want {
+			t.Errorf("pl %s 通勤 --all:%v,want %q", c.verb, err, c.want)
 		}
 	}
 }

@@ -456,14 +456,19 @@ func newPlLinkCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// ref == "" 是「走挑選器」的哨兵,靠 splitProviderRef 保證有給參數時 ref 一定非空
+			// (ok / isProviderID / ref == "" 三條它都會回錯);放寬它的話非 TTY 會悄悄走進挑選器。
 			var id string
+			var refs []provider.PlaylistRef
 			if ref != "" {
 				if id, err = resolvePlaylistID(ctx, r, prov, ref); err != nil {
 					return err
 				}
-			} else { // 第二段
-				refs, err := r.ListPlaylists(ctx)
-				if err != nil {
+				if refs, err = r.ListPlaylists(ctx); err != nil {
+					return friendlyErr(prov, err)
+				}
+			} else { // 第二段:同一份 refs 餵挑選器與下面的存在性檢查,不多打一趟
+				if refs, err = r.ListPlaylists(ctx); err != nil {
 					return friendlyErr(prov, err)
 				}
 				if id, err = pickPlatformPlaylist(prov, refs); err != nil {
@@ -472,10 +477,6 @@ func newPlLinkCmd() *cobra.Command {
 			}
 			// 「存在」的定義要跟 pull 的 gone 判準一致(在 ListPlaylists 裡):像 base62 的 ID 會被 resolvePlaylistID 直接放行,
 			// 別人的公開清單讀得到卻不在自己的列表裡,連了第一次 pull 就會被當成已刪除而自動 unlink。
-			refs, err := r.ListPlaylists(ctx)
-			if err != nil {
-				return friendlyErr(prov, err)
-			}
 			if !slices.ContainsFunc(refs, func(x provider.PlaylistRef) bool { return x.ID == id }) {
 				return fmt.Errorf("%s:%s 不在你的清單列表裡(capy pl list 看得到的才算):pull 會把不在列表裡的清單視為已刪除並自動取消連結,所以不可連結", prov, id)
 			}
