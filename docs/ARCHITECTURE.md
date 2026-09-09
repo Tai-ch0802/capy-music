@@ -219,15 +219,16 @@ type PlaybackController interface {
     Pause(ctx context.Context) error
     Next(ctx context.Context) error
     Prev(ctx context.Context) error
+    // 2026-09-09 實作:Spotify 是 PUT /me/player/seek?position_ms= 與 /me/player/volume?volume_percent=
+    // (手機與部分喇叭回 403 VOLUME_CONTROL_DISALLOW,訊息要講「這個裝置不給調」而不是授權過期);
+    // Apple 是 osascript 的 player position(秒)與 sound volume。超過長度的 seek 不先攔(各平台行為不一致)。
+    Seek(ctx context.Context, posMS int) error
+    SetVolume(ctx context.Context, pct int) error
 }
 
-// 延後、尚未排程(2026-09-09 附錄 A 稽核):以下三個方法不在目前的 PlaybackController 裡。P1 計畫把 Seek / SetVolume / Enqueue
-// 一起延後(P1 不進 bubbletea),P2 計畫對 Apple 半邊的 Seek / SetVolume 同樣延後,P3–P6 都沒排回來。要做的時候:
-//   Seek(ctx context.Context, posMS int) error     // Spotify: PUT /me/player/seek?position_ms=
-//   SetVolume(ctx context.Context, pct int) error  // Spotify: PUT /me/player/volume?volume_percent=;手機類裝置回 403
-//                                                  // VOLUME_CONTROL_DISALLOW → 訊息要講「這個裝置不給調音量」,不是授權過期
-//   Enqueue(ctx context.Context, uri string) error // CLI 命令都還沒設計(附錄 A 沒有 queue),真要做時先補附錄 A
-// Apple 半邊是 osascript 的 player position / sound volume。
+// 延後、尚未排程:Enqueue(ctx context.Context, uri string) error —— 不在目前的 PlaybackController 裡。
+// P1 計畫把它與 Seek / SetVolume 一起延後,後兩者已於 2026-09-09 補上;Enqueue 連 CLI 命令都還沒設計
+// (附錄 A 沒有 queue),真要做時先補附錄 A。
 
 type Track struct {
     ProviderID  string   // provider 內部 ID
@@ -863,7 +864,8 @@ capy play <query...> [--provider P] [--device NAME] [--type track|artist|playlis
 capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;歧義:TTY 挑選器 / 非 TTY exit 2 + TSV
 capy play --pick               # 直接開挑選器(TTY 限定)
 capy play --id <track id>
-capy pause | capy next | capy prev                         # seek / vol 延後(P1 計畫 §延後清單、P2 計畫對 Apple 半邊同樣延後;之後每個階段都沒排回來,2026-09-09 附錄 A 稽核補註)
+capy pause | capy next | capy prev
+capy seek <[h:]mm:ss|秒> | capy vol <0-100>                    # 2026-09-09 實作(P1 計畫原本延後,附錄 A 稽核後補上);Apple 半邊走 Music.app 的 player position / sound volume
 capy now [--watch]
 capy devices                                              # P1 已實作:列 Spotify Connect 播放裝置(名稱 / 類型 / 狀態 / 音量 / ID);與下面 §6.3 的 device 檔管理無關,只是同名
 

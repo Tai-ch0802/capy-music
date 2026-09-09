@@ -40,9 +40,11 @@ func (f *playFake) Play(_ context.Context, r provider.PlayRequest) error {
 	f.played = append(f.played, r)
 	return nil
 }
-func (f *playFake) Pause(context.Context) error { return nil }
-func (f *playFake) Next(context.Context) error  { return nil }
-func (f *playFake) Prev(context.Context) error  { return nil }
+func (f *playFake) Pause(context.Context) error          { return nil }
+func (f *playFake) Next(context.Context) error           { return nil }
+func (f *playFake) Prev(context.Context) error           { return nil }
+func (f *playFake) Seek(context.Context, int) error      { return nil }
+func (f *playFake) SetVolume(context.Context, int) error { return nil }
 
 func newPlayFake(t *testing.T) *playFake {
 	t.Helper()

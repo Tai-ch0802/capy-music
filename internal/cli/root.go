@@ -32,6 +32,7 @@ func newRootCmd() *cobra.Command {
 		simpleCtl("next", "下一首", "⏭ 下一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Next(ctx) }),
 		simpleCtl("prev", "上一首", "⏮ 上一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Prev(ctx) }),
 	)
+	cmd.AddCommand(newSeekCmd(), newVolCmd())
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newConfigCmd(), newHistoryCmd(), newUpdateCmd())

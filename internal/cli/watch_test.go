@@ -30,6 +30,14 @@ func (f *watchFake) Play(_ context.Context, r provider.PlayRequest) error {
 func (f *watchFake) Pause(context.Context) error { f.calls = append(f.calls, "pause"); return nil }
 func (f *watchFake) Next(context.Context) error  { f.calls = append(f.calls, "next"); return nil }
 func (f *watchFake) Prev(context.Context) error  { f.calls = append(f.calls, "prev"); return nil }
+func (f *watchFake) Seek(_ context.Context, ms int) error {
+	f.calls = append(f.calls, fmt.Sprintf("seek:%d", ms))
+	return nil
+}
+func (f *watchFake) SetVolume(_ context.Context, pct int) error {
+	f.calls = append(f.calls, fmt.Sprintf("vol:%d", pct))
+	return nil
+}
 
 func playingState() *provider.PlaybackState {
 	return &provider.PlaybackState{

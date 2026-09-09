@@ -51,6 +51,9 @@ var (
 	ErrNotFound       = errors.New("找不到資源")
 	// ErrPlayerNotRunning:本機播放器 app 沒開(Apple Music.app)。State 回它而不是把 app 啟動起來;是狀態不是失敗。
 	ErrPlayerNotRunning = errors.New("播放器未執行")
+	// ErrVolumeNotAllowed:這個裝置不給遠端調音量(手機、部分喇叭)。是裝置的限制,不是授權問題,
+	// 也不是「平台不支援」——同一個平台換一台裝置就可以。
+	ErrVolumeNotAllowed = errors.New("這個裝置不允許遠端調整音量")
 )
 
 type Track struct {
@@ -164,6 +167,11 @@ type PlaybackController interface {
 	Pause(ctx context.Context) error
 	Next(ctx context.Context) error
 	Prev(ctx context.Context) error
+	// Seek:跳到曲目內的絕對位置(毫秒)。超過長度的行為由平台決定(Spotify 跳到下一首、Music.app 停在結尾),
+	// 這裡不先攔——各平台不一致,攔了反而要維護一份「這個平台幾毫秒才算超過」的規則。
+	Seek(ctx context.Context, posMS int) error
+	// SetVolume:0-100。呼叫端負責夾範圍;手機與部分喇叭會拒絕(Spotify 403 VOLUME_CONTROL_DISALLOW)。
+	SetVolume(ctx context.Context, pct int) error
 }
 
 // PlaylistOp:pl push 的一筆操作(spec §3、§6.5.2)。位置語意:依序套用,Pos / From 指的是前面 ops 套完後的狀態;
