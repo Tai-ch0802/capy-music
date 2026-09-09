@@ -20,9 +20,23 @@ func newTestTUI(t *testing.T, f *watchFake) tuiModel {
 	t.Helper()
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", f, nil, watchPollSpotify)
 	m.width = 100
-	m.st = f.st // 正式路徑是第一次 poll 帶進來的;測試直接給,免得每個案例都要先跑一次輪詢
+	m.st = f.st     // 正式路徑是第一次 poll 帶進來的;測試直接給,免得每個案例都要先跑一次輪詢
+	m.frozen = true // 開場只有前兩秒;要驗開場的案例自己把它關掉
 	return m
 }
+
+// recordPrintln:把推進捲動區的行記下來(tea.Println 產生的是 bubbletea 的私有型別,認不出來)。
+func recordPrintln(t *testing.T) *[]string {
+	t.Helper()
+	var got []string
+	orig := tuiPrintln
+	tuiPrintln = func(s string) tea.Cmd { got = append(got, s); return nil }
+	t.Cleanup(func() { tuiPrintln = orig })
+	return &got
+}
+
+// joined:捲動區收到的全部內容接成一段,方便找關鍵字。
+func joined(got *[]string) string { return strings.Join(*got, "\n") }
 
 // 送一個訊息、拿回 model 與 cmd;cmd 若非 nil 就執行(這些 cmd 都是同步的 func,不是 tea.Tick——
 // tea.Tick 的 timer 建立即啟動,在測試裡跑第二次會永遠卡住)。
@@ -58,6 +72,7 @@ func TestSplitArgs(t *testing.T) {
 
 func TestTUIFrameAdvancesAndBodyStaysPut(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.frozen = false // 開場期間才有動畫
 	if m.frame != 0 {
 		t.Fatal("起始幀應為 0")
 	}
@@ -70,6 +85,11 @@ func TestTUIFrameAdvancesAndBodyStaysPut(t *testing.T) {
 		if m.frame != i {
 			t.Fatalf("幀 = %d,要 %d", m.frame, i)
 		}
+	}
+	// 定格之後動畫停掉:底部四行只在狀態變動與按鍵時重畫,不再每 350 毫秒重繪。
+	m.frozen = true
+	if _, cmd := m.Update(tuiFrameMsg{}); cmd != nil {
+		t.Error("定格後不該再排下一幀")
 	}
 }
 
@@ -160,12 +180,12 @@ func TestTUIPollChainDoesNotMultiply(t *testing.T) {
 // tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer——回來時再排一次 tick 會讓鏈變兩條。
 func TestTUIExecDoesNotReArmTicks(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
-	next, cmd := m.Update(tuiExecMsg{args: []string{"pl", "list"}})
-	if cmd != nil {
+	got := recordPrintln(t)
+	if _, cmd := m.Update(tuiExecMsg{args: []string{"pl", "list"}}); cmd != nil {
 		t.Error("執行完子命令不該再排 tick(排隊中的訊息會自己把鏈接回去)")
 	}
-	if !strings.Contains(next.(tuiModel).note, "pl list") {
-		t.Error("要留下執行過什麼的紀錄")
+	if len(*got) != 0 {
+		t.Errorf("成功不印:輸出本身就是證據,多一行是雜訊:%q", *got)
 	}
 }
 
@@ -186,7 +206,7 @@ func TestTUIStallsInsteadOfQuitting(t *testing.T) {
 		t.Fatal("應該進入停擺狀態")
 	}
 	view := m.View().Content
-	if !strings.Contains(view, "按 r 重試") || !strings.Contains(view, "/ 輸入命令") {
+	if !strings.Contains(view, "r 重試") || !strings.Contains(view, "/ 命令") {
 		t.Errorf("要指路且保留命令列:%q", view)
 	}
 	// r 重新接上
@@ -239,13 +259,17 @@ func TestTUICommandLine(t *testing.T) {
 	if !slices.Equal(gotArgs, []string{"/bin/capy", "pl", "show", "上班 通勤"}) {
 		t.Errorf("執行的參數:%#v", gotArgs)
 	}
-	// Esc 取消:不執行、離開輸入模式
+	// Esc:有字先清空(打錯一長串不必連按退格),空的再離開輸入模式;兩種情況都不執行
 	gotArgs = nil
 	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
 	m.input.SetValue("search x")
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, true)
+	if !m.typing || m.input.Value() != "" || gotArgs != nil {
+		t.Errorf("Esc 要清空而不是執行:typing=%v value=%q args=%v", m.typing, m.input.Value(), gotArgs)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, true)
 	if m.typing || gotArgs != nil {
-		t.Errorf("Esc 要取消而不是執行:typing=%v args=%v", m.typing, gotArgs)
+		t.Errorf("空輸入按 Esc 要離開輸入模式:typing=%v args=%v", m.typing, gotArgs)
 	}
 	// 空輸入按 Enter:什麼都不做
 	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
@@ -291,7 +315,7 @@ func TestTUIStaleRepliesNeverReviveTheChain(t *testing.T) {
 	}
 	// 控制指令自己的錯誤仍然要顯示(使用者剛按的鍵失敗了)
 	next, _ = m.Update(tuiStateMsg{err: errors.New("裝置拒絕"), fromCtl: true, gen: old})
-	if next.(tuiModel).err == nil {
+	if next.(tuiModel).errShort == "" {
 		t.Error("控制指令的錯誤要說,即使已經 stale")
 	}
 }
@@ -353,6 +377,7 @@ func TestTUICtrlCQuitsWhileTyping(t *testing.T) {
 
 func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.frozen = false // 水豚只出現在開場
 	wide := m.View().Content
 	if !strings.Contains(wide, capyChin) { // 下巴那行每一幀都一樣,不受眨眼／嚼草影響
 		t.Error("寬螢幕要有水豚橫幅")
@@ -379,9 +404,11 @@ func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 func TestTUIWithoutPlaybackStillUsable(t *testing.T) {
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "local", "", nil, provider.ErrNotSupported, watchPollSpotify)
 	m.width = 100
-	if got := m.View().Content; !strings.Contains(got, "沒有播放遙控") || !strings.Contains(got, "/ 輸入命令") {
+	m.frozen = true
+	if got := m.View().Content; !strings.Contains(got, "沒有播放遙控") || !strings.Contains(got, "/ 命令") {
 		t.Errorf("要說明原因並保留命令列:%q", got)
 	}
+	m.frozen = false
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyRight}, true) // 不該 panic
 	if m.Init() == nil {
 		t.Error("即使沒有播放遙控,水豚還是要動")

@@ -43,10 +43,18 @@ func capybaraFrame(n int) []string {
 	return append(out, eyes, capyMidriff, capyBrow, mouth, capyChin)
 }
 
+// capybaraStill:開場動畫結束後定格、印進捲動區的那一幀:睜眼看著使用者、草伸出臉外。
+// 不可以拿 capybaraFrame(0) 當定格 —— 第 0 幀 0%capyBlinkEvery == 0,是閉著眼的。
+func capybaraStill() []string {
+	out := make([]string, 0, len(capyHead)+5)
+	out = append(out, capyHead...)
+	return append(out, capyEyesOpen, capyMidriff, capyBrow, capyMouthOut, capyChin)
+}
+
 // capybaraWidth:橫幅要的欄數。全部是 ASCII,所以位元組數就是顯示寬度。
 func capybaraWidth() int {
 	w := 0
-	for _, line := range capybaraFrame(0) {
+	for _, line := range capybaraStill() {
 		w = max(w, len(line))
 	}
 	return w
