@@ -21,7 +21,17 @@ func newRootCmd() *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true, // main 負責印錯與 exit code(歧義 = 2,見 AmbiguousError)
+		Args:          cobra.NoArgs,
+		// 無參數:終端機裡開互動式介面,pipe / cron 一律印 help——「非 TTY 必須是純文字」是硬約束,
+		// 而且 capy | head 這種用法不能突然變成一個吃鍵盤的程式。
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !isInteractive(cmd) {
+				return cmd.Help()
+			}
+			return runTUI(cmd)
+		},
 	}
+	providerFlag(cmd)
 	cmd.AddCommand(newDebugCmd())
 	cmd.AddCommand(newAuthCmd())
 	cmd.AddCommand(newSearchCmd())
