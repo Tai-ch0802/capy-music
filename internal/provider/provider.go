@@ -85,6 +85,9 @@ type Device struct {
 	Type      string
 	Active    bool
 	VolumePct int
+	// VolumeKnown:平台有回報音量。VolumePct 是 int,0 沒辦法區分「真的靜音」與「這個平台不給音量」
+	// (Apple 的 State 不帶),而兩者的正確處置相反:前者要能被 + 解除靜音,後者不該亂猜一個基準。
+	VolumeKnown bool
 }
 
 type PlaybackState struct {

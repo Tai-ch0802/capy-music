@@ -39,11 +39,16 @@ const (
 
 type (
 	tuiFrameMsg time.Time
-	tuiPollMsg  time.Time
+	// tuiPollMsg / tuiStateMsg 帶 gen:輪詢是一條「tick → 讀狀態 → 再排一個 tick」的鏈,而控制鍵
+	// 為了讓畫面立刻跟上會另外起一次讀取。沒有世代編號的話那次讀取會長出第二條鏈,而舊鏈沒人取消——
+	// 方向鍵會自動重複,按住兩秒就是三十幾條鏈同時打 /me/player,穩定觸發 429(PR #41 review)。
+	// 控制鍵讓 gen 前進,舊鏈的 tick 到期時發現世代不符就停下來。
+	tuiPollMsg  struct{ gen int }
 	tuiStateMsg struct {
 		st      *provider.PlaybackState
 		err     error
 		fromCtl bool // 控制指令的錯:顯示但不計入 fails(那個預算是給「連不上」用的)
+		gen     int
 	}
 	tuiExecMsg struct {
 		args []string
@@ -68,7 +73,8 @@ type tuiModel struct {
 	err      error
 	note     string
 	fails    int
-	fatal    error
+	gen      int  // 目前的輪詢世代
+	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
 }
 
 func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
@@ -99,11 +105,12 @@ func (m tuiModel) frameTick() tea.Cmd {
 }
 
 func (m tuiModel) pollTick() tea.Cmd {
-	return tea.Tick(m.interval, func(t time.Time) tea.Msg { return tuiPollMsg(t) })
+	gen := m.gen
+	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
 
 func (m tuiModel) poll() tea.Cmd {
-	ctx, pc, interval := m.ctx, m.pc, m.interval
+	ctx, pc, interval, gen := m.ctx, m.pc, m.interval, m.gen
 	if pc == nil {
 		return nil
 	}
@@ -111,23 +118,31 @@ func (m tuiModel) poll() tea.Cmd {
 		c, cancel := context.WithTimeout(ctx, pollTimeout(interval))
 		defer cancel()
 		st, err := pc.State(c)
-		return tuiStateMsg{st: st, err: err}
+		return tuiStateMsg{st: st, err: err, gen: gen}
 	}
 }
 
-// control:送控制指令後立刻重新輪詢,畫面才會跟上(同 now --watch)。
+// control:送控制指令後立刻重新輪詢,畫面才會跟上。呼叫端要先把 gen 推進(newChain),
+// 這次讀取才會取代舊鏈而不是疊上去。
 func (m tuiModel) control(f func(context.Context) error) tea.Cmd {
-	ctx := m.ctx
+	ctx, gen := m.ctx, m.gen
 	poll := m.poll()
 	return func() tea.Msg {
 		if err := f(ctx); err != nil {
-			return tuiStateMsg{err: err, fromCtl: true}
+			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 		}
 		if poll == nil {
 			return nil
 		}
 		return poll()
 	}
+}
+
+// newChain:讓輪詢世代前進(舊鏈的 tick 到期時會被丟掉),回傳推進後的 model。
+func (m tuiModel) newChain() tuiModel {
+	m.gen++
+	m.stalled = false
+	return m
 }
 
 // tuiExecProcess:測試替換點——真的 fork 一個行程沒辦法在單元測試裡驗證,換掉它才能斷言「這一行
@@ -150,6 +165,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.frame++
 		return m, m.frameTick()
 	case tuiPollMsg:
+		if msg.gen != m.gen || m.stalled { // 舊鏈:停在這裡,不要再排下一個 tick
+			return m, nil
+		}
 		return m, m.poll()
 	case tuiStateMsg:
 		return m.applyState(msg)
@@ -159,7 +177,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.note = "capy " + strings.Join(msg.args, " ") + " 執行完畢"
 		}
-		return m, tea.Batch(m.frameTick(), m.poll()) // Exec 期間 tick 停了,回來要接上
+		// 不重排 tick:tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer(各自的 goroutine)。
+		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
+		return m, nil
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 	}
@@ -179,11 +199,18 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, m.pollTick()
 	}
+	if msg.gen != m.gen { // 舊鏈的回覆:丟掉,不要用它排新的 tick
+		return m, nil
+	}
 	if msg.err != nil {
 		m.err, m.fails = msg.err, m.fails+1
 		if m.fails >= tuiMaxFails {
-			m.fatal = fmt.Errorf("連續 %d 次讀不到播放狀態:%w", m.fails, msg.err)
-			return m, tea.Quit
+			// 不關介面:這裡的定位是「一行可以跑任何子命令」,播放狀態只是其中一格。連不上的時候
+			// 使用者最需要的正是那行命令列(auth login、doctor),把整個介面收掉等於把人關在門外
+			// (PR #41 review)。輪詢先停,按 r 重試。
+			m.err = fmt.Errorf("連續 %d 次讀不到播放狀態:%w(按 r 重試,或 / 打 doctor)", m.fails, msg.err)
+			m.stalled = true
+			return m, nil
 		}
 		return m, m.pollTick()
 	}
@@ -227,20 +254,28 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
+	case "r": // 輪詢停下來之後重新接上
+		m = m.newChain()
+		m.err, m.fails = nil, 0
+		return m, m.poll()
 	case "space":
+		m = m.newChain()
 		if m.st != nil && m.st.Playing {
 			return m, m.control(m.pc.Pause)
 		}
 		return m, m.control(func(ctx context.Context) error { return m.pc.Play(ctx, provider.PlayRequest{}) })
 	case "n":
+		m = m.newChain()
 		return m, m.control(m.pc.Next)
 	case "p":
+		m = m.newChain()
 		return m, m.control(m.pc.Prev)
 	case "left", "right":
 		pos, ok := m.seekTarget(msg.String() == "right")
 		if !ok {
 			return m, nil
 		}
+		m = m.newChain()
 		m.note = "跳到 " + ui.FormatDuration(pos)
 		return m, m.control(func(ctx context.Context) error { return m.pc.Seek(ctx, pos) })
 	case "+", "=", "-":
@@ -248,6 +283,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		m = m.newChain()
 		m.note = fmt.Sprintf("音量 %d", pct)
 		return m, m.control(func(ctx context.Context) error { return m.pc.SetVolume(ctx, pct) })
 	}
@@ -272,9 +308,10 @@ func (m tuiModel) seekTarget(forward bool) (int, bool) {
 	return pos, true
 }
 
-// volTarget:目前音量 ±5,夾在 [0, 100]。平台沒回音量(Apple 的 State 不帶)時不猜。
+// volTarget:目前音量 ±5,夾在 [0, 100]。平台沒回音量(Apple 的 State 不帶)時不猜——
+// 但音量真的是 0(靜音)要能被 + 拉回來,所以看的是 VolumeKnown 而不是 VolumePct > 0。
 func (m tuiModel) volTarget(up bool) (int, bool) {
-	if m.st == nil || m.st.Device.VolumePct <= 0 {
+	if m.st == nil || !m.st.Device.VolumeKnown {
 		return 0, false
 	}
 	pct := m.st.Device.VolumePct + tuiVolStep
@@ -360,7 +397,7 @@ func (m tuiModel) View() tea.View {
 		line("  " + bar.ViewAs(pct) + t.Mutedly(times))
 		if st.Device.Name != "" {
 			dev := fmt.Sprintf("  %s(%s)", st.Device.Name, st.Device.Type)
-			if st.Device.VolumePct > 0 {
+			if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,不是整行消失
 				dev += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
 			}
 			line(t.Mutedly(dev))
@@ -384,6 +421,9 @@ func (m tuiModel) hints() string {
 	}
 	if m.pc == nil {
 		return "  / 輸入命令 · q 離開"
+	}
+	if m.stalled {
+		return "  r 重新連上 · / 輸入命令 · q 離開"
 	}
 	return "  space 播放/暫停 · n/p 上下首 · ←/→ ±10 秒 · +/- 音量 · / 輸入命令 · q 離開"
 }
@@ -423,12 +463,11 @@ var runTUI = func(cmd *cobra.Command) error {
 	origStderr := provider.BackoffStderr // 429 退避的提示不能印進畫面
 	provider.BackoffStderr = io.Discard
 	defer func() { provider.BackoffStderr = origStderr }()
-	final, err := tea.NewProgram(m, tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())).Run()
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
+	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
+	// 離開一律是使用者按 q / Ctrl-C。
+	if _, err := tea.NewProgram(m, tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())).Run(); err != nil &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
 		return err
-	}
-	if fm, ok := final.(tuiModel); ok && fm.fatal != nil {
-		return friendlyErr(provID, fm.fatal)
 	}
 	return nil
 }
