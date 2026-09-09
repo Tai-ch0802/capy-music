@@ -100,3 +100,6 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 func (p *Provider) Pause(ctx context.Context) error { return p.c.Pause(ctx) }
 func (p *Provider) Next(ctx context.Context) error  { return p.c.Next(ctx) }
 func (p *Provider) Prev(ctx context.Context) error  { return p.c.Prev(ctx) }
+
+func (p *Provider) Seek(ctx context.Context, posMS int) error    { return p.c.Seek(ctx, posMS) }
+func (p *Provider) SetVolume(ctx context.Context, pct int) error { return p.c.SetVolume(ctx, pct) }

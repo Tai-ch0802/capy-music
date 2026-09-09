@@ -21,3 +21,5 @@ func (p *Provider) Play(context.Context, provider.PlayRequest) error { return pr
 func (p *Provider) Pause(context.Context) error                      { return provider.ErrNotSupported }
 func (p *Provider) Next(context.Context) error                       { return provider.ErrNotSupported }
 func (p *Provider) Prev(context.Context) error                       { return provider.ErrNotSupported }
+func (p *Provider) Seek(context.Context, int) error                  { return provider.ErrNotSupported }
+func (p *Provider) SetVolume(context.Context, int) error             { return provider.ErrNotSupported }

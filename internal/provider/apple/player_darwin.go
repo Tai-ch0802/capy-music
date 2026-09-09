@@ -129,3 +129,15 @@ func (p *Provider) Prev(context.Context) error {
 	_, err := runOSA(`tell application "Music" to previous track`)
 	return err
 }
+
+// Seek / SetVolume:Music.app 的 player position 單位是秒、sound volume 是 0-100。
+// 位置取整到秒(mm:ss 本來就是秒精度),順便避開小數點在非 en-US locale 的格式疑慮(見 stateScript 的註解)。
+func (p *Provider) Seek(_ context.Context, posMS int) error {
+	_, err := runOSA(fmt.Sprintf(`tell application "Music" to set player position to %d`, (posMS+500)/1000))
+	return err
+}
+
+func (p *Provider) SetVolume(_ context.Context, pct int) error {
+	_, err := runOSA(fmt.Sprintf(`tell application "Music" to set sound volume to %d`, pct))
+	return err
+}

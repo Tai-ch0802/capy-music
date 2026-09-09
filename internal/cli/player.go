@@ -255,6 +255,79 @@ func simpleCtl(use, short, done string, call func(ctx context.Context, pc provid
 	return cmd
 }
 
+// ctlWithArg:吃一個參數的播放遙控(seek / vol)。骨架同 simpleCtl,但參數先解析再取 provider——
+// 打錯格式不該先去建 client、更不該先要求有憑證。
+func ctlWithArg(use, short string, parse func(string) (int, error), do func(context.Context, provider.PlaybackController, int) error, done func(int) string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use: use, Short: short, Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v, err := parse(args[0])
+			if err != nil {
+				return err
+			}
+			p, err := getProvider(cmd)
+			if err != nil {
+				return err
+			}
+			pc, err := asPlayback(p)
+			if err != nil {
+				return err
+			}
+			if err := do(cmd.Context(), pc, v); err != nil {
+				return friendlyErr(p.ID(), err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), done(v))
+			return nil
+		},
+	}
+	providerFlag(cmd)
+	return cmd
+}
+
+// parseSeekPos:mm:ss 或純秒數 → 毫秒。秒欄位允許一或兩位(1:5 = 1:05),但要 0-59——
+// 「1:75」比較可能是打錯而不是想要 2:15。
+func parseSeekPos(s string) (int, error) {
+	bad := fmt.Errorf("位置要寫成 mm:ss 或純秒數(例:1:23 或 83),不是 %q", s)
+	s = strings.TrimSpace(s)
+	mm, ss, hasColon := strings.Cut(s, ":")
+	if !hasColon {
+		secs, err := strconv.Atoi(s)
+		if err != nil || secs < 0 {
+			return 0, bad
+		}
+		return secs * 1000, nil
+	}
+	m, err1 := strconv.Atoi(mm)
+	sec, err2 := strconv.Atoi(ss)
+	if err1 != nil || err2 != nil || m < 0 || sec < 0 || sec > 59 {
+		return 0, bad
+	}
+	return (m*60 + sec) * 1000, nil
+}
+
+// parseVolPct:0-100 的整數。夾範圍不做:使用者打 150 是想調到 150,靜靜改成 100 會讓人以為壞了。
+func parseVolPct(s string) (int, error) {
+	pct, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || pct < 0 || pct > 100 {
+		return 0, fmt.Errorf("音量要是 0-100 的整數,不是 %q", s)
+	}
+	return pct, nil
+}
+
+func newSeekCmd() *cobra.Command {
+	return ctlWithArg("seek <mm:ss|秒>", "跳到曲目內的指定位置", parseSeekPos,
+		func(ctx context.Context, pc provider.PlaybackController, ms int) error { return pc.Seek(ctx, ms) },
+		func(ms int) string { return "⏩ 已跳到 " + ui.FormatDuration(ms) })
+}
+
+func newVolCmd() *cobra.Command {
+	return ctlWithArg("vol <0-100>", "設定播放音量", parseVolPct,
+		func(ctx context.Context, pc provider.PlaybackController, pct int) error {
+			return pc.SetVolume(ctx, pct)
+		},
+		func(pct int) string { return fmt.Sprintf("🔊 音量 %d", pct) })
+}
+
 func newNowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "now", Short: "目前播放狀態(--watch 持續顯示,含進度條與鍵位控制)", Args: cobra.NoArgs,

@@ -300,8 +300,15 @@ func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]prov
 // mapPlayerErr:player 端點的 404 + NO_ACTIVE_DEVICE 是語意,不是 URL 打錯。
 func mapPlayerErr(err error) error {
 	var ae *apiError
-	if errors.As(err, &ae) && ae.Status == http.StatusNotFound && ae.Reason == "NO_ACTIVE_DEVICE" {
-		return provider.ErrNoActiveDevice
+	if errors.As(err, &ae) {
+		switch {
+		case ae.Status == http.StatusNotFound && ae.Reason == "NO_ACTIVE_DEVICE":
+			return provider.ErrNoActiveDevice
+		case ae.Status == http.StatusForbidden && ae.Reason == "VOLUME_CONTROL_DISALLOW":
+			// 手機與部分喇叭不給遠端調音量。不映射成 ErrAuthExpired 那一族:403 在這裡不是授權問題,
+			// 訊息講錯會讓人白跑一次 auth login。
+			return errors.New("這個裝置不允許遠端調整音量(手機與部分喇叭會擋)— 請在該裝置上直接調")
+		}
 	}
 	return err
 }
@@ -379,6 +386,16 @@ func (c *Client) Next(ctx context.Context) error {
 
 func (c *Client) Prev(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodPost, "/me/player/previous", nil, nil, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) Seek(ctx context.Context, posMS int) error {
+	_, err := c.do(ctx, http.MethodPut, "/me/player/seek", url.Values{"position_ms": {strconv.Itoa(posMS)}}, nil, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) SetVolume(ctx context.Context, pct int) error {
+	_, err := c.do(ctx, http.MethodPut, "/me/player/volume", url.Values{"volume_percent": {strconv.Itoa(pct)}}, nil, nil)
 	return mapPlayerErr(err)
 }
 

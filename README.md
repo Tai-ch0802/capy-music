@@ -94,6 +94,8 @@ capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify
 capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
 capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
 capy pause / next / prev / now / devices
+capy seek 1:23          # 跳到曲目內的位置(也吃純秒數:capy seek 83)
+capy vol 40             # 音量 0-100
 capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl unlink 通勤 spotify
