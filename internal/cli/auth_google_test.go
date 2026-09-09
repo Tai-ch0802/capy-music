@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -227,14 +226,20 @@ func TestGoogleLoginAfterLogoutPromptsForSecretOnTTY(t *testing.T) {
 }
 
 func TestGoogleLoginConfigSaveFailureSaysAuthSucceeded(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("唯讀目錄在 Windows 擋不住建檔;root 無視權限位元,chmod 擋不住寫入")
-	}
 	setGoogleTest(t)
 	dir, _ := config.Dir()
-	_ = os.MkdirAll(dir, 0o700)
-	_ = os.Chmod(dir, 0o500) // Load 讀不到檔案 = 零值 config(正常);Save 寫 tmp 檔會失敗
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// 不靠權限位元擋寫入:root 無視權限位元、Windows 的唯讀目錄也擋不住建檔,兩邊都得跳過整條
+	// 斷言——而「授權成功但存檔失敗」正是使用者最容易踩、訊息最要緊的那條路徑,不該讓掉。
+	// config.Save 是 WriteFile(p + ".tmp") → Rename,把 tmp 那個路徑用目錄佔住,WriteFile 必然
+	// 失敗(EISDIR),誰來跑都一樣;config.json 本身仍不存在,Load 照樣拿到零值 config。
+	// 代價是綁到 Save 內部的 tmp 命名——但它壞得很大聲:命名改了 WriteFile 就會成功,
+	// 這裡直接 FAIL(err == nil),不會靜靜地變成綠燈。
+	if err := os.MkdirAll(filepath.Join(dir, "config.json.tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	googleLoginFn = fakeGoogleLogin(t, "x", "s", "a@b")
 	_, err := runCLI(t, "auth", "login", "google", "--client-id", "x", "--client-secret", "s")
 	if err == nil || !strings.Contains(err.Error(), "授權已成功") || !strings.Contains(err.Error(), "token 已入 keychain") {
