@@ -227,8 +227,8 @@ func TestGoogleLoginAfterLogoutPromptsForSecretOnTTY(t *testing.T) {
 }
 
 func TestGoogleLoginConfigSaveFailureSaysAuthSucceeded(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("唯讀目錄在 Windows 擋不住建檔")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("唯讀目錄在 Windows 擋不住建檔;root 無視權限位元,chmod 擋不住寫入")
 	}
 	setGoogleTest(t)
 	dir, _ := config.Dir()
