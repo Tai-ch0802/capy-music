@@ -86,6 +86,10 @@ type tuiModel struct {
 	gen      int  // 目前的輪詢世代
 	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
 	frozen   bool // 開場結束:水豚已進捲動區,View 只剩底部四行
+	cmds     []tuiCmdItem
+	menuSel  int      // 斜線選單選到第幾列(選單開著才有意義)
+	hist     []string // 這次 session 打過的命令,↑↓ 翻;只在記憶體裡,離開就沒了
+	histAt   int      // 翻到哪:len(hist) = 還沒開始翻
 }
 
 func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
@@ -272,6 +276,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
 		return m, m.execResult(msg)
 	case tea.KeyPressMsg:
+		// 命令清單第一次按鍵才建。放進 newTUIModel 會形成初始化循環:tuiCommands → newRootCmd →
+		// runTUI(它是個 var)→ newTUIModel。而且介面開著卻一次都沒按鍵時,這份清單本來就不必存在。
+		if m.cmds == nil {
+			m.cmds = tuiCommands()
+		}
 		return m.onKey(msg)
 	}
 	return m, nil
@@ -329,6 +338,32 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	return m, tick()
 }
 
+// menu:輸入行以 / 開頭時,回過濾後的清單與 true。選單沒有自己的開關狀態 —— 它就是輸入行的投影,
+// 少一個會和輸入行不同步的狀態。
+func (m tuiModel) menu() ([]tuiCmdItem, bool) {
+	q, ok := tuiMenuQuery(m.input.Value())
+	if !ok {
+		return nil, false
+	}
+	return tuiMenuFilter(m.cmds, q), true
+}
+
+// recall:↑↓ 翻命令歷史。d 為 -1 往回、+1 往前;翻到底就回到空的輸入行。
+func (m tuiModel) recall(d int) tuiModel {
+	if len(m.hist) == 0 {
+		return m
+	}
+	at := min(len(m.hist), max(0, m.histAt+d))
+	m.histAt = at
+	if at == len(m.hist) {
+		m.input.SetValue("")
+	} else {
+		m.input.SetValue(m.hist[at])
+	}
+	m.input.CursorEnd()
+	return m
+}
+
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
 	// 兩秒到再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
@@ -339,17 +374,40 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, tea.Sequence(freeze, cmd)
 	}
 	if m.typing {
+		items, menuOpen := m.menu()
 		switch msg.String() {
+		case "up", "down":
+			d := -1
+			if msg.String() == "down" {
+				d = 1
+			}
+			if menuOpen { // 選單開著:↑↓ 是選擇
+				if len(items) > 0 {
+					m.menuSel = min(len(items)-1, max(0, m.menuSel+d))
+				}
+				return m, nil
+			}
+			return m.recall(d), nil // 否則翻歷史
 		case "ctrl+c": // raw mode 下 ctrl+c 不是 SIGINT 而是一個按鍵;不攔的話打字打到一半按它毫無反應
 			return m, tea.Quit
-		case "esc": // 有字先清空,空的再離開輸入(打錯一長串時不必連按退格)
+		case "esc": // 有字先清空(選單也跟著收起來,它就是輸入行的投影),空的再離開輸入
 			if m.input.Value() != "" {
 				m.input.SetValue("")
+				m.menuSel = 0
 				return m, nil
 			}
 			m.typing, m.input = false, blurred(m.input)
 			return m, nil
 		case "enter":
+			if menuOpen { // ⏎ 帶進輸入行,不直接執行:多數命令還要補參數
+				if len(items) == 0 {
+					return m, nil
+				}
+				m.input.SetValue(items[min(m.menuSel, len(items)-1)].path + " ")
+				m.input.CursorEnd()
+				m.menuSel = 0
+				return m, nil
+			}
 			raw := m.input.Value()
 			args := splitArgs(raw)
 			m.typing, m.input = false, blurred(m.input)
@@ -360,6 +418,8 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.exe == "" {
 				return m, m.println(tuiSeg{"✗ 找不到 capy 自己的執行檔,命令列停用", m.theme.Mutedly})
 			}
+			m.hist = append(m.hist, raw) // 只在記憶體裡:存檔要決定寫哪、要不要清,是另一個決定
+			m.histAt = len(m.hist)
 			// 回音先進捲動區再讓出終端機:Sequence 保序,而 exec 交出終端機前會 flush 一次
 			// (releaseTerminal → stopRenderer(false) → flush),所以回音一定在子命令輸出上面。
 			return m, tea.Sequence(
@@ -369,15 +429,35 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		if items, ok := m.menu(); ok { // 打字改變了過濾結果,選取要夾回範圍內
+			m.menuSel = min(m.menuSel, max(0, len(items)-1))
+		}
 		return m, cmd
 	}
 	switch msg.String() {
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
-	case "/", ":":
+	case "/": // 帶著 / 進輸入行:選單就是「輸入行以 / 開頭」的投影,和 Claude Code 的斜線命令一致
+		m.typing, m.menuSel = true, 0
+		m.input.SetValue("/")
+		m.input.CursorEnd()
+		m.input.Focus()
+		return m, textinput.Blink
+	case ":":
 		m.typing = true
 		m.input.Focus()
 		return m, textinput.Blink
+	case "up", "down": // 一般模式的 ↑↓ 也翻歷史:翻到就直接進輸入行
+		if len(m.hist) == 0 {
+			return m, nil
+		}
+		d := -1
+		if msg.String() == "down" {
+			d = 1
+		}
+		m.typing = true
+		m.input.Focus()
+		return m.recall(d), textinput.Blink
 	case "?": // 完整鍵位推進捲動區,不佔底部的行數
 		return m, m.println(tuiSeg{tuiKeymap, m.theme.Mutedly})
 	}
@@ -493,20 +573,24 @@ func (m tuiModel) View() tea.View {
 	if !m.frozen {
 		return tea.NewView(m.intro(w))
 	}
-	lines := []string{
+	var lines []string
+	if items, ok := m.menu(); ok { // 選單向上長,壓在捲動區前面:不插進歷程(歷程是永久的,選單是暫時的)
+		lines = append(lines, tuiMenuView(items, m.menuSel, w-1, m.theme)...)
+	}
+	lines = append(lines,
 		// 分隔線刻意用 ASCII:U+2500 那排方框繪製字元是 East Asian Ambiguous,
 		// 在 CJK 終端機會變兩欄,一條滿版的線剛好翻倍成兩行(水豚踩過同一個坑)。
 		m.theme.Mutedly(strings.Repeat("-", max(1, w-1))),
-		m.statusLine(w - 1),
+		m.statusLine(w-1),
 		// 輸入行不進 tuiClip:它已經帶著樣式,而 tuiClip 只會量純文字的寬度
 		// (跳脫碼會被逐位元組算進去,整行被截成一小截)。textinput 自己依 SetWidth 收邊,
 		// 而 SetWidth 給的是 w-4,留了餘裕吸收 › 這個 ambiguous 字元可能多佔的一欄。
 		m.input.View(),
 		tuiJoin(w-1, tuiSeg{"  " + m.hints(), m.theme.Mutedly}),
-	}
+	)
 	v := tea.NewView(strings.Join(lines, "\n")) // 不留結尾換行:那會被當成第五行
 	if c := m.input.Cursor(); c != nil {
-		c.Y += 2 // 分隔線與狀態列在輸入行上面
+		c.Y += len(lines) - 2 // 輸入行是倒數第二行:上面有選單(可能沒有)、分隔線、狀態列
 		v.Cursor = c
 	}
 	return v
@@ -580,12 +664,18 @@ func tuiPlaceholder(w int) string {
 const tuiKeymap = `按鍵:
   space 播放/暫停    n / p 下一首 / 上一首
   <- / ->  +-10 秒   + / -  音量 +-5
-  /      輸入命令    r     停擺後重新連上
-  ?      這張表      q     離開(輸入中用 Ctrl-C)`
+  /      命令選單    上 / 下  翻這次打過的命令
+  r      停擺後重新連上        ?  這張表
+  q      離開(輸入中用 Ctrl-C)
+
+命令選單(輸入行以 / 開頭時):上 / 下 選,Enter 把命令帶進輸入行(不直接執行),Esc 收起。`
 
 func (m tuiModel) hints() string {
+	if _, ok := m.menu(); ok {
+		return "↑↓ 選 · ⏎ 帶進輸入行 · Esc 收起"
+	}
 	if m.typing {
-		return "Enter 執行 · Esc 清空 · Ctrl-C 離開"
+		return "↑↓ 歷史 · Enter 執行 · Esc 清空 · Ctrl-C 離開"
 	}
 	if m.pc == nil {
 		return "/ 命令 · ? 按鍵 · q 離開"
