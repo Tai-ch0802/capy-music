@@ -506,8 +506,8 @@ func TestPlLinkRefusesRestrictedAndDuplicate(t *testing.T) {
 func TestPlLinkCreate(t *testing.T) {
 	fs, dc, srv := pullWorld(t)
 	fs.set("p1", "通勤", "t1")
-	mustPull(t, "pl", "link", "通勤", "spotify:p1")
-	mustPull(t, "pl", "unlink", "通勤", "spotify")                          // 留一個沒連 spotify 的清單:「別人已連這個 id」不可把還沒有的 id 當成撞到它
+	mustPull(t, "pl", "link", "夜車", "spotify:p1")
+	mustPull(t, "pl", "unlink", "夜車", "spotify")                          // 留一個沒連 spotify 的清單:「別人已連這個 id」不可把還沒有的 id 當成撞到它
 	out, errs := mustPull(t, "pl", "link", "公路旅行", "spotify", "--create") // 非 TTY:是旗標,不走挑選器
 	if w := fs.written(); len(w) != 1 || w[0].Method != http.MethodPost || w[0].Path != "/me/playlists" || w[0].Name != "公路旅行" {
 		t.Fatalf("要在 spotify 建一個跟 canonical 同名的清單:%+v", w)
@@ -530,9 +530,10 @@ func TestPlLinkCreate(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"公路旅行", "spotify"}, "先 capy pl unlink"}, // 已經連了:不可再建一個蓋過去
-		{[]string{"通勤", "spotify:p1"}, "只給平台"},            // 清單還不存在,沒有 ID 或名稱可給
-		{[]string{"通勤", "tidal"}, "只給平台"},
+		{[]string{"公路旅行", "spotify"}, "先 capy pl unlink"},                                // 已經連了:不可再建一個蓋過去
+		{[]string{"通勤", "spotify"}, `已經有叫「通勤」的清單(p1):要連它就 capy pl link "通勤" spotify:p1`}, // 同名的已經在平台上(照舊流程先在 app 裡建過):連它
+		{[]string{"夜車", "spotify:p1"}, "只給平台"},                                           // 清單還不存在,沒有 ID 或名稱可給
+		{[]string{"夜車", "tidal"}, "只給平台"},
 	} {
 		_, _, err := runPull(t, append([]string{"pl", "link", "--create"}, c.args...)...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -542,14 +543,17 @@ func TestPlLinkCreate(t *testing.T) {
 			t.Fatalf("%v:擋下來就不可建清單、不可寫 Drive", c.args)
 		}
 	}
-	// 建好之後 COMMIT 失敗:清單已經在平台上了,要講出它的 id 與接回去的命令,不然使用者會再 --create 一次。
+	// 建好之後 COMMIT 失敗:清單已經在平台上了,要講出它的 id 與接回去的命令;這時重跑 --create 會被同名擋下,不會多建一個。
 	srv.FailOn(func(r *http.Request) bool { return r.Method == http.MethodPatch }, http.StatusInternalServerError, "backendError")
-	_, _, err := runPull(t, "pl", "link", "通勤", "spotify", "--create")
+	_, _, err := runPull(t, "pl", "link", "夜車", "spotify", "--create")
 	srv.FailOn(nil, 0, "")
-	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "別再 --create") || !strings.Contains(err.Error(), `capy pl link "通勤" spotify:new3`) {
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "已經建好") || !strings.Contains(err.Error(), `capy pl link "夜車" spotify:new3`) {
 		t.Fatalf("COMMIT 失敗要交代已建好的清單與接回去的命令:%v", err)
 	}
-	mustPull(t, "pl", "link", "通勤", "spotify:new3") // 照著提示接回去
+	if _, _, err := runPull(t, "pl", "link", "夜車", "spotify", "--create"); err == nil || !strings.Contains(err.Error(), "已經有叫「夜車」的清單(new3)") {
+		t.Fatalf("重跑 --create 要被同名擋下:%v", err)
+	}
+	mustPull(t, "pl", "link", "夜車", "spotify:new3") // 照著提示接回去
 	if len(fs.written()) != 2 {
 		t.Fatalf("接回去不可再建清單:%+v", fs.written())
 	}

@@ -471,7 +471,10 @@ func newPlLinkCmd() *cobra.Command {
 			var id string
 			var refs []provider.PlaylistRef
 			switch {
-			case create: // 平台清單等 canonical 清單定了才建(名字跟著它),下面兩道存在性檢查對它不適用
+			case create: // 平台清單等 canonical 清單定了才建(名字跟著它);refs 只拿來擋同名,下面兩道存在性檢查對它不適用
+				if refs, err = r.ListPlaylists(ctx); err != nil {
+					return friendlyErr(prov, err)
+				}
 			case ref != "":
 				if id, err = resolvePlaylistID(ctx, r, prov, ref); err != nil {
 					return err
@@ -543,13 +546,17 @@ func newPlLinkCmd() *cobra.Command {
 					delete(s.mine().Base[pl.PID], prov) // 舊 base 是別台的觀測,對本機的檔沒意義
 				}
 				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單
+					// 平台上已經有同名的(先在 app 裡建過、或 COMMIT 失敗後重跑):連它就好,再建一個同名的只會讓 <平台>:<名稱> 變歧義
+					if i := slices.IndexFunc(refs, func(x provider.PlaylistRef) bool { return strings.EqualFold(x.Name, pl.Name) }); i >= 0 { // 跟 resolvePlaylistID 認名字的方式一樣
+						return fmt.Errorf("%s 上已經有叫「%s」的清單(%s):要連它就 capy pl link %q %s:%s;真的要另建一個,先在 app 裡建好再用 %s:<ID> 連", prov, pl.Name, refs[i].ID, pl.Name, prov, refs[i].ID, prov)
+					}
 					ref, err := creator.CreatePlaylist(ctx, pl.Name) // 名字跟 canonical 一樣:push 不會再多排一個 rename
 					if err != nil {
 						return friendlyErr(prov, err)
 					}
 					id = ref.ID
 					fmt.Fprintf(cmd.ErrOrStderr(), "在 %s 建立清單 %s(%s)\n", prov, ref.Name, ref.ID)
-					recovery = fmt.Sprintf("%s 上的空清單 %s 已經建好,但連結沒寫進 Drive。別再 --create(會多建一個),改跑 capy pl link %q %s:%s", prov, ref.ID, pl.Name, prov, ref.ID)
+					recovery = fmt.Sprintf("%s 上的空清單 %s 已經建好,但連結沒寫進 Drive:用 capy pl link %q %s:%s 把它接回來", prov, ref.ID, pl.Name, prov, ref.ID)
 				}
 				if pl.Links[prov] != id {
 					pl.Links[prov] = id
