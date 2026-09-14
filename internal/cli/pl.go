@@ -119,7 +119,7 @@ func newPlShowCmd() *cobra.Command {
 				if err != nil {
 					return friendlyErr(p.ID(), err)
 				}
-				if id, err = pickPlatformPlaylist(p.ID(), refs); err != nil {
+				if id, err = pickPlatformPlaylist(p.ID(), refs, ""); err != nil {
 					return err
 				}
 			}

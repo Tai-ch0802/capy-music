@@ -76,21 +76,28 @@ func needTarget(cmd *cobra.Command, args []string, all bool, verb string) error 
 	return nil
 }
 
-// pickPlatformPlaylist:從平台的清單列表挑一個,回它的 provider 端 ID。
-func pickPlatformPlaylist(prov string, refs []provider.PlaylistRef) (string, error) {
-	if len(refs) == 0 {
+// pickPlatformPlaylist:從平台的清單列表挑一個,回它的 provider 端 ID。newLabel 非空時列在最後一列,選它回 ""
+// (pl link 的「在平台上建一個新的空清單」;平台上一個清單都沒有時也還能選它)。
+func pickPlatformPlaylist(prov string, refs []provider.PlaylistRef, newLabel string) (string, error) {
+	if len(refs) == 0 && newLabel == "" {
 		return "", fmt.Errorf("%s 上沒有任何清單", prov)
 	}
-	labels := make([]string, len(refs))
+	labels := make([]string, len(refs), len(refs)+1)
 	for i, r := range refs {
 		labels[i] = r.Name
 		if r.Total >= 0 {
 			labels[i] += fmt.Sprintf(" — %d 首", r.Total)
 		}
 	}
+	if newLabel != "" {
+		labels = append(labels, newLabel)
+	}
 	i, err := pickOne(fmt.Sprintf("選一個 %s 上的清單", prov), labels)
 	if err != nil {
 		return "", err
+	}
+	if i == len(refs) {
+		return "", nil
 	}
 	return refs[i].ID, nil
 }
@@ -153,6 +160,7 @@ func pickLinkedPlaylist(s *canonState, prov, title string) (string, error) {
 // 選「建立新的清單」回打進去的名字 —— 呼叫端拿它去 s.find,所以這裡先擋掉會被 find 命中的
 // 兩種輸入(既有的名字、既有的 pid):不擋的話,使用者明明按了「建立新的」,卻被靜靜 link 到舊的那個。
 // 已經佔用這個平台清單的那一列會標出來:選別列會被 RunE 以「只能連一個」擋下。
+// id 是空的 = 要在平台上建新清單,還沒有誰佔用它(沒連這個平台的清單,Links[prov] 也是空的,別被當成「已連結到這個清單」)。
 func pickLinkTarget(s *canonState, prov, id string) (string, error) {
 	pls := make([]*canon.Playlist, 0, len(s.playlists))
 	for _, pid := range slices.Sorted(maps.Keys(s.playlists)) {
@@ -162,7 +170,7 @@ func pickLinkTarget(s *canonState, prov, id string) (string, error) {
 	labels := make([]string, 0, len(pls)+1)
 	for _, pl := range pls {
 		switch cur := pl.Links[prov]; {
-		case cur == id:
+		case cur != "" && cur == id:
 			labels = append(labels, pl.Name+" — 已連結到這個清單")
 		case cur != "":
 			labels = append(labels, fmt.Sprintf("%s — 已連 %s:%s,要先 unlink", pl.Name, prov, cur))

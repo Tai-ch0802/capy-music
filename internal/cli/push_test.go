@@ -81,6 +81,26 @@ func (f *fakeSpotify) write(t *testing.T, w http.ResponseWriter, r *http.Request
 	w.Write([]byte(`{"snapshot_id":"x"}`))
 }
 
+// create:POST /me/playlists 建空清單,記進 writes(Name = 清單名);id 依序 new<清單數>,例如已有 p1 時是 new2。
+func (f *fakeSpotify) create(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Errorf("建清單的 body 不是 JSON:%v", err)
+	}
+	f.writes = append(f.writes, fakeWrite{Method: r.Method, Path: r.URL.Path, Name: body.Name, Position: -1})
+	if f.writeStatus != 0 {
+		w.WriteHeader(f.writeStatus)
+		fmt.Fprintf(w, `{"error":{"status":%d,"message":"nope"}}`, f.writeStatus)
+		return
+	}
+	id := fmt.Sprintf("new%d", len(f.lists)+1)
+	f.lists = append(f.lists, fakeList{id, body.Name})
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, `{"id":%q,"name":%q,"owner":{"display_name":"tai"},"items":{"total":0}}`, id, body.Name)
+}
+
 func (f *fakeSpotify) written() []fakeWrite {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -406,12 +406,13 @@ p.JL68l7EhogEeXd  冬日暖調          -
           <li><b>capy pl list</b><span>列出平台上的清單。</span></li>
           <li><b>capy pl show &lt;名稱&gt;</b><span>看某個清單的曲目。</span></li>
           <li><b>capy pl link &lt;名稱&gt; &lt;平台&gt;:&lt;清單&gt;</b><span>把平台上的清單連到 capy 的正本。只認你明確指定的,不會自動猜同名清單。</span></li>
+          <li><b>capy pl link &lt;名稱&gt; spotify --create</b><span>在 Spotify 建一個跟正本同名的私人空清單,直接連上。把清單從別的平台複製過來時用它,不必先去 app 裡建。</span></li>
           <li><b>capy pl pull</b><span>平台的變更拉進正本。先列出要改什麼,你確認後才寫。</span></li>
           <li><b>capy pl push</b><span>反方向:正本推回平台。前提是這台裝置先前 pull 過,而且平台上沒有還沒拉下來的變更。</span></li>
           <li><b>capy pl sync</b><span>先 pull 再 push,一張表、一次確認。日常用這個就好。</span></li>
           <li><b>capy pl unlink &lt;名稱&gt; &lt;平台&gt;</b><span>解除連結,正本內容不動。</span></li>
         </ul>
-        <p class="note">這一組命令<b>不帶清單名字直接打</b>,在終端機裡會開挑選器讓你選:<code>pl link</code> 問三次(平台 → 那個平台上的哪個清單 → 連到哪個正本,也可以當場建一個新的),<code>pl unlink</code> 問兩次。接在管線後面或放進 cron 時不會問,照舊要求你把參數寫齊。</p>
+        <p class="note">這一組命令<b>不帶清單名字直接打</b>,在終端機裡會開挑選器讓你選:<code>pl link</code> 問三次(平台 → 那個平台上的哪個清單,在 Spotify 也可以選「建一個新的空清單」 → 連到哪個正本,這一步也可以當場建一個新的),<code>pl unlink</code> 問兩次。接在管線後面或放進 cron 時不會問,照舊要求你把參數寫齊。</p>
       </div>
 
       <div class="group">
@@ -476,6 +477,12 @@ p.JL68l7EhogEeXd  冬日暖調          -
             <td class="yes">可以</td>
           </tr>
           <tr>
+            <th scope="row">建立清單</th>
+            <td class="yes">可以</td>
+            <td class="part">尚未開放</td>
+            <td class="part">自己建檔</td>
+          </tr>
+          <tr>
             <th scope="row">憑證來源</th>
             <td>你自建的 app</td>
             <td>你從網頁播放器複製的權杖</td>
@@ -484,6 +491,45 @@ p.JL68l7EhogEeXd  冬日暖調          -
         </tbody>
       </table>
     </div>
+  </section>
+
+  <section>
+    <h2>把清單複製到另一個平台</h2>
+    <p class="sub">做法是讓兩個平台連到同一個正本,再推過去。下面以 Apple Music 的「公路旅行」複製到 Spotify 為例;Spotify、Apple Music、Google 三個都要先登入。</p>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>兩邊連到同一個正本</h3>
+          <p>先連 Apple 的清單,正本不存在會自動建立。再用 <code>--create</code> 在 Spotify 建一個同名的私人空清單,連到同一個正本。</p>
+<pre><code><span class="c-p">$</span> capy pl link 公路旅行 apple:公路旅行
+<span class="c-p">$</span> capy pl link 公路旅行 spotify --create</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>兩邊一起拉一次</h3>
+          <p>不要帶 <code>--provider</code>:Apple 那邊把曲目拉進正本;Spotify 那邊是空的,只記下這台裝置看過它的樣子。少了這一步,後面的 push 會被擋下來。</p>
+<pre><code><span class="c-p">$</span> capy pl pull 公路旅行</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>替每一首找 Spotify 上的同一首歌</h3>
+          <p>有 ISRC 的曲目直接精準比對;沒有的靠標題、藝人、時長模糊比對,分數不夠的排進佇列等你裁決。</p>
+<pre><code><span class="c-p">$</span> capy resolve 公路旅行 --provider spotify
+<span class="c-p">$</span> capy resolve --review        <span class="c-m"># 上一步有列出佇列才需要</span></code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>先看,再推</h3>
+          <p>表裡的 <code>skip</code> 列是這次複製不過去的曲目:還沒對應到 Spotify 的歌,通常是你自己上傳到 Apple 的,或 Spotify 上根本沒有的。</p>
+<pre><code><span class="c-p">$</span> capy pl push 公路旅行 --provider spotify --dry-run
+<span class="c-p">$</span> capy pl push 公路旅行 --provider spotify</code></pre>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:1.5rem">整個過程不會刪到任何東西:Spotify 那邊是第一次拉,推過去的全是新增。之後兩邊保持連結,Apple 清單有變動時跑 <code>capy pl sync 公路旅行</code> 就會帶過去;只想複製一次的話,完成後用 <code>capy pl unlink 公路旅行 apple</code> 解開。反方向(Spotify 到 Apple)目前還做不到:Apple 那一側只讀不寫。</p>
   </section>
 
   <section>

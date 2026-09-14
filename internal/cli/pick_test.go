@@ -196,6 +196,41 @@ func TestPlLinkNewNameCollides(t *testing.T) {
 	}
 }
 
+// 第二段最後一列是「在 spotify 建新的空清單」:平台上一個清單都沒有也選得到,名字跟著第三段選的 canonical 清單。
+// 建清單排在第三段之後,所以任何一段取消,平台上都不會多出清單。
+func TestPlLinkPickerCreate(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "t1")
+	mustPull(t, "pl", "link", "上班路上", "spotify:p1")
+	mustPull(t, "pl", "unlink", "上班路上", "spotify")
+	fs.drop("p1") // spotify 上一個清單都沒有
+	before := driveFiles(t, dc)
+
+	// --create 已經說了要建新的:跳過第二段,直接問連到哪個 canonical 清單;在那裡取消。
+	log := stubPickers(t, 0, -1)
+	if _, _, err := runPull(t, "pl", "link", "--create"); err == nil || err.Error() != "已取消" {
+		t.Fatalf("取消要回「已取消」:%v", err)
+	}
+	if len(log.titles) != 2 || log.titles[1] != "要連結哪個清單?" {
+		t.Fatalf("--create 要跳過第二段:%q", log.titles)
+	}
+	if len(fs.written()) != 0 || !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatal("取消不可建清單、不可寫 Drive")
+	}
+
+	log = stubPickers(t, 0, 0, 0) // spotify → 建新的空清單(唯一一列)→ 上班路上
+	out, _ := mustPull(t, "pl", "link")
+	if got := log.nth(1); len(got) != 1 || !strings.Contains(got[0], "在 spotify 建一個新的空清單") {
+		t.Fatalf("第二段:%v", got)
+	}
+	if got := log.nth(2); len(got) != 2 || got[0] != "上班路上" {
+		t.Fatalf("第三段:還沒連 spotify 的清單不可標成「已連結到這個清單」:%v", got)
+	}
+	if w := fs.written(); len(w) != 1 || w[0].Name != "上班路上" || !strings.Contains(out, "已連結 上班路上(") || !strings.Contains(out, "spotify:new1") {
+		t.Fatalf("要建一個叫「上班路上」的清單並連上:%+v %q", w, out)
+	}
+}
+
 // --all 與清單名同時給:TTY 下也維持同一句錯誤,且不開挑選器。
 func TestNeedTargetBothGiven(t *testing.T) {
 	pullWorld(t)

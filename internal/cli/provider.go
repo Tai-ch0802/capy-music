@@ -117,6 +117,15 @@ func asPlaylistWriter(p provider.Provider) (provider.PlaylistWriter, error) {
 	return w, nil
 }
 
+// asPlaylistCreator:pl link --create 用。
+func asPlaylistCreator(p provider.Provider) (provider.PlaylistCreator, error) {
+	c, ok := p.(provider.PlaylistCreator)
+	if !ok || !p.Caps().Has(provider.CapPlaylistCreate) {
+		return nil, notSupported(p, "建立播放清單")
+	}
+	return c, nil
+}
+
 // newLocalProvider(P6 決策 35):沒有憑證,只要 local_root;device_id 是 id 的前綴(決策 33),沒登入 Google 就沒有 device_id,
 // 那就只能讀不能 link(link / pull 本來就要 Google)。
 func newLocalProvider() (provider.Provider, error) {
