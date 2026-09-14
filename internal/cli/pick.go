@@ -7,12 +7,23 @@ import (
 	"slices"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
+
+// newForm:全 CLI 的 huh 表單都從這裡建,共用一份鍵位 —— Esc 也能取消。huh 預設只有 Ctrl-C 會中止,
+// Esc 是過濾模式裡「離開 / 清掉過濾字」的鍵,所以挑選器開著按 Esc 什麼都不會發生(使用者回報)。
+// 表單層先比 Quit 再把按鍵交給欄位,綁上之後過濾模式裡 Esc 也是取消(清過濾字用退格);Ctrl-C 照舊。
+// 直接叫 huh.NewForm 會漏掉這份鍵位,新表單一律走這裡。
+func newForm(groups ...*huh.Group) *huh.Form {
+	km := huh.NewDefaultKeyMap()
+	km.Quit = key.NewBinding(key.WithKeys("ctrl+c", "esc"))
+	return huh.NewForm(groups...).WithKeyMap(km)
+}
 
 // pickOne:全 CLI 共用的挑選器,回選中的索引。標題的括號提示由這裡補,呼叫端只給主詞。
 // 八筆以下不開過濾:多打一次 / 才看得到全部,對短清單只是雜訊。測試替換點。
@@ -22,13 +33,13 @@ var pickOne = func(title string, labels []string) (int, error) {
 		opts[i] = huh.NewOption(l, i)
 	}
 	filter := len(labels) > 8
-	hint := "(Ctrl-C 取消)"
+	hint := "(Esc 取消)"
 	if filter {
-		hint = "(/ 過濾,Ctrl-C 取消)"
+		hint = "(/ 過濾,Esc 取消)"
 	}
 	idx := 0
 	sel := huh.NewSelect[int]().Title(title + hint).Options(opts...).Filtering(filter).Height(12).Value(&idx)
-	if err := huh.NewForm(huh.NewGroup(sel)).Run(); err != nil {
+	if err := newForm(huh.NewGroup(sel)).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return 0, errCancelled
 		}
@@ -40,7 +51,7 @@ var pickOne = func(title string, labels []string) (int, error) {
 // promptNewName:pl link 選「建立新的清單」後問名字。測試替換點。
 var promptNewName = func(title string) (string, error) {
 	name := ""
-	if err := huh.NewForm(huh.NewGroup(huh.NewInput().Title(title).Value(&name))).Run(); err != nil {
+	if err := newForm(huh.NewGroup(huh.NewInput().Title(title).Value(&name))).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return "", errCancelled
 		}

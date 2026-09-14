@@ -667,7 +667,7 @@ func newPlUnlinkCmd() *cobra.Command {
 // 只在 stdin 與 stdout 都是 TTY 時才會被呼叫。
 var confirmWrite = func(prompt string) (bool, error) {
 	ok := false
-	err := huh.NewForm(huh.NewGroup(
+	err := newForm(huh.NewGroup(
 		huh.NewConfirm().Title(prompt).Affirmative("套用").Negative("取消").Value(&ok),
 	)).Run()
 	return ok, err

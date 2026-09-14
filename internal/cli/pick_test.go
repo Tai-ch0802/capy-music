@@ -4,10 +4,36 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 )
+
+// 挑選器開著按 Esc 要能取消:huh 預設只有 Ctrl-C 會中止(Esc 是過濾用的鍵),使用者回報 pl show 的挑選器
+// 按 Esc 沒反應。全 CLI 的表單都從 newForm 建,所以驗它就夠;Ctrl-C 要照舊。
+func TestFormEscAborts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{"esc", tea.KeyPressMsg{Code: tea.KeyEscape}},
+		{"ctrl+c", tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}},
+	} {
+		f := newForm(huh.NewGroup(huh.NewSelect[int]().Options(huh.NewOption("a", 0), huh.NewOption("b", 1))))
+		f.Update(tc.key)
+		if f.State != huh.StateAborted {
+			t.Errorf("%s 要中止表單:state=%v", tc.name, f.State)
+		}
+	}
+	// 別的鍵不會中止
+	f := newForm(huh.NewGroup(huh.NewSelect[int]().Options(huh.NewOption("a", 0), huh.NewOption("b", 1))))
+	f.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if f.State != huh.StateNormal {
+		t.Errorf("↓ 不該中止表單:state=%v", f.State)
+	}
+}
 
 // pickLog:挑選器被叫過幾次、每次的標題與選項。
 type pickLog struct {
