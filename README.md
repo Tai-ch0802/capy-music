@@ -174,10 +174,12 @@ capy pl push 公路旅行 --provider spotify --dry-run    # 6. 先看要推什�
 capy pl push 公路旅行 --provider spotify              # 7. 真的推
 ```
 
+> ⚠️ 建清單(`POST /me/playlists`)與推曲目(`PUT /playlists/{id}/items`)是照 Spotify 2026-02 的官方文件實作,**還沒在真帳號上驗證過**。遇到 404,或建出來的清單在 app 裡是公開的,請回報。
+
 - **第 3 步不能省。** push 的前提是這台裝置對那個 Spotify 清單 pull 過;第 2 步剛建的清單還沒有 base,直接 push 會以 exit 3 擋下。
 - **不會刪到任何東西。** Spotify 那邊是第一次 pull(沒有 base 不產生 remove),push 全部是新增,刪除閾值不會觸發。
 - **不一定 100% 複製得過去。** Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
-- **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有同名的清單(例如你之前先在 app 裡建好了)時會擋下,並給你連它的命令。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
+- **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單(例如之前先在 app 裡建好了)時會擋下,並給你連它的命令;追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
 - **之後兩邊保持連結。** Apple 清單有變動時跑 `capy pl sync 公路旅行` 就會帶到 Spotify(Apple 那一側目前只讀)。只要一次性複製的話,完成後 `capy pl unlink 公路旅行 apple`。
 - **反方向(Spotify → Apple)目前做不到**:Apple 還不能建清單,也還不能寫入。
 

@@ -434,10 +434,23 @@ func splitProviderRef(arg string) (prov, ref string, err error) {
 
 // ---- pl link / unlink ----
 
+// readable:平台清單的內容讀不讀得到 = pl link 的連結條件。讀不到(ErrRestricted:Spotify 編輯清單、他人清單,spec §1.1)
+// 的清單 pull 永遠會跳過,連了只是騙自己。404 算讀得到:Apple 的 library 端點對空清單回 404,「新建空清單 → link → 再放歌」是正常起手式。
+func readable(ctx context.Context, r provider.PlaylistReader, id string) (bool, error) {
+	_, err := r.GetPlaylistItems(ctx, id)
+	if errors.Is(err, provider.ErrRestricted) {
+		return false, nil
+	}
+	if err != nil && !errors.Is(err, provider.ErrNotFound) {
+		return false, err
+	}
+	return true, nil
+}
+
 func newPlLinkCmd() *cobra.Command {
 	var createFlag bool
 	cmd := &cobra.Command{
-		Use: "link [name|pid] [provider]:[playlist ID|名稱]", Short: "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link。不帶參數且在終端機裡會三段挑選)", Args: argsOrPicker(2),
+		Use: "link [name|pid] [provider]:[playlist ID|名稱](或 [provider] --create)", Short: "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link。不帶參數且在終端機裡會三段挑選)", Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			create := createFlag // 挑選器第二段選「建新的空清單」也會把它打開
@@ -501,15 +514,14 @@ func newPlLinkCmd() *cobra.Command {
 				if !slices.ContainsFunc(refs, func(x provider.PlaylistRef) bool { return x.ID == id }) {
 					return fmt.Errorf("%s:%s 不在你的清單列表裡(capy pl list 看得到的才算):pull 會把不在列表裡的清單視為已刪除並自動取消連結,所以不可連結", prov, id)
 				}
-				// 讀不到的清單(Spotify 編輯清單、他人清單,spec §1.1)不可連結:pull 永遠會跳過它,連了只是騙自己。
-				// 404 放行:Apple 的 library 端點對空清單回 404,「新建空清單 → link → 再放歌」是正常起手式。
-				if _, err := r.GetPlaylistItems(ctx, id); errors.Is(err, provider.ErrRestricted) {
-					return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不可連結", prov, id)
-				} else if err != nil && !errors.Is(err, provider.ErrNotFound) {
+				if ok, err := readable(ctx, r, id); err != nil {
 					return friendlyErr(prov, err)
+				} else if !ok {
+					return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不可連結", prov, id)
 				}
 			}
-			recovery := "" // 平台清單建好之後才非空:之後出的錯只可能是 COMMIT,要告訴使用者怎麼接回去
+			var done strings.Builder // 成功訊息等 COMMIT 成功才印:COMMIT 失敗時 stdout 不可還說「已連結」(PR #48 review)
+			recovery := ""           // 平台清單建好之後才非空:之後出的錯只可能是 COMMIT,要告訴使用者怎麼接回去
 			err = withCanonical(ctx, cmd.ErrOrStderr(), func(s *canonState) error {
 				arg := ""
 				if len(args) == 2 {
@@ -524,9 +536,11 @@ func newPlLinkCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				for _, pid := range slices.Sorted(maps.Keys(s.playlists)) { // 要建的清單還沒有 id,沒人連得到它;空 id 會撞上每個沒連這個平台的清單
-					if other := s.playlists[pid]; !create && other.Links[prov] == id && (pl == nil || other.PID != pl.PID) {
-						return fmt.Errorf("%s:%s 已連結到 canonical 清單 %s(%s),一個平台清單只能連一個", prov, id, other.Name, other.PID)
+				if !create { // 要建的清單還沒有 id,沒人連得到它;空 id 會撞上每個沒連這個平台的清單
+					for _, pid := range slices.Sorted(maps.Keys(s.playlists)) {
+						if other := s.playlists[pid]; other.Links[prov] == id && (pl == nil || other.PID != pl.PID) {
+							return fmt.Errorf("%s:%s 已連結到 canonical 清單 %s(%s),一個平台清單只能連一個", prov, id, other.Name, other.PID)
+						}
 					}
 				}
 				if pl == nil {
@@ -542,36 +556,59 @@ func newPlLinkCmd() *cobra.Command {
 						return fmt.Errorf("%s(%s)已連結 %s:%s,先 capy pl unlink %s %s", pl.Name, pl.PID, prov, cur, pl.Name, prov)
 					}
 					// 決策 33 / Q30:撞到別台裝置的本機清單 → 接管(重灌後 device_id 變了也靠這條接回來);原裝置下一輪起變 foreign
-					fmt.Fprintf(cmd.OutOrStdout(), "%s(%s)原本連到裝置 %s 的 %s,已改為本機;那台之後會跳過這個清單\n", pl.Name, pl.PID, deviceName(s, cur), prov)
+					fmt.Fprintf(&done, "%s(%s)原本連到裝置 %s 的 %s,已改為本機;那台之後會跳過這個清單\n", pl.Name, pl.PID, deviceName(s, cur), prov)
 					delete(s.mine().Base[pl.PID], prov) // 舊 base 是別台的觀測,對本機的檔沒意義
 				}
-				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單
-					// 平台上已經有同名的(先在 app 裡建過、或 COMMIT 失敗後重跑):連它就好,再建一個同名的只會讓 <平台>:<名稱> 變歧義
-					if i := slices.IndexFunc(refs, func(x provider.PlaylistRef) bool { return strings.EqualFold(x.Name, pl.Name) }); i >= 0 { // 跟 resolvePlaylistID 認名字的方式一樣
-						return fmt.Errorf("%s 上已經有叫「%s」的清單(%s):要連它就 capy pl link %q %s:%s;真的要另建一個,先在 app 裡建好再用 %s:<ID> 連", prov, pl.Name, refs[i].ID, pl.Name, prov, refs[i].ID, prov)
+				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單。
+					// 安全前提:withCanonical 不重試 fn;哪天它加了樂觀重試,這裡就會建出第二個清單。
+					// 平台上已經有同名(EqualFold,同 resolvePlaylistID)而且連得上的清單(先在 app 裡建過、或 COMMIT 失敗後重跑):
+					// 連它就好,再建一個同名的只會讓 <平台>:<名稱> 變歧義。讀不到的(追蹤的別人的清單)連不了,不算撞名,照常建。
+					var dup []string
+					for _, x := range refs {
+						if !strings.EqualFold(x.Name, pl.Name) {
+							continue
+						}
+						ok, err := readable(ctx, r, x.ID)
+						if err != nil {
+							return friendlyErr(prov, err)
+						}
+						if ok {
+							dup = append(dup, x.ID)
+						}
 					}
-					ref, err := creator.CreatePlaylist(ctx, pl.Name) // 名字跟 canonical 一樣:push 不會再多排一個 rename
+					switch len(dup) {
+					case 0:
+					case 1:
+						return fmt.Errorf("%s 上已經有叫「%s」的清單(%s):要連它就 capy pl link %q %s:%s;真的要另建一個,先在 app 裡建好再用 %s:<ID> 連", prov, pl.Name, dup[0], pl.Name, prov, dup[0], prov)
+					default:
+						return fmt.Errorf("%s 上已經有 %d 個叫「%s」的清單(%s):挑一個用 capy pl link %q %s:<ID> 連", prov, len(dup), pl.Name, strings.Join(dup, "、"), pl.Name, prov)
+					}
+					made, err := creator.CreatePlaylist(ctx, pl.Name) // 名字跟 canonical 一樣:push 不會再多排一個 rename
 					if err != nil {
 						return friendlyErr(prov, err)
 					}
-					id = ref.ID
-					fmt.Fprintf(cmd.ErrOrStderr(), "在 %s 建立清單 %s(%s)\n", prov, ref.Name, ref.ID)
-					recovery = fmt.Sprintf("%s 上的空清單 %s 已經建好,但連結沒寫進 Drive:用 capy pl link %q %s:%s 把它接回來", prov, ref.ID, pl.Name, prov, ref.ID)
+					id = made.ID
+					fmt.Fprintf(cmd.ErrOrStderr(), "在 %s 建立清單 %s(%s)\n", prov, made.Name, made.ID)
+					recovery = fmt.Sprintf("%s 上的空清單 %s 已經建好,但連結沒寫進 Drive:用 capy pl link %q %s:%s 把它接回來", prov, made.ID, pl.Name, prov, made.ID)
 				}
 				if pl.Links[prov] != id {
 					pl.Links[prov] = id
 					pl.UpdatedAt = canon.Now().Unix()
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "已連結 %s(%s)↔ %s:%s;接著 capy pl pull %s\n", pl.Name, pl.PID, prov, id, pl.Name)
+				fmt.Fprintf(&done, "已連結 %s(%s)↔ %s:%s;接著 capy pl pull %s\n", pl.Name, pl.PID, prov, id, pl.Name)
 				return nil
 			})
-			if err != nil && recovery != "" {
-				return fmt.Errorf("%w;%s", err, recovery)
+			if err != nil {
+				if recovery != "" {
+					return fmt.Errorf("%w;%s", err, recovery)
+				}
+				return err
 			}
-			return err
+			fmt.Fprint(cmd.OutOrStdout(), done.String())
+			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&createFlag, "create", false, "在平台上建一個跟 canonical 清單同名的空清單再連結(第二個參數只給平台,例如 spotify;目前只有 Spotify 支援)")
+	cmd.Flags().BoolVar(&createFlag, "create", false, "在平台上建一個跟 canonical 清單同名的空清單再連結;此時第二個參數只給平台、不帶「:」(例如 spotify);目前只有 Spotify 支援")
 	return cmd
 }
 
