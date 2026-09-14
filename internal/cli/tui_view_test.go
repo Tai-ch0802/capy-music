@@ -181,11 +181,13 @@ func TestTUIViewCollapsesWhileSubcommandRuns(t *testing.T) {
 	}
 }
 
-// 底部區的高度到下一個命令之前只長不縮。bubbletea 的 inline renderer 縮短畫面時只清底部那幾行,
+// 底部區的高度到下一次推東西進捲動區之前只長不縮。bubbletea 的 inline renderer 縮短畫面時只清底部那幾行,
 // 上面空出來的列原封不動留在捲動區 —— 打 /pl s 把選單從八列過濾到兩列、或選單收起,舊的選單列就
-// 疊在下一個回音上方(現行版本就有)。命令的回音會把位置重設,所以縮回四行要等到命令執行。
-func TestTUIBottomAreaKeepsHeightUntilNextCommand(t *testing.T) {
+// 疊在下一個回音上方(現行版本就有)。推東西進捲動區(insertAbove)會把位置重設,所以縮回四行要等到
+// 那一刻:命令回音、? 鍵位表、printErr 都算。
+func TestTUIBottomAreaKeepsHeightUntilNextScrollbackWrite(t *testing.T) {
 	ran := recordExec(t)
+	got := recordPrintln(t)
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
 	high := len(strings.Split(m.View().Content, "\n"))
@@ -211,6 +213,40 @@ func TestTUIBottomAreaKeepsHeightUntilNextCommand(t *testing.T) {
 	}
 	if n := len(strings.Split(m.View().Content, "\n")); n != high {
 		t.Errorf("離開輸入也不縮(縮了就留一排空行在捲動區):%d 行,要 %d", n, high)
+	}
+	// ? 把鍵位表推進捲動區:位置重設了,縮回四行
+	m = step(t, m, tea.KeyPressMsg{Code: '?'}, false)
+	if len(*got) != 1 {
+		t.Fatalf("前置條件:? 要印:%v", *got)
+	}
+	if n := len(strings.Split(m.View().Content, "\n")); n != 4 {
+		t.Errorf("? 印過之後要縮回四行:%d 行", n)
+	}
+	// 輪詢的錯誤第一次印進捲動區也一樣;同一則不重印時就不能縮
+	reopen := func(m tuiModel) tuiModel {
+		m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
+		return step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
+	}
+	m = reopen(m)
+	if n := len(strings.Split(m.View().Content, "\n")); n != high {
+		t.Fatalf("前置條件:再開一次選單又 Esc 出來:%d 行", n)
+	}
+	boom := errors.New("dial tcp: no route to host")
+	m = step(t, m, tuiStateMsg{err: boom, gen: m.gen}, false)
+	if len(*got) != 2 {
+		t.Fatalf("前置條件:錯誤要印:%v", *got)
+	}
+	if n := len(strings.Split(m.View().Content, "\n")); n != 4 {
+		t.Errorf("錯誤印過之後要縮回四行:%d 行", n)
+	}
+	m = reopen(m)
+	m = step(t, m, tuiStateMsg{err: boom, gen: m.gen}, false) // 同一則:不印
+	if len(*got) != 2 {
+		t.Fatalf("前置條件:同一則錯誤不重印:%v", *got)
+	}
+	if n := len(strings.Split(m.View().Content, "\n")); n != high {
+		t.Errorf("沒推東西進捲動區就不能縮:%d 行,要 %d", n, high)
 	}
 	// 執行命令:回音重設位置,這時縮成一行;回來就是四行
 	m = step(t, m, tea.KeyPressMsg{Code: ':'}, false)
@@ -314,6 +350,19 @@ func TestTUIQuestionMarkPrintsKeymap(t *testing.T) {
 	m = step(t, m, tea.KeyPressMsg{Code: '?'}, true)
 	if len(*got) != 1 || !strings.Contains((*got)[0], "播放/暫停") {
 		t.Fatalf("? 要把完整鍵位推進捲動區:%v", *got)
+	}
+	// 每一行都要到:tuiJoin 的預算是單行的,整份丟進去會量到所有行的加總、九行剩三行(PR #49 review)。
+	lines := strings.Split((*got)[0], "\n")
+	if want := len(strings.Split(tuiKeymap, "\n")); len(lines) != want {
+		t.Fatalf("鍵位表 %d 行只印出 %d 行:%q", want, len(lines), (*got)[0])
+	}
+	if !strings.Contains((*got)[0], "Tab") {
+		t.Error("選單那段(含 Tab)要印得出來")
+	}
+	for i, l := range lines {
+		if w := wantWidth(l); w > 99 { // 測試的寬度是 100,每行夾在 w-1
+			t.Errorf("第 %d 行寬 %d 超過 99:%q", i, w, l)
+		}
 	}
 }
 

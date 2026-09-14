@@ -62,6 +62,8 @@ func tuiMenuQuery(input string) (string, bool) {
 // 就什麼都不做,使用者得回到行首把 / 刪掉才送得出去。用字詞比對,幾個空白分隔都算;大小寫要一樣,cobra 也是。
 // 命令自己可執行、底下又掛著子命令時(resolve / resolve pin),/resolve p 算「還在打 resolve pin」而不是
 // 「resolve 加參數 p」,選單留著讓人補齊;/resolve pin 剛好是命令、/resolve x 沒有命令接得下去,才算完整。
+// 剛好等於命令的一律算完整(/resolve 也是,⏎ 就跑):「打完整命令就執行」是使用者定的規則,
+// 想看 resolve 底下有什麼,/res 或 /resolve p 都看得到(PR #49 review 的取捨)。
 func tuiIsCommand(all []tuiCmdItem, q string) bool {
 	words := strings.Fields(q)
 	if len(words) == 0 {

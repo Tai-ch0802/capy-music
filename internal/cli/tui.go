@@ -87,7 +87,7 @@ type tuiModel struct {
 	stalled   bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
 	frozen    bool // 開場結束:水豚已進捲動區,View 只剩底部四行
 	running   bool // 子命令執行中:底部區縮成一行空白(原因見 View)
-	menuHigh  int  // 上一個命令之後選單佔過的最多列數;View 補空行撐到這個高度(原因見 View)
+	menuHigh  int  // 上次推東西進捲動區之後選單佔過的最多列數;View 補空行撐到這個高度(原因見 View)
 	cmds      []tuiCmdItem
 	menuSel   int      // 斜線選單選到第幾列(選單開著才有意義)
 	hist      []string // 這次 session 打過的命令,↑↓ 翻;只在記憶體裡,離開就沒了
@@ -215,6 +215,17 @@ func (m tuiModel) println(segs ...tuiSeg) tea.Cmd {
 	return tuiPrintln(tuiJoin(m.viewWidth()-1, segs...))
 }
 
+// printBlock:多行文字逐行夾寬度再推進捲動區。tuiJoin 的預算是單行的 —— tuiWidth 把換行算 0 欄,
+// 整份鍵位表丟進去量到的是所有行的加總,九行被截成三行(PR #49 review;main 就這樣)。
+// insertAbove 自己逐行算捲動量,多行字串本身是安全的,只要每一行各自夾好。
+func (m tuiModel) printBlock(s string, style func(string) string) tea.Cmd {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = tuiJoin(m.viewWidth()-1, tuiSeg{ln, style})
+	}
+	return tuiPrintln(strings.Join(lines, "\n"))
+}
+
 // printErr:錯誤第一次出現時整段推進捲動區(永久記錄,可以回頭看);狀態列只留短版。
 // 同一則不重複印——輪詢每兩秒一次,重複印會把捲動區洗掉。
 func (m *tuiModel) printErr(err error) tea.Cmd {
@@ -222,6 +233,7 @@ func (m *tuiModel) printErr(err error) tea.Cmd {
 		return nil
 	}
 	m.lastErr = err.Error()
+	m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
 	return m.println(tuiSeg{"⚠ " + err.Error(), m.theme.Mutedly})
 }
 
@@ -448,7 +460,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 				m.hist = append(m.hist, raw)
 			}
 			m.histAt, m.histDraft = len(m.hist), ""
-			m.running, m.menuHigh = true, 0 // 回音會把 renderer 的位置重設到畫面頂端,這時縮才清得乾淨(見 View)
+			m.running, m.menuHigh = true, 0 // 回音推進捲動區之後縮才乾淨(見 View)
 			// 回音先進捲動區再讓出終端機:Sequence 保序,而 exec 交出終端機前會 flush 一次
 			// (releaseTerminal → stopRenderer(false) → flush),所以回音一定在子命令輸出上面。
 			// 回音前空一行:不然這次的回音緊貼著上一個命令的輸出,段落分不開。
@@ -489,7 +501,8 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.input.Focus()
 		return m.recall(d), textinput.Blink
 	case "?": // 完整鍵位推進捲動區,不佔底部的行數
-		return m, m.println(tuiSeg{tuiKeymap, m.theme.Mutedly})
+		m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
+		return m, m.printBlock(tuiKeymap, m.theme.Mutedly)
 	}
 	if m.pc == nil {
 		return m, nil
@@ -616,8 +629,9 @@ func (m tuiModel) View() tea.View {
 	}
 	// 選單變短或收起時不縮、補空行撐到這一輪的最高點(menuHigh):bubbletea 的 inline renderer 縮短畫面
 	// 時只清底部那幾行,上面空出來的列原封不動留在捲動區 —— 打 /pl s 把選單從八列過濾到兩列,舊的六列
-	// 就疊在選單上方、再疊在下一個回音上方(現行版本就有)。下一個命令的回音(insertAbove)會把
-	// renderer 的位置重設到畫面頂端,那時縮成一行才清得乾淨,所以要撐到那一刻。
+	// 就疊在選單上方、再疊在下一個回音上方(現行版本就有)。推東西進捲動區(insertAbove)會把 renderer
+	// 的位置重設到畫面頂端,之後縮才清得乾淨,所以撐到下一次推為止:命令回音、? 鍵位表、printErr
+	// 都把 menuHigh 歸零(execResult 印結束碼時已經是 0)。
 	if pad := m.menuHigh - len(lines); pad > 0 {
 		lines = append(make([]string, pad), lines...)
 	}
