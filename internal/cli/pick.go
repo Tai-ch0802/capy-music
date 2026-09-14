@@ -17,11 +17,16 @@ import (
 
 // newForm:全 CLI 的 huh 表單都從這裡建,共用一份鍵位 —— Esc 也能取消。huh 預設只有 Ctrl-C 會中止,
 // Esc 是過濾模式裡「離開 / 清掉過濾字」的鍵,所以挑選器開著按 Esc 什麼都不會發生(使用者回報)。
-// 表單層先比 Quit 再把按鍵交給欄位,綁上之後過濾模式裡 Esc 也是取消(清過濾字用退格);Ctrl-C 照舊。
+// 表單層先比 Quit 再把按鍵交給欄位,綁上之後過濾模式裡 Esc 也是取消;Ctrl-C 照舊。
+// 這等於拿掉 select 過濾模式的兩個 Esc 動作(留著過濾字離開輸入、清掉過濾字):過濾中只剩 Enter 選、退格清字。
+// 它們的鍵位還在 help 行裡(select 的 KeyBinds 固定列它們,setFiltering 每次重設 Enabled,壓不掉),
+// 所以只改 help 文字,別讓它宣傳做不到的事(PR #50 review)。MultiSelect 沒用到,不補。
 // 直接叫 huh.NewForm 會漏掉這份鍵位,新表單一律走這裡。
 func newForm(groups ...*huh.Group) *huh.Form {
 	km := huh.NewDefaultKeyMap()
 	km.Quit = key.NewBinding(key.WithKeys("ctrl+c", "esc"))
+	km.Select.SetFilter = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"), key.WithDisabled())
+	km.Select.ClearFilter = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"), key.WithDisabled())
 	return huh.NewForm(groups...).WithKeyMap(km)
 }
 

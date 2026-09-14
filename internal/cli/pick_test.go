@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
@@ -32,6 +34,26 @@ func TestFormEscAborts(t *testing.T) {
 	f.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if f.State != huh.StateNormal {
 		t.Errorf("↓ 不該中止表單:state=%v", f.State)
+	}
+}
+
+// 綁走 Esc 之後,select 過濾模式的 help 行不能還寫「esc set filter」:那個鍵到不了欄位了,標題說 Esc 取消、
+// help 行說 esc set filter,使用者會踩到第二次驚訝(PR #50 review)。
+func TestFormFilterHelpSaysCancel(t *testing.T) {
+	opts := make([]huh.Option[int], 12)
+	for i := range opts {
+		opts[i] = huh.NewOption(fmt.Sprintf("清單 %d", i), i)
+	}
+	f := newForm(huh.NewGroup(huh.NewSelect[int]().Options(opts...).Filtering(true)))
+	f.Init()
+	f.Update(tea.KeyPressMsg{Code: '/', Text: "/"}) // 進過濾:SetFilter 這時才會出現在 help 行
+	v := ansi.Strip(f.View())                       // help 行的鍵與說明各自上色,要先剝掉跳脫碼才比得到
+	if !strings.Contains(v, "esc cancel") || strings.Contains(v, "set filter") {
+		t.Fatalf("過濾中的 help 行要說 esc cancel:%q", v)
+	}
+	f.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if f.State != huh.StateAborted {
+		t.Error("過濾中按 Esc 也要中止表單")
 	}
 }
 
