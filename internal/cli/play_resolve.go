@@ -208,7 +208,7 @@ func pickerLabel(c candidate) string {
 	return fmt.Sprintf("[%s] %s — %s%s", typeNames[c.Type], c.Label, c.Detail, c.Note)
 }
 
-// runPlayPicker:TTY 挑選器(/ 進入過濾)。Esc 在 huh 裡是清除過濾,不綁成取消;取消用 Ctrl-C。測試替換點。
+// runPlayPicker:TTY 挑選器(/ 進入過濾;Esc / Ctrl-C 取消,鍵位在 newForm)。測試替換點。
 var runPlayPicker = func(cands []candidate) (*candidate, error) {
 	labels := make([]string, len(cands))
 	for i, c := range cands {

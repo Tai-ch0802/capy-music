@@ -193,7 +193,7 @@ var (
 // appleConfirmDisclosure:揭露頁,Confirm 預設「取消」;不同意即 error。CLAUDE.md:不可跳過。
 func appleConfirmDisclosure() error {
 	agree := false
-	if err := huh.NewForm(huh.NewGroup(
+	if err := newForm(huh.NewGroup(
 		huh.NewNote().Title("使用前請先閱讀").Description(appleDisclosure),
 		huh.NewConfirm().Title("我已閱讀,同意自負風險,繼續?").Affirmative("同意").Negative("取消").Value(&agree),
 	)).Run(); err != nil {
@@ -210,7 +210,7 @@ func appleConfirmDisclosure() error {
 func appleWizardInputs(hasUser bool) (dev, user string, err error) {
 	onlyDev := hasUser
 	if hasUser {
-		if err := huh.NewForm(huh.NewGroup(
+		if err := newForm(huh.NewGroup(
 			huh.NewConfirm().Title("keychain 已有 user token。只更新 developer token?").
 				Affirmative("只更新 developer token").Negative("兩個都重新貼").Value(&onlyDev),
 		)).Run(); err != nil {
@@ -239,7 +239,7 @@ func appleWizardInputs(hasUser bool) (dev, user string, err error) {
 			return nil
 		}))
 	}
-	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+	if err := newForm(huh.NewGroup(fields...)).Run(); err != nil {
 		return "", "", err
 	}
 	return dev, user, nil
@@ -314,7 +314,7 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 // charm v2 調整條款:huh v2 API 與此處有出入時,以 go doc charm.land/huh/v2 為準,偏差記入報告。
 func runClientIDWizard() (string, error) {
 	var cid string
-	form := huh.NewForm(huh.NewGroup(
+	form := newForm(huh.NewGroup(
 		huh.NewNote().
 			Title("建立你自己的 Spotify app(免費,約 2 分鐘)").
 			Description("Spotify 政策限制每個 app 只能有 5 位使用者,所以要用自己的 app:\n"+

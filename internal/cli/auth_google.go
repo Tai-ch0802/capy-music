@@ -66,7 +66,7 @@ const googleGuide = `建立你自己的 Google OAuth client(免費,約 5 分鐘)
   6. 把 Client ID 與 Client secret 貼到下面`
 
 func runGoogleClientWizard() (id, sec string, err error) {
-	form := huh.NewForm(huh.NewGroup(
+	form := newForm(huh.NewGroup(
 		huh.NewNote().Title("Google Drive 同步:先建自己的 OAuth client").Description(googleGuide),
 		huh.NewInput().Title("Client ID(結尾通常是 .apps.googleusercontent.com)").Value(&id).Validate(func(s string) error {
 			if strings.TrimSpace(s) == "" {
@@ -86,7 +86,7 @@ func runGoogleClientWizard() (id, sec string, err error) {
 // 的互動路徑——只問 secret,不重跑整個精靈;Enter 留空 = 試試看不帶 secret(Q1 未定)。
 func runGoogleSecretPrompt(clientID string) (string, error) {
 	var sec string
-	form := huh.NewForm(huh.NewGroup(
+	form := newForm(huh.NewGroup(
 		huh.NewNote().Title("找不到這個 client 的 secret").Description("client id "+maskGoogleClientID(clientID)+" 還在 config,但 secret 不在 keychain(capy auth logout google 會刪掉它)。\n貼上 secret;直接 Enter 留空則試試看不帶 secret(Desktop client 是否必須帶 secret 由 G-0 驗收決定)。"),
 		huh.NewInput().Title("Client secret").EchoMode(huh.EchoModePassword).Value(&sec),
 	))

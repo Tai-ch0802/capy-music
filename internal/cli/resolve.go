@@ -286,8 +286,8 @@ var reviewPrompt = func(it resolveItem, pos, total int, search func(string) ([]p
 	}
 	opts = append(opts, huh.NewOption("略過(下次再問)", "skip"), huh.NewOption("手動搜尋", "manual"), huh.NewOption("這個平台沒有這首(釘成不可得)", "none"))
 	kind := "skip"
-	if err := huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title(title).Options(opts...).Value(&kind))).Run(); err != nil {
-		return reviewDecision{}, err // Ctrl-C 原樣往上:RunE 把 huh.ErrUserAborted 當「取消 = 整輪不寫入」exit 2
+	if err := newForm(huh.NewGroup(huh.NewSelect[string]().Title(title).Options(opts...).Value(&kind))).Run(); err != nil {
+		return reviewDecision{}, err // Esc / Ctrl-C 原樣往上:RunE 把 huh.ErrUserAborted 當「取消 = 整輪不寫入」exit 2
 	}
 	d := reviewDecision{kind: kind}
 	switch kind {
@@ -295,7 +295,7 @@ var reviewPrompt = func(it resolveItem, pos, total int, search func(string) ([]p
 		d.cand = it.cand
 	case "manual":
 		q := resolve.FuzzyQuery(it.track)
-		if err := huh.NewForm(huh.NewGroup(huh.NewInput().Title("搜尋字串").Value(&q))).Run(); err != nil {
+		if err := newForm(huh.NewGroup(huh.NewInput().Title("搜尋字串").Value(&q))).Run(); err != nil {
 			return reviewDecision{}, err
 		}
 		found, err := search(q)
@@ -310,7 +310,7 @@ var reviewPrompt = func(it resolveItem, pos, total int, search func(string) ([]p
 			picks[i] = huh.NewOption(fmt.Sprintf("%d 分  %s", resolve.ScoreFuzzy(it.track, t), describe(t)), i)
 		}
 		idx := 0
-		if err := huh.NewForm(huh.NewGroup(huh.NewSelect[int]().Title("選一首釘上(Ctrl-C 略過)").Options(picks...).Value(&idx))).Run(); err != nil {
+		if err := newForm(huh.NewGroup(huh.NewSelect[int]().Title("選一首釘上(Esc 略過)").Options(picks...).Value(&idx))).Run(); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				return reviewDecision{kind: "skip"}, nil
 			}
@@ -444,7 +444,7 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 				return true, nil
 			}
 			ok, err := confirmWrite(fmt.Sprintf("%s 的這個 id 已屬 cid %s:把 %s 與它合併(勝者字典序小、清單 item 全部改指勝者)?", it.prov, other, it.cid))
-			if errors.Is(err, huh.ErrUserAborted) { // 確認畫面 Ctrl-C = 不同意合併:這筆略過,不中斷整輪
+			if errors.Is(err, huh.ErrUserAborted) { // 確認畫面 Esc / Ctrl-C = 不同意合併:這筆略過,不中斷整輪
 				return false, nil
 			}
 			return ok, err
@@ -502,7 +502,7 @@ func newResolveCmd() *cobra.Command {
 非 TTY 輸出 TSV:action cid provider provider_id confidence source title artists reason(action ∈ map | review | conflict)。
 exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有待寫入的自動 mapping 但沒有確認(--dry-run、非 TTY 沒 --yes、取消)。
 --review 在終端機逐筆裁決(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有);非 TTY 只印佇列並以 exit 2 結束;
-裁決完才一起寫入,中途 Ctrl-C 整輪不寫入(含自動 mapping)並以 exit 2 結束。`,
+裁決完才一起寫入,中途 Esc / Ctrl-C 整輪不寫入(含自動 mapping)並以 exit 2 結束。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stderr, out := cmd.Context(), cmd.ErrOrStderr(), cmd.OutOrStdout()
