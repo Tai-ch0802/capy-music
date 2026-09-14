@@ -39,6 +39,7 @@
 | `external_ids`(含 ISRC) | 2026-02 移除,**2026-03 已回復** | ISRC 仍可用 ✅ 但列為需監控項 |
 | `GET /playlists/{id}/items` | 只回傳**使用者擁有或協作**的清單內容;他人清單只有 metadata | **無法同步「追蹤的別人的清單」** |
 | 播放清單端點改名 | `/tracks` → `/items`,欄位 `tracks` → `items` | 直接用新名 |
+| 建立播放清單 | `POST /me/playlists`(2026-02 起;`POST /users/{id}/playlists` 已移除);body `name` 必填、`public` 預設 **true**(來源:[February 2026 changes](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)、[Create Playlist](https://developer.spotify.com/documentation/web-api/reference/create-playlist)) | `capy pl link <名> spotify --create`(2026-09-14)明講 `public:false`,名字跟 canonical 一樣(push 不會多排 rename);**真帳號尚未驗證**,與 `/items` 寫入同一批(P5 計畫 R-1) |
 | `GET /me` | 移除 `country`、`email`、`product` | **無法從 API 判斷是否 Premium 或所在市場** |
 | Player 端點 | 全部保留(play/pause/next/seek/volume/devices/transfer/queue) | 遙控設計成立 ✅ |
 | `GET /artists/{id}/top-tracks` | 開發模式 app **一律 403**(2026-09-07 實測:`market=from_token`、`TW`、不帶、`country=` 全部一樣) | 「藝人熱門歌曲」改用 `GET /search?q=artist:"<name>"&type=track`(依熱門度排序)當備案,程式在 403 時自動退回;Spotify-owned / 他人的編輯清單 `items` 也拿不到(2026-09-07 實測 29 個清單 9 個回「平台不提供此內容」),`pl pull` 只涵蓋 app 讀得到的清單 |
@@ -147,7 +148,7 @@ const ( // 順序 = 位元位置,與 internal/provider/provider.go 一致;新能
     CapISRCLookup      // 能用 ISRC 反查
     CapISRCExpose      // 回傳的 track 帶 ISRC
     CapPlaylistRead
-    CapPlaylistCreate
+    CapPlaylistCreate  // 2026-09-14 Spotify 宣告(pl link --create)
     CapPlaylistAppend
     CapPlaylistRemove  // ⚠️ Apple 待驗證
     CapPlaylistReorder // ⚠️ Apple 待驗證
@@ -205,11 +206,17 @@ type PlaylistWriter interface {
     // ApplyOps 一次套用一批操作,由 provider 決定用什麼端點實現;current 是呼叫端剛觀測到的 provider id 序列,
     // ops 相對於它(provider 不再讀一次:少一次 API、少一個競態窗口)。
     // Kind 不支援的 op 跳過、支援的照做,回傳跳過的那些(呼叫端列成 manual);平台真的失敗才回 err。
-    // P5 不做 rebuild fallback(決策 30)。CreatePlaylist 待有需要再加(push 只寫已連結的清單)。
+    // P5 不做 rebuild fallback(決策 30)。push 只寫已連結的清單;建清單是另一個介面 PlaylistCreator(下面)。
     ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) (skipped []PlaylistOp, err error)
     // Pushable:這個 id 能不能被 add 進清單(Spotify local file 的 spotify:local:… uri、Apple library-only 的 id 不能)。純函式。
     // push 算變更集時用它:有 mapping 但推不出去的 item 列 skip,而不是送出去被整批拒收(T4;PR #33 review)。
     Pushable(id string) bool
+}
+
+// 2026-09-14:pl link --create 用。Spotify 實作(POST /me/playlists,public:false);Apple / local 不宣告 CapPlaylistCreate。
+// 只建空清單、回它的 ref;曲目由之後的 pull / resolve / push 補。CLI 在所有會擋的檢查之後才呼叫它,平台上不留沒人連的空清單。
+type PlaylistCreator interface {
+    CreatePlaylist(ctx context.Context, name string) (PlaylistRef, error)
 }
 
 type PlaybackController interface {
@@ -873,6 +880,7 @@ capy devices                                              # P1 已實作:列 Spo
 capy pl list
 capy pl show   [name]                                     # 不帶參數 + TTY:挑選器列這個 provider 的清單(非 TTY 維持 cobra 的參數錯誤)
 capy pl link   [name|pid] [provider]:[playlist_id|name]   # 不帶參數 + TTY:三段挑選(平台 → 該平台的清單 → canonical 清單或建新的);P3(2026-09-08 T8 已實作):只認明確 link(Q5 B);canonical 清單不存在就建立;讀不到的清單不可連結
+capy pl link   <name|pid> <provider> --create   # 2026-09-14:在平台建一個跟 canonical 同名的私人空清單再連(目前只有 Spotify);會擋的檢查都在建之前(已連結、平台上已有連得上的同名清單;追蹤的別人清單讀不到,不算),COMMIT 失敗時訊息給新清單的 id 與接回去的命令
 capy pl unlink [name|pid] [provider]                      # 不帶參數 + TTY:兩段挑選(清單 → 它連的平台);P3(已實作);canonical 內容不動
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
 capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消套用;挑選器取消是 exit 1,那時還沒選到目標)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義

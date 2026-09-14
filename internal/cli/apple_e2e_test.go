@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,61 @@ func swapApple(t *testing.T, h http.HandlerFunc) {
 		return appleprov.New(srv.Client(), srv.URL, "DEV", "MUT", "tw"), nil
 	}
 	t.Cleanup(func() { newProvider = orig })
+}
+
+// 跨平台複製清單(README 與使用指南的步驟):Apple 清單 → canonical → 用 --create 建的 Spotify 清單。
+// 建出來的清單跟 canonical 同名,所以 push 不會多排一個 rename;第二次 push 無變更。
+func TestCopyApplePlaylistToSpotify(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	for _, id := range []string{"t1", "t2"} {
+		fs.addCatalog(fakeCatalogTrack{ID: id, Name: "song-" + id, ISRC: "TW00000000" + strings.ToUpper(id)})
+	}
+	// library 曲目帶 catalog 對應 = 有 ISRC:Spotify 那邊靠它精確反查
+	libTrack := func(lib, cat, isrc string) string {
+		return fmt.Sprintf(`{"id":%q,"attributes":{"name":"song","artistName":"artist","albumName":"A","durationInMillis":200000},
+"relationships":{"catalog":{"data":[{"id":%q,"type":"songs","attributes":{"name":"song","artistName":"artist","albumName":"A","durationInMillis":200000,"isrc":%q}}]}}}`, lib, cat, isrc)
+	}
+	apple := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/library/playlists":
+			w.Write([]byte(`{"data":[{"id":"p.1","attributes":{"name":"公路旅行"}}]}`))
+		case "/me/library/playlists/p.1/tracks":
+			fmt.Fprintf(w, `{"data":[%s,%s]}`, libTrack("i.1", "111", "TW00000000T1"), libTrack("i.2", "222", "TW00000000T2"))
+		default:
+			t.Errorf("非預期的 Apple 請求:%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(apple.Close)
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "apple" {
+			return appleprov.New(apple.Client(), apple.URL, "DEV", "MUT", "tw"), nil
+		}
+		return orig(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = orig })
+
+	before := driveFiles(t, dc)
+	if _, _, err := runPull(t, "pl", "link", "公路旅行", "apple", "--create"); !errors.Is(err, provider.ErrNotSupported) || !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatalf("Apple 還不能建清單,要在碰 Drive 之前擋:%v", err)
+	}
+
+	mustPull(t, "pl", "link", "公路旅行", "apple:公路旅行")
+	mustPull(t, "pl", "link", "公路旅行", "spotify", "--create")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes") // 不帶 --provider:Apple 的曲目拉進來,空的 Spotify 清單記下 base
+	mustPull(t, "resolve", "公路旅行", "--provider", "spotify", "--yes")
+	mustPull(t, "pl", "push", "公路旅行", "--provider", "spotify", "--yes")
+	if got := fs.tracksOf("new1"); strings.Join(got, ",") != "t1,t2" {
+		t.Fatalf("Spotify 清單要依 Apple 的順序有 t1、t2:%v", got)
+	}
+	for _, w := range fs.written() {
+		if w.Method == http.MethodPut && w.Path == "/playlists/new1" {
+			t.Fatalf("清單建的時候就跟 canonical 同名,不該再改名:%+v", fs.written())
+		}
+	}
+	if out, errs := mustPull(t, "pl", "push", "公路旅行", "--provider", "spotify", "--yes"); out != "" || !strings.Contains(errs, "無變更") {
+		t.Fatalf("第二次 push 要無變更:%q %q", out, errs)
+	}
 }
 
 func TestAppleSearchTSV(t *testing.T) {

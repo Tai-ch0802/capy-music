@@ -39,6 +39,7 @@ type fakeSpotify struct {
 	postFail     int                // 接下來 N 個 POST 回 500(client 對 5xx 會重試兩次,要讓一批真的失敗設 3)
 	itemReads    int                // GET /playlists/{id}/items 的次數(sync 的 push 半邊要重用 pull 的 L,不能多讀)
 	listReads    int                // GET /me/playlists 的次數(pl link 的挑選器路徑要沿用同一份 refs)
+	created      int                // POST /me/playlists 建過幾個(新清單的 id 是 new<序號>,不受其他清單影響)
 }
 
 func (f *fakeSpotify) listCalls() int {
@@ -140,6 +141,8 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 			f.hook()
 		}
 		switch {
+		case r.URL.Path == "/me/playlists" && r.Method == http.MethodPost: // pl link --create
+			f.create(t, w, r)
 		case r.URL.Path == "/me/playlists":
 			f.listReads++
 			var items []string
@@ -496,6 +499,72 @@ func TestPlLinkRefusesRestrictedAndDuplicate(t *testing.T) {
 	fs.set("p10", "another", "n")
 	if _, _, err := runPull(t, "pl", "link", "01ARZ3NDEKTSV4RRFFQ69G5FAV", "spotify:p10"); err == nil || !strings.Contains(err.Error(), "找不到 pid") {
 		t.Fatalf("合法 ULID 卻不存在要報找不到 pid:%v", err)
+	}
+}
+
+// pl link --create:在平台上建一個跟 canonical 同名的空清單再連上(把清單複製到另一個平台的起手式)。
+// 會擋的情況一律在建之前擋:平台上不會留下沒人連的空清單。
+func TestPlLinkCreate(t *testing.T) {
+	fs, dc, srv := pullWorld(t)
+	fs.set("p1", "通勤", "t1")
+	fs.set("fol", "公路旅行") // 追蹤的別人的清單:同名但讀不到(連不了),不算撞名,照常建
+	fs.restricted["fol"] = true
+	mustPull(t, "pl", "link", "夜車", "spotify:p1")
+	mustPull(t, "pl", "unlink", "夜車", "spotify")                          // 留一個沒連 spotify 的清單:「別人已連這個 id」不可把還沒有的 id 當成撞到它
+	out, errs := mustPull(t, "pl", "link", "公路旅行", "spotify", "--create") // 非 TTY:是旗標,不走挑選器
+	if w := fs.written(); len(w) != 1 || w[0].Method != http.MethodPost || w[0].Path != "/me/playlists" || w[0].Name != "公路旅行" {
+		t.Fatalf("要在 spotify 建一個跟 canonical 同名的清單:%+v", w)
+	}
+	if !strings.Contains(errs, "在 spotify 建立清單 公路旅行(new1)") || !strings.Contains(out, "已連結 公路旅行(") || !strings.Contains(out, "spotify:new1") {
+		t.Fatalf("輸出:%q %q", out, errs)
+	}
+	linked := ""
+	for name, b := range driveFiles(t, dc) {
+		if pl, err := canon.Decode[canon.Playlist](b); strings.HasPrefix(name, "pl__") && err == nil && pl.Name == "公路旅行" {
+			linked = pl.Links["spotify"]
+		}
+	}
+	if linked != "new1" {
+		t.Fatalf("Drive 上的 公路旅行 要連 spotify:new1,實際 %q", linked)
+	}
+	fs.set("p5", "晨跑") // 兩個自己的同名清單:兩個 id 都列出來讓使用者挑
+	fs.set("p6", "晨跑")
+	// 擋下來的一律零寫入:不建清單、不動 Drive。
+	before := driveFiles(t, dc)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"公路旅行", "spotify"}, "先 capy pl unlink"},                                // 已經連了:不可再建一個蓋過去
+		{[]string{"通勤", "spotify"}, `已經有叫「通勤」的清單(p1):要連它就 capy pl link "通勤" spotify:p1`}, // 同名的已經在平台上(照舊流程先在 app 裡建過):連它
+		{[]string{"夜車", "spotify:p1"}, "只給平台"},                                           // 清單還不存在,沒有 ID 或名稱可給
+		{[]string{"夜車", "tidal"}, "只給平台"},
+		{[]string{"晨跑", "spotify"}, "已經有 2 個叫「晨跑」的清單(p5、p6)"},
+	} {
+		_, _, err := runPull(t, append([]string{"pl", "link", "--create"}, c.args...)...)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v:%v", c.args, err)
+		}
+		if len(fs.written()) != 1 || !sameFiles(before, driveFiles(t, dc)) {
+			t.Fatalf("%v:擋下來就不可建清單、不可寫 Drive", c.args)
+		}
+	}
+	// 建好之後 COMMIT 失敗:清單已經在平台上了,要講出它的 id 與接回去的命令;這時重跑 --create 會被同名擋下,不會多建一個。
+	srv.FailOn(func(r *http.Request) bool { return r.Method == http.MethodPatch }, http.StatusInternalServerError, "backendError")
+	out, _, err := runPull(t, "pl", "link", "夜車", "spotify", "--create")
+	srv.FailOn(nil, 0, "")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "已經建好") || !strings.Contains(err.Error(), `capy pl link "夜車" spotify:new2`) {
+		t.Fatalf("COMMIT 失敗要交代已建好的清單與接回去的命令:%v", err)
+	}
+	if strings.Contains(out, "已連結") { // 沒寫進 Drive 就不是「已連結」:stdout 不可跟錯誤訊息互相打臉(PR #48 review)
+		t.Fatalf("COMMIT 失敗時 stdout 不可說已連結:%q", out)
+	}
+	if _, _, err := runPull(t, "pl", "link", "夜車", "spotify", "--create"); err == nil || !strings.Contains(err.Error(), "已經有叫「夜車」的清單(new2)") {
+		t.Fatalf("重跑 --create 要被同名擋下:%v", err)
+	}
+	mustPull(t, "pl", "link", "夜車", "spotify:new2") // 照著提示接回去
+	if len(fs.written()) != 2 {
+		t.Fatalf("接回去不可再建清單:%+v", fs.written())
 	}
 }
 

@@ -453,6 +453,19 @@ func (c *Client) MyPlaylists(ctx context.Context) ([]provider.PlaylistRef, error
 	}
 }
 
+// CreatePlaylist:POST /me/playlists(2026-02 起取代 POST /users/{id}/playlists,spec §1.1)。public 預設是 true,
+// 同步目標不該默默出現在個人檔案上,所以明講 false。回應沒有 id 就當失敗:空 id 寫進 link 是一條連不到任何清單的連結。
+func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.PlaylistRef, error) {
+	var out playlistJSON
+	if _, err := c.do(ctx, http.MethodPost, "/me/playlists", nil, map[string]any{"name": name, "public": false}, &out); err != nil {
+		return provider.PlaylistRef{}, err
+	}
+	if out.ID == "" {
+		return provider.PlaylistRef{}, errors.New("Spotify 建立清單的回應沒有 id")
+	}
+	return out.toRef(), nil
+}
+
 func (c *Client) PlaylistItems(ctx context.Context, id string) ([]provider.Track, error) {
 	var out []provider.Track
 	for offset := 0; ; {

@@ -18,12 +18,41 @@ func TestProviderIdentityAndCaps(t *testing.T) {
 	}
 	want := provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapPlaybackControl |
 		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue |
-		provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder | provider.CapPlaylistRename
+		provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder | provider.CapPlaylistRename |
+		provider.CapPlaylistCreate
 	if p.Caps() != want {
 		t.Errorf("Caps = %b, want %b", p.Caps(), want)
 	}
-	if p.Caps().Has(provider.CapPlaylistCreate) {
-		t.Error("P5 T1 沒有 CreatePlaylist,不宣告")
+}
+
+// 建清單:POST /me/playlists(舊的 /users/{id}/playlists 已移除)、明講 public:false、回應的 id 就是之後 link 的 id。
+// 斷言放在 handler 裡:t.Errorf 可跨 goroutine,共用變數不行。
+func TestCreatePlaylist(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if r.Method != http.MethodPost || r.URL.Path != "/me/playlists" || body["name"] != "公路旅行" || body["public"] != false {
+			t.Errorf("要 POST /me/playlists、帶名字、明講 public:false:%s %s %v", r.Method, r.URL.Path, body)
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"new1","name":"公路旅行","owner":{"display_name":"tai"},"items":{"total":0}}`))
+	}))
+	defer srv.Close()
+	ref, err := New(srv.Client(), srv.URL).CreatePlaylist(context.Background(), "公路旅行")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != (provider.PlaylistRef{ID: "new1", Name: "公路旅行", Owner: "tai"}) {
+		t.Errorf("ref = %+v", ref)
+	}
+	// 回應沒有 id(形狀變了):不可回一個空 id 讓 CLI 寫進 link。
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{}`))
+	}))
+	defer empty.Close()
+	if _, err := New(empty.Client(), empty.URL).CreatePlaylist(context.Background(), "x"); err == nil {
+		t.Fatal("回應沒有 id 要回錯")
 	}
 }
 

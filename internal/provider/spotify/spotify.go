@@ -23,6 +23,7 @@ var (
 	_ provider.ISRCLookup         = (*Provider)(nil)
 	_ provider.TrackGetter        = (*Provider)(nil)
 	_ provider.PlaylistWriter     = (*Provider)(nil)
+	_ provider.PlaylistCreator    = (*Provider)(nil)
 )
 
 func New(hc *http.Client, base string) *Provider {
@@ -35,7 +36,12 @@ func (p *Provider) DisplayName() string { return "Spotify" }
 func (p *Provider) Caps() provider.Capability {
 	return provider.CapSearch | provider.CapISRCExpose | provider.CapISRCLookup | provider.CapPlaylistRead | provider.CapPlaybackControl |
 		provider.CapArtistSearch | provider.CapPlayPlaylist | provider.CapPlayQueue |
-		provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder | provider.CapPlaylistRename // P5 T1:ApplyOps 整批取代
+		provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder | provider.CapPlaylistRename | // P5 T1:ApplyOps 整批取代
+		provider.CapPlaylistCreate // pl link --create
+}
+
+func (p *Provider) CreatePlaylist(ctx context.Context, name string) (provider.PlaylistRef, error) {
+	return p.c.CreatePlaylist(ctx, name)
 }
 
 func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, ops []provider.PlaylistOp) ([]provider.PlaylistOp, error) {

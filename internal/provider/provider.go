@@ -203,6 +203,12 @@ type PlaylistWriter interface {
 	Pushable(id string) bool
 }
 
+// PlaylistCreator:在平台上建一個空清單(CapPlaylistCreate),回它的 ref。pl link --create 用:建好只連結,
+// 曲目由之後的 pull / resolve / push 補,這裡不寫曲目。
+type PlaylistCreator interface {
+	CreatePlaylist(ctx context.Context, name string) (PlaylistRef, error)
+}
+
 // ApplyPlaylistOps:純函式,把 ops 依序套在 current 上,回傳結果序列與改名後的名稱(空 = 沒改名)。
 // 位置越界、remove 核對不符、Kind 未知都回錯。provider 實作與 push 的計畫測試共用它,兩邊對「位置」的理解才會一致。
 func ApplyPlaylistOps(current []string, ops []PlaylistOp) (items []string, name string, err error) {
