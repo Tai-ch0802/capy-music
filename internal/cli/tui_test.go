@@ -38,6 +38,20 @@ func recordPrintln(t *testing.T) *[]string {
 // joined:捲動區收到的全部內容接成一段,方便找關鍵字。
 func joined(got *[]string) string { return strings.Join(*got, "\n") }
 
+// recordExec:記下「執行了哪些參數」而不真的 fork(tuiExecProcess 的測試替換點)。
+// 回傳的 Cmd 假裝子命令馬上成功結束。
+func recordExec(t *testing.T) *[][]string {
+	t.Helper()
+	var got [][]string
+	orig := tuiExecProcess
+	tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd {
+		got = append(got, c.Args)
+		return func() tea.Msg { return fn(nil) }
+	}
+	t.Cleanup(func() { tuiExecProcess = orig })
+	return &got
+}
+
 // 送一個訊息、拿回 model 與 cmd;cmd 若非 nil 就執行(這些 cmd 都是同步的 func,不是 tea.Tick——
 // tea.Tick 的 timer 建立即啟動,在測試裡跑第二次會永遠卡住)。
 func step(t *testing.T, m tuiModel, msg tea.Msg, runCmd bool) tuiModel {

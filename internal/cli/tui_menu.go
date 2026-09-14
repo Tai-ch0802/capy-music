@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -8,8 +9,9 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
-// 斜線選單。輸入行以 / 開頭時就是開著的:/ 後面打的字即時過濾,↑↓ 選,⏎ 把命令**帶進輸入行**
-// 而不是直接執行(還要補參數),Esc 清掉輸入就收起來。
+// 斜線選單。輸入行以 / 開頭時就是開著的:/ 後面打的字即時過濾,↑↓ 選,Tab / ⏎ 把命令**帶進輸入行**
+// 而不是直接執行(還要補參數),Esc 清掉輸入就收起來。/ 後面已經是完整命令(可帶參數)時選單收起、
+// ⏎ 直接執行:/ 只是開選單的記號,執行時拿掉。
 //
 // 選單向上長、壓在捲動區前面 —— 不插進歷程:歷程是永久的,選單是暫時的,混在一起就分不出
 // 「我看過什麼」與「我正在選什麼」。
@@ -53,6 +55,32 @@ func tuiMenuQuery(input string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimPrefix(input, "/"), true
+}
+
+// tuiIsCommand:q(/ 後面那段)已經是一個完整命令了嗎 —— 剛好等於某個命令路徑,或命令路徑後面接著參數。
+// 是的話選單收起、⏎ 直接執行。原本整行都當過濾字:打了 /pl show 冬日暖調 比不到任何命令,⏎ 沒東西可帶
+// 就什麼都不做,使用者得回到行首把 / 刪掉才送得出去。用字詞比對,幾個空白分隔都算;大小寫要一樣,cobra 也是。
+// 命令自己可執行、底下又掛著子命令時(resolve / resolve pin),/resolve p 算「還在打 resolve pin」而不是
+// 「resolve 加參數 p」,選單留著讓人補齊;/resolve pin 剛好是命令、/resolve x 沒有命令接得下去,才算完整。
+func tuiIsCommand(all []tuiCmdItem, q string) bool {
+	words := strings.Fields(q)
+	if len(words) == 0 {
+		return false
+	}
+	var exact, withArgs, extends bool
+	for _, it := range all {
+		p := strings.Fields(it.path)
+		switch {
+		case slices.Equal(words, p):
+			exact = true
+		case len(words) > len(p) && slices.Equal(words[:len(p)], p):
+			withArgs = true
+		case len(p) >= len(words) && slices.Equal(p[:len(words)-1], words[:len(words)-1]) &&
+			strings.HasPrefix(p[len(words)-1], words[len(words)-1]):
+			extends = true // 還有更長的命令接得下去(最後一個字打到一半也算:resolve p → resolve pin)
+		}
+	}
+	return exact || (withArgs && !extends)
 }
 
 // tuiMenuFilter:命令路徑含有查詢字(不分大小寫)就留下。查詢字裡的空白照樣比對,

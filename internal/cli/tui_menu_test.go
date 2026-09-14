@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -137,11 +138,11 @@ func TestTUISlashMenuEscAndSelectionClamp(t *testing.T) {
 	if m.menuSel != 0 {
 		t.Errorf("↑ 到頂要停在第一列:sel=%d", m.menuSel)
 	}
-	// 過濾到剩很少時,選取要夾回範圍內
+	// 過濾到剩很少時,選取要夾回範圍內(打完整的 /doctor 選單就收起了,所以少打一個字)
 	m.menuSel = 5
-	m.input.SetValue("/doctor")
+	m.input.SetValue("/docto")
 	if items, _ := m.menu(); len(items) != 1 {
-		t.Fatalf("doctor 應該只剩一列:%d", len(items))
+		t.Fatalf("docto 應該只剩一列:%d", len(items))
 	}
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
 	if !strings.HasPrefix(m.input.Value(), "doctor") {
@@ -156,6 +157,107 @@ func TestTUISlashMenuEscAndSelectionClamp(t *testing.T) {
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
 	if m.typing {
 		t.Error("再一次 Esc 才離開輸入模式")
+	}
+}
+
+// Tab 補齊:把選中的命令帶進輸入行,和 ⏎ 一樣。bubbles 的 textinput 只在有「建議」時才處理 Tab,
+// 我們沒開,所以原本按了什麼都不會發生(使用者回報)。
+func TestTUISlashMenuTabCompletes(t *testing.T) {
+	ran := recordExec(t)
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "pl sh")
+	if h := m.hints(); !strings.Contains(h, "Tab") {
+		t.Errorf("選單開著時提示列要提到 Tab:%q", h)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyTab}, false)
+	if m.input.Value() != "pl show " {
+		t.Fatalf("Tab 要補齊選中的命令(後面留空白補參數):%q", m.input.Value())
+	}
+	if _, open := m.menu(); open {
+		t.Error("補齊之後選單要收起")
+	}
+	// 比不到命令時 Tab 不改輸入、也不執行
+	m.input.SetValue("/zzz")
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyTab}, false)
+	if m.input.Value() != "/zzz" || len(*ran) != 0 {
+		t.Errorf("比不到命令時 Tab 不該改輸入或執行:%q %v", m.input.Value(), *ran)
+	}
+}
+
+// / 後面已經是完整命令(可帶參數)時,⏎ 直接執行、/ 自動拿掉。原本整行都當過濾字:比不到任何命令
+// 就什麼都不做,使用者得回到行首把 / 刪掉才送得出去(使用者回報)。
+func TestTUISlashCompleteCommandRuns(t *testing.T) {
+	ran := recordExec(t)
+	got := recordPrintln(t)
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "pl show 冬日暖調")
+	if _, open := m.menu(); open {
+		t.Fatal("完整命令加參數:選單要收起")
+	}
+	if h := m.hints(); !strings.Contains(h, "Enter 執行") {
+		t.Errorf("選單收起後提示列要說 Enter 執行:%q", h)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 1 || !slices.Equal((*ran)[0], []string{"/bin/capy", "pl", "show", "冬日暖調"}) {
+		t.Fatalf("⏎ 要執行去掉 / 的那行:%v", *ran)
+	}
+	if !slices.Equal(m.hist, []string{"pl show 冬日暖調"}) {
+		t.Errorf("歷史要存去掉 / 的那行:%v", m.hist)
+	}
+	if e := ansi.Strip(joined(got)); !strings.Contains(e, "> pl show 冬日暖調") {
+		t.Errorf("回音也不帶 /:%q", e)
+	}
+	// 剛好是完整命令、還沒打參數:也直接執行,不是再按一次 ⏎
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "pl list")
+	if _, open := m.menu(); open {
+		t.Fatal("剛好等於命令路徑:選單要收起")
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 2 || !slices.Equal((*ran)[1], []string{"/bin/capy", "pl", "list"}) {
+		t.Fatalf("完整命令按 ⏎ 就跑:%v", *ran)
+	}
+	// 比不到任何命令:照打的跑、由 cobra 報 unknown command,而不是把 ⏎ 吞掉
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "zzz")
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 3 || !slices.Equal((*ran)[2], []string{"/bin/capy", "zzz"}) {
+		t.Fatalf("比不到命令也要照跑:%v", *ran)
+	}
+	// 命令自己可執行、底下又掛子命令(resolve / resolve pin):/resolve p 是還在打 resolve pin,選單要留著
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "resolve p")
+	if items, open := m.menu(); !open || len(items) != 1 || items[0].path != "resolve pin" {
+		t.Fatalf("/resolve p 要留著選單、列出 resolve pin:open=%v %v", open, items)
+	}
+	m = typeKeys(t, m, "in") // /resolve pin 剛好是命令:執行
+	if _, open := m.menu(); open {
+		t.Fatal("/resolve pin 剛好是命令:選單要收起")
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 4 || !slices.Equal((*ran)[3], []string{"/bin/capy", "resolve", "pin"}) {
+		t.Fatalf("/resolve pin 要執行:%v", *ran)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "resolve x") // 沒有命令接得下去:resolve 加參數 x
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 5 || !slices.Equal((*ran)[4], []string{"/bin/capy", "resolve", "x"}) {
+		t.Fatalf("/resolve x 是 resolve 加參數,要執行:%v", *ran)
+	}
+	// 只有 /:永遠不執行(不帶參數的 capy 會再開一層介面),⏎ / Tab 帶第一個命令進輸入行
+	for _, code := range []rune{tea.KeyEnter, tea.KeyTab} {
+		m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+		m = step(t, m, tea.KeyPressMsg{Code: code}, false)
+		if len(*ran) != 5 {
+			t.Fatalf("只有 / 不可執行:%v", *ran)
+		}
+		if v := m.input.Value(); strings.HasPrefix(v, "/") || !strings.HasSuffix(v, " ") {
+			t.Errorf("只有 / 時 ⏎ / Tab 帶第一個命令進輸入行:%q", v)
+		}
+		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false) // 清空
+		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false) // 離開輸入
 	}
 }
 

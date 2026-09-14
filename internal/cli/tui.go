@@ -86,6 +86,8 @@ type tuiModel struct {
 	gen       int  // 目前的輪詢世代
 	stalled   bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
 	frozen    bool // 開場結束:水豚已進捲動區,View 只剩底部四行
+	running   bool // 子命令執行中:底部區縮成一行空白(原因見 View)
+	menuHigh  int  // 上一個命令之後選單佔過的最多列數;View 補空行撐到這個高度(原因見 View)
 	cmds      []tuiCmdItem
 	menuSel   int      // 斜線選單選到第幾列(選單開著才有意義)
 	hist      []string // 這次 session 打過的命令,↑↓ 翻;只在記憶體裡,離開就沒了
@@ -275,6 +277,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 成功不印:子命令的輸出本身就是證據,多一行是雜訊。
 		// 不重排 tick:tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer(各自的 goroutine)。
 		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
+		m.running = false // 底部區恢復四行:從游標所在的那行(子命令輸出的下一行)往下畫
 		return m, m.execResult(msg)
 	case tea.KeyPressMsg:
 		// 命令清單第一次按鍵才建。放進 newTUIModel 會形成初始化循環:tuiCommands → newRootCmd →
@@ -282,7 +285,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cmds == nil {
 			m.cmds = tuiCommands()
 		}
-		return m.onKey(msg)
+		next, cmd := m.onKey(msg)
+		next.menuHigh = max(next.menuHigh, next.menuRows()) // 只長不縮,到下一個命令為止(見 View)
+		return next, cmd
 	}
 	return m, nil
 }
@@ -343,10 +348,19 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 // 少一個會和輸入行不同步的狀態。
 func (m tuiModel) menu() ([]tuiCmdItem, bool) {
 	q, ok := tuiMenuQuery(m.input.Value())
-	if !ok {
+	if !ok || tuiIsCommand(m.cmds, q) { // 已經是完整命令(可帶參數):選單收起,⏎ 就是執行
 		return nil, false
 	}
 	return tuiMenuFilter(m.cmds, q), true
+}
+
+// menuRows:選單目前佔幾列(收起 = 0;「沒有符合的命令」那一行也算一列)。View 用它撐高度。
+func (m tuiModel) menuRows() int {
+	items, ok := m.menu()
+	if !ok {
+		return 0
+	}
+	return max(1, min(tuiMenuRows, len(items)))
 }
 
 // recall:↑↓ 翻命令歷史。d 為 -1 往回、+1 往前;翻回最新時拿回開始翻之前打到一半的那行
@@ -369,7 +383,7 @@ func (m tuiModel) recall(d int) tuiModel {
 	return m
 }
 
-func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
 	// 兩秒到再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
 	if !m.frozen {
@@ -403,17 +417,22 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.typing, m.input = false, blurred(m.input)
 			return m, nil
-		case "enter":
-			if menuOpen { // ⏎ 帶進輸入行,不直接執行:多數命令還要補參數
-				if len(items) == 0 {
-					return m, nil
-				}
+		case "enter", "tab":
+			if menuOpen && len(items) > 0 { // Tab / ⏎ 帶進輸入行,不直接執行:多數命令還要補參數
 				m.input.SetValue(items[min(m.menuSel, len(items)-1)].path + " ")
 				m.input.CursorEnd()
 				m.menuSel = 0
 				return m, nil
 			}
+			if msg.String() == "tab" { // 沒東西可補就不做事(textinput 自己的 Tab 是接受建議,我們沒開)
+				return m, nil
+			}
 			raw := m.input.Value()
+			// / 只是開選單的記號,執行時拿掉:打了完整命令(或選單比不到任何東西)就照打的跑,
+			// 比不到的由 cobra 報 unknown command。不然使用者得回到行首把 / 刪掉才送得出去。
+			if q, ok := tuiMenuQuery(raw); ok {
+				raw = strings.TrimSpace(q)
+			}
 			args := splitArgs(raw)
 			m.typing, m.input = false, blurred(m.input)
 			m.input.SetValue("")
@@ -429,10 +448,12 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.hist = append(m.hist, raw)
 			}
 			m.histAt, m.histDraft = len(m.hist), ""
+			m.running, m.menuHigh = true, 0 // 回音會把 renderer 的位置重設到畫面頂端,這時縮才清得乾淨(見 View)
 			// 回音先進捲動區再讓出終端機:Sequence 保序,而 exec 交出終端機前會 flush 一次
 			// (releaseTerminal → stopRenderer(false) → flush),所以回音一定在子命令輸出上面。
+			// 回音前空一行:不然這次的回音緊貼著上一個命令的輸出,段落分不開。
 			return m, tea.Sequence(
-				m.println(tuiSeg{"> ", m.theme.Accented}, tuiSeg{raw, m.theme.Strong}), // 與輸入行的提示符一致
+				tuiPrintln("\n"+tuiJoin(m.viewWidth()-1, tuiSeg{"> ", m.theme.Accented}, tuiSeg{raw, m.theme.Strong})), // 提示符與輸入行一致
 				m.runArgs(args),
 			)
 		}
@@ -582,9 +603,23 @@ func (m tuiModel) View() tea.View {
 	if !m.frozen {
 		return tea.NewView(m.intro(w))
 	}
+	if m.running {
+		// 子命令執行中只留一行空白,原因是 bubbletea 交出 / 收回終端機的方式:交出前它把游標移到畫面的
+		// 最後一行再清到底 —— 四行的話只清掉提示列,分隔線 / 狀態 / 輸入三行留在回音與子命令輸出之間;
+		// 收回後它以為游標還在畫面的最後一行,先上移「行數-1」再重畫 —— 四行就是上移三行,蓋掉子命令
+		// 輸出的最後三行(config list 五行只剩兩行)。縮成一行:清得乾淨、上移零行。
+		return tea.NewView(" ")
+	}
 	var lines []string
 	if items, ok := m.menu(); ok { // 選單向上長,壓在捲動區前面:不插進歷程(歷程是永久的,選單是暫時的)
 		lines = append(lines, tuiMenuView(items, m.menuSel, w-1, m.theme)...)
+	}
+	// 選單變短或收起時不縮、補空行撐到這一輪的最高點(menuHigh):bubbletea 的 inline renderer 縮短畫面
+	// 時只清底部那幾行,上面空出來的列原封不動留在捲動區 —— 打 /pl s 把選單從八列過濾到兩列,舊的六列
+	// 就疊在選單上方、再疊在下一個回音上方(現行版本就有)。下一個命令的回音(insertAbove)會把
+	// renderer 的位置重設到畫面頂端,那時縮成一行才清得乾淨,所以要撐到那一刻。
+	if pad := m.menuHigh - len(lines); pad > 0 {
+		lines = append(make([]string, pad), lines...)
 	}
 	lines = append(lines,
 		// 分隔線刻意用 ASCII:U+2500 那排方框繪製字元是 East Asian Ambiguous,
@@ -677,11 +712,12 @@ const tuiKeymap = `按鍵:
   r      停擺後重新連上        ?  這張表
   q      離開(輸入中用 Ctrl-C)
 
-命令選單(輸入行以 / 開頭時):上 / 下 選,Enter 把命令帶進輸入行(不直接執行),Esc 收起。`
+命令選單(輸入行以 / 開頭時):上 / 下 選,Tab / Enter 把命令帶進輸入行,Esc 收起。
+打到完整命令(可接參數,例如 /pl show 冬日暖調)選單就收起,Enter 直接執行,/ 不必刪。`
 
 func (m tuiModel) hints() string {
 	if _, ok := m.menu(); ok {
-		return "↑↓ 選 · ⏎ 帶進輸入行 · Esc 收起"
+		return "↑↓ 選 · Tab/⏎ 補齊 · Esc 收起"
 	}
 	if m.typing {
 		return "↑↓ 歷史 · Enter 執行 · Esc 清空 · Ctrl-C 離開"

@@ -47,7 +47,7 @@ func TestTUIViewIsFourLines(t *testing.T) {
 			case "stalled":
 				m.st, m.stalled, m.errShort = nil, true, "讀不到播放狀態(r 重試)"
 			case "typing":
-				m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+				m = step(t, m, tea.KeyPressMsg{Code: ':'}, false) // 不開選單:開過的高度到下一個命令前不縮(另一條測試)
 				m.input.SetValue(long)
 			case "noplayback":
 				m.pc, m.st, m.pcErr = nil, nil, provider.ErrNotSupported
@@ -129,8 +129,9 @@ func TestTUIEchoesCommandAndExitCode(t *testing.T) {
 	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
 	m.input.SetValue("pl list")
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
-	if len(*got) != 1 || !strings.Contains((*got)[0], "pl list") || !strings.HasPrefix(ansi.Strip((*got)[0]), "> ") {
-		t.Fatalf("要先把回音推進捲動區:%v", *got)
+	// 回音前空一行:不然這次的回音緊貼著上一個命令的輸出,段落分不開(使用者回報)。
+	if len(*got) != 1 || !strings.Contains((*got)[0], "pl list") || !strings.HasPrefix(ansi.Strip((*got)[0]), "\n> ") {
+		t.Fatalf("要先把回音(前面空一行)推進捲動區:%v", *got)
 	}
 	// 結束碼 1 = 壞了;2 / 3 是 capy 設計出來的結束碼(待套用、安全閥),不掛 ✗。
 	for _, tc := range []struct {
@@ -142,6 +143,97 @@ func TestTUIEchoesCommandAndExitCode(t *testing.T) {
 		if len(*got) != 1 || !strings.HasPrefix(ansi.Strip((*got)[0]), tc.wantMark) || !strings.Contains((*got)[0], "結束碼") {
 			t.Errorf("結束碼 %d 要以 %s 開頭:%v", tc.code, tc.wantMark, *got)
 		}
+	}
+}
+
+// 子命令執行中底部區縮成一行空白。四行的話 bubbletea 交出終端機時只清掉最後一行(三行殘留在回音與
+// 輸出之間),收回時又以為游標還在四行的最後一行、上移三行重畫 —— 蓋掉子命令輸出的最後三行
+// (config list 五行只剩兩行;使用者回報的「表格不完整」)。
+func TestTUIViewCollapsesWhileSubcommandRuns(t *testing.T) {
+	ran := recordExec(t)
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m.input.SetValue("config list")
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 1 {
+		t.Fatalf("前置條件:要執行:%v", *ran)
+	}
+	if v := m.View().Content; v != " " {
+		t.Errorf("執行中 View 要是一行空白:%q", v)
+	}
+	// 子命令期間 event loop 是擋住的,排隊的輪詢會先於結束訊息進來:那時也還是一行
+	m = step(t, m, tuiStateMsg{st: playingState(), gen: m.gen}, false)
+	if v := m.View().Content; v != " " {
+		t.Errorf("子命令還沒回來就不該恢復四行:%q", v)
+	}
+	m = step(t, m, tuiExecMsg{args: []string{"config", "list"}}, false)
+	if lines := strings.Split(m.View().Content, "\n"); len(lines) != 4 {
+		t.Errorf("子命令結束後要恢復四行:%d 行\n%q", len(lines), m.View().Content)
+	}
+	// 找不到執行檔:沒有子命令要跑,底部不縮
+	m2 := newTestTUI(t, &watchFake{st: playingState()})
+	m2.exe = ""
+	m2 = step(t, m2, tea.KeyPressMsg{Code: ':'}, false)
+	m2.input.SetValue("config list")
+	m2 = step(t, m2, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if lines := strings.Split(m2.View().Content, "\n"); len(lines) != 4 {
+		t.Errorf("沒有子命令在跑就維持四行:%d 行", len(lines))
+	}
+}
+
+// 底部區的高度到下一個命令之前只長不縮。bubbletea 的 inline renderer 縮短畫面時只清底部那幾行,
+// 上面空出來的列原封不動留在捲動區 —— 打 /pl s 把選單從八列過濾到兩列、或選單收起,舊的選單列就
+// 疊在下一個回音上方(現行版本就有)。命令的回音會把位置重設,所以縮回四行要等到命令執行。
+func TestTUIBottomAreaKeepsHeightUntilNextCommand(t *testing.T) {
+	ran := recordExec(t)
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	high := len(strings.Split(m.View().Content, "\n"))
+	if high != tuiMenuRows+4 {
+		t.Fatalf("前置條件:/ 開滿選單:%d 行", high)
+	}
+	m = typeKeys(t, m, "pl s") // 過濾到兩列:空行在上、選單貼著分隔線
+	lines := strings.Split(m.View().Content, "\n")
+	if len(lines) != high {
+		t.Fatalf("選單變短時底部區不縮:%d 行,要 %d", len(lines), high)
+	}
+	if lines[0] != "" || !strings.Contains(lines[high-6], "pl show") || !strings.Contains(lines[high-5], "pl sync") {
+		t.Errorf("補的空行要在選單上方:%q", lines)
+	}
+	m = typeKeys(t, m, "how 冬日") // 完整命令:選單收起,高度照舊
+	if n := len(strings.Split(m.View().Content, "\n")); n != high {
+		t.Errorf("選單收起時底部區不縮:%d 行,要 %d", n, high)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
+	if m.typing {
+		t.Fatal("前置條件:兩次 Esc 要離開輸入")
+	}
+	if n := len(strings.Split(m.View().Content, "\n")); n != high {
+		t.Errorf("離開輸入也不縮(縮了就留一排空行在捲動區):%d 行,要 %d", n, high)
+	}
+	// 執行命令:回音重設位置,這時縮成一行;回來就是四行
+	m = step(t, m, tea.KeyPressMsg{Code: ':'}, false)
+	m.input.SetValue("config list")
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	if len(*ran) != 1 || m.View().Content != " " {
+		t.Fatalf("執行中要縮成一行:%v %q", *ran, m.View().Content)
+	}
+	m = step(t, m, tuiExecMsg{args: []string{"config", "list"}}, false)
+	if n := len(strings.Split(m.View().Content, "\n")); n != 4 {
+		t.Errorf("命令跑完回到四行:%d 行", n)
+	}
+	// 「沒有符合的命令」那一行也算一列:不然收起時它會留在捲動區
+	m3 := newTestTUI(t, &watchFake{st: playingState()})
+	m3 = step(t, m3, tea.KeyPressMsg{Code: ':'}, false)
+	m3.input.SetValue("/zzz")
+	m3 = step(t, m3, tea.KeyPressMsg{Code: tea.KeyRight}, false) // 隨便一個鍵,讓高度記下來
+	if n := len(strings.Split(m3.View().Content, "\n")); n != 5 {
+		t.Fatalf("前置條件:沒有符合的命令是一列:%d 行", n)
+	}
+	m3 = step(t, m3, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
+	if n := len(strings.Split(m3.View().Content, "\n")); n != 5 {
+		t.Errorf("「沒有符合的命令」那一列收起後也要撐著:%d 行", n)
 	}
 }
 
