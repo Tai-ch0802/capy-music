@@ -41,6 +41,17 @@ type fakeSpotify struct {
 	itemReads    int                // GET /playlists/{id}/items 的次數(sync 的 push 半邊要重用 pull 的 L,不能多讀)
 	listReads    int                // GET /me/playlists 的次數(pl link 的挑選器路徑要沿用同一份 refs)
 	created      int                // POST /me/playlists 建過幾個(新清單的 id 是 new<序號>,不受其他清單影響)
+	isrcAlias    map[string]string  // id → 借用這個 id 的 ISRC(同 ISRC 不同 id:單曲版 / 專輯版;pl dedup 用)
+}
+
+// aliasISRC:讓 id 在清單裡回 src 的 ISRC(不同 id、同 ISRC)。
+func (f *fakeSpotify) aliasISRC(id, src string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.isrcAlias == nil {
+		f.isrcAlias = map[string]string{}
+	}
+	f.isrcAlias[id] = src
 }
 
 func (f *fakeSpotify) listCalls() int {
@@ -127,9 +138,18 @@ func (f *fakeSpotify) index(id string) int {
 	return -1
 }
 
-func fakeTrackJSON(id string) string {
-	isrc := "TW" + strings.Repeat("0", 10-len(id)) + strings.ToUpper(id)
+func fakeTrackJSON(id string) string { return fakeTrackJSONISRC(id, fakeISRC(id)) }
+
+func fakeTrackJSONISRC(id, isrc string) string {
 	return fmt.Sprintf(`{"id":%q,"name":"song-%s","duration_ms":200000,"explicit":false,"album":{"name":"A"},"artists":[{"name":"artist"}],"external_ids":{"isrc":%q}}`, id, id, isrc)
+}
+
+// trackJSON:清單項目的 JSON;isrcAlias 裡的 id 借用別的 id 的 ISRC。呼叫端持鎖。
+func (f *fakeSpotify) trackJSON(id string) string {
+	if src, ok := f.isrcAlias[id]; ok {
+		return fakeTrackJSONISRC(id, fakeISRC(src))
+	}
+	return fakeTrackJSON(id)
 }
 
 func fakeCID(id string) string { return "i:TW" + strings.Repeat("0", 10-len(id)) + strings.ToUpper(id) }
@@ -176,7 +196,7 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 					its = append(its, `{"item":`+fakeLocalJSON(tid)+`}`)
 					continue
 				}
-				its = append(its, `{"item":`+fakeTrackJSON(tid)+`}`)
+				its = append(its, `{"item":`+f.trackJSON(tid)+`}`)
 			}
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(its, ","), len(its))
 		case strings.HasPrefix(r.URL.Path, "/playlists/") && r.Method == http.MethodPut: // 改名

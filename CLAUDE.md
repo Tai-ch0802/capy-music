@@ -18,4 +18,5 @@
 - 憑證只進 OS keychain,絕不寫入 Drive、SQLite 或設定檔。**唯一放寬(決策 9)**:專案自己的 Google client secret 經 `-ldflags` 注入後會編進 release binary(`strings capy` 讀得到)—— 這只涵蓋 app 自身識別,不涵蓋任何使用者憑證;BYO 使用者輸入的 client secret 仍只進 keychain(`google.client_secret`),不進 config。
 - Spotify PKCE 的 refresh token 會輪替,每次 refresh 必須覆寫儲存。
 - 任何會刪除使用者播放清單曲目的程式路徑,都必須先過 dry-run 與閾值檢查。
+- **清單順序是使用者的記憶(2026-09-15,附錄 C 決策 38)。** 任何路徑都不得排序或打亂清單:沒動到的項目相對順序永遠不變;去重只拿掉後出現的那份、搬移只在尾端新增;只有平台自己重排了才採平台順序(DERIVE 規則 6′)。
 - SQLite 是 cache,不是 source of truth。刪除 db 必須能從 Drive 完整重建(此約束要有測試)。
