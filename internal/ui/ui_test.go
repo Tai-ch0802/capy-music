@@ -94,45 +94,131 @@ func TestTableTTYAlignsCJKAndBold(t *testing.T) {
 	}
 }
 
-func TestTableTTYShrinksIDFirstThenRightToLeft(t *testing.T) {
-	// 欄寬:ID 22、曲名 28、藝人 6、專輯 32、時長 4,欄距 8 → 全寬 100。
+// sliceByWidth:取一行裡顯示欄位 [from, to) 的文字(跳脫碼先剝掉;全形字算 2)。測試自己的尺。
+func sliceByWidth(line string, from, to int) string {
+	var b strings.Builder
+	col := 0
+	for _, r := range ansi.Strip(line) {
+		w := ansi.StringWidth(string(r))
+		if col >= from && col < to {
+			b.WriteRune(r)
+		}
+		col += w
+	}
+	return b.String()
+}
+
+// columnText:把某一欄在這幾行裡的碎片接回去(去掉補白),starts 是各欄在表頭的起點。
+func columnText(lines []string, starts []int, col int) string {
+	to := 1 << 20
+	if col+1 < len(starts) {
+		to = starts[col+1]
+	}
+	var parts []string
+	for _, l := range lines {
+		if s := strings.TrimSpace(sliceByWidth(l, starts[col], to)); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func squash(s string) string { return strings.ReplaceAll(s, " ", "") }
+
+// 放不下時儲存格換行、不截斷:沒有 …、每一行不超過終端寬、ID 完整、每欄的碎片接回去等於原文
+// (去空白比:英文在字邊界斷會吃掉那個空白)。縮的順序:專輯(最右的文字欄)先、藝人次之、曲名最後。
+func TestTableTTYWrapsInsteadOfTruncating(t *testing.T) {
+	// 欄寬:ID 22、曲名 28、藝人 22、專輯 32、時長 4,欄距 8 → 全寬 116。
 	id := strings.Repeat("a", 22)
 	title := "很長很長的歌名很長很長的歌名"
+	artist := "Billie Eilish & Khalid"
 	album := strings.Repeat("專輯", 8)
-	row := [][]string{{id, title, "五月天", album, "3:47"}}
 	header := []string{"ID", "曲名", "藝人", "專輯", "時長"}
-	render := func(width int) string {
+	row := []string{id, title, artist, album, "3:47"}
+	render := func(width int) []string {
+		t.Helper()
 		withWidth(t, width)
 		buf := &bytes.Buffer{}
-		Table(buf, true, header, row)
-		line := strings.Split(buf.String(), "\n")[1]
-		if w := ansi.StringWidth(line); w > width {
-			t.Errorf("寬 %d:行寬 %d 超過終端:%q", width, w, line)
+		Table(buf, true, header, [][]string{row})
+		out := strings.TrimRight(buf.String(), "\n")
+		if strings.Contains(out, "…") {
+			t.Errorf("寬 %d:不可截斷:%q", width, out)
 		}
-		return line
+		lines := strings.Split(out, "\n")
+		if !strings.Contains(lines[1], id) {
+			t.Errorf("寬 %d:ID 要完整、不換行:%q", width, lines[1])
+		}
+		starts := make([]int, len(header))
+		for i, h := range header {
+			starts[i] = cellOffset(t, lines[0], h)
+		}
+		for col, want := range row {
+			if got := columnText(lines[1:], starts, col); squash(got) != squash(want) {
+				t.Errorf("寬 %d 第 %d 欄碎片接回去不等於原文:%q,要 %q\n%s", width, col, got, want, out)
+			}
+		}
+		return lines[1:]
 	}
-
-	line := render(87) // 超 13:ID 22→9 剛好吸收,其他欄完整
-	if !strings.Contains(line, "aaaaaaaa…  "+title) || !strings.Contains(line, album) {
-		t.Errorf("寬 87:只有 ID 該縮成 8 字 + …:%q", line)
+	fits := func(width int, lines []string) {
+		t.Helper()
+		for i, l := range lines {
+			if w := ansi.StringWidth(l); w > width {
+				t.Errorf("寬 %d:第 %d 行寬 %d 超過終端:%q", width, i, w, l)
+			}
+		}
 	}
-	line = render(60) // ID 縮到底仍超 27:最右的時長已在底線,專輯 32→5;藝人與曲名完整
-	if !strings.Contains(line, title) || !strings.Contains(line, "五月天") || strings.Contains(line, album) {
-		t.Errorf("寬 60:專輯應先被截、曲名與藝人完整:%q", line)
+	lines := render(120) // 放得下:一列一行
+	fits(120, lines)
+	if len(lines) != 1 {
+		t.Errorf("寬 120 放得下就不該換行:%q", lines)
 	}
-	line = render(48) // 其他欄全到底線,曲名才被縮
-	if strings.Contains(line, title) || !strings.Contains(line, "很長很長的歌名") {
-		t.Errorf("寬 48:曲名應最後才縮、且仍保留開頭:%q", line)
+	lines = render(100) // 超 16:只有專輯縮(32→16),折成兩行;曲名與藝人整個在第一行
+	fits(100, lines)
+	if len(lines) != 2 || !strings.Contains(lines[0], title) || !strings.Contains(lines[0], artist) {
+		t.Errorf("寬 100:只有專輯該換行、曲名與藝人在第一行:%q", lines)
+	}
+	lines = render(60) // 第一輪縮到 12 還超,第二輪縮到 8 才放得下:仍然放得下、仍然完整
+	fits(60, lines)
+	lines = render(40) // 連下限都放不下:放棄 —— 欄寬全部還原、一列一行讓終端機折行,不截也不半縮
+	if len(lines) != 1 || !strings.Contains(lines[0], title) || !strings.Contains(lines[0], album) {
+		t.Errorf("寬 40 放不下就該整列原樣印出:%q", lines)
 	}
 }
 
-func TestTableTTYIDNotFirstColumn(t *testing.T) {
+// ansi.Wrap 把連字號當斷點,「字 -」會黏在上一行而超出欄寬("The Question - Single" 在 12 欄折成 14 欄),
+// 超出的行要再硬斷:每一行都不可超過終端寬,碎片仍要接得回原文。
+func TestTableTTYWrapNeverExceedsWidth(t *testing.T) {
+	header := []string{"ID", "曲名", "藝人", "專輯", "時長"}
+	for _, album := range []string{"The Question - Single", "Kiss All The Time. Disco, Occasionally.", "ab - cd - ef - gh"} {
+		row := []string{strings.Repeat("a", 22), "很長很長的歌名很長很長的歌名", "Billie Eilish & Khalid", album, "3:47"}
+		withWidth(t, 60) // 專輯欄會被縮到下限
+		buf := &bytes.Buffer{}
+		Table(buf, true, header, [][]string{row})
+		lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+		for i, l := range lines {
+			if w := ansi.StringWidth(l); w > 60 {
+				t.Errorf("%q 第 %d 行寬 %d 超過終端:%q", album, i, w, l)
+			}
+		}
+		starts := make([]int, len(header))
+		for i, h := range header {
+			starts[i] = cellOffset(t, lines[0], h)
+		}
+		if got := columnText(lines[1:], starts, 3); squash(got) != squash(album) {
+			t.Errorf("專輯碎片接回去不等於原文:%q,要 %q", got, album)
+		}
+	}
+}
+
+// ID 欄永遠完整,在最後一欄也一樣。放不下就放棄,不截、不半縮(名稱不該被切成兩行)。
+func TestTableTTYIDNeverShrinks(t *testing.T) {
 	withWidth(t, 40)
 	buf := &bytes.Buffer{}
-	Table(buf, true, []string{"名稱", "類型", "ID"}, [][]string{{"MacBook Pro", "Computer", strings.Repeat("f", 40)}})
-	line := strings.Split(buf.String(), "\n")[1]
-	if !strings.Contains(line, "MacBook Pro") || !strings.Contains(line, "ffffffff…") {
-		t.Errorf("ID 在最後一欄也應先縮、名稱保留:%q", line)
+	id := strings.Repeat("f", 40)
+	Table(buf, true, []string{"名稱", "類型", "ID"}, [][]string{{"MacBook Pro", "Computer", id}})
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[1], "MacBook Pro") || !strings.Contains(lines[1], id) {
+		t.Errorf("ID 與名稱都要完整、在同一行:%q", buf.String())
 	}
 }
 

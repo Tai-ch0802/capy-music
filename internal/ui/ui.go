@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -39,13 +40,14 @@ var TermWidth = func() int {
 }
 
 const (
-	colGap       = 2
-	minIDWidth   = 9 // 8 字 + …
-	minCellWidth = 4 // 3 字 + …
+	colGap         = 2
+	minCellWidth   = 12 // 縮欄的下限:一行放得下一個短單字,換行後還讀得順
+	tightCellWidth = 8  // 以 minCellWidth 縮完還放不下,再以它縮一輪;還是放不下就放棄,讓終端機自己折行
 )
 
-// Table: TTY → 依顯示寬度(ansi.StringWidth,全形字算 2、ANSI 不算)對齊、含粗體標題、
-// 超出終端寬度時截斷加 …;非 TTY → 無標題 raw TSV(cut -f 友善),一個位元組都不改。
+// Table: TTY → 依顯示寬度(ansi.StringWidth,全形字算 2、ANSI 不算)對齊、含粗體標題;放不下時
+// 儲存格**換行、不截斷**(資訊要給完整,不要給一半;ID 欄永遠完整,見 fitWidths);
+// 非 TTY → 無標題 raw TSV(cut -f 友善),一個位元組都不改。
 func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 	if !tty {
 		for _, r := range rows {
@@ -77,33 +79,71 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 		measure(r)
 	}
 	fitWidths(widths, header, TermWidth())
-	line := func(r []string, style func(string) string) string {
-		var b strings.Builder
-		for i := 0; i < n; i++ {
-			c := ""
-			if i < len(r) {
-				c = ansi.Truncate(tsvEscaper.Replace(r[i]), widths[i], "…")
-			}
-			pad := widths[i] - ansi.StringWidth(c)
-			if style != nil {
-				c = style(c)
-			}
-			b.WriteString(c)
-			if i < n-1 {
-				b.WriteString(strings.Repeat(" ", pad+colGap))
-			}
+	// wrapCell:超過欄寬就換行。ansi.Wrap 英文在字邊界斷、CJK 逐字斷、跳脫碼保留(儲存格帶樣式又換了行,
+	// 樣式會延續到同一行後面的補白 —— 目前沒有呼叫端在儲存格上樣式,標題的粗體是這裡自己套的)。
+	// ansi.Wrap 把連字號當斷點,卻會讓「字 -」黏在上一行而超出欄寬("The Question - Single" 在 12 欄
+	// 折成 14 欄的 "The Question -"),超出的行再硬斷一次,欄寬才守得住。
+	wrapCell := func(c string, width int) []string {
+		c = tsvEscaper.Replace(c)
+		if ansi.StringWidth(c) <= width {
+			return []string{c}
 		}
-		return strings.TrimRight(b.String(), " ")
+		var out []string
+		for _, l := range strings.Split(ansi.Wrap(c, width, ""), "\n") {
+			if ansi.StringWidth(l) > width {
+				out = append(out, strings.Split(ansi.Hardwrap(l, width, false), "\n")...)
+				continue
+			}
+			out = append(out, l)
+		}
+		return out
 	}
-	fmt.Fprintln(w, line(header, func(s string) string { return boldStyle.Render(s) }))
+	// lines:一列展開成幾行 —— 各欄行數的最大值;每行各欄補到欄寬,同一列的各欄才對得齊。
+	lines := func(r []string, style func(string) string) []string {
+		cells := make([][]string, n)
+		h := 1
+		for i := range cells {
+			cells[i] = []string{""}
+			if i < len(r) {
+				cells[i] = wrapCell(r[i], widths[i])
+			}
+			h = max(h, len(cells[i]))
+		}
+		out := make([]string, h)
+		for k := range out {
+			var b strings.Builder
+			for i := 0; i < n; i++ {
+				c := ""
+				if k < len(cells[i]) {
+					c = cells[i][k]
+				}
+				pad := max(0, widths[i]-ansi.StringWidth(c))
+				if style != nil {
+					c = style(c)
+				}
+				b.WriteString(c)
+				if i < n-1 {
+					b.WriteString(strings.Repeat(" ", pad+colGap))
+				}
+			}
+			out[k] = strings.TrimRight(b.String(), " ")
+		}
+		return out
+	}
+	for _, l := range lines(header, func(s string) string { return boldStyle.Render(s) }) {
+		fmt.Fprintln(w, l)
+	}
 	for _, r := range rows {
-		fmt.Fprintln(w, line(r, nil))
+		for _, l := range lines(r, nil) {
+			fmt.Fprintln(w, l)
+		}
 	}
 }
 
-// fitWidths 把欄寬縮到 total 以內。順序寫死(UX 計畫 R2):標題為 ID 的欄先縮(最少留
-// minIDWidth),再從最右欄往左,第一個非 ID 欄(曲名/名稱)最後。終端窄到連底線都放不下就放棄,
-// 讓終端機自己折行。
+// fitWidths 把欄寬縮到 total 以內;縮過的儲存格由 Table 換行,不截斷。**ID 欄不縮**:ID 是要複製去
+// 下一個命令的原子字串,斷成兩行沒意義。其餘順序照舊(UX 計畫 R2):從最右欄往左,第一個非 ID 欄
+// (曲名/名稱)最後。下限先用 minCellWidth,還放不下再以 tightCellWidth 縮一輪;還是放不下就放棄 ——
+// 欄寬全部還原,讓終端機自己折行(半縮的表格既換了行又超寬,兩邊的壞處都吃到;截掉才是丟資料)。
 //
 // 假設(靠位置、不靠語意):「最該保留的欄 = 第一個標題不是 ID 的欄」。目前四張表都成立;之後若在
 // 前面插一個窄欄(例如 # 或 平台),被保護的會變成那個窄欄——屆時把它改成明確指定,別靠這個推斷。
@@ -119,11 +159,6 @@ func fitWidths(widths []int, header []string, total int) {
 		}
 		return sum - total
 	}
-	shrink := func(i, floor int) {
-		if o := over(); o > 0 && widths[i] > floor {
-			widths[i] = max(widths[i]-o, floor)
-		}
-	}
 	id, name := -1, -1
 	for i, h := range header {
 		if h == "ID" && id < 0 {
@@ -132,17 +167,26 @@ func fitWidths(widths []int, header []string, total int) {
 			name = i
 		}
 	}
-	if id >= 0 {
-		shrink(id, minIDWidth)
-	}
-	for i := n - 1; i >= 0; i-- {
-		if i != id && i != name {
-			shrink(i, minCellWidth)
+	orig := slices.Clone(widths)
+	for _, floor := range []int{minCellWidth, tightCellWidth} {
+		shrink := func(i int) {
+			if o := over(); o > 0 && widths[i] > floor {
+				widths[i] = max(widths[i]-o, floor)
+			}
+		}
+		for i := n - 1; i >= 0; i-- {
+			if i != id && i != name {
+				shrink(i)
+			}
+		}
+		if name >= 0 {
+			shrink(name)
+		}
+		if over() <= 0 {
+			return
 		}
 	}
-	if name >= 0 {
-		shrink(name, minCellWidth)
-	}
+	copy(widths, orig) // 放棄:別留下半縮的表格
 }
 
 // FormatDuration: ms → m:ss。
