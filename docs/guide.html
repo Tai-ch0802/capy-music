@@ -411,6 +411,7 @@ p.JL68l7EhogEeXd  冬日暖調          -
           <li><b>capy pl pull</b><span>平台的變更拉進正本。先列出要改什麼,你確認後才寫。</span></li>
           <li><b>capy pl push</b><span>反方向:正本推回平台。前提是這台裝置先前 pull 過,而且平台上沒有還沒拉下來的變更。</span></li>
           <li><b>capy pl sync</b><span>先 pull 再 push,一張表、一次確認。日常用這個就好。</span></li>
+          <li><b>capy pl dedup &lt;名稱&gt;</b><span>去掉正本裡重複的曲目:同平台 id 或同 ISRC 算同一首,保留第一份、其餘順序不動,再推到可寫的平台;沒有重複就什麼都不寫。<code>capy pl dedup apple:冬日暖調</code> 則直接讀平台清單、只印報告(不碰 Drive、不需要連結),Apple 只讀,照表在 app 裡手動刪。</span></li>
           <li><b>capy pl unlink &lt;名稱&gt; &lt;平台&gt;</b><span>解除連結,正本內容不動。</span></li>
         </ul>
         <p class="note">這一組命令<b>不帶清單名字直接打</b>,在終端機裡會開挑選器讓你選:<code>pl link</code> 問三次(平台 → 那個平台上的哪個清單,在 Spotify 也可以選「建一個新的空清單」 → 連到哪個正本,這一步也可以當場建一個新的),<code>pl unlink</code> 問兩次。接在管線後面或放進 cron 時不會問,照舊要求你把參數寫齊。</p>
@@ -556,6 +557,10 @@ p.JL68l7EhogEeXd  冬日暖調          -
       <div class="note caution">
         <h3>刪除永遠要先看過</h3>
         <p>任何會刪掉清單曲目的操作都會先列出來讓你確認,而且超過門檻時會直接擋下來,要加 <code>--force</code> 才放行。<code>--dry-run</code> 可以只看不做。</p>
+      </div>
+      <div class="note">
+        <h3>清單順序是你的記憶</h3>
+        <p>capy 沒有任何路徑會排序或打亂清單:同步只在平台自己重排時才跟著動,去重只拿掉後出現的那份,沒動到的曲目相對順序永遠不變。</p>
       </div>
       <div class="note">
         <h3>Apple Music 的權杖是你從網頁複製的</h3>

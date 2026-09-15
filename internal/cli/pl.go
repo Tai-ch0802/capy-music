@@ -16,7 +16,7 @@ import (
 
 func newPlCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pl", Short: "播放清單"}
-	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd(), newPlSyncCmd())
+	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd(), newPlSyncCmd(), newPlDedupCmd())
 	return cmd
 }
 
@@ -127,7 +127,7 @@ func newPlShowCmd() *cobra.Command {
 			}
 			tracks, err := r.GetPlaylistItems(ctx, id)
 			if errors.Is(err, provider.ErrRestricted) {
-				return fmt.Errorf("無法讀取這個清單的內容 — 可能是追蹤的他人清單(Spotify 2026-02 起只提供 metadata,spec §1.1),也可能是授權不足;先跑 capy doctor 確認授權")
+				return errRestrictedPlaylist
 			}
 			if err != nil {
 				return friendlyErr(p.ID(), err)
