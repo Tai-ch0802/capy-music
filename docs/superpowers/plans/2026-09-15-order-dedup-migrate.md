@@ -38,13 +38,15 @@
 - **`<provider>:<清單 ID 或名稱>`:只報告。** 直接讀平台清單(同 `pl show` 的讀法),鍵 = `canon.CID(prov, id, isrc)` 的公式
   (同 id 或同 ISRC 就是同一首),表 `POS ID TITLE ARTISTS REASON`(reason 寫「與 pos N 同 id / 同 ISRC …」,pos 從 0 起、指向保留的那份),
   非 TTY 是無標題 TSV;不碰 Drive、不需要連結;有沒有重複 exit 都是 0(報告就是報告,同 `resolve` 的佇列)。stderr 依平台能不能寫指路:
-  可寫 → `pl link` 再 `pl dedup <名稱>`;只讀(Apple)→ 照表在 app 裡手動刪。`--yes` / `--force` / `--provider` 配這種寫法是錯誤(exit 1):
-  帶著寫入形狀的 flag 卻只報告、exit 0,會讓人以為刪了。
+  可寫 → `pl link` 再 `pl dedup <名稱>`;只讀(Apple)→ 照表在 app 裡手動刪。`--yes` / `--force` / `--dry-run` / `--provider` 配這種寫法是錯誤(exit 1):
+  帶著寫入形狀的 flag 卻只報告、exit 0,會讓人以為刪了;`--dry-run` 反過來會讓人以為沒有重複(canonical 路徑有重複是 exit 2;PR #54 review)。
 - **canonical 清單(name|pid;不帶參數 + TTY 開挑選器):sync 的一輪中間多一步。** `observeAndDerive`(pull 半邊,push 的兩個前提靠它)
   → `dedupCanonical`(C 裡 `Redirect(cid)` 第二次以後出現的拿掉,保留第一份,其餘 item 與 rank 一個都不動)→ `planPush`(不 strict,同 sync;
   C 只剩一份、L 有兩份,LCS 配不到的那份就是 `remove`)。一張表 `syncHeader`,`dir` 多一種 `dedup`(provider 空、pos 是 C 的位置);
   閾值去重(分母 C 的曲數)與 push(分母 L 的長度)各算,`--force` 同 sync 的爆炸半徑(去掉的份推到每個可寫平台);exit code 同 sync。
-  - **C 沒有重複、每個平台的 L 也沒有 → 「沒有重複」、`errSkipCommit`、零寫入**:pull 半邊看到的其他變更留給 `pl sync`,dedup 不退化成 sync。
+  - **C 沒有重複、這次檢查過的每個平台的 L 也沒有 → 「沒有重複」、`errSkipCommit`、零寫入**:pull 半邊看到的其他變更留給 `pl sync`(stderr 提一句),
+    dedup 不退化成 sync。`--provider` 沒選到、foreign、restricted 的平台是「沒看過」不是「沒重複」:stderr 說它這次沒檢查,結論句改成
+    「正本與這次檢查的平台沒有重複」(PR #54 review)。
   - **C 早已去重、只讀的平台還留著多的份**:規則 4′ 不會把它加回來(L 兩份、base 兩份、C 一份 → 允許新增 0),所以「沒有重複」會誤導。
     `platformDuplicates` 對 pull 半邊讀到的每個 L 再算一次(`canon.Observe` 純函式),沒有 push 計畫的那些(寫不了、這次推不了)列 stderr
     「apple:<id> 還有 N 份重複(pos …),請在 app 裡手動刪除」;使用者刪掉後 `pl sync` 零變更(規則 5:C 已經只有一份、配對上,不會再移除)。
@@ -58,21 +60,37 @@
   再跑「沒有重複」;平台把重複加回來;同 ISRC 不同 id;只讀平台手動 + 之後 sync 不加回 + 手動刪後收斂;閾值 + `--force`;參數與 help)。
   假平台加 `aliasISRC`(兩個 id 共用一個 ISRC)。
 
-## 3. `capy migrate <A 清單> --from <A> --to <B[:清單]>`(下一個 PR)
+## 3. `capy migrate [來源清單] --from <A> --to <B[:清單]> [--dry-run] [--yes]`(第二個 PR;`internal/cli/migrate.go`、決策 39)
 
-- **不靠 derive,順序明確建**:
-  - `--to spotify`(新建):`pl link --create` 的核心建同名私人空清單並連結 → C = A 的曲目、A 的原順序。
-  - `--to spotify:<既有>` / `--to local:<檔>`(加進既有):先把 B 現況 pull 進 C(C = B 原樣)→ 把 A 裡 **C 還沒有的**(`Redirect(cid)` 比;
-    同 ISRC / 同 id 就算有 = 「已經有相同的,則略過」)**依 A 的順序接在尾端**。性質測試:B 原順序是輸出的前綴、追加的部分是 A 的子序列。
-  - **A 不連結 canonical**(使用者定案):直接讀 A 的清單、只借 `Observe` 拿 cid 與 mapping。一次性複製,沒有 base 的包袱,之後 `pl sync`
-    不會因 bootstrap 把 B 重排成 A 的順序。要持續同步的人走 README 的 link + sync 流程(結尾指路)。
-  - `resolve --provider B`(ISRC 反查 → 模糊比對 ≥85 自動;其餘 TTY 接 `--review`,非 TTY 印佇列、只推有對應的)→ `push --provider B`
-    (變更集全是 add、順序 = C,確認才推;`--yes` 跳過)。**不動 A 的任何東西。**
-- **組合方式**:一個 `withCanonical` 裡呼叫 link / observe / resolve / push 既有的核心函式(要把它們從各自的 RunE 抽成可呼叫的函式)——
-  一次 COMMIT、一次確認、原子;不像介面那樣連跑五個子命令(五趟 Drive、中途死掉留半成品、每步各問一次)。代價:PR 較大。
-- 非 TTY:`--from` / `--to` 必填、`--yes` 才寫;錯誤訊息一字不變。目標限制:Apple 不能當目標(只讀);local 只能加進既有檔。頂層 `capy migrate`。
-- 可用性卡在維護者的 Spotify 真帳號 smoke test(建清單 + 推曲目);Apple 當目標等 R-8 / T6。
+一個 `withCanonical` 裡依序做完,既有的核心函式都直接叫得到(`observeAndDerive`、`canon.Observe` + `absorb`、`pl.Append`、
+`planResolve` / `applyMappings` / `reviewLoop`、`planPush` / `applyPlans` / `finishPush`);唯一要抽的是 `pl link --create` 的同名檢查
+(`sameNamePlaylists`,兩邊共用)。
+
+- **讀來源**:直接讀 A 的清單,不連結、不記 base(使用者定案:一次性複製;沒有 base 的包袱,之後 `pl sync` 不會因 bootstrap 把 B 重排成 A 的順序)。
+  例外(review #55 第 1 點):沿用的正本本來就連著 A(手動流程做到一半)→ A 那半也 `observeAndDerive` 進 C、以 C 為準不尾端追加(不然 C 與 A 順序分岔,結尾建議的 sync 會重排 A);結尾照 links 講。同名正本連著 A 平台的另一份清單則擋下。
+- **決定正本 C**(`migrateCanonical`):B 既有且已連著某個 C → 沿用它;B 既有沒連 → 找同名(**B 的名字**,不然 push 會多排 rename 把使用者的清單改名)
+  的 C 接管,沒有就建,連著 B 平台別的清單的擋下;B 新建 → 以 A 的名字找同名的 C:沒有就建,連著 B 平台清單的擋下(指路 `--to B:<id>`),
+  其餘沿用——README 手動流程做到一半的人(canonical 已連著來源)就在這裡,再建一個同名的會讓 `find` 永遠歧義。
+- **既有的 B 先 `observeAndDerive`(只 pull 它)**:C 之後就是 B 的原樣(前綴),push 的兩個前提也靠這一步;pull 半邊撞閾值 → exit 3 指路 sync。
+- **A → C 尾端**:`Observe(A)` 拿 cid、`absorb`;C 沒有的(`Redirect(cid)` 比)依 A 的順序 `Append`,同 cid 略過(A 自己的重複也只留一份)。
+  A 的曲目都已在既有的 B 裡 → 「都已在,無變更」零寫入(pull 半邊看到的平台變更也留給 `pl sync`,不退化成一次 sync,同 `pl dedup`);新建的 B 則還要把正本既有的推過去。
+  push 失敗(平台 403、確認期間變了)時 COMMIT 照走(正本已接上、連結已記),結尾經 `finishPush` 以那個錯收場,exit 1、不講成功;剛建的清單不在第二次 list 裡則報錯並附 `pl link … 接回來` 的命令。
+- **resolve 到 B**:`planResolve` + `applyMappings`;新建的 B 還沒有 id 而 `resolve.Needs` 只看有 link 的 (清單, provider),給副本一個佔位 link。
+  TTY 且沒對到的 > 0 → 問一次要不要當場 `reviewLoop`(Esc = 整輪不寫入,清單也還沒建);`--yes` 不問。
+- **一張表、一次確認**:`syncHeader`,`dir` ∈ `pull` / `migrate`(接在尾端的來源曲目,reason 說推到哪或「沒有對應,這次不推」)/ `push`
+  (既有的 B 才算得出來)。`--dry-run` exit 2(`--yes` 也不放行)、非 TTY 沒 `--yes` exit 2、確認畫面說清楚幾首沒對到、正本既有幾首會一起推到新清單。
+- **確認之後才建清單**:取消、dry-run、擋下都不會在平台留下沒人連的空清單。建好後用**新的** `newPlatforms` 再 `observeAndDerive` 一次
+  (重新 list 才看得到它、讀到空清單、記下 base)。
+- **push strict 且只准 add**(`migratePlanPush`):B 有待同步的移除 / 換序 / 改名 → exit 3 先 `pl sync`——「只新增」是 migrate 的承諾,
+  待同步的變更交給 sync 而不是順手做掉。`applyPlans` → `finishPush`;新建後 COMMIT 失敗的訊息帶 `pl link` 接回的命令。
+- 結尾:搬了幾首、幾首沒對到(指路 `resolve --review` + `pl sync`)、來源沒有連結(要跟著來源就 `pl link` + `pl sync`)。
+- 不帶參數 + TTY 四段挑選(來源平台 → 清單 → 目標平台 → 既有的或「建一個跟來源同名的新清單」);非 TTY 要 `--from` / `--to` / `--yes`,
+  錯誤訊息一字不變。Apple 不能當目標(只讀);local 只能加進既有檔。頂層 `capy migrate`。
+- 測試:新建(來源順序、重複只留一份、dry-run / 非 TTY 不建、只有目標連著、再跑撞同名指路、指到既有「都已在」零寫入、之後 sync 零變更)、
+  加進既有(目標原 item 逐位元不變、沿用它連的正本、來源不連結)、既有沒連(正本叫目標的名字、沒有 rename)、沿用連著來源的正本、
+  沒對到的跳過再 pin + sync 補上、TTY 當場裁決與取消不建、四段挑選、各種拒絕(同名、缺 flag、只讀目標、空來源、待同步的移除)。
+- 可用性卡維護者的 Spotify 真帳號 smoke test(建清單 + 推曲目,同 PR #48);Apple 當目標等 R-8 / T6。
 
 ## 4. 產出
-- PR (1) `feat/pl-dedup`:§1 + §2,附 ARCHITECTURE v0.10、README、指南。
-- PR (2) `feat/migrate`:§3,合併 (1) 之後開。
+- PR (1) `feat/pl-dedup`:§1 + §2,附 ARCHITECTURE v0.10、README、指南 → PR #54 已合併(2026-09-15)。
+- PR (2) `feat/migrate`:§3,附 ARCHITECTURE v0.11(附錄 A、決策 39)、README / 指南「跨平台複製清單」改以 migrate 開頭、手動七步留作「背後在做什麼」。

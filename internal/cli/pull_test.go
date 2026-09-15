@@ -44,6 +44,13 @@ type fakeSpotify struct {
 	isrcAlias    map[string]string  // id → 借用這個 id 的 ISRC(同 ISRC 不同 id:單曲版 / 專輯版;pl dedup 用)
 }
 
+// createdCount:POST /me/playlists 建過幾個(migrate 的 dry-run / 取消不得建清單)。
+func (f *fakeSpotify) createdCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.created
+}
+
 // aliasISRC:讓 id 在清單裡回 src 的 ISRC(不同 id、同 ISRC)。
 func (f *fakeSpotify) aliasISRC(id, src string) {
 	f.mu.Lock()

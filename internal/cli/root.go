@@ -39,6 +39,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newSearchCmd())
 	cmd.AddCommand(newPlayCmd())
 	cmd.AddCommand(newPlCmd())
+	cmd.AddCommand(newMigrateCmd())
 	cmd.AddCommand(
 		simpleCtl("pause", "暫停播放", "⏸ 已暫停", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Pause(ctx) }),
 		simpleCtl("next", "下一首", "⏭ 下一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Next(ctx) }),
