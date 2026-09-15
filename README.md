@@ -109,6 +109,7 @@ capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provid
 capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
 capy pl dedup 通勤 [--dry-run] [--yes] [--force]   # 去掉正本裡重複的曲目(同平台 id 或同 ISRC;保留第一份、順序不動),再推到可寫的平台;沒有重複就零寫入
 capy pl dedup apple:冬日暖調                     # 直接讀平台清單、只報告哪幾首重複(不碰 Drive、不需要連結);Apple 只讀,照表在 app 裡手動刪
+capy migrate 公路旅行 --from apple --to spotify[:既有清單] [--dry-run] [--yes]   # 把清單搬到另一個平台(新建或加進既有;順序不動、只新增、不動來源);見下方「跨平台複製清單」
 capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
 capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
 capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個平台沒有這首;id 已屬另一 cid 時合併(非 TTY 要 --yes)
@@ -167,7 +168,19 @@ capy update [--dev]                      # 見上方「更新」
 
 ### 跨平台複製清單(例:Apple Music → Spotify)
 
-把清單從一個平台複製到另一個平台,做法是讓兩個平台連到同一個 canonical 清單,再推過去。下面以 Apple Music 的「公路旅行」複製到 Spotify 為例;Spotify、Apple Music、Google 三個都要先登入(`capy auth status` 看得到)。清單名有空白要加雙引號。
+一個命令(Spotify、Apple Music、Google 三個都要先登入,`capy auth status` 看得到;清單名有空白要加雙引號):
+
+```
+capy migrate 公路旅行 --from apple --to spotify              # 在 Spotify 建一個同名的私人清單,把 Apple 的曲目搬過去
+capy migrate 公路旅行 --from apple --to spotify:開車歌單      # 或加進 Spotify 既有的清單:接在它原本的曲目後面
+capy migrate                                                # 終端機裡不帶參數:逐段挑選來源平台、清單、目標平台、既有清單或建新的
+```
+
+它把下面手動流程的七步一次做完:讀來源(不連結、不動它)→ 決定正本與目標(既有的目標先拉進正本)→ 來源裡目標還沒有的依來源順序接在尾端(同平台 id 或同 ISRC 的略過,來源自己的重複也只留一份)→ 替每一首找目標平台的 id(ISRC 反查 → 模糊比對;沒對到的在終端機可以當場逐筆裁決)→ 一張表(`dir` 有 `pull` / `migrate` / `push` 三種)、一次確認 → 需要時才在目標建清單 → 推。先看不做用 `--dry-run`;腳本裡要 `--yes`(非 TTY 沒給以 exit 2 結束、不建清單)。**順序**:目標原本的順序是前綴,來源的曲目依來源的順序接在後面。**只新增**:永遠不動來源,對目標也不移除;目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 `capy pl sync`。沒對到的曲目這次不推,表裡會說,結尾給你 `capy resolve --review` 與 `capy pl sync` 的命令補上。完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要之後跟著來源的變動,結尾也會給 `capy pl link` + `capy pl sync` 的命令。目標不能是 Apple(目前只讀);local 只能加進既有檔(`--to local:<檔名>`)。
+
+> ⚠️ 建清單(`POST /me/playlists`)與推曲目(`PUT /playlists/{id}/items`)是照 Spotify 2026-02 的官方文件實作,**還沒在真帳號上驗證過**。遇到 404,或建出來的清單在 app 裡是公開的,請回報。
+
+**背後在做什麼(手動流程;想讓兩邊持續同步時用這個)**:讓兩個平台連到同一個 canonical 清單,再推過去。下面以 Apple Music 的「公路旅行」複製到 Spotify 為例。
 
 ```
 capy pl link 公路旅行 apple:公路旅行                  # 1. canonical 清單(不存在就建立)連到 Apple 的清單
@@ -178,8 +191,6 @@ capy resolve --review                                 # 5. 上一步列出 revie
 capy pl push 公路旅行 --provider spotify --dry-run    # 6. 先看要推什麼
 capy pl push 公路旅行 --provider spotify              # 7. 真的推
 ```
-
-> ⚠️ 建清單(`POST /me/playlists`)與推曲目(`PUT /playlists/{id}/items`)是照 Spotify 2026-02 的官方文件實作,**還沒在真帳號上驗證過**。遇到 404,或建出來的清單在 app 裡是公開的,請回報。
 
 - **第 3 步不能省。** push 的前提是這台裝置對那個 Spotify 清單 pull 過;第 2 步剛建的清單還沒有 base,直接 push 會以 exit 3 擋下。
 - **不會刪到任何東西。** Spotify 那邊是第一次 pull(沒有 base 不產生 remove),push 全部是新增,刪除閾值不會觸發。

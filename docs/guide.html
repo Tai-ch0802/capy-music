@@ -497,7 +497,12 @@ p.JL68l7EhogEeXd  冬日暖調          -
 
   <section>
     <h2>把清單複製到另一個平台</h2>
-    <p class="sub">做法是讓兩個平台連到同一個正本,再推過去。下面以 Apple Music 的「公路旅行」複製到 Spotify 為例;Spotify、Apple Music、Google 三個都要先登入。</p>
+    <p class="sub">一個命令就好。以 Apple Music 的「公路旅行」複製到 Spotify 為例;Spotify、Apple Music、Google 三個都要先登入。</p>
+<pre><code><span class="c-p">$</span> capy migrate 公路旅行 --from apple --to spotify              <span class="c-m"># 在 Spotify 建一個同名的私人清單,把曲目搬過去</span>
+<span class="c-p">$</span> capy migrate 公路旅行 --from apple --to spotify:開車歌單      <span class="c-m"># 或加進既有的清單:接在它原本的曲目後面</span>
+<span class="c-p">$</span> capy migrate                                                <span class="c-m"># 不帶參數:逐段挑選來源、清單、目標</span></code></pre>
+    <p style="margin-top:1.25rem">它先列出要搬什麼,你確認後才動手;需要新清單時也是確認之後才建。目標原本的順序是前綴,來源的曲目依來源的順序接在後面;來源裡目標已經有的(同一首歌,或同一個 ISRC)略過。永遠不動來源,對目標也只新增:目標有還沒同步的移除或換序時會先擋下來,請你先 <code>capy pl sync</code>。沒在目標平台找到的歌這次不推,終端機裡可以當場一首一首裁決,否則結尾會給你補上的命令。完成後只有目標連著正本(來源不連結,一次性複製);想之後跟著來源的變動,結尾也會給 <code>pl link</code> 加 <code>pl sync</code> 的命令。目標不能是 Apple(目前只讀)。</p>
+    <p style="margin-top:1.5rem"><b>背後在做什麼</b>:讓兩個平台連到同一個正本,再推過去。想讓兩邊持續同步的話,照下面手動做一次,之後就 <code>capy pl sync</code>。</p>
     <div class="steps">
       <div class="step">
         <div>
@@ -531,7 +536,7 @@ p.JL68l7EhogEeXd  冬日暖調          -
         </div>
       </div>
     </div>
-    <p style="margin-top:1.5rem">整個過程不會刪到任何東西:Spotify 那邊是第一次拉,推過去的全是新增。之後兩邊保持連結,Apple 清單有變動時跑 <code>capy pl sync 公路旅行</code> 就會帶過去;只想複製一次的話,完成後用 <code>capy pl unlink 公路旅行 apple</code> 解開。反方向(Spotify 到 Apple)目前還做不到:Apple 那一側只讀不寫。</p>
+    <p style="margin-top:1.5rem">整個過程不會刪到任何東西:Spotify 那邊是第一次拉,推過去的全是新增。之後兩邊保持連結,Apple 清單有變動時跑 <code>capy pl sync 公路旅行</code> 就會帶過去;只想複製一次的話,用上面的 <code>capy migrate</code>,或完成後 <code>capy pl unlink 公路旅行 apple</code> 解開。反方向(Spotify 到 Apple)目前還做不到:Apple 那一側只讀不寫。</p>
     <div class="note caution" style="margin-top:1.5rem">
       <h3>Spotify 的寫入還沒在真帳號上驗證過</h3>
       <p>建清單與推曲目是照 Spotify 2026 年 2 月的官方文件實作的,還沒有在真的帳號上跑過。遇到 404,或建出來的清單在 app 裡是公開的,請回報。</p>

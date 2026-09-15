@@ -572,20 +572,10 @@ func newPlLinkCmd() *cobra.Command {
 				}
 				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單。
 					// 安全前提:withCanonical 不重試 fn;哪天它加了樂觀重試,這裡就會建出第二個清單。
-					// 平台上已經有同名(EqualFold,同 resolvePlaylistID)而且連得上的清單(先在 app 裡建過、或 COMMIT 失敗後重跑):
-					// 連它就好,再建一個同名的只會讓 <平台>:<名稱> 變歧義。讀不到的(追蹤的別人的清單)連不了,不算撞名,照常建。
-					var dup []string
-					for _, x := range refs {
-						if !strings.EqualFold(x.Name, pl.Name) {
-							continue
-						}
-						ok, err := readable(ctx, r, x.ID)
-						if err != nil {
-							return friendlyErr(prov, err)
-						}
-						if ok {
-							dup = append(dup, x.ID)
-						}
+					// 平台上已經有同名而且連得上的清單(先在 app 裡建過、或 COMMIT 失敗後重跑):連它就好(sameNamePlaylists,migrate 也用)。
+					dup, err := sameNamePlaylists(ctx, r, refs, pl.Name)
+					if err != nil {
+						return friendlyErr(prov, err)
 					}
 					switch len(dup) {
 					case 0:
