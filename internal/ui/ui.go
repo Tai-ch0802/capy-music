@@ -78,7 +78,6 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 	for _, r := range rows {
 		measure(r)
 	}
-	fitWidths(widths, header, TermWidth())
 	// wrapCell:超過欄寬就換行。ansi.Wrap 英文在字邊界斷、CJK 逐字斷、跳脫碼保留(儲存格帶樣式又換了行,
 	// 樣式會延續到同一行後面的補白 —— 目前沒有呼叫端在儲存格上樣式,標題的粗體是這裡自己套的)。
 	// ansi.Wrap 把連字號當斷點,卻會讓「字 -」黏在上一行而超出欄寬("The Question - Single" 在 12 欄
@@ -133,6 +132,16 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 		}
 		return out
 	}
+	// 比終端機寬:先開檢視窗格(要有鍵盤),每列一行、自然寬度;看完再把換行版印進捲動區當紀錄。
+	// 窗格開不起來就直接印,不擋輸出。
+	if natural := over(widths, TermWidth()); natural > 0 && len(rows) > 0 && StdinIsTTY() {
+		body := make([]string, 0, len(rows))
+		for _, r := range rows {
+			body = append(body, lines(r, nil)...) // 還沒縮欄,每列剛好一行
+		}
+		_ = Pager(lines(header, nil)[0], body)
+	}
+	fitWidths(widths, header, TermWidth())
 	for _, l := range lines(header, func(s string) string { return boldStyle.Render(s) }) {
 		fmt.Fprintln(w, l)
 	}
@@ -174,13 +183,7 @@ func fitWidths(widths []int, header []string, total int) {
 	if n == 0 {
 		return
 	}
-	over := func() int {
-		sum := (n - 1) * colGap
-		for _, x := range widths {
-			sum += x
-		}
-		return sum - total
-	}
+	over := func() int { return over(widths, total) }
 	atomic := make([]bool, n)
 	keep := -1
 	for i, h := range header {
@@ -215,6 +218,15 @@ func fitWidths(widths []int, header []string, total int) {
 			return
 		}
 	}
+}
+
+// over:這組欄寬(含欄距)比 total 寬多少;≤ 0 就是放得下。
+func over(widths []int, total int) int {
+	sum := (len(widths) - 1) * colGap
+	for _, x := range widths {
+		sum += x
+	}
+	return sum - total
 }
 
 // FormatDuration: ms → m:ss。
