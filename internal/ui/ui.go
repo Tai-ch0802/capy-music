@@ -2,15 +2,30 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
+
+// ErrInterrupted:使用者在檢視窗格裡按了 Ctrl-C。命令要跟著結束(exit 130,同 SIGINT),
+// 不可再往下問確認、寫入。
+var ErrInterrupted = errors.New("已中斷")
+
+// TableOption:Table 的選項。
+type TableOption func(*tableConfig)
+
+type tableConfig struct{ noPager bool }
+
+// NoPager:這次不開檢視窗格。給 --yes 的命令用:README 說 --yes「只跳過確認」,它從頭到尾不該碰鍵盤,
+// 而且 pl pull 的表是握著 pull.lock 印的,窗格開多久鎖就握多久。
+func NoPager(c *tableConfig) { c.noPager = true }
 
 // IsTTY 用 x/term(Windows console 上 os.Stat trick 不可靠)。
 func IsTTY(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
@@ -46,9 +61,14 @@ const (
 
 // Table: TTY → 依顯示寬度(ansi.StringWidth,全形字算 2、ANSI 不算)對齊、含粗體標題;放不下時
 // 儲存格**換行、不截斷**(資訊要給完整,不要給一半;原子欄永遠完整,見 fitWidths)。表頭跟資料列
-// 一視同仁:欄名比縮過的欄寬長也會折(PROVIDER_ID 在 80 欄折成 PROVIDER / _ID)。
+// 一視同仁:欄名比縮過的欄寬長也會折(PROVIDER_ID 在 80 欄折成 PROVIDER / _ID)。比終端機寬時先開
+// 檢視窗格(pager.go),看完再印換行版;窗格裡按 Ctrl-C 回 ErrInterrupted,什麼都不印。
 // 非 TTY → 無標題 raw TSV(cut -f 友善),一個位元組都不改。
-func Table(w io.Writer, tty bool, header []string, rows [][]string) {
+func Table(w io.Writer, tty bool, header []string, rows [][]string, opts ...TableOption) error {
+	var cfg tableConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if !tty {
 		for _, r := range rows {
 			cells := make([]string, len(r))
@@ -57,7 +77,7 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 			}
 			fmt.Fprintln(w, strings.Join(cells, "\t"))
 		}
-		return
+		return nil
 	}
 	n := len(header) // 欄數 = 標題與最長的列取大者:列多出來的欄用空標題,絕不靜默丟資料(非 TTY 路徑本來就全印)
 	for _, r := range rows {
@@ -78,7 +98,6 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 	for _, r := range rows {
 		measure(r)
 	}
-	fitWidths(widths, header, TermWidth())
 	// wrapCell:超過欄寬就換行。ansi.Wrap 英文在字邊界斷、CJK 逐字斷、跳脫碼保留(儲存格帶樣式又換了行,
 	// 樣式會延續到同一行後面的補白 —— 目前沒有呼叫端在儲存格上樣式,標題的粗體是這裡自己套的)。
 	// ansi.Wrap 把連字號當斷點,卻會讓「字 -」黏在上一行而超出欄寬("The Question - Single" 在 12 欄
@@ -133,6 +152,18 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 		}
 		return out
 	}
+	// 比終端機寬:先開檢視窗格(要有鍵盤、沒被關掉),每列一行、自然寬度;看完再把換行版印進捲動區當紀錄。
+	// 窗格開不起來就直接印,不擋輸出;使用者按 Ctrl-C 就是中止,紀錄也不印。
+	if natural := over(widths, TermWidth()); natural > 0 && len(rows) > 0 && !cfg.noPager && PagerEnabled() && StdinIsTTY() {
+		body := make([]string, 0, len(rows))
+		for _, r := range rows {
+			body = append(body, lines(r, nil)...) // 還沒縮欄,每列剛好一行
+		}
+		if err := Pager(w, lines(header, nil)[0], body); errors.Is(err, tea.ErrInterrupted) {
+			return ErrInterrupted
+		}
+	}
+	fitWidths(widths, header, TermWidth())
 	for _, l := range lines(header, func(s string) string { return boldStyle.Render(s) }) {
 		fmt.Fprintln(w, l)
 	}
@@ -141,6 +172,7 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 			fmt.Fprintln(w, l)
 		}
 	}
+	return nil
 }
 
 // atomicHeader:這一欄是原子值 —— ID 之類要複製去下一個命令的字串,永遠不縮、不折(折成三段夾在補白裡,
@@ -174,13 +206,7 @@ func fitWidths(widths []int, header []string, total int) {
 	if n == 0 {
 		return
 	}
-	over := func() int {
-		sum := (n - 1) * colGap
-		for _, x := range widths {
-			sum += x
-		}
-		return sum - total
-	}
+	excess := func() int { return over(widths, total) } // 別叫 over:短變數宣告裡 body 看得到外層那個,改成 var 就是無窮遞迴
 	atomic := make([]bool, n)
 	keep := -1
 	for i, h := range header {
@@ -199,7 +225,7 @@ func fitWidths(widths []int, header []string, total int) {
 	}
 	for _, floor := range []int{minCellWidth, tightCellWidth} {
 		shrink := func(i int) {
-			if o := over(); o > 0 && widths[i] > floor {
+			if o := excess(); o > 0 && widths[i] > floor {
 				widths[i] = max(widths[i]-o, floor)
 			}
 		}
@@ -211,10 +237,19 @@ func fitWidths(widths []int, header []string, total int) {
 		if keep >= 0 {
 			shrink(keep)
 		}
-		if over() <= 0 {
+		if excess() <= 0 {
 			return
 		}
 	}
+}
+
+// over:這組欄寬(含欄距)比 total 寬多少;≤ 0 就是放得下。
+func over(widths []int, total int) int {
+	sum := (len(widths) - 1) * colGap
+	for _, x := range widths {
+		sum += x
+	}
+	return sum - total
 }
 
 // FormatDuration: ms → m:ss。

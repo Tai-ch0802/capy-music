@@ -403,8 +403,7 @@ func newDevicesCmd() *cobra.Command {
 				}
 				rows[i] = []string{d.Name, d.Type, active, strconv.Itoa(d.VolumePct), d.ID}
 			}
-			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"名稱", "類型", "狀態", "音量", "ID"}, rows)
-			return nil
+			return ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"名稱", "類型", "狀態", "音量", "ID"}, rows)
 		},
 	}
 	providerFlag(cmd)

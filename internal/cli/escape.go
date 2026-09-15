@@ -227,7 +227,9 @@ func newDriveInitCmd() *cobra.Command {
 				fmt.Fprintln(stderr, msg)
 				return nil
 			}
-			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ACTION", "FILE"}, rows)
+			if err := ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ACTION", "FILE"}, rows, tableOpts(yes)...); err != nil {
+				return err
+			}
 			if dryRun {
 				return &PendingError{N: len(rows)}
 			}

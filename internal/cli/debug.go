@@ -60,8 +60,7 @@ func newDebugLookupISRCCmd() *cobra.Command {
 				}
 				rows[i] = []string{tr.ProviderID, tr.Title, strings.Join(tr.Artists, ", "), tr.Album, dur, tr.ISRC}
 			}
-			ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION", "ISRC"}, rows)
-			return nil
+			return ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION", "ISRC"}, rows)
 		},
 	}
 	providerFlag(cmd)

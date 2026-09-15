@@ -85,8 +85,7 @@ func newSearchCmd() *cobra.Command {
 			_ = cc.Save()
 			tty := stdoutIsTTY(cmd)
 			// TSV 欄序(文件化):id, title, artists, album, duration_ms
-			ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "曲名", "藝人", "專輯", "時長"}, trackRows(tracks, tty))
-			return nil
+			return ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "曲名", "藝人", "專輯", "時長"}, trackRows(tracks, tty))
 		},
 	}
 	cmd.Flags().Int("limit", 10, "結果數(單次 API 上限 10,超過自動分頁)")

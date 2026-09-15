@@ -64,7 +64,9 @@ push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完�
 					rows = append(rows, append([]string{"push"}, r...))
 				}
 				if len(rows) > 0 {
-					ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), syncHeader, rows)
+					if err := ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), syncHeader, rows, tableOpts(yes)...); err != nil {
+						return err
+					}
 				}
 				if len(refused) > 0 { // planPush 不 strict 時不會回 refused;留著是免得哪天有人改回 strict 而靜靜寫入
 					return &BlockedError{Msg: strings.Join(refused, ";")}

@@ -193,7 +193,7 @@ func (m tuiModel) execResult(msg tuiExecMsg) tea.Cmd {
 		return m.println(tuiSeg{"✗ " + head + ":" + msg.err.Error(), m.theme.Mutedly})
 	}
 	mark := "✗ "
-	if c := ee.ExitCode(); c == 2 || c == 3 {
+	if c := ee.ExitCode(); c == 2 || c == 3 || c == 130 { // 130 = 在檢視窗格裡按 Ctrl-C 中止,也不是壞掉
 		mark = "· "
 	}
 	return m.println(tuiSeg{fmt.Sprintf("%s%s 結束碼 %d", mark, head, ee.ExitCode()), m.theme.Mutedly})

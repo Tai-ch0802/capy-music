@@ -451,7 +451,9 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 					return err
 				}
 				if len(rows) > 0 {
-					ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows)
+					if err := ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows, tableOpts(yes)...); err != nil {
+						return err
+					}
 				}
 				if len(refused) > 0 {
 					return &BlockedError{Msg: strings.Join(refused, ";")}

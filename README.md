@@ -149,7 +149,7 @@ capy update [--dev]                      # 見上方「更新」
 之後開放切換時從那裡加。
 
 
-所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,放不下時儲存格**換行、不截斷**(ID 欄永遠完整,曲名最後才縮)。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
+所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,放不下時儲存格**換行、不截斷**(ID 欄永遠完整,曲名最後才縮);比終端機還寬時會先開一個**檢視窗格**(每列一行,`←→` 橫向、`↑↓` 上下、`g`/`G` 頭尾、`q` 離開;`Ctrl-C` 是中止,命令以 exit 130 結束、不再往下問),離開後表格以換行的形式留在捲動區。帶 `--yes` 的命令不開窗格;`CAPY_PAGER=never` 一律不開(script / expect、CI 給了 pty 那種「有 TTY 但沒有人」的情況)。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
 
 `capy pl pull` 的 exit code 是對外契約(cron 靠它):`0` 無變更或已成功套用、`1` 錯誤、`2` 有待套用的變更(`--dry-run`、非 TTY 沒給 `--yes`、在終端機取消)、`3` 安全閥擋下(Drive appdata 不完整;或單一清單要刪 >10 首、或 >30% 且 >3 首)。`--yes` 只跳過確認、`--force` 只越過刪除閾值且只能配單一清單(`capy pl pull <名稱> --force`,不能配 `--all`:安全閥一次只解除一個清單),兩者都不放行「Drive 不完整」——那條的出口是 `capy drive init --from-local`。變更集在非 TTY 下是無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;「這次動了幾筆」看行數,不佔 exit code。寫入順序固定 Drive 先、本機 `state.db` 後;`state.db` 只是快取,刪掉後下一次 pull 會從 Drive 重建。
 
