@@ -57,6 +57,37 @@ func TestFormFilterHelpSaysCancel(t *testing.T) {
 	}
 }
 
+// 表單套 capy 的配色:標題與說明用 Text、選中的用 Accent。huh 預設的 Charm 主題把標題染成靛藍(#7571F9,
+// 背景偵測不到時是更深的 #5A56E0),深色終端機上很難讀 —— resolve --review 的說明就是這樣被回報的。
+func TestFormUsesCapyTheme(t *testing.T) {
+	f := newForm(huh.NewGroup(huh.NewSelect[int]().Title("這是標題").Description("這行說明要讀得到").
+		Options(huh.NewOption("第一個選項", 0), huh.NewOption("第二個選項", 1))))
+	f.Init()
+	v := f.View()
+	const text, accent = "38;2;201;209;217", "38;2;63;178;127" // GeekGreen 的 Text 與 Accent
+	// 緊鄰文字前面的那一段 SGR 才算數:選中的選項前面還有 "> " 的主色,看太寬會被它矇混過去
+	styleBefore := func(s string) string {
+		t.Helper()
+		i := strings.Index(v, s)
+		if i < 0 {
+			t.Fatalf("畫面裡找不到 %q:%q", s, v)
+		}
+		j := strings.LastIndex(v[:i], "\x1b[")
+		if j < 0 {
+			t.Fatalf("%q 前面沒有樣式:%q", s, v[:i])
+		}
+		return v[j:i]
+	}
+	for _, s := range []string{"這是標題", "這行說明要讀得到", "第二個選項"} {
+		if sty := styleBefore(s); !strings.Contains(sty, text) {
+			t.Errorf("%q 緊鄰的樣式要是 Text(不是 huh 的灰 243 / 靛藍):%q", s, sty)
+		}
+	}
+	if sty := styleBefore("第一個選項"); !strings.Contains(sty, accent) {
+		t.Errorf("選中的選項緊鄰的樣式要是 Accent:%q", sty)
+	}
+}
+
 // pickLog:挑選器被叫過幾次、每次的標題與選項。
 type pickLog struct {
 	titles []string
