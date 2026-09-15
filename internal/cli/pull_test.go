@@ -21,6 +21,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/drive"
 	"github.com/Tai-ch0802/capy-music/internal/drive/drivetest"
 	"github.com/Tai-ch0802/capy-music/internal/store"
+	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
 // fakeSpotify:可變的假平台。lists 是 /me/playlists 的順序,items 是每個清單的曲目 id(平台順序)。
@@ -349,10 +350,14 @@ func TestExitCodeTable(t *testing.T) {
 	}{
 		{nil, 0}, {errors.New("x"), 1}, {&AmbiguousError{}, 2}, {&PendingError{N: 2}, 2}, {&BlockedError{Msg: "b"}, 3},
 		{fmt.Errorf("wrap:%w", &BlockedError{Msg: "b"}), 3},
+		{ui.ErrInterrupted, 130}, {fmt.Errorf("wrap:%w", ui.ErrInterrupted), 130}, // 窗格裡按 Ctrl-C:同 SIGINT
 	} {
 		if code, _ := ExitCode(tc.err); code != tc.want {
 			t.Errorf("%v → %d(要 %d)", tc.err, code, tc.want)
 		}
+	}
+	if _, msg := ExitCode(ui.ErrInterrupted); msg != "" {
+		t.Errorf("中斷不印東西(使用者自己按的):%q", msg)
 	}
 	if _, msg := ExitCode(errors.New("boom")); msg != "Error: boom" {
 		t.Errorf("一般錯誤要帶 Error: 前綴:%q", msg)

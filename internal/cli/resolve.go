@@ -532,7 +532,9 @@ exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有
 					}
 				}
 				if len(rows) > 0 {
-					ui.Table(out, stdoutIsTTY(cmd), resolveHeader, rows)
+					if err := ui.Table(out, stdoutIsTTY(cmd), resolveHeader, rows, tableOpts(yes)...); err != nil {
+						return err
+					}
 				}
 				if review && queued > 0 && !reviewIsTTY(cmd) {
 					return &ReviewNeedsTTYError{N: queued}

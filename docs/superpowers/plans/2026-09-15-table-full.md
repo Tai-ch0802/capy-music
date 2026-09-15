@@ -40,7 +40,13 @@
   終端機寬度不對)。子命令拿到的是真的 TTY,介面裡也能用,不需要 pty + VT 模擬器。
 - 離開之後把 W 的換行版印進捲動區當紀錄:窗格關了就沒了,紀錄要留在可回捲、可複製的地方。
 - 放得下、非 TTY、stdin 是管線(cron 把 stdout 接到終端機那種)、沒有列:都不開,行為同 W。
-- 窗格開不起來(bubbletea 回錯)就直接印換行版,不擋輸出。
+  **`--yes` 的命令也不開**(README 說 `--yes` 只跳過確認,它從頭到尾不該碰鍵盤;變更集又是握著 `pull.lock`
+  印的,窗格開多久鎖就握多久);**`CAPY_PAGER=never` 一律不開**——script / expect、CI 給了 pty、tmux send-keys
+  這些「有 TTY 但沒有人」的情況要有逃生口(review #52)。
+- **Ctrl-C 是中止,不是離開**:`tea.Interrupt` → `Table` 回 `ui.ErrInterrupted`、什麼都不印 → 命令以 exit 130
+  (同 SIGINT)結束,`pl pull` 不會再問「套用?」、`resolve --review` 不會進裁決迴圈。為此 `Table` 改回 `error`,
+  12 個呼叫點都接(review #52)。
+- 窗格開不起來(bubbletea 回其他錯)就直接印換行版,不擋輸出。
 - 測試:窗格的 Update / View 是純函式(捲動、夾住、狀態列、表頭跟著捲、離開鍵);`Table` 的開關條件用
   `Pager` / `StdinIsTTY` 兩個替換點驗。
 - 代價:多一個要離開的畫面;「放得下不開、放不下才開」兩種體驗。

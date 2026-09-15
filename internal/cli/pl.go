@@ -44,7 +44,9 @@ func newPlListCmd() *cobra.Command {
 				}
 				rows[i] = []string{ref.ID, ref.Name, total, ref.Owner}
 			}
-			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "名稱", "曲數", "擁有者"}, rows)
+			if err := ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "名稱", "曲數", "擁有者"}, rows); err != nil {
+				return err
+			}
 			cc := cache.Load() // 補全與 play 的清單來源(只是快取,寫失敗靜默)
 			pls := make([]cache.Playlist, len(refs))
 			for i, ref := range refs {
@@ -131,8 +133,7 @@ func newPlShowCmd() *cobra.Command {
 				return friendlyErr(p.ID(), err)
 			}
 			tty := stdoutIsTTY(cmd)
-			ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "曲名", "藝人", "專輯", "時長"}, trackRows(tracks, tty))
-			return nil
+			return ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "曲名", "藝人", "專輯", "時長"}, trackRows(tracks, tty))
 		},
 	}
 	providerFlag(cmd)

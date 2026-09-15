@@ -79,8 +79,7 @@ func newDebugDriveLsCmd() *cobra.Command {
 				rows = append(rows, []string{f.ID, f.Name, f.AppProperties["kind"], f.AppProperties["pid"], f.AppProperties["device_id"],
 					strconv.FormatInt(f.Version, 10), f.ModifiedTime.Local().Format("2006-01-02 15:04:05")})
 			}
-			ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "NAME", "KIND", "PID", "DEVICE", "VER", "MODIFIED"}, rows)
-			return nil
+			return ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "NAME", "KIND", "PID", "DEVICE", "VER", "MODIFIED"}, rows)
 		},
 	}
 	cmd.Flags().String("q", "", "files.list 的 q(例:appProperties has { key='kind' and value='pl' })")

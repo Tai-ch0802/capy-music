@@ -2,7 +2,9 @@ package ui
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -47,6 +49,12 @@ func TestPagerKeysAndView(t *testing.T) {
 	if s := plain(lines[11]); !strings.Contains(s, "第 1–10 列 / 30") || !strings.Contains(s, "欄 1–40 / 120") {
 		t.Errorf("狀態列要說看到哪:%q", s)
 	}
+	// 寬一點的視窗要看得到 g/G 的提示(它是唯一跳很遠的鍵,不寫出來沒人發現)
+	step(tea.WindowSizeMsg{Width: 100, Height: 12})
+	if s := plain(strings.Split(m.View().Content, "\n")[11]); !strings.Contains(s, "g/G") {
+		t.Errorf("狀態列要提 g/G:%q", s)
+	}
+	step(tea.WindowSizeMsg{Width: 40, Height: 12})
 	// → 捲 8 欄,表頭跟著捲
 	step(tea.KeyPressMsg{Code: tea.KeyRight})
 	lines = strings.Split(m.View().Content, "\n")
@@ -86,8 +94,8 @@ func TestPagerKeysAndView(t *testing.T) {
 	if !strings.Contains(plain(strings.Split(m.View().Content, "\n")[11]), "第 1–10 列 / 30") {
 		t.Errorf("g 要回頂:%q", m.View().Content)
 	}
-	// q / Esc / Ctrl-C 都離開
-	for _, k := range []tea.KeyPressMsg{{Code: 'q', Text: "q"}, {Code: tea.KeyEscape}, {Code: 'c', Mod: tea.ModCtrl}} {
+	// q / Esc 是「看完了」;Ctrl-C 是中斷,命令要跟著結束(不可再問確認)
+	for _, k := range []tea.KeyPressMsg{{Code: 'q', Text: "q"}, {Code: tea.KeyEscape}} {
 		cmd := step(k)
 		if cmd == nil {
 			t.Fatalf("%s 要離開", k)
@@ -95,6 +103,11 @@ func TestPagerKeysAndView(t *testing.T) {
 		if _, ok := cmd().(tea.QuitMsg); !ok {
 			t.Errorf("%s 要是 Quit", k)
 		}
+	}
+	if cmd := step(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}); cmd == nil {
+		t.Fatal("Ctrl-C 要有反應")
+	} else if _, ok := cmd().(tea.InterruptMsg); !ok {
+		t.Error("Ctrl-C 要是 Interrupt,不是 Quit")
 	}
 	// 視窗變小:高度跟著變
 	step(tea.WindowSizeMsg{Width: 30, Height: 5})
@@ -106,15 +119,21 @@ func TestPagerKeysAndView(t *testing.T) {
 // 表格比終端機寬、而且 stdin / stdout 都是 TTY 時才開窗格;窗格拿到的是自然寬度的行(每列一行、不截不折);
 // 看完照樣把換行版印進捲動區。放得下、非 TTY、stdin 是管線、沒有列:都不開。
 func TestTableOpensPagerOnlyWhenWiderThanTerminal(t *testing.T) {
-	origPager, origStdin := Pager, StdinIsTTY
-	t.Cleanup(func() { Pager, StdinIsTTY = origPager, origStdin })
+	origPager, origStdin, origEnabled := Pager, StdinIsTTY, PagerEnabled
+	t.Cleanup(func() { Pager, StdinIsTTY, PagerEnabled = origPager, origStdin, origEnabled })
 	var got struct {
 		calls  int
+		w      io.Writer
 		header string
 		rows   []string
 	}
-	Pager = func(h string, rows []string) error { got.calls++; got.header, got.rows = h, rows; return nil }
+	Pager = func(w io.Writer, h string, rows []string) error {
+		got.calls++
+		got.w, got.header, got.rows = w, h, rows
+		return nil
+	}
 	StdinIsTTY = func() bool { return true }
+	PagerEnabled = func() bool { return true }
 
 	id := strings.Repeat("a", 22)
 	album := strings.Repeat("專輯", 8)
@@ -123,9 +142,11 @@ func TestTableOpensPagerOnlyWhenWiderThanTerminal(t *testing.T) {
 
 	withWidth(t, 60)
 	buf := &bytes.Buffer{}
-	Table(buf, true, header, rows)
-	if got.calls != 1 {
-		t.Fatalf("比終端機寬要開一次窗格:%d", got.calls)
+	if err := Table(buf, true, header, rows); err != nil {
+		t.Fatalf("看完就繼續,不該有錯:%v", err)
+	}
+	if got.calls != 1 || got.w != buf {
+		t.Fatalf("比終端機寬要開一次窗格、畫在同一個 writer:%d %v", got.calls, got.w == buf)
 	}
 	if len(got.rows) != 2 || !strings.Contains(got.rows[0], album) || !strings.Contains(got.rows[0], id) || strings.Contains(got.rows[0], "…") {
 		t.Errorf("窗格要拿到每列一行、完整不截的行:%q", got.rows)
@@ -168,5 +189,46 @@ func TestTableOpensPagerOnlyWhenWiderThanTerminal(t *testing.T) {
 	Table(&bytes.Buffer{}, true, []string{strings.Repeat("H", 70)}, nil)
 	if got.calls != 0 {
 		t.Error("沒有列不該開窗格")
+	}
+	// --yes 的命令(NoPager)不開:README 說 --yes 只跳過確認,從頭到尾不碰鍵盤;變更集又是握著 pull.lock 印的
+	buf.Reset()
+	Table(buf, true, header, rows, NoPager)
+	if got.calls != 0 || !strings.Contains(buf.String(), id) {
+		t.Errorf("NoPager 不該開窗格、表格照印:%d %q", got.calls, buf.String())
+	}
+	// CAPY_PAGER=never 不開:有 TTY 但沒有人的情況(script / expect、CI 給了 pty)要有逃生口
+	PagerEnabled = func() bool { return false }
+	buf.Reset()
+	Table(buf, true, header, rows)
+	if got.calls != 0 || !strings.Contains(buf.String(), id) {
+		t.Errorf("PagerEnabled=false 不該開窗格、表格照印:%d %q", got.calls, buf.String())
+	}
+	PagerEnabled = func() bool { return true }
+}
+
+// 窗格裡按 Ctrl-C 是中止:Table 回 ErrInterrupted、什麼都不印,呼叫端才不會接著問「套用?」(pl pull 看到
+// 要刪 8 首按 Ctrl-C 的人已經表態了)。窗格開不起來(其他錯)就當沒開,表格照印。
+func TestTableInterruptedPagerStopsTheCommand(t *testing.T) {
+	origPager, origStdin, origEnabled := Pager, StdinIsTTY, PagerEnabled
+	t.Cleanup(func() { Pager, StdinIsTTY, PagerEnabled = origPager, origStdin, origEnabled })
+	StdinIsTTY = func() bool { return true }
+	PagerEnabled = func() bool { return true }
+	header := []string{"ID", "曲名", "藝人", "專輯", "時長"}
+	rows := [][]string{{strings.Repeat("a", 22), "很長很長的歌名很長很長的歌名", "Billie Eilish & Khalid", strings.Repeat("專輯", 8), "3:47"}}
+	withWidth(t, 60)
+
+	Pager = func(io.Writer, string, []string) error { return tea.ErrInterrupted }
+	buf := &bytes.Buffer{}
+	err := Table(buf, true, header, rows)
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("Ctrl-C 要回 ErrInterrupted:%v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("中止就什麼都不印:%q", buf.String())
+	}
+	Pager = func(io.Writer, string, []string) error { return errors.New("no tty") }
+	buf.Reset()
+	if err := Table(buf, true, header, rows); err != nil || !strings.Contains(buf.String(), "aaaa") {
+		t.Errorf("窗格開不起來就直接印、不回錯:%v %q", err, buf.String())
 	}
 }

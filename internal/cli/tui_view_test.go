@@ -137,7 +137,7 @@ func TestTUIEchoesCommandAndExitCode(t *testing.T) {
 	for _, tc := range []struct {
 		code     int
 		wantMark string
-	}{{1, "✗"}, {2, "·"}, {3, "·"}} {
+	}{{1, "✗"}, {2, "·"}, {3, "·"}, {130, "·"}} {
 		*got = nil
 		m = step(t, m, tuiExecMsg{args: []string{"pl", "pull"}, err: exitErr(t, tc.code)}, true)
 		if len(*got) != 1 || !strings.HasPrefix(ansi.Strip((*got)[0]), tc.wantMark) || !strings.Contains((*got)[0], "結束碼") {

@@ -57,8 +57,19 @@ func ExitCode(err error) (int, string) {
 		return 2, err.Error()
 	case errors.As(err, &blk):
 		return 3, err.Error()
+	case errors.Is(err, ui.ErrInterrupted): // 檢視窗格裡按了 Ctrl-C:同 SIGINT 的 130,不印東西
+		return 130, ""
 	}
 	return 1, "Error: " + err.Error()
+}
+
+// tableOpts:--yes 的命令不開檢視窗格 —— README 說 --yes「只跳過確認」,它從頭到尾不該碰鍵盤,
+// 而且變更集是握著 pull.lock 印的,窗格開多久鎖就握多久(PR #52 review)。
+func tableOpts(yes bool) []ui.TableOption {
+	if yes {
+		return []ui.TableOption{ui.NoPager}
+	}
+	return nil
 }
 
 // ---- 共用骨架 ----
@@ -715,7 +726,9 @@ func newPlPullCmd() *cobra.Command {
 					return err
 				}
 				if len(rows) > 0 { // 零列時 TTY 也不印空表頭
-					ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows)
+					if err := ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), pullHeader, rows, tableOpts(yes)...); err != nil {
+						return err
+					}
 				}
 				if len(blocked) > 0 && !force { // 安全閥先於提示:被擋下的 derive 結果不落地,拿它算「尚未對應」會對不上
 					return &BlockedError{Msg: strings.Join(blocked, ";") + "。加 --force 越過(先用 --dry-run 看清楚要刪什麼)"}

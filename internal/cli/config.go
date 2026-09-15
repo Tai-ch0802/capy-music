@@ -118,8 +118,7 @@ func newConfigCmd() *cobra.Command {
 					}
 					rows = append(rows, []string{k, v})
 				}
-				ui.Table(cmd.OutOrStdout(), tty, []string{"設定", "值"}, rows)
-				return nil
+				return ui.Table(cmd.OutOrStdout(), tty, []string{"設定", "值"}, rows)
 			},
 		},
 	)
