@@ -24,6 +24,8 @@ import (
 // TTY 可當場逐筆裁決)→ 一張表、一次確認 → 需要時才在 B 建清單 → push。
 // 順序:B(或 C)原本的順序是前綴、A 的曲目依 A 的順序接在後面——明確建,不靠 DERIVE(沒有 base 的 bootstrap 會採平台順序)。
 // A 不連結 canonical(使用者定案):一次性複製,之後 pl sync 不會因 bootstrap 把 B 重排成 A 的順序;要持續同步走 README 的 link + sync。
+// 例外:沿用的正本本來就連著 A(手動流程做到一半)——那 A 那半也 pull 進 C、以正本為準,不尾端追加(review #55:不然 C 與 A 順序分岔,
+// 之後的 sync 會重排 A);結尾也照 links 講「來源連著」而不是「一次性複製」。
 // 永遠不刪 A;對 B 只做 add——B 有待同步的移除 / 換序 / 改名時擋下(exit 3),先 pl sync。
 
 // migrateIsTTY:確認與當場裁決的 TTY 閘;測試替換點(同 reviewIsTTY 慣例)。
@@ -144,11 +146,6 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		if !slices.ContainsFunc(refsB, func(x provider.PlaylistRef) bool { return x.ID == dst.id }) { // 同 pl link:不在自己列表裡的 pull 會當 gone
 			return fmt.Errorf("%s:%s 不在你的清單列表裡(capy pl list 看得到的才算),不能當目標", dst.prov, dst.id)
 		}
-		if ok, err := readable(ctx, rB, dst.id); err != nil {
-			return friendlyErr(dst.prov, err)
-		} else if !ok {
-			return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不能當目標", dst.prov, dst.id)
-		}
 	case to == "": // 挑選器:既有的清單,或建一個新的
 		newLabel := ""
 		if cerr == nil {
@@ -156,6 +153,13 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		}
 		if dst.id, err = pickPlatformPlaylist(dst.prov, refsB, newLabel); err != nil {
 			return err
+		}
+	}
+	if dst.id != "" { // --to 與挑選器兩條路都要過:讀不到的清單 push 前提一會擋,但它指路的 pl pull 一樣讀不到,使用者會卡住(review #55)
+		if ok, err := readable(ctx, rB, dst.id); err != nil {
+			return friendlyErr(dst.prov, err)
+		} else if !ok {
+			return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不能當目標", dst.prov, dst.id)
 		}
 	}
 	if dst.id == "" {
@@ -191,13 +195,6 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		fmt.Fprintf(stderr, "%s 是空的,沒有東西可搬\n", src)
 		return nil
 	}
-	target := func() string {
-		if dst.id == "" {
-			return dst.prov + ":" + dst.name + "(新建)"
-		}
-		return dst.String()
-	}
-
 	var deferred error
 	applied, touched := 0, false
 	created, plName, summary := "", "", ""
@@ -210,27 +207,33 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		targets := []*canon.Playlist{pl}
 		pf := newPlatforms(ctx)
 		var pullRows [][]string
-		var lives map[liveKey]*canon.Observed
-		if dst.id != "" { // 既有的 B 先吸進 C:C 之後就是 B 的原樣(前綴),push 的兩個前提也靠這一步
-			rows, blocked, lv, err := observeAndDerive(ctx, s, targets, dst.prov, stderr, pf)
+		lives := map[liveKey]*canon.Observed{}
+		observe := func(prov string, pf *platforms) error {
+			rows, blocked, lv, err := observeAndDerive(ctx, s, targets, prov, stderr, pf)
 			if err != nil {
 				return err
 			}
 			if len(blocked) > 0 {
 				return &BlockedError{Msg: strings.Join(blocked, ";") + "。migrate 不越過刪除閾值:先 capy pl sync " + pl.Name + " 處理那邊的變更,再 migrate"}
 			}
+			pullRows = append(pullRows, rows...)
+			maps.Copy(lives, lv)
+			return nil
+		}
+		// 正本已連著來源(README 手動流程做到一半、或本來就在同步):來源那半也 pull 進 C,新歌落在它在來源的真實位置——
+		// 尾端追加會讓正本與來源的順序分岔,結尾建議的 pl sync 就會把使用者的來源清單重排(review #55,踩到決策 38)
+		if pl.Links[src.prov] != "" {
+			if err := observe(src.prov, pf); err != nil {
+				return err
+			}
+		}
+		if dst.id != "" { // 既有的 B 先吸進 C:C 之後就是 B 的原樣(前綴),push 的兩個前提也靠這一步
+			if err := observe(dst.prov, pf); err != nil {
+				return err
+			}
 			if pl.Links[dst.prov] != dst.id {
 				return fmt.Errorf("%s 端找不到清單 %s(已取消連結),重跑一次", dst.prov, dst.id)
 			}
-			pullRows, lives = rows, lv
-		}
-		// A 的曲目:C 還沒有的依 A 的順序接在尾端;同一首(同平台 id 或同 ISRC)只留一份
-		id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
-		lcid, updated := canon.Observe(id, src.prov, s.tracks.Tracks, tracksA)
-		s.absorb(updated)
-		have := map[string]bool{}
-		for _, it := range pl.Items {
-			have[id.Redirect(it.CID)] = true
 		}
 		type appended struct {
 			pos   int
@@ -238,15 +241,26 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			track provider.Track
 		}
 		var added []appended
-		for i, cid := range lcid {
-			if have[cid] {
-				continue
+		// 正本就是來源的正本(pull 剛做過):以正本為準,不再尾端追加——來源裡 C 刻意移除的那幾首(規則 4′ 留給 push)不能被加回來
+		follow := pl.Links[src.prov] == src.id
+		if !follow { // A 的曲目:C 還沒有的依 A 的順序接在尾端;同一首(同平台 id 或同 ISRC)只留一份
+			id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
+			lcid, updated := canon.Observe(id, src.prov, s.tracks.Tracks, tracksA)
+			s.absorb(updated)
+			have := map[string]bool{}
+			for _, it := range pl.Items {
+				have[id.Redirect(it.CID)] = true
 			}
-			have[cid] = true
-			if _, err := pl.Append(cid); err != nil {
-				return err
+			for i, cid := range lcid {
+				if have[cid] {
+					continue
+				}
+				have[cid] = true
+				if _, err := pl.Append(cid); err != nil {
+					return err
+				}
+				added = append(added, appended{len(pl.Items) - 1, cid, tracksA[i]})
 			}
-			added = append(added, appended{len(pl.Items) - 1, cid, tracksA[i]})
 		}
 		existing := len(pl.Items) - len(added) // 正本既有的份數:新建的目標要把它們一起推過去(沿用了連著來源的正本時就是全部);既有的目標它們已在上面
 		if len(added) == 0 && dst.id != "" {   // 沒東西可接就一個位元組都不寫:pull 半邊看到的變更留給 sync(同 pl dedup 的規矩),不退化成一次 sync
@@ -300,16 +314,24 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			rows = append(rows, append([]string{"pull"}, r...))
 		}
 		unmapped := 0
+		if dst.id == "" { // 新建的目標:正本既有的也會推過去——同樣進表(建了才算得出真的 push 列,先用 mapping 算等價的)、同樣算沒對應的;
+			pos := 0 //   不然對不到的默默不推、表是空的、結尾不說(review #55)
+			for _, it := range pl.Items[:existing] {
+				id, reason, ok := migrateReason(s, wB, dst.prov, it.CID)
+				action, at := "add", strconv.Itoa(pos)
+				if ok {
+					pos++
+				} else {
+					action, at, unmapped = "skip", "", unmapped+1
+				}
+				t := s.tracks.Tracks[it.CID]
+				rows = append(rows, []string{"push", action, dst.prov, pl.Name, at, it.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
+			}
+		}
 		for _, a := range added {
-			m := s.tracks.Tracks[a.cid].Mappings[dst.prov]
-			var reason string
-			switch {
-			case m.ID != "" && wB.Pushable(m.ID):
-				reason = fmt.Sprintf("推到 %s:%s(%s %d)", dst.prov, m.ID, m.Source, m.Confidence)
-			case m.ID != "":
-				reason, unmapped = "有 mapping 但推不出去(local file / library-only),只能在平台手動加", unmapped+1
-			default:
-				reason, unmapped = dst.prov+" 沒有對應,這次不推", unmapped+1
+			_, reason, ok := migrateReason(s, wB, dst.prov, a.cid)
+			if !ok {
+				unmapped++
 			}
 			rows = append(rows, []string{"migrate", "add", src.prov, pl.Name, strconv.Itoa(a.pos), a.cid, a.track.ProviderID, a.track.Title, strings.Join(a.track.Artists, ", "), reason})
 		}
@@ -339,12 +361,19 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			if !migrateIsTTY(cmd) {
 				return &PendingError{N: n}
 			}
-			prompt := fmt.Sprintf("把 %s 的 %d 首加進 %s?", src, len(added), target())
+			var prompt string
+			switch {
+			case dst.id != "":
+				prompt = fmt.Sprintf("把 %s 的 %d 首加進 %s?", src, len(added), dst)
+			case follow:
+				prompt = fmt.Sprintf("在 %s 建立清單「%s」,把正本(連著 %s)的 %d 首推過去?", dst.prov, pl.Name, src, len(pl.Items))
+			case existing > 0:
+				prompt = fmt.Sprintf("在 %s 建立清單「%s」,把 %s 的 %d 首連同正本原有的 %d 首推過去?", dst.prov, pl.Name, src, len(added), existing)
+			default:
+				prompt = fmt.Sprintf("在 %s 建立清單「%s」,把 %s 的 %d 首推過去?", dst.prov, pl.Name, src, len(added))
+			}
 			if unmapped > 0 {
 				prompt += fmt.Sprintf("(其中 %d 首在 %s 沒有對應,這次不推)", unmapped, dst.prov)
-			}
-			if dst.id == "" && existing > 0 {
-				prompt += fmt.Sprintf("(正本既有的 %d 首會一起推到新清單)", existing)
 			}
 			ok, err := confirmWrite(prompt)
 			if err != nil {
@@ -379,14 +408,23 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		if applied > 0 {
 			fmt.Fprintf(stderr, "已推送 %d 筆變更\n", applied)
 		}
-		summary = fmt.Sprintf("已把 %s 的 %d 首接進正本 %s(%s),推了 %d 首到 %s\n", src, len(added), pl.Name, pl.PID, applied, dst)
-		if created != "" && existing > 0 {
-			summary += fmt.Sprintf("正本既有的 %d 首一起推到新清單了\n", existing)
+		if follow {
+			pulled := ""
+			if len(pullRows) > 0 {
+				pulled = fmt.Sprintf("、pull 了 %d 筆來源變更", len(pullRows))
+			}
+			summary = fmt.Sprintf("正本 %s(%s)連著 %s,以正本為準%s,推了 %d 首到 %s\n", pl.Name, pl.PID, src, pulled, applied, dst)
+		} else {
+			summary = fmt.Sprintf("已把 %s 的 %d 首接進正本 %s(%s,共 %d 首),推了 %d 首到 %s\n", src, len(added), pl.Name, pl.PID, len(pl.Items), applied, dst)
 		}
 		if unmapped > 0 {
 			summary += fmt.Sprintf("%d 首在 %s 沒有對應、這次沒推:capy resolve %q --provider %s --review 裁決後,capy pl sync %q --provider %s 推過去\n", unmapped, dst.prov, pl.Name, dst.prov, pl.Name, dst.prov)
 		}
-		summary += fmt.Sprintf("來源沒有連結(一次性複製)。之後要跟著 %s 的變動:capy pl link %q %s:%s,再 capy pl sync %q\n", src.prov, pl.Name, src.prov, src.id, pl.Name)
+		if link := pl.Links[src.prov]; link != "" { // 兩句都要看 links 講:來源連著時「一次性複製」是假話、再叫人 pl link 是多餘的(review #55)
+			summary += fmt.Sprintf("來源 %s:%s 也連著這個正本(不是一次性複製):之後 capy pl sync %q 會讓兩邊都跟上正本\n", src.prov, link, pl.Name)
+		} else {
+			summary += fmt.Sprintf("來源沒有連結(一次性複製)。之後要跟著 %s 的變動:capy pl link %q %s:%s,再 capy pl sync %q\n", src.prov, pl.Name, src.prov, src.id, pl.Name)
+		}
 		return nil
 	})
 	if err == nil && deferred == nil { // push 失敗(deferred)時 COMMIT 照走、但結尾要以它收場(同 push / sync 經 finishPush);成功才講成功
@@ -435,6 +473,8 @@ func migrateCanonical(s *canonState, src, dst migrateEnd, stderr io.Writer) (*ca
 		return nil, fmt.Errorf("已經有叫「%s」的 canonical 清單(%s)連著 %s:%s:要加進那個清單就 --to %s:%s", pl.Name, pl.PID, dst.prov, pl.Links[dst.prov], dst.prov, pl.Links[dst.prov])
 	case pl.Links[dst.prov] != "":
 		return nil, fmt.Errorf("同名的 canonical 清單 %s(%s)已連結 %s:%s,不是 %s:先 capy pl unlink %q %s", pl.Name, pl.PID, dst.prov, pl.Links[dst.prov], dst.id, pl.Name, dst.prov)
+	case dst.id == "" && pl.Links[src.prov] != "" && pl.Links[src.prov] != src.id: // 同名但連著來源平台另一份:沿用會把這份的歌推去那份
+		return nil, fmt.Errorf("同名的 canonical 清單 %s(%s)連著 %s:%s,不是來源 %s:要搬的是那一份就用它,不然先 capy pl unlink %q %s", pl.Name, pl.PID, src.prov, pl.Links[src.prov], src, pl.Name, src.prov)
 	default:
 		links := "還沒連任何平台"
 		if len(pl.Links) > 0 {
@@ -467,6 +507,18 @@ func migratePlanPush(ctx context.Context, s *canonState, targets []*canon.Playli
 		}
 	}
 	return plans, rows, nil
+}
+
+// migrateReason:一首曲目在目標平台的去向——推得出去 / 有 mapping 但推不出去 / 沒對應(後兩種算 unmapped);id 給表的 provider_id 欄。
+func migrateReason(s *canonState, w provider.PlaylistWriter, prov, cid string) (id, reason string, ok bool) {
+	m := s.tracks.Tracks[cid].Mappings[prov]
+	switch {
+	case m.ID != "" && w.Pushable(m.ID):
+		return m.ID, fmt.Sprintf("推到 %s:%s(%s %d)", prov, m.ID, m.Source, m.Confidence), true
+	case m.ID != "":
+		return m.ID, "有 mapping 但推不出去(local file / library-only),只能在平台手動加", false
+	}
+	return "", prov + " 沒有對應,這次不推", false
 }
 
 // sameNamePlaylists:平台上跟 name 同名(EqualFold,同 resolvePlaylistID)而且連得上的清單 id。pl link --create 與 migrate 建清單前都先擋——

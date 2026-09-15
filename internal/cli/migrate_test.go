@@ -178,6 +178,79 @@ func TestMigrateAdoptsCanonicalLinkedToSource(t *testing.T) {
 	}
 }
 
+// 正本已連著來源(手動流程做到一半):來源那半也 pull 進正本,新歌落在它在來源的真實位置;結尾說來源連著、不說一次性複製;
+// 之後 sync 零變更、來源順序不動。修之前尾端追加 → 正本 [a b n] ≠ 來源 [n a b],sync 把來源重排成 [a b n](review #55 第 1 點)。
+func TestMigrateSourceLinkedCanonicalFollowsSource(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	catalogISRC(fs1, "a", "b", "n")
+	fs2.set("q1", "公路旅行", "a", "b")
+	mustPull(t, "pl", "link", "公路旅行", "apple:q1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	fs2.set("q1", "公路旅行", "n", "a", "b") // 使用者在來源最前面插一首
+	out, errs := mustPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify", "--yes")
+	if !slices.Equal(dirActions(out), []string{"pull add apple", "push add spotify", "push add spotify", "push add spotify"}) {
+		t.Fatalf("表 = 來源的 pull + 推到新清單的三首:\n%s", out)
+	}
+	if !slices.Equal(fs1.tracksOf("new1"), []string{"n", "a", "b"}) || !slices.Equal(cidsOf(drivePlaylistNamed(t, dc, "公路旅行")), []string{fakeCID("n"), fakeCID("a"), fakeCID("b")}) {
+		t.Fatalf("正本與新清單都是來源的順序:%v", fs1.tracksOf("new1"))
+	}
+	if strings.Contains(errs, "來源沒有連結") || !strings.Contains(errs, "以正本為準、pull 了 1 筆來源變更,推了 3 首到 spotify:new1") || !strings.Contains(errs, "來源 apple:q1 也連著這個正本") {
+		t.Fatalf("結尾要照 links 講:%s", errs)
+	}
+	if out, errs := mustPull(t, "pl", "sync", "公路旅行", "--yes"); strings.TrimSpace(out) != "" || !strings.Contains(errs, "無變更") || !slices.Equal(fs2.tracksOf("q1"), []string{"n", "a", "b"}) {
+		t.Fatalf("之後 sync 零變更、來源順序不動:%s%s %v", out, errs, fs2.tracksOf("q1"))
+	}
+}
+
+// 新建目標時,正本既有、在目標對不到的曲目也要進表(push skip 列)、算進「沒有對應」、結尾要說;
+// 修之前表是空的、結尾不說還講錯數字、exit 0(review #55 第 2 點)。
+func TestMigrateNewTargetReportsUnmappedExisting(t *testing.T) {
+	fs1, fs2, _, _ := twoPlatforms(t)
+	catalogISRC(fs1, "a") // b 在 spotify 對不到
+	fs2.set("q1", "公路旅行", "a", "b")
+	mustPull(t, "pl", "link", "公路旅行", "apple:q1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	out, errs := mustPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify", "--yes")
+	if !slices.Equal(dirActions(out), []string{"push add spotify", "push skip spotify"}) || !strings.Contains(out, "\t"+fakeCID("b")+"\t\tsong-b\tartist\tspotify 沒有對應,這次不推\n") {
+		t.Fatalf("既有的 b 要列成 skip:\n%s", out)
+	}
+	if !strings.Contains(errs, "1 首在 spotify 沒有對應、這次沒推:capy resolve \"公路旅行\" --provider spotify --review") || !strings.Contains(errs, "推了 1 首到 spotify:new1") || strings.Contains(errs, "一起推到新清單") {
+		t.Fatalf("結尾要說沒推的那首、數字要是真的:%s", errs)
+	}
+	if !slices.Equal(fs1.tracksOf("new1"), []string{"a"}) {
+		t.Fatalf("new1:%v", fs1.tracksOf("new1"))
+	}
+}
+
+// 挑選器選到讀不到的清單:同 --to 路徑以 exit 1 擋下、零寫入;修之前落到 push 前提一的 exit 3,指路的 pl pull 一樣讀不到(review #55 第 3 點)。
+func TestMigratePickerRefusesUnreadableTarget(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	catalogISRC(fs1, "a")
+	fs2.set("q1", "公路旅行", "a")
+	fs1.set("p1", "別人的清單", "x")
+	fs1.mu.Lock()
+	fs1.restricted["p1"] = true
+	fs1.mu.Unlock()
+	stubPickers(t, 1, 0, 0, 0) // apple → q1 → spotify → p1
+	_, _, err := runPull(t, "migrate", "--yes")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "spotify 清單 p1 讀不到內容") || len(fs1.written()) != 0 || len(driveFiles(t, dc)) != 0 {
+		t.Fatalf("挑選器路徑也要過 readable:%v", err)
+	}
+}
+
+// 新建目標時同名的正本連著來源平台的另一份清單:沿用會把這份的歌推去那份,擋下指路。
+func TestMigrateRefusesCanonicalLinkedToOtherSourcePlaylist(t *testing.T) {
+	fs1, fs2, _, _ := twoPlatforms(t)
+	catalogISRC(fs1, "a", "b")
+	fs2.set("q1", "公路旅行", "a")
+	fs2.set("q7", "舊版", "b")
+	mustPull(t, "pl", "link", "公路旅行", "apple:q7") // 正本「公路旅行」連著 apple:q7
+	_, _, err := runPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify", "--yes")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "連著 apple:q7,不是來源 apple:q1") || fs1.createdCount() != 0 {
+		t.Fatalf("要擋:%v", err)
+	}
+}
+
 // 沒對到的曲目這次不推、表裡與結尾都說;之後 resolve pin + pl sync 補上。
 func TestMigrateUnmappedTrackSkippedThenResolved(t *testing.T) {
 	fs1, fs2, dc, _ := twoPlatforms(t)
@@ -216,7 +289,7 @@ func TestMigrateOffersReviewInTTYAndCancelCreatesNothing(t *testing.T) {
 	if _, _, err := runPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify"); exitOf(t, err) != 2 || fs1.createdCount() != 0 || len(driveFiles(t, dc)) != 0 {
 		t.Fatalf("取消:exit 2、不建清單、不寫 Drive:%v", err)
 	}
-	if len(prompts) != 2 || !strings.Contains(prompts[0], "1 首在 spotify 沒有自動對應到,現在逐筆裁決?") || !strings.Contains(prompts[1], "把 apple:q1 的 2 首加進 spotify:公路旅行(新建)?(其中 1 首在 spotify 沒有對應,這次不推)") {
+	if len(prompts) != 2 || !strings.Contains(prompts[0], "1 首在 spotify 沒有自動對應到,現在逐筆裁決?") || !strings.Contains(prompts[1], "在 spotify 建立清單「公路旅行」,把 apple:q1 的 2 首推過去?(其中 1 首在 spotify 沒有對應,這次不推)") {
 		t.Fatalf("兩個提示:%q", prompts)
 	}
 	prompts, answer = nil, true
