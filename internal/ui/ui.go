@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -46,7 +45,8 @@ const (
 )
 
 // Table: TTY → 依顯示寬度(ansi.StringWidth,全形字算 2、ANSI 不算)對齊、含粗體標題;放不下時
-// 儲存格**換行、不截斷**(資訊要給完整,不要給一半;ID 欄永遠完整,見 fitWidths);
+// 儲存格**換行、不截斷**(資訊要給完整,不要給一半;原子欄永遠完整,見 fitWidths)。表頭跟資料列
+// 一視同仁:欄名比縮過的欄寬長也會折(PROVIDER_ID 在 80 欄折成 PROVIDER / _ID)。
 // 非 TTY → 無標題 raw TSV(cut -f 友善),一個位元組都不改。
 func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 	if !tty {
@@ -88,6 +88,9 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 		if ansi.StringWidth(c) <= width {
 			return []string{c}
 		}
+		if width < 2 {
+			width = 2 // 全形字切不進 1 欄,硬斷也救不了;現在的下限到不了這裡,守著免得哪天調低了靜靜破功
+		}
 		var out []string
 		for _, l := range strings.Split(ansi.Wrap(c, width, ""), "\n") {
 			if ansi.StringWidth(l) > width {
@@ -118,7 +121,7 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 					c = cells[i][k]
 				}
 				pad := max(0, widths[i]-ansi.StringWidth(c))
-				if style != nil {
+				if style != nil && c != "" { // 空儲存格不套:染成粗體的空字串會讓 TrimRight 修不到尾端補白
 					c = style(c)
 				}
 				b.WriteString(c)
@@ -140,13 +143,32 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string) {
 	}
 }
 
-// fitWidths 把欄寬縮到 total 以內;縮過的儲存格由 Table 換行,不截斷。**ID 欄不縮**:ID 是要複製去
-// 下一個命令的原子字串,斷成兩行沒意義。其餘順序照舊(UX 計畫 R2):從最右欄往左,第一個非 ID 欄
-// (曲名/名稱)最後。下限先用 minCellWidth,還放不下再以 tightCellWidth 縮一輪;還是放不下就放棄 ——
-// 欄寬全部還原,讓終端機自己折行(半縮的表格既換了行又超寬,兩邊的壞處都吃到;截掉才是丟資料)。
-//
-// 假設(靠位置、不靠語意):「最該保留的欄 = 第一個標題不是 ID 的欄」。目前四張表都成立;之後若在
-// 前面插一個窄欄(例如 # 或 平台),被保護的會變成那個窄欄——屆時把它改成明確指定,別靠這個推斷。
+// atomicHeader:這一欄是原子值 —— ID 之類要複製去下一個命令的字串,永遠不縮、不折(折成三段夾在補白裡,
+// 使用者會以為複製到的是完整值,比看得出被截的 … 更糟)。靠標題名判斷,規則集中在這裡:標題都是這個 repo
+// 自己定的,加新表時對照這條;改成呼叫端逐一宣告要動 12 個呼叫點,換來的只是同一份知識散在各處
+// (PR #51 review 的取捨)。
+func atomicHeader(h string) bool {
+	switch h {
+	case "ID", "CID", "PID", "ISRC", "DEVICE":
+		return true
+	}
+	return strings.HasSuffix(h, "_ID")
+}
+
+// keepHeader:最該保留寬度的欄,最後才縮 —— 曲目 / 清單的名字(UX 計畫 R2)。
+func keepHeader(h string) bool {
+	switch h {
+	case "曲名", "名稱", "TITLE", "NAME":
+		return true
+	}
+	return false
+}
+
+// fitWidths 把欄寬縮到 total 以內;縮過的儲存格由 Table 換行,不截斷。原子欄(atomicHeader)不縮;
+// 其餘從最右欄往左,名字欄(keepHeader;沒有就第一個非原子欄)最後。下限先用 minCellWidth,還放不下
+// 再以 tightCellWidth 縮一輪;還是放不下就**盡力而為** —— 留著縮過的欄寬,剩下的超寬交給終端機折行。
+// 全部還原成自然寬度的話,差幾欄會變成差幾十欄,整張表都被軟折行毀掉(PR #51 review:resolve 在 80 欄
+// 從 84 變 107)。9–10 欄又帶 22 字 Spotify ID 的 pull / sync / resolve 在 80 欄本來就放不下,那是分頁器的事。
 func fitWidths(widths []int, header []string, total int) {
 	n := len(widths)
 	if n == 0 {
@@ -159,15 +181,22 @@ func fitWidths(widths []int, header []string, total int) {
 		}
 		return sum - total
 	}
-	id, name := -1, -1
+	atomic := make([]bool, n)
+	keep := -1
 	for i, h := range header {
-		if h == "ID" && id < 0 {
-			id = i
-		} else if name < 0 {
-			name = i
+		atomic[i] = atomicHeader(h)
+		if keep < 0 && keepHeader(h) {
+			keep = i
 		}
 	}
-	orig := slices.Clone(widths)
+	if keep < 0 {
+		for i := range header {
+			if !atomic[i] {
+				keep = i
+				break
+			}
+		}
+	}
 	for _, floor := range []int{minCellWidth, tightCellWidth} {
 		shrink := func(i int) {
 			if o := over(); o > 0 && widths[i] > floor {
@@ -175,18 +204,17 @@ func fitWidths(widths []int, header []string, total int) {
 			}
 		}
 		for i := n - 1; i >= 0; i-- {
-			if i != id && i != name {
+			if !atomic[i] && i != keep {
 				shrink(i)
 			}
 		}
-		if name >= 0 {
-			shrink(name)
+		if keep >= 0 {
+			shrink(keep)
 		}
 		if over() <= 0 {
 			return
 		}
 	}
-	copy(widths, orig) // 放棄:別留下半縮的表格
 }
 
 // FormatDuration: ms → m:ss。

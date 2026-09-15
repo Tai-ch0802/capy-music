@@ -179,10 +179,7 @@ func TestTableTTYWrapsInsteadOfTruncating(t *testing.T) {
 	}
 	lines = render(60) // 第一輪縮到 12 還超,第二輪縮到 8 才放得下:仍然放得下、仍然完整
 	fits(60, lines)
-	lines = render(40) // 連下限都放不下:放棄 —— 欄寬全部還原、一列一行讓終端機折行,不截也不半縮
-	if len(lines) != 1 || !strings.Contains(lines[0], title) || !strings.Contains(lines[0], album) {
-		t.Errorf("寬 40 放不下就該整列原樣印出:%q", lines)
-	}
+	render(40) // 連下限都放不下:盡力縮,剩下的交給終端機折行;仍然不截、ID 仍完整、碎片仍接得回去(render 裡驗)
 }
 
 // ansi.Wrap 把連字號當斷點,「字 -」會黏在上一行而超出欄寬("The Question - Single" 在 12 欄折成 14 欄),
@@ -210,15 +207,111 @@ func TestTableTTYWrapNeverExceedsWidth(t *testing.T) {
 	}
 }
 
-// ID 欄永遠完整,在最後一欄也一樣。放不下就放棄,不截、不半縮(名稱不該被切成兩行)。
+// ID 欄永遠完整,在最後一欄也一樣;放不下時其餘欄盡力縮(名稱可以折),但不截。
 func TestTableTTYIDNeverShrinks(t *testing.T) {
 	withWidth(t, 40)
 	buf := &bytes.Buffer{}
 	id := strings.Repeat("f", 40)
-	Table(buf, true, []string{"名稱", "類型", "ID"}, [][]string{{"MacBook Pro", "Computer", id}})
+	header := []string{"名稱", "類型", "ID"}
+	Table(buf, true, header, [][]string{{"MacBook Pro", "Computer", id}})
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[1], "MacBook Pro") || !strings.Contains(lines[1], id) {
-		t.Errorf("ID 與名稱都要完整、在同一行:%q", buf.String())
+	if !strings.Contains(lines[1], id) {
+		t.Errorf("ID 要完整、在第一行:%q", buf.String())
+	}
+	starts := make([]int, len(header))
+	for i, h := range header {
+		starts[i] = cellOffset(t, lines[0], h)
+	}
+	if got := columnText(lines[1:], starts, 0); squash(got) != squash("MacBook Pro") {
+		t.Errorf("名稱碎片接回去要等於原文:%q", got)
+	}
+}
+
+// 原子欄(ID / *_ID / CID / PID / ISRC / DEVICE)在最寬的幾張表上也永遠不折;放不下時盡力縮,不會比
+// 自然寬度更糟(PR #51 review:resolve 在 80 欄不可以從 84 退化成 107)。上限用測試自己算的尺:
+// 原子欄自然寬 + 其餘欄 min(自然寬, 8) + 欄距。
+func TestTableTTYAtomicColumnsAndWideTables(t *testing.T) {
+	spotifyID := "3n3Ppam7vgaVa1iaRUc9Lp"
+	cid := "c_01H8XQZ4K7"
+	pull := []string{"ACTION", "PROVIDER", "PLAYLIST", "POS", "CID", "PROVIDER_ID", "TITLE", "ARTISTS", "REASON"}
+	pullRow := []string{"add", "spotify", "冬日暖調", "12", cid, spotifyID, "Mr. Brightside", "The Killers", "new in drive"}
+	cases := []struct {
+		name   string
+		header []string
+		row    []string
+		atomic []int // 哪幾欄是原子欄(測試自己列,不問被測的函式)
+	}{
+		{"pull", pull, pullRow, []int{4, 5}},
+		{"sync", append([]string{"DIR"}, pull...), append([]string{"push"}, pullRow...), []int{5, 6}},
+		{"resolve", []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFIDENCE", "SOURCE", "TITLE", "ARTISTS", "REASON"},
+			[]string{"link", cid, "spotify", spotifyID, "0.98", "isrc", "Mr. Brightside", "The Killers", "isrc exact"}, []int{1, 3}},
+		{"debug", []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION", "ISRC"},
+			[]string{spotifyID, "Mr. Brightside", "The Killers", "Hot Fuss", "3:42", "USIR20400274"}, []int{0, 5}},
+		{"drive", []string{"ID", "NAME", "KIND", "PID", "DEVICE", "VER", "MODIFIED"},
+			[]string{"1AbCdEfGhIjKlMnOpQrStUvWxYz012345", "pl__p_01H8XQ.json", "playlist", "p_01H8XQ", "dev-9f8e7d6c5b4a", "3", "2026-09-14T06:29:23Z"}, []int{0, 3, 4}},
+	}
+	for _, c := range cases {
+		isAtomic := map[int]bool{}
+		for _, i := range c.atomic {
+			isAtomic[i] = true
+		}
+		bound := 2 * (len(c.header) - 1)
+		for i := range c.header {
+			nat := max(ansi.StringWidth(c.header[i]), ansi.StringWidth(c.row[i]))
+			if isAtomic[i] {
+				bound += nat
+			} else {
+				bound += min(nat, 8)
+			}
+		}
+		for _, width := range []int{80, 120} {
+			withWidth(t, width)
+			buf := &bytes.Buffer{}
+			Table(buf, true, c.header, [][]string{c.row})
+			out := strings.TrimRight(buf.String(), "\n")
+			if strings.Contains(out, "…") {
+				t.Errorf("%s 寬 %d:不可截斷:%q", c.name, width, out)
+			}
+			lines := strings.Split(out, "\n")
+			for _, i := range c.atomic {
+				if !strings.Contains(out, c.row[i]) {
+					t.Errorf("%s 寬 %d:原子欄 %q 不可折:%q", c.name, width, c.row[i], out)
+				}
+			}
+			limit := max(width, bound) // 放得下就要放得下;放不下也不可比「盡力縮」的上限寬
+			for i, l := range lines {
+				if w := ansi.StringWidth(l); w > limit {
+					t.Errorf("%s 寬 %d:第 %d 行寬 %d 超過 %d(盡力縮的上限):%q", c.name, width, i, w, limit, l)
+				}
+			}
+		}
+	}
+	// 名字欄最後才縮:TITLE 在 PLAYLIST 之前縮的話,「Mr. Brightside」會被折而 PLAYLIST 完整
+	row := []string{"add", "spotify", "上班路上聽的長清單名稱", "12", cid, spotifyID, "Mr. Brightside", "Sycco", "isrc"}
+	withWidth(t, 108) // 自然寬 116,超 8:REASON / ARTISTS 已短於下限,PLAYLIST 要吸收
+	buf := &bytes.Buffer{}
+	Table(buf, true, pull, [][]string{row})
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if !strings.Contains(lines[1], "Mr. Brightside") || strings.Contains(lines[1], "上班路上聽的長清單名稱") {
+		t.Errorf("TITLE 要最後才縮、PLAYLIST 先折:%q", lines)
+	}
+}
+
+// 表頭折行時右邊是空儲存格:不可拖著補白與「染成粗體的空字串」(PR #51 review)。
+func TestTableTTYHeaderLinesNoTrailingPadding(t *testing.T) {
+	withWidth(t, 80)
+	buf := &bytes.Buffer{}
+	header := []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFIDENCE", "SOURCE", "TITLE", "ARTISTS", "REASON"}
+	Table(buf, true, header, [][]string{{"link", "c_01H8XQZ4K7", "spotify", "3n3Ppam7vgaVa1iaRUc9Lp", "0.98", "isrc", "Mr. Brightside", "The Killers", "isrc exact"}})
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if strings.TrimSpace(ansi.Strip(lines[1])) != "CE" { // CONFIDENCE(10)不是原子欄,縮到 8 折成 CONFIDEN / CE
+		t.Fatalf("前置條件:CONFIDENCE 在 80 欄要折成兩行:%q", lines)
+	}
+	for i := 0; i < 2; i++ {
+		plain := ansi.Strip(lines[i])
+		if strings.TrimRight(plain, " ") != plain || strings.Contains(lines[i], "\x1b[1m\x1b[m") {
+			t.Errorf("表頭第 %d 行不可拖著補白或空的粗體:%q", i, lines[i])
+		}
 	}
 }
 
