@@ -65,21 +65,26 @@ func TestFormUsesCapyTheme(t *testing.T) {
 	f.Init()
 	v := f.View()
 	const text, accent = "38;2;201;209;217", "38;2;63;178;127" // GeekGreen 的 Text 與 Accent
+	// 緊鄰文字前面的那一段 SGR 才算數:選中的選項前面還有 "> " 的主色,看太寬會被它矇混過去
 	styleBefore := func(s string) string {
 		t.Helper()
 		i := strings.Index(v, s)
 		if i < 0 {
 			t.Fatalf("畫面裡找不到 %q:%q", s, v)
 		}
-		return v[max(0, i-60):i]
+		j := strings.LastIndex(v[:i], "\x1b[")
+		if j < 0 {
+			t.Fatalf("%q 前面沒有樣式:%q", s, v[:i])
+		}
+		return v[j:i]
 	}
 	for _, s := range []string{"這是標題", "這行說明要讀得到", "第二個選項"} {
-		if sty := styleBefore(s); !strings.Contains(sty, text) || strings.Contains(sty, "38;5;243") || strings.Contains(sty, "117;113;249") || strings.Contains(sty, "90;86;224") {
-			t.Errorf("%q 前面的樣式要是 Text,不是 huh 的灰 / 靛藍:%q", s, sty)
+		if sty := styleBefore(s); !strings.Contains(sty, text) {
+			t.Errorf("%q 緊鄰的樣式要是 Text(不是 huh 的灰 243 / 靛藍):%q", s, sty)
 		}
 	}
 	if sty := styleBefore("第一個選項"); !strings.Contains(sty, accent) {
-		t.Errorf("選中的選項要是 Accent:%q", sty)
+		t.Errorf("選中的選項緊鄰的樣式要是 Accent:%q", sty)
 	}
 }
 
