@@ -41,13 +41,13 @@ func newPlDedupCmd() *cobra.Command {
 		Long: `重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首)。保留第一次出現的那份、拿掉後面的,剩下的相對順序一個都不動。
 
 <provider>:<清單 ID 或名稱>:直接讀平台清單、只報告(非 TTY 是無標題 TSV:pos id title artists reason;pos 從 0 起);不碰 Drive、
-不需要連結;有沒有重複 exit code 都是 0。Apple 目前只讀,只能到這裡——照表在 app 裡手動刪。--yes / --force 配這種寫法是錯誤。
+不需要連結;有沒有重複 exit code 都是 0。Apple 目前只讀,只能到這裡——照表在 app 裡手動刪。--yes / --force / --dry-run / --provider 配這種寫法是錯誤。
 
 canonical 清單(name|pid;不帶參數且在終端機裡會開挑選器):pl sync 的一輪中間多一步——先 pull(平台現況吸進正本)、
 正本去重、再 push 把多出來的份從可寫的平台拿掉。一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason,
 dir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確認;exit code 同 pl sync(0 無變更或已套用、1 錯誤、2 待套用、3 安全閥)。
-正本與各平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 pl sync)。刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),
---force 越過;寫不了的平台(Apple)還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。`,
+正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 pl sync;--provider 沒選到或讀不到的平台這次沒檢查,stderr 會說)。
+刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),--force 越過;寫不了的平台(Apple)還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。`,
 		Args: argsOrPicker(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if prov != "" && !isProviderID(prov) {
@@ -60,8 +60,10 @@ dir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確�
 					if err != nil {
 						return err
 					}
-					if yes || force || prov != "" {
-						return fmt.Errorf("%s:%s 只報告、不改平台(--yes / --force / --provider 在這裡沒有意義);要由 capy 移除:capy pl link <名稱> %s:%s,再 capy pl dedup <名稱>", p, ref, p, ref)
+					// 帶著寫入形狀的 flag 卻只報告、exit 0,會讓人以為刪了;--dry-run 反過來會讓人以為沒有重複——canonical 路徑有重複是 exit 2,
+					// 這裡永遠是 0,同一個 flag 兩種 exit code 不能並存(PR #54 review)
+					if yes || force || dryRun || prov != "" {
+						return fmt.Errorf("%s:%s 只報告、不改平台(--yes / --force / --dry-run / --provider 在這裡沒有意義);要由 capy 移除:capy pl link <名稱> %s:%s,再 capy pl dedup <名稱>", p, ref, p, ref)
 					}
 					return dedupReport(cmd, p, ref)
 				}
@@ -88,10 +90,20 @@ dir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確�
 				if err != nil {
 					return err
 				}
-				manual, leftover := platformDuplicates(s, pl, lives, plans)
+				manual, leftover, unchecked := platformDuplicates(s, pl, lives, plans)
+				if len(unchecked) > 0 { // 沒看過的平台不能算進「沒有重複」的結論(PR #54 review):只讀平台那份的 stderr 是使用者唯一會知道的管道
+					fmt.Fprintf(stderr, "%s 這次沒檢查(--provider 沒選到、或讀不到),它上面有沒有重複不在這次的結論裡\n", strings.Join(unchecked, "、"))
+				}
 				if len(dedupRows) == 0 && !leftover {
-					fmt.Fprintln(stderr, "沒有重複")
-					return errSkipCommit // pull 半邊看到的變更留給 pl sync:dedup 沒東西去重就一個位元組都不寫
+					msg := "沒有重複"
+					if len(unchecked) > 0 {
+						msg = "正本與這次檢查的平台沒有重複"
+					}
+					if len(pullRows) > 0 {
+						msg += fmt.Sprintf("(pull 半邊看到 %d 筆平台變更,留給 capy pl sync)", len(pullRows))
+					}
+					fmt.Fprintln(stderr, msg)
+					return errSkipCommit // dedup 沒東西去重就一個位元組都不寫
 				}
 				var rows [][]string
 				for _, r := range pullRows {
@@ -156,8 +168,14 @@ dir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確�
 				pulled, deduped = len(pullRows), len(dedupRows)
 				return nil
 			})
-			if err == nil && (deduped > 0 || pulled > 0) {
+			switch {
+			case err != nil:
+			case deduped > 0 && pulled > 0:
 				fmt.Fprintf(stderr, "已去除 %d 份重複(另套用 %d 筆 pull 變更)\n", deduped, pulled)
+			case deduped > 0:
+				fmt.Fprintf(stderr, "已去除 %d 份重複\n", deduped)
+			case pulled > 0: // 正本沒有要去除的份、多的份只剩在寫不了的平台上,但 pull 半邊有東西落地
+				fmt.Fprintf(stderr, "已套用 %d 筆 pull 變更(正本沒有要去除的份)\n", pulled)
 			}
 			return finishPush(err, applied, touched, deferred, "重跑 capy pl dedup 或 capy pl sync(pull 半邊會把平台上已拿掉的那份當平台變更吸收,不會重複)", "再重跑 capy pl dedup")
 		},
@@ -198,8 +216,12 @@ func dedupReport(cmd *cobra.Command, prov, ref string) error {
 		keys[i] = canon.CID(prov, t.ProviderID, t.ISRC)
 	}
 	dups := canon.Duplicates(keys)
+	label := prov + ":" + id
+	if ref != id { // 使用者打的是名稱:兩個都印,對得起來(PR #54 review)
+		label = fmt.Sprintf("%s:%s(%s)", prov, ref, id)
+	}
 	if len(dups) == 0 {
-		fmt.Fprintf(stderr, "%s:%s 沒有重複\n", prov, id)
+		fmt.Fprintf(stderr, "%s 沒有重複\n", label)
 		return nil
 	}
 	rows := make([][]string, len(dups))
@@ -254,11 +276,13 @@ func dedupCanonical(s *canonState, pl *canon.Playlist) (rows [][]string) {
 
 // platformDuplicates:pull 半邊讀到的每個平台清單 L 裡還有幾份重複。有 push 計畫的平台會由 push 拿掉(C 已去重,LCS 配不到的那份就是 remove);
 // 沒有計畫的(寫不了、這次推不了)只能請使用者手動刪——那幾份列成 stderr 的句子。leftover = 任一個 L 有重複(不管拿不拿得掉)。
-func platformDuplicates(s *canonState, pl *canon.Playlist, lives map[liveKey]*canon.Observed, plans []*pushPlan) (manual []string, leftover bool) {
+// unchecked = 連著、但這次沒看過的平台(--provider 沒選到、foreign、restricted):「沒看過」不是「沒重複」,呼叫端不能把它算進結論(PR #54 review)。
+func platformDuplicates(s *canonState, pl *canon.Playlist, lives map[liveKey]*canon.Observed, plans []*pushPlan) (manual []string, leftover bool, unchecked []string) {
 	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
 	for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
-		live := lives[liveKey{pl.PID, prov}]
-		if live == nil {
+		live, seen := lives[liveKey{pl.PID, prov}]
+		if !seen || live == nil {
+			unchecked = append(unchecked, prov)
 			continue
 		}
 		lcid, _ := canon.Observe(id, prov, s.tracks.Tracks, live.Tracks)
@@ -276,5 +300,5 @@ func platformDuplicates(s *canonState, pl *canon.Playlist, lives map[liveKey]*ca
 		}
 		manual = append(manual, fmt.Sprintf("%s:%s 還有 %d 份重複(pos %s),這個平台目前寫不了或這次推不了,請在 app 裡手動刪除;正本不會再把它們加回來", prov, live.ID, len(dups), strings.Join(poss, "、")))
 	}
-	return manual, leftover
+	return manual, leftover, unchecked
 }

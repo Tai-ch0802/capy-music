@@ -37,10 +37,13 @@ func TestPlDedupReportsPlatformPlaylistWithoutDrive(t *testing.T) {
 		t.Fatal("報告路徑不碰 Drive、不寫平台")
 	}
 	fs.set("p2", "睡前", "x", "y")
-	if out, errs := mustPull(t, "pl", "dedup", "spotify:p2"); out != "" || !strings.Contains(errs, "沒有重複") {
+	if out, errs := mustPull(t, "pl", "dedup", "spotify:p2"); out != "" || !strings.Contains(errs, "spotify:p2 沒有重複") {
 		t.Fatalf("沒有重複:%q %q", out, errs)
 	}
-	for _, args := range [][]string{{"pl", "dedup", "spotify:p1", "--yes"}, {"pl", "dedup", "spotify:p1", "--force"}, {"pl", "dedup", "spotify:p1", "--provider", "spotify"}} {
+	if _, errs := mustPull(t, "pl", "dedup", "spotify:睡前"); !strings.Contains(errs, "spotify:睡前(p2) 沒有重複") { // 打名稱時兩個都印
+		t.Fatalf("名稱與 id 都要印:%q", errs)
+	}
+	for _, args := range [][]string{{"pl", "dedup", "spotify:p1", "--yes"}, {"pl", "dedup", "spotify:p1", "--force"}, {"pl", "dedup", "spotify:p1", "--dry-run"}, {"pl", "dedup", "spotify:p1", "--provider", "spotify"}} {
 		if _, _, err := runPull(t, args...); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "只報告") {
 			t.Fatalf("%v 要 exit 1 並說只報告:%v", args, err)
 		}
@@ -133,8 +136,8 @@ func TestPlDedupPlatformReaddsDuplicate(t *testing.T) {
 	// 平台只加了一首(沒有重複):dedup 說沒有重複、零寫入,那首留給 sync
 	fs.set("p1", "通勤", "a", "b", "c", "d", "e")
 	files := driveFiles(t, dc)
-	if out, errs := mustPull(t, "pl", "dedup", "通勤", "--yes"); out != "" || !strings.Contains(errs, "沒有重複") || !sameFiles(files, driveFiles(t, dc)) || len(fs.tracksOf("p1")) != 5 {
-		t.Fatalf("沒有重複就不退化成 sync:%q %q", out, errs)
+	if out, errs := mustPull(t, "pl", "dedup", "通勤", "--yes"); out != "" || !strings.Contains(errs, "沒有重複(pull 半邊看到 1 筆平台變更,留給 capy pl sync)") || !sameFiles(files, driveFiles(t, dc)) || len(fs.tracksOf("p1")) != 5 {
+		t.Fatalf("沒有重複就不退化成 sync,但要說 sync 還有活:%q %q", out, errs)
 	}
 	if out, _ := mustPull(t, "pl", "sync", "通勤", "--yes"); !slices.Equal(dirActions(out), []string{"pull add spotify"}) {
 		t.Fatalf("e 留給 sync:%s", out)
@@ -191,6 +194,40 @@ func TestPlDedupReadOnlyPlatformIsManual(t *testing.T) {
 	fs2.set("q1", "通勤", "a", "b") // 使用者在 app 裡手動刪了
 	if out, errs := mustPull(t, "pl", "sync", "通勤", "--yes"); strings.TrimSpace(out) != "" || !strings.Contains(errs, "無變更") || !slices.Equal(cidsOf(drivePlaylistNamed(t, dc, "通勤")), []string{fakeCID("a"), fakeCID("b")}) {
 		t.Fatalf("手動刪掉後收斂、正本不動:%s%s", out, errs)
+	}
+}
+
+// --provider 沒選到、或 restricted 讀不到的平台是「沒看過」,不是「沒重複」(PR #54 review):只讀的 apple 還留著一份時,
+// `--provider spotify` 不能說「沒有重複」,要說 apple 這次沒檢查;restricted 同理。
+func TestPlDedupUncheckedPlatformIsNotAssertedClean(t *testing.T) {
+	fs1, fs2, _, _ := twoPlatforms(t)
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		p, err := orig(ctx, id)
+		if id == "apple" && err == nil {
+			return readOnlyProvider{p, p.(provider.PlaylistReader)}, nil
+		}
+		return p, err
+	}
+	t.Cleanup(func() { newProvider = orig })
+	fs1.set("p1", "通勤", "a", "b")
+	fs2.set("q1", "通勤", "a", "a", "b")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "link", "通勤", "apple:q1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	if _, errs := mustPull(t, "pl", "dedup", "通勤", "--yes"); !strings.Contains(errs, "apple:q1 還有 1 份重複") || !strings.Contains(errs, "已去除 1 份重複") {
+		t.Fatalf("先去重一輪:%s", errs)
+	}
+	out, errs := mustPull(t, "pl", "dedup", "通勤", "--yes", "--provider", "spotify")
+	flat := func(errs string) bool { return strings.Contains("\n"+errs, "\n沒有重複") } // 整句的「沒有重複」斷言
+	if out != "" || flat(errs) || !strings.Contains(errs, "apple 這次沒檢查") || !strings.Contains(errs, "正本與這次檢查的平台沒有重複") {
+		t.Fatalf("--provider spotify 不能斷言 apple 沒重複:%q %q", out, errs)
+	}
+	fs2.mu.Lock()
+	fs2.restricted["q1"] = true
+	fs2.mu.Unlock()
+	if _, errs := mustPull(t, "pl", "dedup", "通勤", "--yes"); !strings.Contains(errs, "apple 這次沒檢查") || flat(errs) {
+		t.Fatalf("restricted 也是沒檢查:%q", errs)
 	}
 }
 
