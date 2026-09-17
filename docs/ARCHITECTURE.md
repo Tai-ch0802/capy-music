@@ -1,8 +1,8 @@
 # capy-music — 跨平台音樂 CLI 架構規劃
 
 > 專案名稱 `capy-music`,binary `capy`
-> 文件版本 v0.11 — 2026-09-15(`capy migrate`:附錄 A、附錄 C 決策 39;計畫 §3 在 docs/superpowers/plans/2026-09-15-order-dedup-migrate.md)
-> 前版 v0.10 — 2026-09-15(清單順序寫成硬約束 + `pl dedup`:§6.6、附錄 A、附錄 C 決策 38);v0.9 — 2026-09-08(P6 計畫:`local` 綁裝置 provider(§1.4、§3 `CapDeviceBound` / `DeviceScoped`、附錄 C 決策 33–37);計畫在 docs/superpowers/plans/2026-09-08-p6-local.md);v0.8 — 2026-09-08(P5 對齊:不建 op log / HLC(§6.4 改寫、附錄 C 決策 26),DERIVE 規則 4′(§6.5.1),`pl push` / `pl sync` 契約(§6.5.2、附錄 A),共享檔版本守衛(§6.3、§6.6),Apple 寫入 gate 與 append-only fallback(決策 30);計畫在 docs/superpowers/plans/2026-09-08-p5-sync.md);v0.7 — 2026-09-08(P4 後半對齊:§5.1 觀測 cid 三段式身分規則、mapping 物件化與 schema 2(T2b 的 merged 再跳 3)、§5.3 review queue 契約、§6.5.1 base 只經 tombstone 重導、§7 schema v5、附錄 C 決策 19–25;計畫在 docs/superpowers/plans/2026-09-08-p4-resolver.md;v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
+> 文件版本 v0.12 — 2026-09-17(P7 網頁介面 `capy --web`:§2 方框與互動場景、§6.6 加一列、§8 括號限定、§9 P7、附錄 A、附錄 B、附錄 C 決策 40–44;計畫在 docs/superpowers/plans/2026-09-17-web-mode.md,視覺規格在 2026-09-17-web-mode-design.md)
+> 前版 v0.11 — 2026-09-15(`capy migrate`:附錄 A、附錄 C 決策 39;計畫 §3 在 docs/superpowers/plans/2026-09-15-order-dedup-migrate.md);v0.10 — 2026-09-15(清單順序寫成硬約束 + `pl dedup`:§6.6、附錄 A、附錄 C 決策 38);v0.9 — 2026-09-08(P6 計畫:`local` 綁裝置 provider(§1.4、§3 `CapDeviceBound` / `DeviceScoped`、附錄 C 決策 33–37);計畫在 docs/superpowers/plans/2026-09-08-p6-local.md);v0.8 — 2026-09-08(P5 對齊:不建 op log / HLC(§6.4 改寫、附錄 C 決策 26),DERIVE 規則 4′(§6.5.1),`pl push` / `pl sync` 契約(§6.5.2、附錄 A),共享檔版本守衛(§6.3、§6.6),Apple 寫入 gate 與 append-only fallback(決策 30);計畫在 docs/superpowers/plans/2026-09-08-p5-sync.md);v0.7 — 2026-09-08(P4 後半對齊:§5.1 觀測 cid 三段式身分規則、mapping 物件化與 schema 2(T2b 的 merged 再跳 3)、§5.3 review queue 契約、§6.5.1 base 只經 tombstone 重導、§7 schema v5、附錄 C 決策 19–25;計畫在 docs/superpowers/plans/2026-09-08-p4-resolver.md;v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
 > 本文件為架構基準,所有「已驗證」標記的事實均於 2026-08 查證。
 
 ---
@@ -84,8 +84,8 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  CLI / TUI     cobra + bubbletea                             │
-│  capy search · capy play · capy pl sync · capy auth login    │
+│  CLI / TUI / Web   cobra + bubbletea + net/http (127.0.0.1)  │
+│  capy search · capy play · capy pl sync · capy --web         │
 └────────────────────────┬─────────────────────────────────────┘
                          │
 ┌────────────────────────▼─────────────────────────────────────┐
@@ -115,7 +115,7 @@
 **關鍵設計:Apple 的「資料能力」與「播放能力」解耦。**
 Apple Music API(播放清單、搜尋)在**所有 OS 都可用**;只有播放綁 macOS。所以 Windows 使用者一樣能同步 Apple Music 播放清單,只是不能從 CLI 播 Apple 的歌(播放遙控走 Spotify Connect)。
 
-**TUI 與可腳本化【定案】:** TUI 第一天進場(charmbracelet 全家桶),但**所有命令在非 TTY(pipe/cron)下必須可純文字輸出**——「可納入 cron/script」是 §8.5.6 列的核心價值,不得被 TUI 犧牲。互動場景:無參數執行 `capy` 的儀表板、`now --watch`、`resolve --review`、auth 精靈(huh 表單,含 BYO Client ID onboarding)。
+**TUI 與可腳本化【定案】:** TUI 第一天進場(charmbracelet 全家桶),但**所有命令在非 TTY(pipe/cron)下必須可純文字輸出**——「可納入 cron/script」是 §8.5.6 列的核心價值,不得被 TUI 犧牲。互動場景:無參數執行 `capy` 的儀表板、`now --watch`、`resolve --review`、auth 精靈(huh 表單,含 BYO Client ID onboarding)。**第三種模式(2026-09-17,P7 決策 40)**:`capy --web` 在同一個行程裡執行命令、輸出非 TTY(writer 不是 `*os.File`,TSV / 表格結構化送到瀏覽器)、互動提示由同一組接縫換成瀏覽器回答——TUI 用 re-exec 是因為終端機有 TTY 可讓給子行程,瀏覽器沒有;非 TTY 純文字契約一個位元組不改。
 
 ### 語言【已定案】:Go
 
@@ -656,6 +656,7 @@ capy pl sync 的一輪(pl pull 只有 1–3 + 6;pl push 只有 1–2 + 4–6—�
 | 共享檔版本守衛 | COMMIT 前再 list 一次,FETCH 讀過的任一檔 `version` 變了或同名多了一份 → 零上傳、本機不動、exit 1、重跑(§6.3,決策 29);pull / resolve / push / sync 一體適用;sync 撞上時平台已改、Drive 沒改,訊息講明、重跑補上 |
 | 刪除閾值 | 單一 (清單, provider) 在一次 `pl pull` 或 `pl push` 要刪除 **>10 首,或 >30% 且 >3 首**(分母是該 provider 可見的曲數;Q3 採 B,2026-09-08 T8,附錄 C 決策 18)時中止並要求 `--force`(P3 會刪曲目的路徑是 `pl pull --force`,附錄 A;閾值是「任何刪除路徑都要過 dry-run + 閾值」這條硬約束的落點,不限 push;P5 的 `pl push` 走同一個 `removalBlocked`,分母是平台清單 L 的長度)。`--force` 只越過閾值,不放行「Drive 不完整」(下一列) |
 | 清單順序 | **順序是使用者的記憶**(2026-09-15,CLAUDE.md 硬約束、附錄 C 決策 38):沒動到的 item 相對順序與 rank 永遠不變。DERIVE 只在平台真的重排時才採平台順序(規則 6′;兩邊都重排後 pull 者勝,決策 26 接受的平手),push 以 C 的順序當目標序列,`pl dedup` 只拿掉後出現的那份(`canon.Duplicates`;性質測試:剩下的是原序列的子序列、保留第一份、rank 不動),搬移(`capy migrate`,下一個 PR)只在尾端新增。沒有任何路徑會排序 |
+| 網頁介面的邊界 | `capy --web`(2026-09-17,CLAUDE.md 硬約束、附錄 C 決策 40–41):只綁 127.0.0.1、不可用 8888、每次啟動一次性 token(URL fragment → `X-Capy-Token` 標頭,不用 cookie)、`Host` 逐字比對、`Origin` / `Sec-Fetch-Site` 檢查、CSP 零 inline;命令由單一序列槽在行程內執行,`debug` 群組、`--auto`、`--web`、三個 secret flag 一律 403,keychain 內容與精靈輸入的 secret 絕不進事件 / log / URL;提示等待逾時 5 分鐘砍整個 job(零寫入、pull.lock 立刻放),關分頁即取消;刪除閾值、`--force` 語意、揭露不可跳過都與 CLI 相同 |
 | Drive 不完整的閘 | `manifest.playlists` 宣告、或本機 `state.db` 記得的檔在 Drive 取不到(全空只是特例)→ `pl pull` / `pl link` 一律 exit 3、零寫入,`--yes` / `--force` 都不放行;出口是 `capy drive init --from-local`(2026-09-08 T9 已實作:只建 Drive 缺的檔、不覆寫還在的檔(Drive 為準)、不動本機 cache、不代為上傳別台裝置的 `dev__` 檔;沒缺就零寫入;manifest 宣告但兩邊都沒有的清單補不回,訊息講明只能清空 appdata 重建)。任何檔 `schema_version` 高於 binary 支援 → exit 1、零寫入 |
 | 快照備份 | 每次 pull 的 COMMIT(§6.5 步驟 6)把該平台狀態存進本裝置 `dev__<device_id>.json` 的 `base[pid][provider]`(§6.3)。`capy pl restore`:base 是 per-device 的觀測快照,「從它回滾」= 把上次看到的平台狀態 push 回去,與 `pl push` 重疊,**延後到有人要為止**(2026-09-08 P5,計畫 Q18) |
 | Export 逃生口 | `capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain;用 `store.OpenReadOnly`:壞檔不刪、版本不符不改名、不建檔,`Dump` 整批在一個 read transaction 裡所以是一致快照),輸出 Drive 檔的合併形式到 stdout——鍵是檔名、值是該檔內容的縮排形式,壓回 compact 後與 Drive 上逐位元相同(2026-09-08 T9;`import` 就是它的反向);本機沒資料 exit 1、stdout 不印,找得到升版保留的 `state.db.v<n>` 就指出來。反向路徑是 `capy drive init --from-local`(上一列;同一個唯讀開法,永不寫本機;上傳順序 manifest 最後;Drive 上還在的每個檔都先檢 schema) |
@@ -702,12 +703,12 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | MusicKit JS 不可與其他 JS 重組 | v0.5 起不再載入 MusicKit JS(橋接頁已移除),此條無對象 |
 | **Apple 網頁播放器 token 供第三方使用** | **Apple 未授權。** 這是灰色地帶中最深的一項:token 由使用者自己複製、程式只指導不擷取、指令內強制揭露、風險由使用者自負(附錄 C 決策 8)。隱藏的 `--auto` 是明確切出的例外,未文件化 |
 | 不可對 Apple Music 存取收費 | 永久免費 + 開源。這也正是專案初衷。 |
-| MusicKit Content 不可與其他內容 synchronized | ⚠️ 灰色地帶。保守做法:**只同步使用者自建的 library playlist**;不觸碰 Apple 編輯清單/目錄;不把 Apple cover art 用在播放脈絡以外 |
+| MusicKit Content 不可與其他內容 synchronized | ⚠️ 灰色地帶。保守做法:**只同步使用者自建的 library playlist**;不觸碰 Apple 編輯清單/目錄;不把 Apple cover art 用在播放脈絡或連回 Apple Music 的脈絡以外(2026-09-17,決策 42:ISRC 頁的封面永遠與「在 Apple Music 開啟」連結並列,播放面板的封面是播放脈絡) |
 | 不可下載/修改 MusicKit Content | 我們只碰 metadata,不碰音訊 |
 | Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規 |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
 
-本專案沒有任何伺服器端元件(v0.5 起 Worker 已移除):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google basic verification 需要的 URL)掛 taislife.work,內容就是這一句。
+本專案沒有任何遠端伺服器端元件(v0.5 起 Worker 已移除;`capy --web` 只在使用者自己的電腦 127.0.0.1 起 HTTP,不對外、資料不離開那台電腦、不經過我們):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google basic verification 需要的 URL)掛 taislife.work,內容就是這一句。
 
 ---
 
@@ -833,6 +834,9 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 ### P6 — 抽象驗證 ✅(2026-09-08 計畫與結論:docs/superpowers/plans/2026-09-08-p6-local.md)
 接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單(A1–A12)與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。**結論(T3):SPI 撐得住**——local 全走原本的能力介面、沒有特例分支,唯一的新語意是 `CapDeviceBound` + `DeviceScoped`。接下一個真實平台前先補:rename 會改 id 的平台要能回新 id(A12)、`Pushable` 要能回「推不出去」的原因而不是 CLI 猜(A10)、`friendlyErr` 第四個平台時改成 provider 自己回訊息(A2)、`Search` 正規化下沉到 `provider`(A6)。
 
+### P7 — 網頁介面(2026-09-17 計畫:docs/superpowers/plans/2026-09-17-web-mode.md;視覺規格 2026-09-17-web-mode-design.md)
+**行程內、一次一個命令、接縫換成瀏覽器**(決策 40–44):T1 接縫與匯出(零行為變更)→ T2 provider 豐富欄位 + `ParseISRC` → T3a 伺服器 / 執行器 / 安全 / dock → T3b 提示橋 → T4 ISRC API + 播放面板 API → T5 七頁與視覺定稿 → T6 文件收尾 + 真帳號驗收(R-1…R-12)。T0 不當 gate(使用者定案,決策 44)。
+
 ---
 
 ## 10. 交接給 Claude Code 的重點
@@ -873,6 +877,7 @@ capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;�
 capy play --pick               # 直接開挑選器(TTY 限定)
 capy play --id <track id>
 capy                                                       # 無參數 + 終端機:互動式介面(水豚橫幅、現在播什麼、一行輸入任何子命令);非 TTY 一律印 help
+capy --web [--port N] [--provider P]                       # 2026-09-17(P7,決策 40–41;internal/cli/web.go):127.0.0.1 起 HTTP(port 預設隨機、8888 拒絕),印 http://127.0.0.1:<port>/#t=<一次性 token> 並開瀏覽器;命令在行程內跑、一次一個(409)、輸出非 TTY(表格經 ui.TableWriter 結構化)、提示由頁面回答(confirm / select / input / form,取消值照抄終端機);允許清單 = 非 Hidden 的命令樹(debug 整群 403),--auto / --web / --client-secret / --developer-token / --user-token 403,update 放行但之後 /api/run 503 要求重啟;/api/isrc 與 /api/now 直達端點不進序列槽;非 TTY 啟動也能開(只印網址不開瀏覽器);Ctrl-C 砍進行中命令後乾淨結束
 capy pause | capy next | capy prev
 capy seek <[h:]mm:ss|秒> | capy vol <0-100>                    # 2026-09-09 實作(P1 計畫原本延後,附錄 A 稽核後補上);Apple 半邊走 Music.app 的 player position / sound volume
 capy now [--watch]
@@ -924,6 +929,7 @@ capy doctor
 | Google `drive.appdata` 敏感度分類 | 目前非敏感,若改分類影響巨大 | 每季檢查 Drive API scopes 文件 |
 | Drive API quota units 計費時程 | 每專案每日 >400,000,000 quota units「planned to incur charges … later in 2026」(§8.5.1),Google 承諾至少 90 天預告;個人用量遠低於門檻,但一旦開始計費,§8.5.3「成本與人數無關」就多一個條件 | 每季對照 developers.google.com/workspace/drive/api/guides/limits;訂閱 Google Workspace 開發者公告 |
 | Spotify Lossless over Connect | 目前 Connect 端點只給 320k Ogg | 若開放,遙控播放的音質敘述要更新 |
+| Spotify `preview_url` | 2024-11 起新建的 app 拿到的 `preview_url` 為 null(既有 app 不受影響);ISRC 頁的試聽可能永遠只有 Apple 有 | ISRC 頁把 null 當「無」;真帳號 smoke(R-10)時記錄兩家回應的實際欄位 |
 
 ## 附錄 C:定案紀錄(2026-09-01;決策 8–13 為 2026-09-03)
 
@@ -969,6 +975,11 @@ capy doctor
 | 37 | P6 T0 只產計畫與 spec(2026-09-08) | 等維護者 review 後開 T1 | 決策 33 在 SPI 加新語意,不該由一個 PR 順手決定;同決策 12 / 25 / 32 |
 | 38 | 清單順序不可破壞;`pl dedup` 的重複定義(2026-09-15) | 順序是使用者的記憶,寫成 CLAUDE.md 硬約束:任何路徑不得排序,沒動到的項目相對順序永遠不變;去重只拿掉後出現的那份(同平台 id 或同 ISRC = cid 相同;同 ISRC 不同 id 也算,使用者確認),搬移(`capy migrate`,下一個 PR)只在尾端新增。`pl dedup` 兩條路徑:`<provider>:<清單>` 只報告(不碰 Drive、Apple 只讀只能到這裡),canonical 清單走 sync 的一輪中間多一步去重;正本與平台都沒重複時零寫入、不退化成 sync;寫不了的平台上剩下的份列 stderr 手動刪 | 使用者:「歌單的歌曲順序很重要,這隱含著使用者的加入歌單記憶,絕對不能被破壞」。查證後順序在模型裡本來就是一級公民(規則 4′ / 6′、push 以 cid 對齊、模型測試的 oracle 是意圖),這次是把它寫成約束、用 `canon.Duplicates` 的性質測試守住,不重做同步邏輯。**已知取捨**:同 ISRC 不同 id 時正本記第一份(mapping 是第一次觀測到的 id),平台上留哪個 id 由 push 的 LCS 配對決定(相鄰兩份留後面那個 id),曲目與順序不變、測試釘住;要「留第一個 id」得改 `lcsPairs` 的平手規則,等有人需要 |
 | 39 | `capy migrate` 的形狀(2026-09-15) | 一次性複製:來源直接讀、不連結、不記 base;正本的決定規則見附錄 A;順序明確建(目標原順序是前綴、來源未有的依來源順序尾端追加、同 cid 略過),不靠 DERIVE;只做新增(目標有待同步的移除 / 換序 / 改名 → exit 3 先 sync);確認之後才在目標建清單;沒對到的曲目 TTY 可當場裁決、否則跳過並指路 resolve --review + sync;新建目標時正本既有的曲目也進表、對不到的也算「沒對應」;完成後只有目標連著正本,結尾給 pl link + sync 的命令。例外(review #55):沿用的正本本來就連著來源時,來源那半也 pull 進正本、以正本為準不尾端追加(不然正本與來源順序分岔,之後的 sync 會重排來源,違反決策 38),結尾照 links 講「兩邊都連著」 | 使用者:「引導使用者直接將 A 平台的音樂清單搬移(或新增)至 B 平台上,就不用讓使用者自己理解 pull, push, link 等指令關聯」;定案 A 不連結。不靠 DERIVE 是因為沒有 base 的 bootstrap pull 會採平台順序,會把既有目標重排成來源的順序(違反決策 38);確認後才建清單是因為取消 / dry-run / 擋下都不該在平台留下沒人連的空清單;只做新增是 migrate 的承諾,待同步的變更交給 sync 而不是順手做掉。可用性卡維護者的 Spotify 真帳號 smoke test(建清單 + 推曲目,同 PR #48) |
+| 40 | `capy --web` 的形狀(2026-09-17;計畫 §1) | 行程內執行 cobra 命令(`newRootCmd` + `SetOut` / `SetErr` + `SetArgs` 非 nil + `ExecuteContext(jobCtx)`),一次只跑一個命令(`TryLock`,重疊 409);互動提示不動 huh,啟動時把既有 package var 接縫整組換成「送 JSON prompt 事件到瀏覽器、等 POST 回答」的實作,每個接縫的取消回傳值照抄原本(`errCancelled` / `huh.ErrUserAborted` / `(false,nil)`),`ExitCode` 與非 TTY 純文字契約一個位元組不改(writer 非 `*os.File` → 自動 TSV / 不上色 / 不開 pager);表格靠 `ui.Table` 開頭的 `TableWriter` 選用介面整張含標題送到瀏覽器;`bothTTY` / `runClientIDWizard` 改 var、`auth.LoginStderr` / `LockStderr` 匯出;允許清單從 `newRootCmd` 走訪長出(非 Hidden、非 help / completion 的 CommandPath,含群組),`debug` 整群構造性 403;argv 含 `--auto` / `--web` / `--client-secret` / `--developer-token` / `--user-token` 一律 403;`update` 放行但 exit 0 後伺服器 stale(`/api/run` 503 要求重啟);`capy` 空參數印 help、`now --watch` 回錯指向面板;取消三路(關分頁 / cancel 端點 / 伺服器 SIGINT)匯到同一個 jobCtx,提示逾時 5 分鐘為 job 級(砍整個 job、鎖立刻放),`auth login *` 不設逾時;不做子行程 / PTY / job registry / 唯讀並行(計畫 Q34) | 使用者:「所有的 CLI 指令都要也可以透過 web 去操作執行 … 呈現畫面可以更豐富」。TUI 為了非 TTY 退化與 huh 搶 stdin 選了 re-exec(tui.go:33),但結構化表格與瀏覽器回答提示只有行程內拿得到;所有接縫都是 process 級 var、`defaultProvider` 是無同步的 OnceValue,並行就是 data race(CI 以 -race 為 gate),所以一次一個命令;三路線評審(行程內 / 子行程 / 混合)中行程內勝出,子行程的互動層落在 Go 測不到的 JS、cookie 不分 port、Windows 只能 TerminateProcess |
+| 41 | web 的安全模型(2026-09-17;計畫 §1) | 只綁 127.0.0.1(永不 0.0.0.0 / ::),`--port` 預設 0 動態、8888 在 listen 前拒絕;每次啟動一次性 token(`auth.NewState()`)放 URL fragment,前端存 sessionStorage、每個 `/api/*` 帶 `X-Capy-Token`(常數時間比對,不符 401),不用 cookie;`Host` 必須逐字等於 `127.0.0.1:<port>`(不收 localhost,不符 421);`Origin` 若存在必須同源、`Sec-Fetch-Site` 若存在只收 same-origin / none(否則 403),永不回 CORS;CSP `default-src 'none'` + self 的 script / style / font / connect,`img-src` / `media-src` 只放兩家 CDN,前端零 inline;keychain 內容與精靈輸入的 secret 絕不進事件 / log / URL / 回顯(伺服器不記錄 args / body);信任邊界 = 同一個 OS 使用者 | 本機伺服器不等於安全:DNS rebinding、跨站 fetch、127.0.0.1 其他 port 的頁面(repo 內就有 8888 回呼)都是攻擊面;cookie 依 RFC 6265 不分 port,會把 token 送給使用者瀏覽過的任何 127.0.0.1 頁面 |
+| 42 | ISRC 頁的資料路徑、provider 豐富欄位、播放面板(2026-09-17;計畫 §1) | `GET /api/isrc/{isrc}` 直達端點(不經 cobra、不進命令序列槽):`NormalizeISRC` → 離線 `ParseISRC` 四段(年份兩碼 ≤ 今年 → 20xx 否則 19xx)→ 三家 provider 並行 `LookupISRC`(單家失敗不擋整體)→ canonical 走 `store.OpenReadOnly().Dump()` 零副作用(`Identity.Resolve("","",isrc)` 命中後再驗 tracks 存在;走訪清單找含它的 item);`provider.Track` 加 `URL / ArtworkURL / PreviewURL / ReleaseDate / Popularity / Genres` 六個選填欄位,Spotify `trackJSON` 與 Apple `songJSON` 擴充解碼(同一次回應本來就有,零額外呼叫),`Raw` 不動、不落 Drive / SQLite;不接 MusicBrainz 等外部資料源;封面只在播放面板(播放脈絡)與 ISRC 頁該平台卡片出現,後者永遠與該平台的外連並列(§8 的 Apple cover art 一列同步放寬措辭);`debug lookup-isrc` 維持 Hidden、不升格(Q32);播放面板 `GET /api/now` 每 2 s 輪詢、不進序列槽,PlaybackController 以伺服器 ctx 快取,`auth*` / `config set` job 後與 State 回錯時作廢;播放控制鈕走既有命令 | 使用者:「可以透過 ISRC 去查詢資料,呈現更豐富的歌曲資訊和內容」。`Track.Raw` 從未被填、兩家 `do()` 沒 body 副本、store 明寫不存原始 JSON,型別欄位比 Raw 乾淨;§8 承諾不依賴第三方服務;每 2 s 重建 provider = 兩三次 keychain exec + flock,不可行 |
+| 43 | web 前端交付與視覺識別(2026-09-17;規格在 docs/superpowers/plans/2026-09-17-web-mode-design.md) | 靜態檔 `internal/cli/webui/` 以 `go:embed` 進 binary,vanilla HTML / CSS custom properties / ES modules,零 Node、零 CDN、零 build step、零 inline;單一深色主題(刻意);GeekGreen `#3FB27F` 是唯一主色,「霓虹」= 同一個綠的兩個相位(焦點 / 進行中 / 播放中 / 一次簽名時刻發光,落定回平面),glow 預算四處可數;全直角;內嵌一支 Iosevka Fixed Regular woff2 子集(約 35 KB)當 mono、sans 走系統堆疊;Phosphor 圖示子集 sprite;原子欄永不截斷、不拖曳不排序;dock(正在播放列 / 命令列 / log)是 TUI 底部四行的直譯,每一頁只是把同一條 capy 命令的輸出畫得更豐富,提示在區塊裡渲染 | 使用者:「畫面採用 /design-taste-frontend … geek 綠 … 冷冽的霓虹特效 … cyberpunk」。三提案三評審(相位差主控台勝出),pre-flight 逐條過;guide.html 已鎖深色、accent 在白底 2.66 不過 AA、glow 相位只在深底成立;Node 工具鏈會讓 `go install` 與零依賴分發破功 |
+| 44 | web mode 的 T0 不是 gate(2026-09-17) | 計畫 PR 開出來就接著開 T1,不等維護者 review 計畫;每個 T 仍各自開 PR、各自走 review 循環、CI 綠才合併;真帳號寫入仍要授權 | 使用者 2026-09-17:「計畫寫好開 PR 後就直接接著做 T1,不用等我」;與決策 12 / 25 / 32 / 37 不同,明記以免日後誤以為漏了 gate |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 
