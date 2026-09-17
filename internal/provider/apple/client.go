@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
@@ -135,25 +136,48 @@ func (c *Client) Preflight(ctx context.Context) (bool, error) {
 type songJSON struct {
 	ID         string `json:"id"`
 	Attributes struct {
-		Name             string `json:"name"`
-		ArtistName       string `json:"artistName"`
-		AlbumName        string `json:"albumName"`
-		DurationInMillis int    `json:"durationInMillis"`
-		ISRC             string `json:"isrc"`
-		ContentRating    string `json:"contentRating"`
-		URL              string `json:"url"`
+		Name             string   `json:"name"`
+		ArtistName       string   `json:"artistName"`
+		AlbumName        string   `json:"albumName"`
+		DurationInMillis int      `json:"durationInMillis"`
+		ISRC             string   `json:"isrc"`
+		ContentRating    string   `json:"contentRating"`
+		URL              string   `json:"url"`
+		ReleaseDate      string   `json:"releaseDate"`
+		GenreNames       []string `json:"genreNames"`
+		Artwork          struct {
+			URL string `json:"url"` // 模板:…/{w}x{h}bb.jpg
+		} `json:"artwork"`
+		Previews []struct {
+			URL string `json:"url"`
+		} `json:"previews"`
 	} `json:"attributes"`
 }
 
+// artworkSize:Apple artwork.url 是含 {w}x{h} 佔位符的模板;頁面用 600。
+var artworkSize = strings.NewReplacer("{w}", "600", "{h}", "600")
+
 func (s *songJSON) toTrack() provider.Track {
+	var artwork, preview string
+	if s.Attributes.Artwork.URL != "" {
+		artwork = artworkSize.Replace(s.Attributes.Artwork.URL)
+	}
+	if len(s.Attributes.Previews) > 0 {
+		preview = s.Attributes.Previews[0].URL
+	}
 	return provider.Track{
-		ProviderID: s.ID,
-		ISRC:       s.Attributes.ISRC,
-		Title:      s.Attributes.Name,
-		Artists:    []string{s.Attributes.ArtistName},
-		Album:      s.Attributes.AlbumName,
-		DurationMS: s.Attributes.DurationInMillis,
-		Explicit:   s.Attributes.ContentRating == "explicit",
+		ProviderID:  s.ID,
+		ISRC:        s.Attributes.ISRC,
+		Title:       s.Attributes.Name,
+		Artists:     []string{s.Attributes.ArtistName},
+		Album:       s.Attributes.AlbumName,
+		DurationMS:  s.Attributes.DurationInMillis,
+		Explicit:    s.Attributes.ContentRating == "explicit",
+		URL:         s.Attributes.URL,
+		ArtworkURL:  artwork,
+		PreviewURL:  preview,
+		ReleaseDate: s.Attributes.ReleaseDate,
+		Genres:      s.Attributes.GenreNames,
 	}
 }
 
