@@ -858,6 +858,23 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, "overflow-wrap: anywhere") {
 		t.Error("主控台輸出要 overflow-wrap: anywhere")
 	}
+	// 面板:stale 是「伺服器忙」不是「伺服器不在」——用連續次數會把「慢但一直有新資料」判成失聯,而且回不來。
+	player := read("js/player.js")
+	if strings.Contains(player, "stales") {
+		t.Error("失聯判斷不可以用連續 stale 次數,要看上一份快照多久沒更新")
+	}
+	if !strings.Contains(player, "STALE_DEAD_MS") || !strings.Contains(player, "nowConnected") {
+		t.Error("面板要有自己的失聯門檻與連線旗標(body[data-connected] 是 console 在用的)")
+	}
+	// ISRC 頁:兩次查詢重疊時,舊的那次不可以把結果接在新的後面。
+	isrcjs := read("js/pages/isrc.js")
+	if !strings.Contains(isrcjs, "mine !== seq") || !strings.Contains(isrcjs, "AbortController") {
+		t.Error("重疊的 ISRC 查詢要有序號守衛並取消舊 fetch")
+	}
+	// hash 路由要有結尾錨點,否則 #/isrcfoo 也會被判成 ISRC 頁。
+	if !strings.Contains(app, "]+))?$/") {
+		t.Error("hash 路由的正規式要有結尾錨點")
+	}
 }
 
 // TestWebNonTTYPrintsURLAndDoesNotOpenBrowser + 只綁 loopback:buffer stdout(非 TTY)下印出 http://127.0.0.1:<port>/#t=…、

@@ -7,6 +7,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -163,7 +164,11 @@ func lookupISRC(ctx context.Context, id, isrc string) ([]provider.Track, error) 
 func (s *webServer) fillCanonical(resp *isrcResponse, isrc string) {
 	st, err := store.OpenReadOnly(webCanonBusy)
 	if err != nil {
-		resp.CanonicalError = err.Error()
+		// 還沒有 state.db 是第一次 pl pull 之前的正常狀態,不是錯誤:讓頁面走「本機還沒有這首的紀錄」那句 muted 指路,
+		// 不要畫成紅字(review #61)。真正的錯誤(壞檔、schema 不符、busy)才帶 canonical_error。
+		if !errors.Is(err, store.ErrNoDB) {
+			resp.CanonicalError = err.Error()
+		}
 		return
 	}
 	defer st.Close()
@@ -296,25 +301,35 @@ func (s *webServer) pollNow(id string) *nowResponse {
 }
 
 // playback:每個 provider 的 PlaybackController 建一次就快取(同 runTUI 的先例),用伺服器 ctx。
+// playback:double-check——鎖內只看快取,建構在鎖外。newProvider 可能要等 <key>.token.lock(伺服器 ctx,沒有逾時),
+// 而 dropNow() 在 handleRun 的收尾路徑上要拿同一把 nowMu:建構若在鎖內,auth 命令的 exit 事件會被面板的 poll 卡住,
+// 使用者看到的是「命令卡住」。面板卡住是設計上接受的代價(staleNow 承擔),/api/run 的完成事件被卡住不是。
+// 競態下重複建一個丟掉即可(newProvider 沒有副作用)。
 func (s *webServer) playback(id string) (provider.PlaybackController, error) {
 	s.nowMu.Lock()
-	defer s.nowMu.Unlock()
-	if pc, ok := s.now[id]; ok {
+	pc, ok := s.now[id]
+	s.nowMu.Unlock()
+	if ok {
 		return pc, nil
 	}
 	p, err := newProvider(s.ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	pc, err := asPlayback(p)
+	built, err := asPlayback(p)
 	if err != nil {
 		return nil, err
+	}
+	s.nowMu.Lock()
+	defer s.nowMu.Unlock()
+	if pc, ok := s.now[id]; ok { // 別人先建好了:用它的,丟掉自己這個
+		return pc, nil
 	}
 	if s.now == nil {
 		s.now = map[string]provider.PlaybackController{}
 	}
-	s.now[id] = pc
-	return pc, nil
+	s.now[id] = built
+	return built, nil
 }
 
 // dropNow:作廢快取的 controller。時機:auth 相關命令或 config set 結束後(帳號 / 預設平台換了)、State 回錯。
@@ -322,6 +337,7 @@ func (s *webServer) dropNow() {
 	s.nowMu.Lock()
 	s.now = nil
 	s.nowMu.Unlock()
+	s.lastNow.Store(nil) // 快照一起丟:否則 auth logout 之後,已登出帳號的那首歌還會被 staleNow 端出來一次
 }
 
 func (s *webServer) setNow(resp *nowResponse) {
@@ -331,7 +347,10 @@ func (s *webServer) setNow(resp *nowResponse) {
 // staleNow:上一次的快照加 stale 標記;還沒有任何快照就回一個空的 stale 回應(頁面顯示「讀取中」而不是凍住)。
 func (s *webServer) staleNow(id string) *nowResponse {
 	snap := s.lastNow.Load()
-	if snap == nil || snap.resp == nil {
+	// 認平台:快照是另一家的就不端出來(config set default_provider 之後、重建那一次特別容易走到;
+	// pollMu 是整個行程一把,A 的 poll 在飛時 B 也會落到這裡)。寧可回空的 stale,也不要顯示不是現在
+	// 這個平台在放的歌。升級路徑是每個 provider 一把鎖 + 一份快照。
+	if snap == nil || snap.resp == nil || snap.resp.Provider != id {
 		return &nowResponse{Provider: id, Stale: true}
 	}
 	cp := *snap.resp

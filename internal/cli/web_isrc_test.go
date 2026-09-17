@@ -199,6 +199,25 @@ func TestWebISRCMergedCIDRedirectsAndHitsAliasSet(t *testing.T) {
 	}
 }
 
+// TestWebISRCNoDBIsNotAnError:【fails-before-fix】還沒有 state.db 是第一次 pl pull 之前的正常狀態,
+// 不是錯誤——帶 canonical_error 會讓頁面畫成紅字,而且蓋掉「本機還沒有這首的紀錄(先 capy pl pull)」那句指路。
+func TestWebISRCNoDBIsNotAnError(t *testing.T) {
+	fs, _, _ := pullWorld(t)
+	fs.addCatalog(fakeCatalogTrack{ID: "sp1", Name: "song", ISRC: "TWK231680790"})
+	deleteDB(t)
+	_, c := startWeb(t)
+	code, m := c.isrcGet("/api/isrc/TWK231680790")
+	if code != 200 || m["canonical"] != nil {
+		t.Fatalf("%d %v", code, m["canonical"])
+	}
+	if e, ok := m["canonical_error"]; ok {
+		t.Errorf("沒有 db 不是錯誤,不該帶 canonical_error:%v", e)
+	}
+	if len(provTracks(t, m, "spotify")) != 1 {
+		t.Error("平台結果照常")
+	}
+}
+
 // TestWebISRCPlaylistWalkFollowsTombstone:清單裡的 item cid 還指著墓碑(COMMIT 中途斷掉、tracks.json 已寫但
 // 清單沒寫到的自癒情境)時,走訪要先 Redirect 才比得到——直接比 it.CID == cid 會說「沒有清單含這首」。
 // 走 CLI 合併出來的狀態測不到這條:resolve 的 COMMIT 會順手把 item 重導,所以這裡直接把鏡像做成那個樣子。

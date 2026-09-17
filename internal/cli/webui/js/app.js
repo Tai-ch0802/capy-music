@@ -76,20 +76,21 @@ runBtn.addEventListener('click', submit);
 cancelBtn.addEventListener('click', () => con.cancel());
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
 // 路由:只有兩頁(主控台 / ISRC),其餘 rail 項目在 T5 才開。
-let isrcReady = false;
+let isrcPage = null;
 function showPage(name) {
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
   for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
 }
 function route() {
-  const m = /^#\/isrc(?:\/([^/?#]+))?/.exec(location.hash || '');
+  // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 ISRC 頁。
+  const m = /^#\/isrc(?:\/([^/?#]+))?$/.exec(location.hash || '');
   if (!m) { showPage('console'); input.focus(); return; }
   showPage('isrc');
   const want = m[1] ? decodeURIComponent(m[1]) : '';
-  if (!isrcReady) {
-    initISRC(document.getElementById('page-isrc'), api, want);
-    isrcReady = true;
-  }
+  // 每次都把目前 hash 的值餵下去:上一頁 / 直接改網址列都要生效,不然網址寫 A、畫面是 B。
+  // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
+  if (!isrcPage) isrcPage = initISRC(document.getElementById('page-isrc'), api, want);
+  else if (want) isrcPage.show(want);
   document.getElementById('isrc-input').focus();
 }
 window.addEventListener('hashchange', route);

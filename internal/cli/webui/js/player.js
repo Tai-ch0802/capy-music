@@ -1,6 +1,10 @@
 // player.js:dock 的正在播放列。每 2 秒打 GET /api/now(輪詢不串流),document.hidden 時停;
 // 控制鈕不另做端點,直接 POST /api/run 跑既有命令(決策 42)。
-const POLL_MS = 2000;
+// POLL_MS 要大於伺服器的 webNowWait(2 s):相等的話單飛的 TryLock 幾乎每兩輪就固定失敗一次。
+const POLL_MS = 2500;
+// 上一份快照超過這麼久沒更新才算失聯。用時間而不是「連續幾次 stale」:State 穩定超過 webNowWait 時
+// 每一輪都會是 stale,用次數會把「慢但一直有新資料」判成「伺服器死了」而且永遠回不來(review #61)。
+const STALE_DEAD_MS = 30000;
 
 function mmss(ms) {
   const s = Math.floor(ms / 1000);
@@ -10,7 +14,7 @@ function mmss(ms) {
 export class Player {
   constructor(root, api, notice) {
     this.root = root; this.api = api; this.notice = notice;
-    this.timer = null; this.fails = 0; this.stales = 0;
+    this.timer = null; this.fails = 0;
     this.line = root.querySelector('#now-line');
     this.root.querySelectorAll('[data-cmd]').forEach((b) => {
       b.addEventListener('click', () => this.control(b.dataset.cmd));
@@ -40,14 +44,15 @@ export class Player {
       return;
     }
     this.fails = 0;
-    this.stales = d.stale ? this.stales + 1 : 0;
-    if (this.stales >= 5) { this.disconnected(); return; }
-    document.body.dataset.connected = 'true';
+    // stale 的語意是「伺服器忙」,不是「伺服器不在」:只降級顯示,不改連線狀態。真的太久沒有新資料才算失聯。
+    if (d.stale && (d.stale_ms || 0) > STALE_DEAD_MS) { this.disconnected(); return; }
+    this.root.dataset.nowConnected = 'true';
     this.render(d);
   }
 
+  // 面板自己的旗標:body[data-connected] 是 console 在用的(那次 job 的串流斷了),兩個狀態不該互相蓋。
   disconnected() {
-    document.body.dataset.connected = 'false';
+    this.root.dataset.nowConnected = 'false';
     this.line.textContent = 'capy --web 已停止或讀不到播放狀態';
   }
 

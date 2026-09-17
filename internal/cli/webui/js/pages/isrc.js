@@ -133,29 +133,38 @@ export function initISRC(root, api, initial) {
   const out = root.querySelector('#isrc-out');
   const input = root.querySelector('#isrc-input');
   const status = root.querySelector('#isrc-status');
+  // 序號 + AbortController:兩次查詢重疊時,舊的那次不可以把結果接在新的後面(伺服器端每家給到 30 秒,
+  // 一個沒登入的平台就足以讓第一次查詢在背景吊很久)。取消舊 fetch 也讓伺服器的 r.Context() 提早收工。
+  let seq = 0;
+  let inflight = null;
 
   async function look(raw) {
     const isrc = (raw || '').trim();
     if (!isrc) return;
+    const mine = ++seq;
+    if (inflight) inflight.abort();
+    inflight = new AbortController();
     location.hash = '#/isrc/' + encodeURIComponent(isrc);
     status.textContent = '查詢中…';
     out.replaceChildren();
     let r;
     try {
-      r = await api.fetch('/api/isrc/' + encodeURIComponent(isrc));
+      r = await api.fetch('/api/isrc/' + encodeURIComponent(isrc), { signal: inflight.signal });
     } catch (e) {
-      status.textContent = '連不上 capy --web:' + e.message;
+      if (mine === seq && e.name !== 'AbortError') status.textContent = '連不上 capy --web:' + e.message;
       return;
     }
+    if (mine !== seq) return;
     if (!r.ok) {
       let msg = r.statusText;
       try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
-      status.textContent = msg;
+      if (mine === seq) status.textContent = msg;
       return;
     }
     const d = await r.json();
+    if (mine !== seq) return;
     status.textContent = '';
-    out.appendChild(partsBar(d.parts));
+    out.replaceChildren(partsBar(d.parts));
     for (const id of Object.keys(d.providers).sort()) out.appendChild(providerCard(id, d.providers[id]));
     out.appendChild(canonicalCard(d));
   }
@@ -170,4 +179,12 @@ export function initISRC(root, api, initial) {
     input.value = initial;
     look(initial);
   }
+  // show:路由每次 hashchange 都會叫;與輸入框現值相同就不重查(look 自己設 hash 造成的那次)。
+  return {
+    show(isrc) {
+      if (!isrc || isrc === input.value.trim()) return;
+      input.value = isrc;
+      look(isrc);
+    },
+  };
 }

@@ -43,7 +43,9 @@ var webUI embed.FS
 var webOpenURL = browser.Open
 
 // webCSP:前端零 inline(TestWebStaticHasCSPAndNoInline 讀 index.html 斷言);兩家 CDN host 依常見回應推定
-// (Spotify 試聽是 p.scdn.co,review #58),T4 拿真回應驗證再定案。
+// (Spotify 封面 i.scdn.co / 試聽 p.scdn.co;Apple is1-ssl.mzstatic.com 被 *.mzstatic.com 蓋到、試聽 audio-ssl.itunes.apple.com)。
+// **還沒被真回應驗證過**:T4 的 smoke 是在沒有憑證的乾淨 config 下跑的,沒有任何一張封面真的被載入。
+// 驗收點是 R-10 / R-11(真帳號唯讀):查一首有封面與試聽的歌,看 console 有沒有 CSP 違規,不合就放寬到 https:。
 const webCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; " +
 	"img-src 'self' https://i.scdn.co https://*.mzstatic.com; media-src https://p.scdn.co https://audio-ssl.itunes.apple.com https://*.mzstatic.com; " +
 	"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"

@@ -218,6 +218,86 @@ func TestWebNowPollBoundedWhileStateStuck(t *testing.T) {
 }
 
 // TestWebNowNotBlockedByRunningJob:面板輪詢不進 runMu——序列槽被握著時仍要回。
+// TestWebNowStaleNeverCrossesProvider:【fails-before-fix】有快照但問的是另一家時,不可以把上一家的歌端出來。
+// 走得到的路:面板正在輪詢 spotify → 使用者 config set default_provider apple → dropNow → 下一次 poll 要重建
+// provider 又要打平台,超過 webNowWait → handler 回 staleNow("apple"),而快照是 spotify 的。
+func TestWebNowStaleNeverCrossesProvider(t *testing.T) {
+	setCLITestConfig(t)
+	origWait := webNowWait
+	webNowWait = 100 * time.Millisecond
+	t.Cleanup(func() { webNowWait = origWait })
+	f := newNowFake()
+	swapNow(t, f)
+	s, c := startWeb(t)
+	if m := c.now("?provider=spotify"); m["track"] == nil {
+		t.Fatal("先要有一份 spotify 的新鮮快照")
+	}
+	blk := make(chan struct{})
+	defer close(blk)
+	f.blockOn(blk)
+	m := c.now("?provider=apple")
+	if m["provider"] != "apple" || !m["stale"].(bool) {
+		t.Fatalf("卡住時要回 apple 的 stale:%v", m)
+	}
+	if m["track"] != nil {
+		t.Errorf("不可以把 spotify 的快照當成 apple 的:%v", m["track"])
+	}
+	// 直接對 staleNow 再釘一次(不經 HTTP):同一家才沿用。
+	if got := s.staleNow("apple"); got.Track != nil || got.Provider != "apple" {
+		t.Errorf("staleNow(apple):%+v", got)
+	}
+	if got := s.staleNow("spotify"); got.Track == nil {
+		t.Error("同一家還是要沿用上一份快照")
+	}
+}
+
+// TestWebNowDropAlsoClearsSnapshot:【fails-before-fix】作廢的理由是帳號 / 平台變了,那份快照正好是舊帳號的內容。
+func TestWebNowDropAlsoClearsSnapshot(t *testing.T) {
+	setCLITestConfig(t)
+	f := newNowFake()
+	swapNow(t, f)
+	s, c := startWeb(t)
+	if m := c.now(""); m["track"] == nil {
+		t.Fatal("先要有快照")
+	}
+	s.dropNow()
+	if got := s.staleNow("spotify"); got.Track != nil {
+		t.Errorf("dropNow 之後不可以還端得出已登出帳號的那首歌:%+v", got.Track)
+	}
+}
+
+// TestWebNowBuildsProviderOutsideLock:【fails-before-fix】newProvider 若在 nowMu 內,等 token 鎖的 poll 會把
+// handleRun 收尾的 dropNow() 卡住 —— 使用者看到的是「命令卡住」,而那是 /api/run 的完成事件被面板卡住。
+func TestWebNowBuildsProviderOutsideLock(t *testing.T) {
+	setCLITestConfig(t)
+	building := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	var once sync.Once
+	orig := newProvider
+	newProvider = func(context.Context, string) (provider.Provider, error) {
+		once.Do(func() { close(building) })
+		<-release // = 等 <key>.token.lock
+		return newNowFake(), nil
+	}
+	t.Cleanup(func() { newProvider = orig })
+	s, c := startWeb(t)
+
+	go func() { c.now("") }()
+	select {
+	case <-building:
+	case <-time.After(5 * time.Second):
+		t.Fatal("poll 沒進到 newProvider")
+	}
+	done := make(chan struct{})
+	go func() { s.dropNow(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dropNow 被還在建 provider 的 poll 卡住了(建構要在 nowMu 之外)")
+	}
+}
+
 func TestWebNowNotBlockedByRunningJob(t *testing.T) {
 	setCLITestConfig(t)
 	f := newNowFake()
