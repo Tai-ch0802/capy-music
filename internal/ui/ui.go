@@ -59,8 +59,9 @@ const (
 	tightCellWidth = 8  // 以 minCellWidth 縮完還放不下,再以它縮一輪;還是放不下就放棄,讓終端機自己折行
 )
 
-// TableWriter:選用介面(io.StringWriter 式)。writer 若實作它,Table 把整張表(含標題)原樣交給它,不走
-// TSV / 對齊(P7 web 模式用:頁面自己渲染表格);終端機的 tty / 非 TTY 兩條既有路徑一個位元組不改。
+// TableWriter:選用介面(io.StringWriter 式)。writer 若實作它,Table 把整張表(含標題)交給它,不走 TSV / 對齊
+// (P7 web 模式用:頁面自己渲染表格);終端機的 tty / 非 TTY 兩條既有路徑一個位元組不改。header 已調和到最長列的
+// 欄數(多出來的欄用空標題,同 TTY 路徑的不變式:絕不靜默丟資料);儲存格原樣、不跳脫;TableOption 只影響呈現,對它無意義。
 type TableWriter interface {
 	WriteTable(header []string, rows [][]string) error
 }
@@ -72,6 +73,15 @@ type TableWriter interface {
 // 非 TTY → 無標題 raw TSV(cut -f 友善),一個位元組都不改。
 func Table(w io.Writer, tty bool, header []string, rows [][]string, opts ...TableOption) error {
 	if tw, ok := w.(TableWriter); ok {
+		n := len(header)
+		for _, r := range rows {
+			n = max(n, len(r))
+		}
+		if n > len(header) { // 同下方 TTY 路徑:列多出來的欄用空標題,絕不靜默丟資料
+			padded := make([]string, n)
+			copy(padded, header)
+			header = padded
+		}
 		return tw.WriteTable(header, rows)
 	}
 	var cfg tableConfig

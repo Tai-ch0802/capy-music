@@ -29,7 +29,7 @@ import (
 // 永遠不刪 A;對 B 只做 add——B 有待同步的移除 / 換序 / 改名時擋下(exit 3),先 pl sync。
 
 // migrateIsTTY:確認與當場裁決的 TTY 閘;測試替換點(同 reviewIsTTY 慣例)。
-var migrateIsTTY = bothTTY
+var migrateIsTTY = func(cmd *cobra.Command) bool { return bothTTY(cmd) } // 委派、不複製函式值:覆寫 bothTTY 一處七個閘全對齊(review #57)
 
 // migrateEnd:一端的平台清單。id 空 = 目標要新建(名字跟來源)。
 type migrateEnd struct{ prov, id, name string }

@@ -94,7 +94,7 @@ func providerOf(key string) string { return strings.TrimSuffix(key, ".token") }
 var lockRetryInterval = 50 * time.Millisecond
 
 // lockNoticeAfter / LockStderr:等鎖超過這個時間就往 stderr 提醒一次(只印一次)與提醒的目的地。測試 / web 替換點
-// (LockStderr 在 P7 T1 匯出:web 模式把它指到當前 job 的串流)。
+// (LockStderr 在 P7 T1 匯出:web 模式接到 webLockStderr,改寫成點名面板 / ISRC 頁的那句;歸屬見計畫決策 42)。
 // 不共用 spotify.go 的 LoginStderr:本檔 provider-neutral,Google 之後走同一條路徑。
 var (
 	lockNoticeAfter           = time.Second

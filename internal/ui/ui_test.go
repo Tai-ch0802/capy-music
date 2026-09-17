@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -361,6 +362,14 @@ func TestTableWriterBypassesTSV(t *testing.T) {
 		if s.Len() != 0 {
 			t.Errorf("tty=%v:實作 TableWriter 的 writer 不該收到任何位元組,得到 %q", tty, s.String())
 		}
+	}
+	// 欄數調和:列比 header 長時 header 補空標題(TTY 路徑的不變式,頁面端才不會照 header 畫 <td> 而吃掉多出來的欄)。
+	long := &tableSink{}
+	if err := Table(long, false, []string{"A"}, [][]string{{"1", "2", "3"}, {"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"A", "", ""}; !slices.Equal(long.header, want) || len(long.rows[0]) != 3 {
+		t.Errorf("header 要補到最長列的欄數:header=%q rows=%q", long.header, long.rows)
 	}
 	s := &tableSink{err: errors.New("頁面已關閉")}
 	if err := Table(s, false, []string{"A"}, [][]string{{"1"}}); err == nil || err.Error() != "頁面已關閉" {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,6 +51,13 @@ func TestBothTTYAndClientIDWizardAreSeams(t *testing.T) {
 	asked := ""
 	confirmWrite = func(prompt string) (bool, error) { asked = prompt; return false, nil }
 	t.Cleanup(func() { bothTTY, confirmWrite = origBoth, origConfirm })
+
+	// review / migrate 兩個閘委派到 bothTTY(review #57):覆寫一處就全對齊,不是複製函式值。
+	probe := newRootCmd()
+	probe.SetOut(&bytes.Buffer{})
+	if !reviewIsTTY(probe) || !migrateIsTTY(probe) {
+		t.Fatal("reviewIsTTY / migrateIsTTY 要委派到 bothTTY,不是複製函式值")
+	}
 
 	_, _, err := runPull(t, "pl", "pull", "通勤")
 	if exitOf(t, err) != 2 || !strings.Contains(asked, "套用以上 2 筆") {

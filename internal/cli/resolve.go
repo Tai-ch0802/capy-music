@@ -322,7 +322,7 @@ var reviewPrompt = func(it resolveItem, pos, total int, search func(string) ([]p
 }
 
 // reviewIsTTY:--review 的 TTY 閘;測試替換點(測試的 stdout 是 buffer)。
-var reviewIsTTY = bothTTY
+var reviewIsTTY = func(cmd *cobra.Command) bool { return bothTTY(cmd) } // 委派、不複製函式值:覆寫 bothTTY 一處七個閘全對齊(review #57)
 
 // pinMapping:把 (prov, m) 釘給 cid。cid 先沿墓碑追——同一輪 --review 的前一筆可能已經把它合併掉(accept 對到已屬另一 cid 的候選),
 // 直接寫會把敗者當幽靈 track 復活;勝者不在 tracks 就回錯。回傳實際釘上的 cid。
