@@ -623,7 +623,6 @@ func TestWebLockNoticeNamesPanelPoll(t *testing.T) {
 
 // ── update → stale ──
 
-
 // TestWebUpdateExitZeroMakesServerStale:update 真的換了 binary(replaceExecutable 設 executableReplaced)的那個 job
 // 結束後提示重啟、之後 /api/run 一律 503 直到重啟;【fails-before-fix】舊判準「exit 0 + capy update」會讓「已是最新」
 // 的 no-op 也把主控台永久 503(review #59 第 1 點)——前半段釘住 no-op 不 stale。
