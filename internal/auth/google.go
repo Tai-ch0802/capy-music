@@ -91,9 +91,9 @@ func LoginGoogle(ctx context.Context, c GoogleClient, openBrowser func(string) e
 	verifier := oauth2.GenerateVerifier()
 	lb.Start()
 	authURL := conf.AuthCodeURL(state, googleAuthOptions(verifier)...)
-	fmt.Fprintf(loginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
+	fmt.Fprintf(LoginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
 	if err := openBrowser(authURL); err != nil {
-		fmt.Fprintf(loginStderr, "無法自動開瀏覽器:%v\n", err)
+		fmt.Fprintf(LoginStderr, "無法自動開瀏覽器:%v\n", err)
 	}
 	vals, err := lb.Wait(ctx)
 	if err != nil {

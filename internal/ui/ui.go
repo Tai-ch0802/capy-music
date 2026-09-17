@@ -59,12 +59,21 @@ const (
 	tightCellWidth = 8  // 以 minCellWidth 縮完還放不下,再以它縮一輪;還是放不下就放棄,讓終端機自己折行
 )
 
+// TableWriter:選用介面(io.StringWriter 式)。writer 若實作它,Table 把整張表(含標題)原樣交給它,不走
+// TSV / 對齊(P7 web 模式用:頁面自己渲染表格);終端機的 tty / 非 TTY 兩條既有路徑一個位元組不改。
+type TableWriter interface {
+	WriteTable(header []string, rows [][]string) error
+}
+
 // Table: TTY → 依顯示寬度(ansi.StringWidth,全形字算 2、ANSI 不算)對齊、含粗體標題;放不下時
 // 儲存格**換行、不截斷**(資訊要給完整,不要給一半;原子欄永遠完整,見 fitWidths)。表頭跟資料列
 // 一視同仁:欄名比縮過的欄寬長也會折(PROVIDER_ID 在 80 欄折成 PROVIDER / _ID)。比終端機寬時先開
 // 檢視窗格(pager.go),看完再印換行版;窗格裡按 Ctrl-C 回 ErrInterrupted,什麼都不印。
 // 非 TTY → 無標題 raw TSV(cut -f 友善),一個位元組都不改。
 func Table(w io.Writer, tty bool, header []string, rows [][]string, opts ...TableOption) error {
+	if tw, ok := w.(TableWriter); ok {
+		return tw.WriteTable(header, rows)
+	}
 	var cfg tableConfig
 	for _, o := range opts {
 		o(&cfg)
