@@ -50,7 +50,7 @@ export class Console {
       if (!r.ok) {
         let msg = r.statusText;
         try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
-        this.exit(b, r.status === 409 ? 1 : 1, msg, r.status === 503 ? 'stale' : 'refused');
+        this.exit(b, 1, msg, r.status === 503 ? 'stale' : (r.status === 409 ? 'busy' : 'refused'));
         if (r.status === 503) document.body.dataset.stale = '';
         if (r.status === 401) this.notice(msg);
         return;
@@ -104,6 +104,8 @@ export class Console {
     if (reason === 'cancelled') text += ' · 已取消';
     else if (reason === 'shutdown') text += ' · capy --web 已結束';
     else if (reason === 'timeout') text += ' · 等待回答逾時';
+    else if (reason === 'busy') text += ' · 另一個命令執行中,等它結束或取消';
+    else if (reason === 'stale') text += ' · 請重啟 capy --web';
     if (message) text += ' · ' + message.replace(/^Error: /, '');
     if (code === 2 && /--yes/.test(message || '')) text += '(未套用:加 --yes 重跑)';
     el.textContent = text;

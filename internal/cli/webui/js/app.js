@@ -45,13 +45,13 @@ export function notice(text) {
 
 bootToken();
 const con = new Console(document.getElementById('console'), api, notice);
-const form = document.getElementById('cmdform');
 const input = document.getElementById('cmd');
 const runBtn = document.getElementById('run');
 const cancelBtn = document.getElementById('cancel');
 
-form.addEventListener('submit', async (ev) => {
-  ev.preventDefault();
+// 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
+async function submit() {
+  if (con.running) return;
   const line = input.value.trim();
   input.value = '';
   input.disabled = true; runBtn.disabled = true; cancelBtn.hidden = false;
@@ -61,7 +61,9 @@ form.addEventListener('submit', async (ev) => {
     input.disabled = false; runBtn.disabled = false; cancelBtn.hidden = true;
     input.focus();
   }
-});
+}
+input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } });
+runBtn.addEventListener('click', submit);
 cancelBtn.addEventListener('click', () => con.cancel());
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
 loadCommands().catch((e) => notice('連不上 capy --web:' + e.message));

@@ -26,13 +26,13 @@
 <footer class="dock">
   <div class="dock__now" id="now" data-playing="false">播放面板(T4)</div>
   <div class="dock__notice" id="notice" hidden></div>
-  <form class="dock__cmd" id="cmdform" autocomplete="off">
+  <div class="dock__cmd" id="cmdline" role="group" aria-label="命令列">
     <label class="dock__prompt" for="cmd">capy</label>
-    <input id="cmd" name="cmd" class="dock__input" list="commands" spellcheck="false" placeholder="pl show 通勤 · search 五月天 · auth status">
+    <input id="cmd" name="cmd" class="dock__input" list="commands" autocomplete="off" spellcheck="false" placeholder="pl show 通勤 · search 五月天 · auth status">
     <datalist id="commands"></datalist>
-    <button type="submit" class="btn btn--primary" id="run">執行</button>
+    <button type="button" class="btn btn--primary" id="run">執行</button>
     <button type="button" class="btn btn--ghost" id="cancel" hidden>取消</button>
-  </form>
+  </div>
 </footer>
 <script type="module" src="js/app.js"></script>
 </body>

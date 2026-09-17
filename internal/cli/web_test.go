@@ -31,6 +31,8 @@ func startWeb(t *testing.T) (*webServer, *webClient) {
 	if os.Getenv("CAPY_CONFIG_DIR") == "" {
 		setCLITestConfig(t)
 	}
+	executableReplaced.Store(false) // update 的測試會真的 replaceExecutable,旗標是 process 全域
+	t.Cleanup(func() { executableReplaced.Store(false) })
 	ctx, cancel := context.WithCancel(context.Background())
 	s, err := newWebServer(ctx)
 	if err != nil {
@@ -621,17 +623,35 @@ func TestWebLockNoticeNamesPanelPoll(t *testing.T) {
 
 // ── update → stale ──
 
+
+// TestWebUpdateExitZeroMakesServerStale:update 真的換了 binary(replaceExecutable 設 executableReplaced)的那個 job
+// 結束後提示重啟、之後 /api/run 一律 503 直到重啟;【fails-before-fix】舊判準「exit 0 + capy update」會讓「已是最新」
+// 的 no-op 也把主控台永久 503(review #59 第 1 點)——前半段釘住 no-op 不 stale。
 func TestWebUpdateExitZeroMakesServerStale(t *testing.T) {
-	if !webMarksStale(0, "capy update") || webMarksStale(1, "capy update") || webMarksStale(0, "capy search") {
-		t.Error("只有 capy update 成功結束才 stale")
-	}
+	setCLITestConfig(t)
+	stubGitHub(t, http.StatusOK, headJSON)
+	calls := stubInstall(t)
+	stubExecutable(t)
+	stubVersion(t, "2026.09.07-0123456") // = main 的 sha 前綴 → 已是最新
 	s, c := startWeb(t)
-	s.stale.Store(true)
-	if code, _, msg := c.run(map[string]any{"args": []string{"--help"}}); code != http.StatusServiceUnavailable || !strings.Contains(msg, "重啟") {
-		t.Errorf("stale 後 /api/run 一律 503:%d %q", code, msg)
+	_, ev, _ := c.run(map[string]any{"args": []string{"update", "--dev"}})
+	if ex := evExit(t, ev); ex["code"] != float64(0) || !strings.Contains(evText(ev, "stdout"), "已是最新") || len(*calls) != 0 {
+		t.Fatalf("no-op update:%v %q", ex, evText(ev, "stdout"))
 	}
-	if st := c.status(http.MethodGet, "/api/commands", nil, nil); st != 200 {
-		t.Errorf("stale 只封 /api/run:%d", st)
+	if s.stale.Load() {
+		t.Fatal("沒換 binary 不得 stale")
+	}
+	if code, _, _ := c.run(map[string]any{"args": []string{"--help"}}); code != 200 {
+		t.Errorf("已是最新之後還能跑:%d", code)
+	}
+	// 真的換了 binary:提示重啟、stale、之後 503。
+	stubVersion(t, "2026.09.04-77b72b4")
+	_, ev, _ = c.run(map[string]any{"args": []string{"update", "--dev"}})
+	if ex := evExit(t, ev); ex["code"] != float64(0) || !strings.Contains(evText(ev, "stdout"), "已更新") || !strings.Contains(evText(ev, "stderr"), "請重啟") || !s.stale.Load() {
+		t.Fatalf("換了 binary 的 update:%v out=%q err=%q", ex, evText(ev, "stdout"), evText(ev, "stderr"))
+	}
+	if code, _, _ := c.run(map[string]any{"args": []string{"--help"}}); code != http.StatusServiceUnavailable {
+		t.Errorf("stale 後 503:%d", code)
 	}
 }
 
@@ -803,7 +823,7 @@ func TestWebNonTTYPrintsURLAndDoesNotOpenBrowser(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	base, _, _ := strings.Cut(url, "/#")
+	base, frag, _ := strings.Cut(url, "/#t=")
 	req, _ := http.NewRequest(http.MethodGet, base+"/", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -812,6 +832,17 @@ func TestWebNonTTYPrintsURLAndDoesNotOpenBrowser(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || resp.Header.Get("Content-Security-Policy") == "" {
 		t.Errorf("GET /:%d %v", resp.StatusCode, resp.Header)
+	}
+	// token 字元集是 app.js 的 bootToken 正規式 [A-Za-z0-9_-]+ 的契約(base64 的 + / = 會被 JS 截斷成永遠 401)。
+	if !regexp.MustCompile(`^[A-Za-z0-9_\-]+$`).MatchString(frag) || len(frag) < 32 {
+		t.Errorf("token 要是 URL-safe 無 padding、夠長:%q", frag)
+	}
+	req, _ = http.NewRequest(http.MethodGet, base+"/api/commands", nil)
+	req.Header.Set("X-Capy-Token", frag)
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Errorf("印出的 fragment 直接當 X-Capy-Token 要 200:%v %v", err, resp)
+	} else {
+		resp.Body.Close()
 	}
 	if opened != 0 {
 		t.Errorf("非 TTY 不開瀏覽器,叫了 %d 次", opened)

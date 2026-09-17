@@ -10,7 +10,7 @@ function mmss(ms) {
 export function renderTable(header, rows) {
   const t = document.createElement('table');
   t.className = 'tbl';
-  const cols = Math.max(header.length, ...rows.map((r) => r.length), 0);
+  const cols = rows.reduce((m, r) => Math.max(m, r.length), header.length); // 不用 Math.max(...spread):上萬列會 RangeError
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
   for (let i = 0; i < cols; i++) {

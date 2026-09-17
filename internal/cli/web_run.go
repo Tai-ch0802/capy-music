@@ -231,6 +231,10 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	job := &webJob{id: strconv.FormatUint(s.seq.Add(1), 10), ctx: jobCtx, cancel: cancel, sse: sse}
 	s.setCur(job)
+	defer func() { // defer:命令 panic(net/http 會 recover)也要守「絕不寫到已結束的 ResponseWriter」(review #59)
+		sse.close()   // 之後 webGlobalStderr 的寫入退回 os.Stderr
+		s.setCur(nil) // 在 closed 之後:沒有任何寫入會落到已結束的 ResponseWriter
+	}()
 	_ = sse.event(map[string]any{"type": "start", "job": job.id, "args": args, "path": path})
 
 	root.SetOut(&webStdout{webStream{sse, "stdout"}})
@@ -238,18 +242,12 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	root.SetArgs(args)
 	err := root.ExecuteContext(jobCtx)
 	code, msg := ExitCode(err)
-	if webMarksStale(code, path) {
+	if path == "capy update" && executableReplaced.Load() { // update 真的換了 binary(no-op 的「已是最新」不算;review #59)
 		s.stale.Store(true)
 		_ = sse.event(map[string]any{"type": "stderr", "text": webStaleMsg + "\n"})
 	}
 	_ = sse.event(map[string]any{"type": "exit", "code": code, "message": msg, "reason": webExitReason(jobCtx)})
-	sse.close()   // 之後 webGlobalStderr 的寫入退回 os.Stderr
-	s.setCur(nil) // 在 closed 之後:沒有任何寫入會落到已結束的 ResponseWriter
 }
-
-// webMarksStale:capy update 成功後整個 /api/run 停用直到重啟——replaceExecutable 只 rename 不 re-exec(update.go),
-// 舊行程繼續跑可寫的 store 路徑會與新 binary 輪流 retire 對方的 state.db(store.go)。
-func webMarksStale(code int, path string) bool { return code == 0 && path == "capy update" }
 
 func webExitReason(ctx context.Context) string {
 	cause := context.Cause(ctx)

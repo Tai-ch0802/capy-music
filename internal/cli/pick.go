@@ -23,6 +23,9 @@ import (
 // 它們的鍵位還在 help 行裡(select 的 KeyBinds 固定列它們,setFiltering 每次重設 Enabled,壓不掉),
 // 所以只改 help 文字,別讓它宣傳做不到的事(PR #50 review)。MultiSelect 沒用到,不補。
 // 直接叫 huh.NewForm 會漏掉這份鍵位與配色,新表單一律走這裡。
+// **web 模式(capy --web,P7 決策 40)**:installWebSeams 把 stdinIsTTY 換成 false,但 huh 仍會抓 /dev/tty——伺服器行程有
+// 終端機就接管、沒有就「bubbletea: error opening TTY」。所以任何新的表單一律包成 package var 並進 installWebSeams
+// (CLAUDE.md 硬約束),不得在命令裡直接 newForm(...).Run();既有的都在 isInteractive / bothTTY / stdinIsTTY 閘後面。
 // 配色是 ui.HuhStyles(跟互動式介面同一套):huh 預設把標題染成靛藍,深色終端機上很難讀(使用者回報)。
 func newForm(groups ...*huh.Group) *huh.Form {
 	km := huh.NewDefaultKeyMap()
