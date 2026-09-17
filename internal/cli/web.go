@@ -148,6 +148,7 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /api/commands", s.api(s.handleCommands))
 	mux.HandleFunc("POST /api/run", s.api(s.handleRun))
 	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.api(s.handleCancel))
+	mux.HandleFunc("POST /api/jobs/{job}/answer", s.api(s.handleAnswer))
 	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, _ *http.Request) { httpErr(w, http.StatusNotFound, "沒有這個端點") }))
 	mux.Handle("/", s.page(s.static))
 	return mux
@@ -231,14 +232,13 @@ func (s *webServer) current() *webJob {
 
 // ── 接縫 ──
 
-// installWebSeams:一次安裝、退出還原。T3a 第一版:三家精靈回既有的非互動錯誤(stdinIsTTY = false,不抓 /dev/tty)、
-// 五個 stderr 全域改接 webGlobalStderr、bare capy 印 help 不開 TUI、now --watch 指路面板;isInteractive / bothTTY
-// 維持 false(七個確認閘回 exit 2「待套用」,前端顯示「加 --yes 重跑」),T3b 的提示橋再翻成 true。
+// installWebSeams:一次安裝、退出還原。五個 stderr 全域改接 webGlobalStderr、bare capy 印 help 不開 TUI、
+// now --watch 指路面板;互動閘與每個 huh 接縫由 installWebPromptSeams(web_prompt.go)換成提示橋。
 // runMu 保證同時只有一個 job,process 全域 var 沒有競態。
 func installWebSeams(s *webServer) (restore func()) {
-	origStdin, origTUI, origWatch := stdinIsTTY, runTUI, runWatch
+	origTUI, origWatch := runTUI, runWatch
 	origBackoff, origStore, origDrive, origLogin, origLock := provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr, auth.LockStderr
-	stdinIsTTY = func() bool { return false }
+	restorePrompts := installWebPromptSeams(s)
 	runTUI = func(cmd *cobra.Command) error { return cmd.Help() }
 	runWatch = func(*cobra.Command, provider.Provider, provider.PlaybackController) error {
 		return errors.New("web 模式請看頁面上的播放狀態面板;單次用 capy now")
@@ -247,7 +247,8 @@ func installWebSeams(s *webServer) (restore func()) {
 	provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr = g, g, g, g
 	auth.LockStderr = &webLockStderr{g}
 	return func() {
-		stdinIsTTY, runTUI, runWatch = origStdin, origTUI, origWatch
+		restorePrompts()
+		runTUI, runWatch = origTUI, origWatch
 		provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr, auth.LockStderr = origBackoff, origStore, origDrive, origLogin, origLock
 	}
 }

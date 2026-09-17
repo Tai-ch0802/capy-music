@@ -380,15 +380,6 @@ func TestWebNowWatchRefused(t *testing.T) {
 	}
 }
 
-func TestWebAuthLoginNonInteractiveErrorNotTTY(t *testing.T) {
-	setCLITestConfig(t)
-	_, c := startWeb(t)
-	_, events, _ := c.run(map[string]any{"args": []string{"auth", "login", "spotify"}})
-	if ex := evExit(t, events); ex["code"] != float64(1) || !strings.Contains(ex["message"].(string), "--client-id") {
-		t.Errorf("T3a 的精靈走非互動錯誤(不抓 /dev/tty):%v", ex)
-	}
-}
-
 func TestWebResetsDefaultProviderPerRun(t *testing.T) {
 	setCLITestConfig(t)
 	_, c := startWeb(t)

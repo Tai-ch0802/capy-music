@@ -301,19 +301,25 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	return nil
 }
 
+// spotifyAppTitle / spotifyAppSteps:BYO 精靈的說明原文;huh 表單與 web 提示橋共用同一份。
+const (
+	spotifyAppTitle = "建立你自己的 Spotify app(免費,約 2 分鐘)"
+	spotifyAppSteps = "Spotify 政策限制每個 app 只能有 5 位使用者,所以要用自己的 app:\n" +
+		"1. 開 https://developer.spotify.com/dashboard\n" +
+		"2. Create app,名稱隨意\n" +
+		"3. Redirect URI 填入(完全照抄): http://127.0.0.1:8888/callback\n" +
+		"4. 勾選 Web API → Save\n" +
+		"5. 複製 Client ID 貼到下一欄"
+)
+
 // runClientIDWizard:BYO onboarding(spec §4.2)。測試 / web 替換點(P7 決策 40:web 改走表單提示橋)。
 // charm v2 調整條款:huh v2 API 與此處有出入時,以 go doc charm.land/huh/v2 為準,偏差記入報告。
 var runClientIDWizard = func() (string, error) {
 	var cid string
 	form := newForm(huh.NewGroup(
 		huh.NewNote().
-			Title("建立你自己的 Spotify app(免費,約 2 分鐘)").
-			Description("Spotify 政策限制每個 app 只能有 5 位使用者,所以要用自己的 app:\n"+
-				"1. 開 https://developer.spotify.com/dashboard\n"+
-				"2. Create app,名稱隨意\n"+
-				"3. Redirect URI 填入(完全照抄): http://127.0.0.1:8888/callback\n"+
-				"4. 勾選 Web API → Save\n"+
-				"5. 複製 Client ID 貼到下一欄"),
+			Title(spotifyAppTitle).
+			Description(spotifyAppSteps),
 		huh.NewInput().
 			Title("Client ID").
 			Value(&cid).

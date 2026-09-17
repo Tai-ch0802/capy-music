@@ -109,8 +109,128 @@ export class Console {
       case 'stderr': this.append(b, 'block__err', ev.text); break;
       case 'table': b.appendChild(renderTable(ev.header, ev.rows)); break;
       case 'exit': this.exit(b, ev.code, ev.message, ev.reason); break;
-      default: break; // prompt / prompt_closed / open_url:T3b
+      case 'prompt': this.prompt(ev, b); break;
+      case 'prompt_closed': this.promptClosed(ev, b); break;
+      case 'open_url': this.openURL(ev, b); break;
+      default: break;
     }
+  }
+
+  // 提示橋(決策 40 第 3 點):confirm / select / input / form 都畫在同一個區塊裡;答案 POST /api/jobs/{job}/answer。
+  prompt(ev, b) {
+    const box = document.createElement('div');
+    box.className = 'prompt';
+    box.dataset.id = String(ev.id);
+    box.dataset.kind = ev.kind;
+    const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
+    if (ev.note) {
+      const n = el('div', 'prompt__note');
+      n.appendChild(el('div', 'prompt__note-title', ev.note.title));
+      n.appendChild(el('pre', 'prompt__note-body', ev.note.body));
+      box.appendChild(n);
+    }
+    if (ev.error) box.appendChild(el('div', 'prompt__error', ev.error));
+    box.appendChild(el('div', 'prompt__title', ev.title));
+    const controls = () => box.querySelectorAll('button,input');
+    const answer = (cancel, value) => {
+      controls().forEach((c) => { c.disabled = true; });
+      this.answer(ev.id, cancel, value).then((ok) => { if (!ok) controls().forEach((c) => { c.disabled = false; }); });
+    };
+    const btn = (label, cls, fn) => { const x = el('button', 'btn ' + cls, label); x.type = 'button'; x.addEventListener('click', fn); return x; };
+    const onKeys = (inp, submit) => inp.addEventListener('keydown', (k) => {
+      if (k.key === 'Enter') { k.preventDefault(); submit(); }
+      if (k.key === 'Escape') { k.preventDefault(); answer(true, null); }
+    });
+    const row = el('div', 'prompt__row');
+    let focus = null;
+    switch (ev.kind) {
+      case 'confirm': {
+        const yes = btn(ev.affirmative || '確定', ev.default === true ? 'btn--primary' : '', () => answer(false, true));
+        const no = btn(ev.negative || '取消', ev.default === false ? 'btn--primary' : '', () => answer(false, false));
+        row.append(yes, no);
+        focus = ev.default === false ? no : yes;
+        break;
+      }
+      case 'select': {
+        const list = el('div', 'prompt__options');
+        (ev.options || []).forEach((o, i) => list.appendChild(btn(o, 'btn--option', () => answer(false, i))));
+        box.appendChild(list);
+        focus = list.firstElementChild;
+        break;
+      }
+      case 'input': {
+        const inp = el('input', 'prompt__input');
+        inp.type = 'text'; inp.spellcheck = false; inp.autocomplete = 'off';
+        inp.value = ev.default == null ? '' : String(ev.default);
+        onKeys(inp, () => answer(false, inp.value));
+        row.append(inp, btn('確定', 'btn--primary', () => answer(false, inp.value)));
+        focus = inp;
+        break;
+      }
+      case 'form': {
+        const inputs = {};
+        const fields = el('div', 'prompt__fields');
+        const submit = () => { const v = {}; for (const [n, inp] of Object.entries(inputs)) v[n] = inp.value; answer(false, v); };
+        (ev.fields || []).forEach((f) => {
+          const lab = el('label', 'prompt__field');
+          lab.appendChild(el('span', null, f.label));
+          const inp = el('input', 'prompt__input');
+          inp.type = f.secret ? 'password' : 'text';
+          inp.autocomplete = f.secret ? 'new-password' : 'off';
+          inp.spellcheck = false;
+          onKeys(inp, submit);
+          inputs[f.name] = inp;
+          lab.appendChild(inp);
+          fields.appendChild(lab);
+          if (!focus) focus = inp;
+        });
+        box.appendChild(fields);
+        row.appendChild(btn('送出', 'btn--primary', submit));
+        break;
+      }
+      default: break;
+    }
+    row.appendChild(btn('✕ 關掉', 'btn--ghost', () => answer(true, null)));
+    box.appendChild(row);
+    b.appendChild(box);
+    this.stick(b);
+    if (focus) setTimeout(() => focus.focus(), 0);
+  }
+
+  async answer(id, cancel, value) {
+    if (!this.job) return false;
+    const r = await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/answer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, cancel, value }),
+    });
+    if (r.ok) return true;
+    let msg = r.statusText;
+    try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
+    this.notice('回答沒送到:' + msg);
+    return r.status !== 400; // 400 = 型別不合,讓使用者改;其他(404 / 409)不必重試
+  }
+
+  promptClosed(ev, b) {
+    const box = b.querySelector(`.prompt[data-id="${CSS.escape(String(ev.id))}"]`);
+    if (!box) return;
+    box.classList.add('is-closed');
+    box.dataset.reason = ev.reason;
+    box.querySelectorAll('button,input').forEach((c) => { c.disabled = true; });
+    const text = { answered: '已回答', dismissed: '已關掉', timeout: '等待回答逾時,命令已取消', cancelled: '命令已取消' }[ev.reason] || ev.reason;
+    const tag = document.createElement('div');
+    tag.className = 'prompt__closed';
+    tag.textContent = text;
+    box.appendChild(tag);
+  }
+
+  openURL(ev, b) {
+    const p = document.createElement('p');
+    p.className = 'block__link';
+    const a = document.createElement('a');
+    a.href = ev.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.textContent = '在瀏覽器開啟授權頁:' + ev.url;
+    p.appendChild(a);
+    b.appendChild(p);
+    this.stick(b);
   }
 
   exit(b, code, message, reason) {
