@@ -675,7 +675,9 @@ var confirmWrite = func(prompt string) (bool, error) {
 }
 
 // bothTTY:stdout 與 stdin 都是終端機才能問;echo | capy … 這種 stdin 是管線的不問,直接當待套用。
-func bothTTY(cmd *cobra.Command) bool { return stdoutIsTTY(cmd) && ui.IsTTY(os.Stdin) }
+// 測試 / web 替換點(P7 決策 40:web 模式整段換成 true)。reviewIsTTY(resolve.go)與 migrateIsTTY(migrate.go)
+// 委派到這裡(不是複製函式值),覆寫這一處七個確認閘就全對齊。
+var bothTTY = func(cmd *cobra.Command) bool { return stdoutIsTTY(cmd) && ui.IsTTY(os.Stdin) }
 
 // removalBlocked:刪除閾值(Q3 採 B,2026-09-08;附錄 C 決策 18):單一 (清單, provider) 要移除 >10 首,
 // 或 >30% 且 >3 首。分母是「該 provider 可見的曲數」(DeriveResult.VisibleCount),不是 canonical 總曲數。

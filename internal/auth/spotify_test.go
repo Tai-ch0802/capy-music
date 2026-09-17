@@ -187,9 +187,9 @@ func TestLoginSpotifyBrowserOpenFailStillCompletes(t *testing.T) {
 	swapTokenURL(t, tokenSrv.URL)
 
 	stderrBuf := &bytes.Buffer{}
-	origStderr := loginStderr
-	loginStderr = stderrBuf
-	t.Cleanup(func() { loginStderr = origStderr })
+	origStderr := LoginStderr
+	LoginStderr = stderrBuf
+	t.Cleanup(func() { LoginStderr = origStderr })
 
 	failingBrowser := func(authURL string) error {
 		done := make(chan struct{})

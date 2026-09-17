@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -327,5 +329,50 @@ func TestTableTTYRowsLongerThanHeaderAndNoHeader(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	if len(lines) != 2 || !strings.Contains(lines[1], "a") || !strings.Contains(lines[1], "b") {
 		t.Errorf("無標題時列仍要印出來(標題列為空):%q", buf.String())
+	}
+}
+
+// tableSink:實作 TableWriter 的 writer(P7 web 模式的頁面端)。
+type tableSink struct {
+	bytes.Buffer
+	header []string
+	rows   [][]string
+	calls  int
+	err    error
+}
+
+func (s *tableSink) WriteTable(header []string, rows [][]string) error {
+	s.calls++
+	s.header, s.rows = header, rows
+	return s.err
+}
+
+// TestTableWriterBypassesTSV:writer 實作 TableWriter → 整張表(含標題、儲存格不跳脫)原樣交給它,
+// 底層 buffer 零位元組;tty 與非 TTY 一樣;它回的 error 原樣往上。不實作的 writer 走既有路徑
+// (TestTableNonTTYIsRawTSV 與 TTY 系列不改而過 = 零行為變更)。
+func TestTableWriterBypassesTSV(t *testing.T) {
+	for _, tty := range []bool{false, true} {
+		s := &tableSink{}
+		if err := Table(s, tty, []string{"A", "B"}, [][]string{{"1", "x\ty"}, {"2", "y"}}); err != nil {
+			t.Fatalf("tty=%v: %v", tty, err)
+		}
+		if s.calls != 1 || len(s.header) != 2 || s.header[0] != "A" || len(s.rows) != 2 || s.rows[0][1] != "x\ty" {
+			t.Errorf("tty=%v:應原樣收到 header 與 rows,得到 calls=%d header=%q rows=%q", tty, s.calls, s.header, s.rows)
+		}
+		if s.Len() != 0 {
+			t.Errorf("tty=%v:實作 TableWriter 的 writer 不該收到任何位元組,得到 %q", tty, s.String())
+		}
+	}
+	// 欄數調和:列比 header 長時 header 補空標題(TTY 路徑的不變式,頁面端才不會照 header 畫 <td> 而吃掉多出來的欄)。
+	long := &tableSink{}
+	if err := Table(long, false, []string{"A"}, [][]string{{"1", "2", "3"}, {"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"A", "", ""}; !slices.Equal(long.header, want) || len(long.rows[0]) != 3 {
+		t.Errorf("header 要補到最長列的欄數:header=%q rows=%q", long.header, long.rows)
+	}
+	s := &tableSink{err: errors.New("頁面已關閉")}
+	if err := Table(s, false, []string{"A"}, [][]string{{"1"}}); err == nil || err.Error() != "頁面已關閉" {
+		t.Errorf("WriteTable 的 error 要原樣回傳,得到 %v", err)
 	}
 }

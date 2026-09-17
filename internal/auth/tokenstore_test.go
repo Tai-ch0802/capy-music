@@ -382,9 +382,9 @@ func TestTokenSourceWriteBackRetryGivesUpWhenContextCanceled(t *testing.T) {
 func TestLockFileWarnsOnceWhileWaiting(t *testing.T) {
 	setTokenTest(t)
 	var buf strings.Builder
-	origW, origAfter, origRetry := lockStderr, lockNoticeAfter, lockRetryInterval
-	lockStderr, lockNoticeAfter, lockRetryInterval = &buf, 10*time.Millisecond, 5*time.Millisecond
-	t.Cleanup(func() { lockStderr, lockNoticeAfter, lockRetryInterval = origW, origAfter, origRetry })
+	origW, origAfter, origRetry := LockStderr, lockNoticeAfter, lockRetryInterval
+	LockStderr, lockNoticeAfter, lockRetryInterval = &buf, 10*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { LockStderr, lockNoticeAfter, lockRetryInterval = origW, origAfter, origRetry })
 
 	unlock, err := lockFile(context.Background(), "t.lock")
 	if err != nil {

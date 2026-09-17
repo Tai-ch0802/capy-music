@@ -93,11 +93,12 @@ func providerOf(key string) string { return strings.TrimSuffix(key, ".token") }
 // lockRetryInterval:等鎖的輪詢間隔。測試替換點。
 var lockRetryInterval = 50 * time.Millisecond
 
-// lockNoticeAfter / lockStderr:等鎖超過這個時間就往 stderr 提醒一次(只印一次)與提醒的目的地。測試替換點。
-// 不共用 spotify.go 的 loginStderr:本檔 provider-neutral,Google 之後走同一條路徑。
+// lockNoticeAfter / LockStderr:等鎖超過這個時間就往 stderr 提醒一次(只印一次)與提醒的目的地。測試 / web 替換點
+// (LockStderr 在 P7 T1 匯出:web 模式接到 webLockStderr,改寫成點名面板 / ISRC 頁的那句;歸屬見計畫決策 42)。
+// 不共用 spotify.go 的 LoginStderr:本檔 provider-neutral,Google 之後走同一條路徑。
 var (
 	lockNoticeAfter           = time.Second
-	lockStderr      io.Writer = os.Stderr
+	LockStderr      io.Writer = os.Stderr
 )
 
 // lockFile 對 config.Dir()/<name> 取跨程序排他鎖。鎖檔是空檔,不放任何內容。
@@ -139,7 +140,7 @@ func LockFile(ctx context.Context, name, notice string) (unlock func(), err erro
 		}
 		if !notified && time.Since(start) >= lockNoticeAfter {
 			notified = true
-			fmt.Fprintf(lockStderr, "等待另一個 capy 釋放 %s(%s);要放棄按 Ctrl-C。\n", name, notice)
+			fmt.Fprintf(LockStderr, "等待另一個 capy 釋放 %s(%s);要放棄按 Ctrl-C。\n", name, notice)
 		}
 		select {
 		case <-ctx.Done():

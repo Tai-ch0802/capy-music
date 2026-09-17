@@ -79,8 +79,8 @@ func newAuthLoginCmd() *cobra.Command {
 				}
 			}
 			cid = strings.TrimSpace(cid)
-			if !clientIDRe.MatchString(cid) {
-				return fmt.Errorf("Client ID 應為 32 位小寫十六進位字串(從 dashboard 複製)")
+			if err := validateSpotifyClientID(cid); err != nil {
+				return err
 			}
 			fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成 Spotify 授權…(180s 內)")
 			ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
@@ -219,16 +219,7 @@ func appleWizardInputs(hasUser bool) (dev, user string, err error) {
 	}
 	fields := []huh.Field{
 		huh.NewNote().Title("從網頁播放器複製 token").Description(appleGuide),
-		huh.NewInput().Title("developer token(authorization 標頭的值)").Value(&dev).Validate(func(s string) error {
-			exp, err := apple.JWTExp(apple.NormalizeDevToken(s))
-			if err != nil {
-				return err
-			}
-			if !exp.After(time.Now()) {
-				return fmt.Errorf("已於 %s 過期,請重新複製", exp.Format(time.RFC3339))
-			}
-			return nil
-		}),
+		huh.NewInput().Title("developer token(authorization 標頭的值)").Value(&dev).Validate(validateAppleDevToken),
 	}
 	if !onlyDev {
 		fields = append(fields, huh.NewInput().Title("user token(media-user-token 標頭的值)").
@@ -310,9 +301,9 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	return nil
 }
 
-// runClientIDWizard:BYO onboarding(spec §4.2)。
+// runClientIDWizard:BYO onboarding(spec §4.2)。測試 / web 替換點(P7 決策 40:web 改走表單提示橋)。
 // charm v2 調整條款:huh v2 API 與此處有出入時,以 go doc charm.land/huh/v2 為準,偏差記入報告。
-func runClientIDWizard() (string, error) {
+var runClientIDWizard = func() (string, error) {
 	var cid string
 	form := newForm(huh.NewGroup(
 		huh.NewNote().
@@ -326,17 +317,32 @@ func runClientIDWizard() (string, error) {
 		huh.NewInput().
 			Title("Client ID").
 			Value(&cid).
-			Validate(func(s string) error {
-				if !clientIDRe.MatchString(strings.TrimSpace(s)) {
-					return errors.New("Client ID 應為 32 位小寫十六進位字串(從 dashboard 複製)")
-				}
-				return nil
-			}),
+			Validate(validateSpotifyClientID),
 	))
 	if err := form.Run(); err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(cid), nil
+}
+
+// validateSpotifyClientID / validateAppleDevToken:huh 表單的 Validate 與 --client-id / env 路徑共用同一份
+// (P7 T1 抽出:web 的表單提示橋也用它們;錯誤訊息一字不差)。
+func validateSpotifyClientID(s string) error {
+	if !clientIDRe.MatchString(strings.TrimSpace(s)) {
+		return errors.New("Client ID 應為 32 位小寫十六進位字串(從 dashboard 複製)")
+	}
+	return nil
+}
+
+func validateAppleDevToken(s string) error {
+	exp, err := apple.JWTExp(apple.NormalizeDevToken(s))
+	if err != nil {
+		return err
+	}
+	if !exp.After(time.Now()) {
+		return fmt.Errorf("已於 %s 過期,請重新複製", exp.Format(time.RFC3339))
+	}
+	return nil
 }
 
 // maskClientID:顯示頭尾各 4 碼;格式異常時不切片、直接指出下一步。

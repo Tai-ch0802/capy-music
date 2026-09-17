@@ -12,8 +12,9 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
-// loginStderr:LoginSpotify 印手動授權 URL / 開瀏覽器失敗訊息的目的地。測試替換點。
-var loginStderr io.Writer = os.Stderr
+// LoginStderr:LoginSpotify / LoginGoogle 印手動授權 URL / 開瀏覽器失敗訊息的目的地。測試 / web 替換點
+// (P7 T1 匯出:web 模式接到 webGlobalStderr;面板 / ISRC 頁與 job 併發寫入的歸屬與措辭見計畫決策 42,還沒完全定案)。
+var LoginStderr io.Writer = os.Stderr
 
 // KeySpotifyToken 是 keychain 內完整 token 記錄(JSON,見 tokenstore.go)的鍵名。唯一真相來源。
 const KeySpotifyToken = "spotify.token"
@@ -74,10 +75,10 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	verifier := oauth2.GenerateVerifier()
 	lb.Start()
 	authURL := conf.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
-	fmt.Fprintf(loginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
+	fmt.Fprintf(LoginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
 	if err := openBrowser(authURL); err != nil {
 		// SSH/headless 場景 browser.Open 必失敗——不中止,使用者可手動貼上面那行 URL 完成授權。
-		fmt.Fprintf(loginStderr, "無法自動開瀏覽器:%v\n", err)
+		fmt.Fprintf(LoginStderr, "無法自動開瀏覽器:%v\n", err)
 	}
 	vals, err := lb.Wait(ctx)
 	if err != nil {
