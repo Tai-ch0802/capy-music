@@ -15,7 +15,10 @@ func TestParseISRC(t *testing.T) {
 		{"ZZABC2100001", true, ISRCParts{Country: "ZZ", Registrant: "ABC", Year: "21", Designation: "00001", YearFull: 2021}}, // 國際 ISRC 總部
 		{"USRC19900001", true, ISRCParts{Country: "US", Registrant: "RC1", Year: "99", Designation: "00001", YearFull: 1999, Geographic: true}},
 		{"USRC12600001", true, ISRCParts{Country: "US", Registrant: "RC1", Year: "26", Designation: "00001", YearFull: 2026, Geographic: true}}, // 今年
-		{"USRC12700001", true, ISRCParts{Country: "US", Registrant: "RC1", Year: "27", Designation: "00001", YearFull: 1927, Geographic: true}}, // 明年 → 上世紀
+		{"USRC12700001", true, ISRCParts{Country: "US", Registrant: "RC1", Year: "27", Designation: "00001", YearFull: 2027, Geographic: true}}, // 明年:年底預先配號
+		{"USRC12800001", true, ISRCParts{Country: "US", Registrant: "RC1", Year: "28", Designation: "00001", YearFull: 1928, Geographic: true}}, // 後年 → 上世紀
+		{"QAABC2100001", true, ISRCParts{Country: "QA", Registrant: "ABC", Year: "21", Designation: "00001", YearFull: 2021, Geographic: true}}, // 卡達是國家,Q 通配會誤傷
+		{"QNABC2100001", true, ISRCParts{Country: "QN", Registrant: "ABC", Year: "21", Designation: "00001", YearFull: 2021}},                   // 明列的發行商前綴
 		{"nope", false, ISRCParts{}},
 		{"TWK23168079", false, ISRCParts{}},  // 11 碼
 		{"TWK23A680790", false, ISRCParts{}}, // 年份不是數字

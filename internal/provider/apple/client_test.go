@@ -276,7 +276,8 @@ func TestLibraryPlaylistsAndTracks(t *testing.T) {
 			}
 			w.Write([]byte(`{"data":[
 {"id":"i.1","type":"library-songs","attributes":{"name":"派對動物","artistName":"五月天","albumName":"自傳","durationInMillis":227000},
- "relationships":{"catalog":{"data":[{"id":"c1","type":"songs","attributes":{"isrc":"TWA472400123"}}]}}},
+ "relationships":{"catalog":{"data":[{"id":"c1","type":"songs","attributes":{"isrc":"TWA472400123","name":"派對動物 (catalog)","url":"https://music.apple.com/tw/album/x/1?i=c1",
+   "artwork":{"url":"https://is1-ssl.mzstatic.com/image/thumb/Music/x/{w}x{h}bb.jpg"},"genreNames":["Mandopop"]}}]}}},
 {"id":"i.2","type":"library-songs","attributes":{"name":"本機檔","artistName":"我","albumName":"","durationInMillis":1000}}]}`))
 		default:
 			t.Errorf("非預期路徑:%s", r.URL.Path)
@@ -299,8 +300,13 @@ func TestLibraryPlaylistsAndTracks(t *testing.T) {
 	if ts[0].ProviderID != "c1" || ts[0].ISRC != "TWA472400123" {
 		t.Errorf("有 catalog 對應時應用 catalog id/ISRC:%+v", ts[0])
 	}
-	if ts[1].ProviderID != "i.2" || ts[1].ISRC != "" {
-		t.Errorf("無 catalog 對應時用 library id:%+v", ts[1])
+	// 豐富欄位從 catalog 搬過來(review #58);曲名仍是 library 的值,不被 catalog 的蓋掉。
+	if ts[0].Title != "派對動物" || ts[0].URL != "https://music.apple.com/tw/album/x/1?i=c1" ||
+		ts[0].ArtworkURL != "https://is1-ssl.mzstatic.com/image/thumb/Music/x/600x600bb.jpg" || len(ts[0].Genres) != 1 {
+		t.Errorf("catalog 的 url / artwork(600)/ genres 要搬過來、library 曲名保留:%+v", ts[0])
+	}
+	if ts[1].ProviderID != "i.2" || ts[1].ISRC != "" || ts[1].URL != "" || ts[1].ArtworkURL != "" {
+		t.Errorf("無 catalog 對應時用 library id、豐富欄位零值:%+v", ts[1])
 	}
 }
 

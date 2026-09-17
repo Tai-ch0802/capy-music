@@ -381,6 +381,10 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 			}
 			if cd := it.Relationships.Catalog.Data; len(cd) > 0 { // 有 catalog 對應:P4 resolver 要 catalog id 與 ISRC
 				tr.ProviderID, tr.ISRC = cd[0].ID, cd[0].Attributes.ISRC
+				// 豐富欄位只搬純 catalog 才有的那幾個;Name / ArtistName / AlbumName 保留 library 的值(使用者自己 library 裡的,
+				// 可能與 catalog 不同),所以刻意不整個換成 toTrack()(review #58)。
+				c := cd[0].toTrack()
+				tr.URL, tr.ArtworkURL, tr.PreviewURL, tr.ReleaseDate, tr.Genres = c.URL, c.ArtworkURL, c.PreviewURL, c.ReleaseDate, c.Genres
 			}
 			out = append(out, tr)
 		}

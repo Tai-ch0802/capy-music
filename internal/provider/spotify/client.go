@@ -131,7 +131,8 @@ type trackJSON struct {
 		ReleaseDate string `json:"release_date"`
 		Images      []struct {
 			URL string `json:"url"`
-		} `json:"images"` // Spotify 依大到小排,取第一張
+		} `json:"images"` // Spotify 依大到小排,取第一張(曲目專輯通常 640)。ArtworkURL 的契約是「一張可直接 <img src> 的封面,約 600px」,
+		// 同 Apple 展成 600;要多尺寸得改欄位型別,不是這一行(review #58)
 	} `json:"album"`
 	Artists []struct {
 		Name string `json:"name"`
