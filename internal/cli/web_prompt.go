@@ -24,6 +24,10 @@ import (
 // 整輪不寫入、pull.lock 立刻放。只套在會握 pull.lock 的路徑;auth login * 不設(handleRun)。測試替換點。
 var webPromptTimeout = 5 * time.Minute
 
+// webAuthPromptTimeout:auth login * 的提示上限。這條路不取任何鎖,使用者要開 DevTools 抄兩個 token,
+// 所以放寬到 30 分鐘;但不是 0——沒有上限等於讓被放生的分頁永久占住序列槽(review #60)。測試替換點。
+var webAuthPromptTimeout = 30 * time.Minute
+
 type webPrompt struct {
 	Kind        string     `json:"kind"` // confirm | select | input | form
 	Title       string     `json:"title"`
@@ -45,6 +49,31 @@ type webField struct {
 	Name   string `json:"name"`
 	Label  string `json:"label"`
 	Secret bool   `json:"secret,omitempty"` // 值只在 answer body 裡經 loopback 進行程,不進事件、不記 log、不回顯
+	// 驗證失敗重問時把上一輪的值帶回去,使用者只要改錯的那一欄(終端機的 huh 本來就是這樣)。
+	// secret 欄不能帶值(決策 40–41),只帶 Filled:前端顯示「已填,留空 = 沿用上次」,伺服器端沿用。
+	Value  string `json:"value,omitempty"`
+	Filled bool   `json:"filled,omitempty"`
+}
+
+// refill:重問前把上一輪的答案帶回欄位——非 secret 欄回填值,secret 欄只標「已填」。
+func refill(fields []webField, last map[string]string) {
+	for i := range fields {
+		f := &fields[i]
+		if f.Secret {
+			f.Value, f.Filled = "", last[f.Name] != ""
+			continue
+		}
+		f.Value = last[f.Name]
+	}
+}
+
+// keepSecrets:secret 欄留空 = 沿用上一輪的值(值從沒離開過行程)。
+func keepSecrets(fields []webField, v, last map[string]string) {
+	for _, f := range fields {
+		if f.Secret && strings.TrimSpace(v[f.Name]) == "" && last[f.Name] != "" {
+			v[f.Name] = last[f.Name]
+		}
+	}
 }
 
 type webPromptEvent struct {
@@ -200,11 +229,11 @@ func (s *webServer) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	j.pending = nil
-	j.mu.Unlock()
-	select {
+	select { // 在鎖內入列:「pending 相符」與「答案入列」是同一個原子動作,ask 的 drain 才真的只會看到自己那一題
 	case j.answers <- a:
 	default:
 	}
+	j.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -320,12 +349,15 @@ func (s *webServer) webReviewPrompt(it resolveItem, pos, total int, search func(
 func (s *webServer) webClientIDWizard() (string, error) {
 	p := webPrompt{Kind: "form", Title: "Client ID", Note: &webNote{Title: spotifyAppTitle, Body: spotifyAppSteps},
 		Fields: []webField{{Name: "client_id", Label: "Client ID"}}}
+	last := map[string]string{}
 	for {
+		refill(p.Fields, last)
 		a, err := s.ask(p)
 		if err != nil || a.Cancel {
 			return "", huh.ErrUserAborted
 		}
-		cid := strings.TrimSpace(a.formValue()["client_id"])
+		last = a.formValue()
+		cid := strings.TrimSpace(last["client_id"])
 		if err := validateSpotifyClientID(cid); err != nil {
 			p.Error = err.Error()
 			continue
@@ -357,17 +389,23 @@ func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err er
 		}
 		onlyDev = a.boolValue()
 	}
+	// dev 欄刻意不設 Secret,與 huh 版一致(那邊也只有 user token 是 EchoModePassword):它是一長串 JWT,
+	// 貼錯要看得出來;`autocomplete=off` 已設。它一樣不得出現在任何事件裡,由測試釘住。
 	fields := []webField{{Name: "dev", Label: "developer token(authorization 標頭的值)"}}
 	if !onlyDev {
 		fields = append(fields, webField{Name: "user", Label: "user token(media-user-token 標頭的值)", Secret: true})
 	}
 	p := webPrompt{Kind: "form", Title: "貼上 token", Note: &webNote{Title: "從網頁播放器複製 token", Body: appleGuide}, Fields: fields}
+	last := map[string]string{}
 	for {
+		refill(p.Fields, last)
 		a, err := s.ask(p)
 		if err != nil || a.Cancel {
 			return "", "", huh.ErrUserAborted
 		}
 		v := a.formValue()
+		keepSecrets(p.Fields, v, last) // user token 留空 = 沿用上次:dev token 過期重問時不必回 DevTools 重抄
+		last = v
 		if err := validateAppleDevToken(v["dev"]); err != nil {
 			p.Error = "developer token:" + err.Error()
 			continue
@@ -386,12 +424,16 @@ func (s *webServer) webGoogleWizard() (id, sec string, err error) {
 			{Name: "client_id", Label: "Client ID(結尾通常是 .apps.googleusercontent.com)"},
 			{Name: "client_secret", Label: "Client secret(可留空試試看;G-0 驗收會確定 Desktop client 要不要)", Secret: true},
 		}}
+	last := map[string]string{}
 	for {
+		refill(p.Fields, last)
 		a, err := s.ask(p)
 		if err != nil || a.Cancel {
 			return "", "", huh.ErrUserAborted
 		}
 		v := a.formValue()
+		keepSecrets(p.Fields, v, last)
+		last = v
 		if strings.TrimSpace(v["client_id"]) == "" {
 			p.Error = "Client ID:必填"
 			continue

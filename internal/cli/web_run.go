@@ -241,8 +241,10 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	job := &webJob{id: strconv.FormatUint(s.seq.Add(1), 10), ctx: jobCtx, cancel: cancel, sse: sse,
 		answers: make(chan webAnswer, 1), promptTimeout: webPromptTimeout}
-	if strings.HasPrefix(path, "capy auth login") { // 不取任何鎖;斷線仍取消、180 s 授權逾時仍由 cli 層給
-		job.promptTimeout = 0
+	if strings.HasPrefix(path, "capy auth login") {
+		// 5 分鐘對「開 DevTools 抄兩個 token」不夠,但「完全沒有上限」的代價是:分頁被放生就永久占住單一序列槽,
+		// 之後每個命令都 409 且永遠不會自己好(auth login 不取 pull.lock,所以只卡 web 自己)。給寬鬆但有限的上限。
+		job.promptTimeout = webAuthPromptTimeout
 	}
 	s.setCur(job)
 	defer func() { // defer:命令 panic(net/http 會 recover)也要守「絕不寫到已結束的 ResponseWriter」(review #59)

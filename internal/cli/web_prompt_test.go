@@ -414,7 +414,24 @@ func TestWebAppleWizardDisclosureCannotBeSkipped(t *testing.T) {
 			if e, _ := p["error"].(string); !strings.Contains(e, "過期") {
 				t.Errorf("過期 dev 重問要帶錯誤:%v", p["error"])
 			}
-			return reply(map[string]any{"dev": dev, "user": "MUT1"})
+			// 重問要把上一輪的值帶回來:非 secret 欄回填值、secret 欄只標 filled(值絕不回到頁面)。
+			var devF, userF map[string]any
+			for _, f := range p["fields"].([]any) {
+				m := f.(map[string]any)
+				if m["name"] == "dev" {
+					devF = m
+				} else {
+					userF = m
+				}
+			}
+			if devF["value"] != expired {
+				t.Errorf("dev 欄要帶回上一輪的值,得到 %v", devF["value"])
+			}
+			if userF["filled"] != true || userF["value"] != nil {
+				t.Errorf("user 欄只帶 filled、不帶值:%v", userF)
+			}
+			// user 留空 = 沿用上一輪的 MUT1:dev token 過期重問時不必回 DevTools 重抄沒問題的那一個。
+			return reply(map[string]any{"dev": dev, "user": ""})
 		}
 		t.Errorf("多出來的第 %d 題", n)
 		return nil
@@ -431,21 +448,36 @@ func TestWebAppleWizardDisclosureCannotBeSkipped(t *testing.T) {
 	}
 }
 
-// TestWebAuthLoginHasNoPromptTimeout:auth login * 不設提示逾時(Apple 使用者要開 DevTools 抄 token)。
-func TestWebAuthLoginHasNoPromptTimeout(t *testing.T) {
+// TestWebAuthLoginHasLongerPromptTimeout:auth login * 用的是 webAuthPromptTimeout 而不是一般的 5 分鐘
+// (Apple 使用者要開 DevTools 抄兩個 token),但**不是沒有上限**——runMu 壓在整個 handleRun 上,
+// 被放生的分頁若永遠不逾時就會永久占住單一序列槽(review #60)。
+func TestWebAuthLoginHasLongerPromptTimeout(t *testing.T) {
+	if webAuthPromptTimeout <= webPromptTimeout || webAuthPromptTimeout <= 0 {
+		t.Fatalf("auth 的上限要比一般的寬、且必須有限:%v vs %v", webAuthPromptTimeout, webPromptTimeout)
+	}
 	clearAppleTokens(t)
 	t.Setenv("CAPY_APPLE_DEVELOPER_TOKEN", "")
 	t.Setenv("CAPY_APPLE_USER_TOKEN", "")
-	orig := webPromptTimeout
-	webPromptTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { webPromptTimeout = orig })
+	origWait, origAuth := webPromptTimeout, webAuthPromptTimeout
+	webPromptTimeout, webAuthPromptTimeout = 50*time.Millisecond, 5*time.Second
+	t.Cleanup(func() { webPromptTimeout, webAuthPromptTimeout = origWait, origAuth })
 	_, c := startWeb(t)
 	ev := c.runInteractive(map[string]any{"args": []string{"auth", "login", "apple"}}, func(n int, _ string, _ map[string]any) *promptReply {
-		time.Sleep(300 * time.Millisecond) // 遠超過 50 ms 仍要收
+		time.Sleep(300 * time.Millisecond) // 遠超過一般的 50 ms,仍要收
 		return reply(false)
 	})
 	if ex := evExit(t, ev); ex["reason"] != "done" || !strings.Contains(ex["message"].(string), "未同意聲明") {
-		t.Fatalf("auth login 的提示不逾時:%v", ex)
+		t.Fatalf("auth login 用的是寬鬆的上限:%v", ex)
+	}
+
+	// 但上限是存在的:放生不回答,到點就砍掉 job、序列槽拿得回來。
+	webAuthPromptTimeout = 80 * time.Millisecond
+	ev = c.runInteractive(map[string]any{"args": []string{"auth", "login", "apple"}}, func(int, string, map[string]any) *promptReply { return nil })
+	if ex := evExit(t, ev); ex["reason"] != "timeout" {
+		t.Fatalf("放生的 auth login 也要逾時(否則序列槽永遠拿不回來):%v", ex)
+	}
+	if code, _, _ := c.run(map[string]any{"args": []string{"--help"}}); code != 200 {
+		t.Errorf("逾時後序列槽要放掉,得到 %d", code)
 	}
 }
 

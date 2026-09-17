@@ -137,7 +137,9 @@ export class Console {
       this.answer(ev.id, cancel, value).then((ok) => { if (!ok) controls().forEach((c) => { c.disabled = false; }); });
     };
     const btn = (label, cls, fn) => { const x = el('button', 'btn ' + cls, label); x.type = 'button'; x.addEventListener('click', fn); return x; };
+    // 組字中的 Enter 是確認候選字、Esc 是取消候選字,兩個都不該當成回答(同 app.js 的命令列)。
     const onKeys = (inp, submit) => inp.addEventListener('keydown', (k) => {
+      if (k.isComposing || k.keyCode === 229) return;
       if (k.key === 'Enter') { k.preventDefault(); submit(); }
       if (k.key === 'Escape') { k.preventDefault(); answer(true, null); }
     });
@@ -178,6 +180,8 @@ export class Console {
           inp.type = f.secret ? 'password' : 'text';
           inp.autocomplete = f.secret ? 'new-password' : 'off';
           inp.spellcheck = false;
+          if (f.value) inp.value = f.value;                      // 重問時帶回上一輪的值(非 secret 欄)
+          if (f.filled) inp.placeholder = '已填,留空 = 沿用上次'; // secret 欄的值絕不回到頁面
           onKeys(inp, submit);
           inputs[f.name] = inp;
           lab.appendChild(inp);
@@ -194,14 +198,20 @@ export class Console {
     box.appendChild(row);
     b.appendChild(box);
     this.stick(b);
-    if (focus) setTimeout(() => focus.focus(), 0);
+    if (focus) setTimeout(() => focus.focus({ preventScroll: true }), 0); // 不覆蓋 stick() 的捲動判斷
   }
 
   async answer(id, cancel, value) {
     if (!this.job) return false;
-    const r = await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/answer`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, cancel, value }),
-    });
+    let r;
+    try {
+      r = await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, cancel, value }),
+      });
+    } catch (e) { // fetch 在網路層失敗是 reject,不是 r.ok === false:自己收,讓控制項解鎖可以重送
+      this.notice('回答沒送到:' + e.message);
+      return false;
+    }
     if (r.ok) return true;
     let msg = r.statusText;
     try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
@@ -270,6 +280,10 @@ export class Console {
 
   async cancel() {
     if (!this.job) return;
-    await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/cancel`, { method: 'POST' });
+    try {
+      await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/cancel`, { method: 'POST' });
+    } catch (e) { // 同 answer():裸 await 在斷線時是 unhandled rejection,使用者只看到「按了沒反應」
+      this.notice('取消沒送到:' + e.message);
+    }
   }
 }

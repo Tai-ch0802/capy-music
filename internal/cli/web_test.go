@@ -820,6 +820,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "ev.isComposing") || !strings.Contains(app, "ev.keyCode === 229") {
 		t.Error("命令列的 Enter 要擋 IME 組字(isComposing + Safari 的 keyCode 229)")
 	}
+	// 提示橋的輸入框(清單名字、搜尋字串)最可能打中文:Enter 與 Esc 都要擋組字(review #60)。
+	if !strings.Contains(console, "k.isComposing") || !strings.Contains(console, "k.keyCode === 229") {
+		t.Error("提示輸入框的 Enter / Esc 也要擋 IME 組字")
+	}
+	if !strings.Contains(console, "preventScroll: true") {
+		t.Error("提示的 focus 不可覆蓋 stick() 的捲動判斷")
+	}
 	// 設計規格 §11:log 面板 role=region(不是 live region,高吞吐會把螢幕閱讀器淹掉);狀態行才 role=status。
 	if !strings.Contains(index, `role="region"`) || strings.Contains(index, "aria-live") {
 		t.Error("log 面板要 role=region、不可是 live region")
