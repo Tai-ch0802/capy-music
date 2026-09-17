@@ -25,12 +25,28 @@ export function parseStatus(text) {
   return out;
 }
 
-// stateOf:三態由文字承載(✓ 已登入 / · 未登入 / ⚠ 已過期),不靠顏色單獨表意。
-export function stateOf(lines) {
-  const joined = (lines || []).join(' ');
-  if (/過期/.test(joined)) return { mark: '⚠', text: '已過期', kind: 'warn' };
-  if (/keychain 存在/.test(joined)) return { mark: '✓', text: '已登入', kind: 'ok' };
-  return { mark: '·', text: '未登入', kind: 'muted' };
+// stateOf:逐個 provider 認它自己的關鍵欄位,不要把整段 join 起來做子字串比對。
+// auth status 的三段用的是不同字眼(auth.go / auth_google.go):
+//   spotify  refresh token: keychain 存在 / 不存在(…)
+//   google   token: keychain 存在(…) / 不存在(…)
+//   apple    developer token: 有效至 … | 已於 … 過期 | 不存在(…);user token: 存在 | 不存在(…)
+// 「讀取 keychain 失敗」三家都可能印,那是要使用者處理的錯誤態,不是「未登入」(review #62)。
+export function stateOf(id, lines) {
+  const j = (lines || []).join('\n');
+  if (/讀取 keychain 失敗/.test(j)) return { mark: '⚠', text: '讀取 keychain 失敗', kind: 'warn' };
+  if (id === 'apple') {
+    if (/developer token: 已於 .* 過期/.test(j)) return { mark: '⚠', text: '已過期', kind: 'warn' };
+    if (/developer token: 有效至/.test(j) && /user token: 存在/.test(j)) return { mark: '✓', text: '已登入', kind: 'ok' };
+    return { mark: '·', text: '未登入', kind: 'muted' };
+  }
+  if (id === 'google') {
+    return /token: keychain 存在/.test(j)
+      ? { mark: '✓', text: '已登入', kind: 'ok' }
+      : { mark: '·', text: '未登入', kind: 'muted' };
+  }
+  return /refresh token: keychain 存在/.test(j)
+    ? { mark: '✓', text: '已登入', kind: 'ok' }
+    : { mark: '·', text: '未登入', kind: 'muted' };
 }
 
 export function initAccount(root, api, con, notice) {
@@ -42,7 +58,10 @@ export function initAccount(root, api, con, notice) {
     let text = '';
     con.run('auth status', {
       onStdout: (t) => { text += t; },
-      onExit: () => render(parseStatus(text)),
+      onExit: (code, msg) => { // refused(-1)也會到這裡,否則 409 之後這一頁永遠空白
+        render(parseStatus(text));
+        if (code !== 0 && !text) notice(msg || '');
+      },
     });
   };
 
@@ -54,7 +73,7 @@ export function initAccount(root, api, con, notice) {
     }
     for (const p of PROVIDERS) {
       const lines = parsed[p.id];
-      const st = stateOf(lines);
+      const st = stateOf(p.id, lines);
       const row = el('div', 'acct');
       row.dataset.state = st.kind;
       row.appendChild(el('span', 'acct__name', p.label));

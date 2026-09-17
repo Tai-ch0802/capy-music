@@ -128,7 +128,8 @@ function inInput() {
 const keysDialog = document.getElementById('keys');
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
-  if (inInput() || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
+  if (inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   const n = PAGES[Number(ev.key) - 1];
   if (n) { location.hash = '#/' + n; return; }
   switch (ev.key) {
@@ -138,17 +139,24 @@ document.addEventListener('keydown', (ev) => {
     case ' ': ev.preventDefault(); player.control(player.root.dataset.playing === 'true' ? 'pause' : 'play'); break;
     case 'n': player.control('next'); break;
     case 'p': player.control('prev'); break;
+    case 'ArrowLeft': ev.preventDefault(); player.seekBy(-10); break;
+    case 'ArrowRight': ev.preventDefault(); player.seekBy(10); break;
+    case '+': case '=': player.volBy(5); break;
+    case '-': player.volBy(-5); break;
     default: break;
   }
 });
 
 const player = new Player(document.getElementById('now'), api, notice);
+// 先拿到 providers 再路由:深連結或在某頁 F5 時,該頁的平台下拉才不會用寫死的預設值建起來
+// (ready 保證每頁只初始化一次,建好之後不會補正)。連不上時照樣路由,頁面至少畫得出來。
 loadCommands()
   .then((d) => {
     if (d && d.default_provider) providers.current = d.default_provider;
     if (d && d.providers) providers.list = d.providers;
-    if (!location.hash || location.hash === '#/console') con.showIdle(providers.current);
   })
-  .catch((e) => notice('連不上 capy --web:' + e.message));
-route();
-player.start();
+  .catch((e) => notice('連不上 capy --web:' + e.message))
+  .finally(() => {
+    route();
+    player.start();
+  });

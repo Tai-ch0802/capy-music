@@ -796,6 +796,69 @@ func TestWebCapybaraMatchesTUI(t *testing.T) {
 	}
 }
 
+// TestWebAccountPageKeysOnAuthStatusWording:帳號頁的正確性綁在 auth status 的中文字面上,而純文字契約的測試
+// 只保證 CLI 自己不變、不保證網頁跟得上(review #62)。這裡兩邊一起釘:account.js 認的每個字面都要真的出現在
+// auth status 的輸出裡。CLI 那邊改一個字,這個測試就會紅並指向 account.js,而不是讓網頁靜默判錯。
+func TestWebAccountPageKeysOnAuthStatusWording(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/account.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := string(b)
+
+	// (1) Apple 有效:developer token 有效至 … + user token 存在。這正是舊版判成「未登入」的那一種狀態
+	// ——「keychain 存在」只出現在 spotify 與 google 段落,apple 段一個字都不中。
+	setupAppleTokens(t)
+	out, err := runCLI(t, "auth", "status")
+	if err != nil {
+		t.Fatalf("auth status: %v", err)
+	}
+	for _, lit := range []string{"developer token: 有效至", "user token: 存在"} {
+		if !strings.Contains(out, lit) {
+			t.Errorf("auth status 的 apple 段不再印 %q,帳號頁會把有效的 Apple 判成未登入", lit)
+		}
+		if !strings.Contains(account, lit) {
+			t.Errorf("account.js 沒有認 %q", lit)
+		}
+	}
+
+	// (2) 三家都未登入:apple 段要印「不存在」,而且不可以出現任何一個「已登入」的字面。
+	clearAppleTokens(t)
+	out, err = runCLI(t, "auth", "status")
+	if err != nil {
+		t.Fatalf("auth status: %v", err)
+	}
+	if !strings.Contains(out, "developer token: 不存在") {
+		t.Errorf("未登入時 apple 段要印「不存在」:%q", out)
+	}
+	for _, lit := range []string{"developer token: 有效至", "user token: 存在", "refresh token: keychain 存在"} {
+		if strings.Contains(out, lit) {
+			t.Errorf("什麼都沒設定時不該出現 %q:%q", lit, out)
+		}
+	}
+
+	// (3) 另外兩家與錯誤態的字面也要對得上(spotify / google 各自不同,不能用同一個 regex 打天下)。
+	for _, lit := range []string{"refresh token: keychain 存在", "token: keychain 存在", "讀取 keychain 失敗"} {
+		if !strings.Contains(account, lit) {
+			t.Errorf("account.js 沒有認 %q", lit)
+		}
+	}
+	src, err := os.ReadFile("auth.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gsrc, err := os.ReadFile("auth_google.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	both := string(src) + string(gsrc)
+	for _, lit := range []string{"refresh token: keychain 存在", "token: keychain 存在", "讀取 keychain 失敗"} {
+		if !strings.Contains(both, lit) {
+			t.Errorf("auth status 不再印 %q,帳號頁的判斷會靜默失效", lit)
+		}
+	}
+}
+
 func walkEmbedded(t *testing.T, dir string, fn func(name string, b []byte)) error {
 	t.Helper()
 	entries, err := webUI.ReadDir(dir)
@@ -927,6 +990,33 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// hash 路由要有結尾錨點,否則 #/isrcfoo 也會被判成 ISRC 頁。
 	if !strings.Contains(app, "]+))?$/") {
 		t.Error("hash 路由的正規式要有結尾錨點")
+	}
+	// 巢狀 run():hooks 綁在這一次呼叫上,外層的 finally 不可以洗掉內層的狀態(review #62)。
+	if !strings.Contains(console, "this.cur === mine") {
+		t.Error("run() 的 finally 要先確認還是自己那一次才清狀態")
+	}
+	// 409 / 401 / 503 也要通知發起的頁面,否則那一頁永遠不會收尾。
+	if !strings.Contains(console, "onExit?.(-1") {
+		t.Error("refused() 要發 onExit,否則單一序列槽擋掉的那一頁會永久空白")
+	}
+	// pl dedup 沒有 --all:清單留空時不可以送它。
+	sync := read("js/pages/sync.js")
+	if !strings.Contains(sync, `verb === 'dedup' ? '' : ' --all'`) {
+		t.Error("dedup 不可以帶 --all(cobra 會直接退回)")
+	}
+	// doctor 會彈系統對話框,不可以由切頁動作觸發。
+	doctor := read("js/pages/doctor.js")
+	if !strings.Contains(doctor, "emptyState('doctor')") {
+		t.Error("診斷頁要先畫空白態,由使用者按鈕觸發")
+	}
+	// 鍵位表列出來的鍵要真的有實作,且表開著時單鍵不換頁。
+	if !strings.Contains(app, "keysDialog.open") || !strings.Contains(app, "seekBy") || !strings.Contains(app, "volBy") {
+		t.Error("? 表列的 ← → 與 + - 要有實作,且對話框開著時不換頁")
+	}
+	// local 的 id 含空白是常態,不 quote 會被 splitArgs 切斷。
+	search := read("js/pages/search.js")
+	if !strings.Contains(search, "quote(id)") {
+		t.Error("play --id 要 quote")
 	}
 }
 

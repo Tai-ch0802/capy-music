@@ -31,7 +31,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     con.run('export', {
       onStdout: (t) => { text += t; },
       onExit: (code) => {
-        if (code !== 0) { left.appendChild(emptyState('pl link --create')); return; }
+        if (code !== 0) { left.appendChild(emptyState('pl link 通勤 spotify --create')); return; }
         let files;
         try {
           files = JSON.parse(text);
@@ -46,12 +46,14 @@ export function initPlaylists(root, api, con, notice, providers) {
 
   function render(files) {
     const tracks = (files['tracks.json'] || {}).tracks || {};
+    // 不重排:export 的鍵序本來就是決定性的(map 鍵排序),而 localeCompare 的結果會隨瀏覽器的 ICU 版本浮動,
+    // 同一份資料在不同瀏覽器上會不一樣。清單集合與清單內容都照原順序(review #62)。
     const pls = Object.keys(files)
       .filter((k) => k.startsWith('pl__'))
-      .map((k) => files[k])
-      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-Hant'));
+      .sort()
+      .map((k) => files[k]);
     left.replaceChildren();
-    if (!pls.length) { left.appendChild(emptyState('pl link --create')); return; }
+    if (!pls.length) { left.appendChild(emptyState('pl link 通勤 spotify --create')); return; }
     for (const pl of pls) {
       const row = el('button', 'pl__item');
       row.type = 'button';

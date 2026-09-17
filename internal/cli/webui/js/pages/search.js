@@ -18,7 +18,8 @@ export function initSearch(root, api, con, notice, providers) {
     const text = q.value.trim();
     if (!text) { q.focus(); return; }
     out.replaceChildren();
-    con.run(`search ${quote(text)} --provider ${prov.value} --limit ${limit.value}`, {
+    const n = Math.max(1, Number(limit.value) || 10); // 輸入框可以被清空,min 只在原生送出時驗
+    con.run(`search ${quote(text)} --provider ${prov.value} --limit ${n}`, {
       onTable: (header, rows) => out.replaceChildren(resultTable(header, rows, prov.value, con)),
       onExit: (code) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState('search <關鍵字>')); },
     });
@@ -43,7 +44,8 @@ function resultTable(header, rows, prov, con) {
   [...t.querySelectorAll('tbody tr')].forEach((tr, i) => {
     const td = el('td', 'row-actions');
     const id = rows[i][0];
-    td.appendChild(btn('播放', 'btn--ghost', () => con.run(`play --id ${id} --provider ${prov}`)));
+    // local 的 id 是 <device_id>/<檔名>,含空白是常態:不 quote 會被 splitArgs 切斷(review #62)。
+    td.appendChild(btn('播放', 'btn--ghost', () => con.run(`play --id ${quote(id)} --provider ${prov}`)));
     tr.appendChild(td);
   });
   wrap.appendChild(t);

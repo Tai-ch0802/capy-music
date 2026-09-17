@@ -107,6 +107,10 @@ export class Console {
   // run(line, hooks):hooks.onTable / onStdout / onExit 讓發起命令的頁面拿到解析後的輸出。
   // 命令本身照樣完整跑在 dock 裡(回聲、串流、提示、退出碼都在),頁面只是多一份結構化的複本。
   async run(line, hooks = {}) {
+    // hooks / running / job 綁在「這一次呼叫」上:onExit 裡再叫一次 run()(帳號頁登入完要刷新)時,
+    // 外層的 finally 會晚一步執行,不能把內層那次的狀態洗掉(review #62)。
+    const mine = Symbol('run');
+    this.cur = mine;
     this.hooks = hooks;
     const b = this.block(line || '(help)');
     this.running = true; this.notice('');
@@ -126,7 +130,7 @@ export class Console {
       this.exit(b, 1, '連線中斷:' + e.message, 'disconnected');
       document.body.dataset.connected = 'false';
     } finally {
-      this.running = false; this.job = null; this.hooks = {};
+      if (this.cur === mine) { this.running = false; this.job = null; this.hooks = {}; }
       delete b.dataset.running;
     }
   }
@@ -323,6 +327,9 @@ export class Console {
     this.notice(msg);
     if (status === 503) document.body.dataset.stale = '';
     this.stick(b);
+    // 沒跑成也要通知發起的頁面:否則 409(單一序列槽)之後那一頁的 render 永遠不會收尾,
+    // 而 route() 的 ready 又保證不會重新初始化——頁面就永久空白了(review #62)。
+    this.hooks.onExit?.(-1, msg, 'refused');
   }
 
   async cancel() {

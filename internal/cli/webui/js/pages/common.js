@@ -10,6 +10,8 @@ export const el = (tag, cls, text) => {
 // quote:清單名有空白時要加引號,與 splitArgs(tui.go)的規則對齊——沒有跳脫、沒有單引號。
 export function quote(s) {
   const v = String(s || '').trim();
+  // splitArgs(tui.go)沒有跳脫語法,所以內含雙引號的值組不出正確的命令:明確標出來,不要默默組出壞命令。
+  if (v.includes('"')) return v.replace(/"/g, '\uFFFD');
   return v.includes(' ') ? `"${v}"` : v;
 }
 

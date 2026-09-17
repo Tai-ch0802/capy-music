@@ -12,11 +12,17 @@ export function initSync(root, api, con, notice, providers) {
   dry.checked = true;
   const out = el('div', 'page__out');
 
-  const target = () => (name.value.trim() ? quote(name.value) : '--all');
+  // pl dedup 沒有 --all(dedup.go 只有 --provider / --dry-run / --yes / --force),清單留空時不要送它:
+  // web 的 isInteractive 是 true,不帶清單名會開挑選器,比送一個 cobra 一定退回的 flag 好(review #62)。
+  const target = (verb) => {
+    const n = name.value.trim();
+    if (n) return ' ' + quote(n);
+    return verb === 'dedup' ? '' : ' --all';
+  };
   const flags = () => (prov.value === '(全部)' ? '' : ` --provider ${prov.value}`) + (dry.checked ? ' --dry-run' : '');
   const run = (verb) => {
     out.replaceChildren();
-    con.run(`pl ${verb} ${target()}${flags()}`, {
+    con.run(`pl ${verb}${target(verb)}${flags()}`, {
       onTable: (h, r) => out.replaceChildren(table(h, r)),
       onExit: (code, msg) => { if (code !== 0 && msg) out.appendChild(el('p', 'page__warn', msg)); },
     });
@@ -24,6 +30,7 @@ export function initSync(root, api, con, notice, providers) {
 
   const bar = el('div', 'form-row');
   bar.append(field('清單', name), field('平台', prov), field('只看變更(--dry-run)', dry));
+  bar.appendChild(el('span', 'page__note', 'dedup 的 --provider 只影響 pull / push 半邊,正本的去重不分平台;清單留空時 dedup 會開挑選器。'));
   const acts = el('div', 'form-row');
   for (const v of ['pull', 'push', 'sync', 'dedup']) acts.appendChild(btn(v, v === 'sync' ? 'btn--primary' : '', () => run(v)));
 
@@ -34,7 +41,8 @@ export function initSync(root, api, con, notice, providers) {
   mig.append(field('搬移:從', from), field('到', to));
   mig.appendChild(btn('migrate', '', () => {
     out.replaceChildren();
-    con.run(`migrate --from ${from.value} --to ${to.value}${dry.checked ? ' --dry-run' : ''}`, {
+    const n = name.value.trim() ? ' ' + quote(name.value) : ''; // 上面填了清單名就帶進去,不要默默丟掉
+    con.run(`migrate${n} --from ${from.value} --to ${to.value}${dry.checked ? ' --dry-run' : ''}`, {
       onTable: (h, r) => out.replaceChildren(table(h, r)),
     });
   }));
