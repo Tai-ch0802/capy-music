@@ -84,6 +84,7 @@ window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventD
 const providers = { list: ['spotify', 'apple', 'local'], current: 'spotify' };
 const PAGES = ['console', 'search', 'playlists', 'sync', 'isrc', 'account', 'doctor'];
 const ready = new Set();
+let isrcPage = null;
 
 function showPage(name) {
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
@@ -91,7 +92,8 @@ function showPage(name) {
 }
 
 function route() {
-  const m = /^#\/([a-z]+)(?:\/([^/?#]+))?/.exec(location.hash || '');
+  // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 isrc 頁(review #61)。
+  const m = /^#\/([a-z]+)(?:\/([^/?#]+))?$/.exec(location.hash || '');
   const name = m && PAGES.includes(m[1]) ? m[1] : 'console';
   const arg = m && m[2] ? decodeURIComponent(m[2]) : '';
   showPage(name);
@@ -104,7 +106,11 @@ function route() {
     else if (name === 'sync') initSync(...args);
     else if (name === 'account') initAccount(...args);
     else if (name === 'doctor') initDoctor(...args);
-    else if (name === 'isrc') initISRC(root, api, arg);
+    else if (name === 'isrc') isrcPage = initISRC(root, api, arg);
+  } else if (name === 'isrc' && arg) {
+    // 每次都餵目前 hash 的值:上一頁 / 直接改網址列都要生效,不然網址寫 A、畫面是 B(review #61)。
+    // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
+    isrcPage?.show(arg);
   }
   if (name === 'console') { con.showIdle(providers.current); input.focus(); }
   else if (name === 'isrc') document.getElementById('isrc-input').focus();
