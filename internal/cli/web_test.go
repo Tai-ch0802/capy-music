@@ -380,15 +380,6 @@ func TestWebNowWatchRefused(t *testing.T) {
 	}
 }
 
-func TestWebAuthLoginNonInteractiveErrorNotTTY(t *testing.T) {
-	setCLITestConfig(t)
-	_, c := startWeb(t)
-	_, events, _ := c.run(map[string]any{"args": []string{"auth", "login", "spotify"}})
-	if ex := evExit(t, events); ex["code"] != float64(1) || !strings.Contains(ex["message"].(string), "--client-id") {
-		t.Errorf("T3a 的精靈走非互動錯誤(不抓 /dev/tty):%v", ex)
-	}
-}
-
 func TestWebResetsDefaultProviderPerRun(t *testing.T) {
 	setCLITestConfig(t)
 	_, c := startWeb(t)
@@ -828,6 +819,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// 組字中的 Enter 是確認候選字:注音使用者按第一個 Enter 不該把半截命令送出去。
 	if !strings.Contains(app, "ev.isComposing") || !strings.Contains(app, "ev.keyCode === 229") {
 		t.Error("命令列的 Enter 要擋 IME 組字(isComposing + Safari 的 keyCode 229)")
+	}
+	// 提示橋的輸入框(清單名字、搜尋字串)最可能打中文:Enter 與 Esc 都要擋組字(review #60)。
+	if !strings.Contains(console, "k.isComposing") || !strings.Contains(console, "k.keyCode === 229") {
+		t.Error("提示輸入框的 Enter / Esc 也要擋 IME 組字")
+	}
+	if !strings.Contains(console, "preventScroll: true") {
+		t.Error("提示的 focus 不可覆蓋 stick() 的捲動判斷")
 	}
 	// 設計規格 §11:log 面板 role=region(不是 live region,高吞吐會把螢幕閱讀器淹掉);狀態行才 role=status。
 	if !strings.Contains(index, `role="region"`) || strings.Contains(index, "aria-live") {

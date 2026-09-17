@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -22,6 +23,13 @@ type webJob struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 	sse    *sseWriter
+
+	// 提示橋(web_prompt.go):pendingID 簿記——handleAnswer 只收 id 相符的答案,重複 POST 與遲到的舊答案進不了下一題。
+	mu            sync.Mutex
+	promptSeq     int
+	pending       *pendingPrompt
+	answers       chan webAnswer // cap 1
+	promptTimeout time.Duration  // 0 = 不逾時(auth login *:Apple 使用者要開 DevTools 抄兩個 token)
 }
 
 var (
@@ -231,7 +239,13 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel(nil)
 	stop := context.AfterFunc(s.ctx, func() { cancel(errWebShutdown) })
 	defer stop()
-	job := &webJob{id: strconv.FormatUint(s.seq.Add(1), 10), ctx: jobCtx, cancel: cancel, sse: sse}
+	job := &webJob{id: strconv.FormatUint(s.seq.Add(1), 10), ctx: jobCtx, cancel: cancel, sse: sse,
+		answers: make(chan webAnswer, 1), promptTimeout: webPromptTimeout}
+	if strings.HasPrefix(path, "capy auth login") {
+		// 5 分鐘對「開 DevTools 抄兩個 token」不夠,但「完全沒有上限」的代價是:分頁被放生就永久占住單一序列槽,
+		// 之後每個命令都 409 且永遠不會自己好(auth login 不取 pull.lock,所以只卡 web 自己)。給寬鬆但有限的上限。
+		job.promptTimeout = webAuthPromptTimeout
+	}
 	s.setCur(job)
 	defer func() { // defer:命令 panic(net/http 會 recover)也要守「絕不寫到已結束的 ResponseWriter」(review #59)
 		sse.close()   // 之後 webGlobalStderr 的寫入退回 os.Stderr

@@ -410,8 +410,10 @@ func TestDumpIsConsistentUnderConcurrentHydrate(t *testing.T) {
 			}
 		}
 	}()
-	deadline, n := time.Now().Add(400*time.Millisecond), 0
-	for time.Now().Before(deadline) {
+	// 讀到夠多次才收工,不是固定牆鐘視窗:慢的 runner(CI 的 windows-latest)在 400 ms 內只跑得完兩次就會假性失敗。
+	// 仍留一個上限,真的卡住時不會無限跑。
+	deadline, hard, n := time.Now().Add(400*time.Millisecond), time.Now().Add(30*time.Second), 0
+	for (time.Now().Before(deadline) || n < 3) && time.Now().Before(hard) {
 		c, err := r.Dump()
 		if err != nil {
 			close(stop)
