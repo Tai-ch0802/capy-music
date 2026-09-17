@@ -124,8 +124,15 @@ type trackJSON struct {
 	Name       string `json:"name"`
 	DurationMS int    `json:"duration_ms"`
 	Explicit   bool   `json:"explicit"`
+	Popularity int    `json:"popularity"`
+	PreviewURL string `json:"preview_url"` // 2024-11 起新建的 app 為 null
 	Album      struct {
-		Name string `json:"name"`
+		Name        string `json:"name"`
+		ReleaseDate string `json:"release_date"`
+		Images      []struct {
+			URL string `json:"url"`
+		} `json:"images"` // Spotify 依大到小排,取第一張(曲目專輯通常 640)。ArtworkURL 的契約是「一張可直接 <img src> 的封面,約 600px」,
+		// 同 Apple 展成 600;要多尺寸得改欄位型別,不是這一行(review #58)
 	} `json:"album"`
 	Artists []struct {
 		Name string `json:"name"`
@@ -133,6 +140,9 @@ type trackJSON struct {
 	ExternalIDs struct {
 		ISRC string `json:"isrc"`
 	} `json:"external_ids"`
+	ExternalURLs struct {
+		Spotify string `json:"spotify"`
+	} `json:"external_urls"`
 }
 
 func (t *trackJSON) toTrack() provider.Track {
@@ -144,15 +154,24 @@ func (t *trackJSON) toTrack() provider.Track {
 	if id == "" { // local file(與沒帶 additional_types 的 podcast episode)的 id 是 null:拿 uri 當 id,cid 才不會是空的 p:spotify:
 		id = t.URI
 	}
+	var artwork string
+	if len(t.Album.Images) > 0 {
+		artwork = t.Album.Images[0].URL
+	}
 	return provider.Track{
-		ProviderID: id,
-		ISRC:       t.ExternalIDs.ISRC,
-		Title:      t.Name,
-		Artists:    artists,
-		Album:      t.Album.Name,
-		DurationMS: t.DurationMS,
-		Explicit:   t.Explicit,
-		Unpushable: t.IsLocal,
+		ProviderID:  id,
+		ISRC:        t.ExternalIDs.ISRC,
+		Title:       t.Name,
+		Artists:     artists,
+		Album:       t.Album.Name,
+		DurationMS:  t.DurationMS,
+		Explicit:    t.Explicit,
+		Unpushable:  t.IsLocal,
+		URL:         t.ExternalURLs.Spotify,
+		ArtworkURL:  artwork,
+		PreviewURL:  t.PreviewURL,
+		ReleaseDate: t.Album.ReleaseDate,
+		Popularity:  t.Popularity,
 	}
 }
 

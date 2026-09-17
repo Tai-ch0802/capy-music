@@ -65,7 +65,15 @@ type Track struct {
 	DurationMS int
 	Explicit   bool
 	Unpushable bool // API 加不回去的曲目(Spotify local file、Apple library-only):push 時只配對、不新增(計畫 Q22)
-	Raw        json.RawMessage
+	// 豐富欄位(P7 決策 42,2026-09-17):選填、零值 = 該平台沒給;同一次 API 回應本來就有,零額外呼叫;
+	// 只給頁面顯示用,不落 Drive / SQLite;local 不填。封面 / 試聽由瀏覽器直接向平台 CDN 載入。
+	URL         string   // 平台上這首歌的頁面(外連)
+	ArtworkURL  string   // 封面(Apple 已把 {w}x{h} 換成 600)
+	PreviewURL  string   // 試聽片段;Spotify 2024-11 起新建的 app 拿到 null
+	ReleaseDate string   // 平台給的字串原樣(YYYY-MM-DD,Spotify 可能只有 YYYY)
+	Popularity  int      // Spotify 0–100;Apple 沒有
+	Genres      []string // Apple genreNames;Spotify 曲目物件沒有(在 artist 上)
+	Raw         json.RawMessage
 }
 
 // Artist:藝人;熱門歌曲以 ArtistTopTracks 另取。
