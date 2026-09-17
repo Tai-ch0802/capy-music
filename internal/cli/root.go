@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,6 +28,14 @@ func newRootCmd() *cobra.Command {
 		// 無參數:終端機裡開互動式介面,pipe / cron 一律印 help——「非 TTY 必須是純文字」是硬約束,
 		// 而且 capy | head 這種用法不能突然變成一個吃鍵盤的程式。
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			web, _ := cmd.Flags().GetBool("web")
+			port, _ := cmd.Flags().GetInt("port")
+			if cmd.Flags().Changed("port") && !web {
+				return errors.New("--port 只能配 --web 使用")
+			}
+			if web { // 在 !isInteractive 分流之前:非 TTY 啟動(launchd / nohup)也能開,只印網址不開瀏覽器
+				return runWeb(cmd, port)
+			}
 			if !isInteractive(cmd) {
 				return cmd.Help()
 			}
@@ -34,6 +43,8 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	providerFlag(cmd)
+	cmd.Flags().Bool("web", false, "在瀏覽器操作:只綁 127.0.0.1,啟動時印一次性網址")
+	cmd.Flags().Int("port", 0, "--web 的 port(預設 0 = 動態;不可用 8888)")
 	cmd.AddCommand(newDebugCmd())
 	cmd.AddCommand(newAuthCmd())
 	cmd.AddCommand(newSearchCmd())

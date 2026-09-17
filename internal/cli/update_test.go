@@ -151,11 +151,16 @@ func TestReplaceExecutableKeepsOldMode(t *testing.T) {
 	if err := os.WriteFile(src, []byte("new"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	executableReplaced.Store(false)
+	t.Cleanup(func() { executableReplaced.Store(false) })
 	if err := replaceExecutable(dst, src); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(dst); fi.Mode().Perm() != 0o755 {
 		t.Fatalf("新 binary 要沿用舊檔權限 0755,得到 %o", fi.Mode().Perm())
+	}
+	if !executableReplaced.Load() {
+		t.Error("換掉 binary 要設 executableReplaced(capy --web 靠它把 /api/run 停用)")
 	}
 }
 
@@ -168,11 +173,15 @@ func TestReplaceExecutableRollsBackWhenSourceMissing(t *testing.T) {
 	if err := os.WriteFile(dst+".old", []byte("stale"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	executableReplaced.Store(false)
 	if err := replaceExecutable(dst, filepath.Join(dir, "missing")); err == nil {
 		t.Fatal("來源不存在應失敗")
 	}
 	if b, _ := os.ReadFile(dst); string(b) != "old" {
 		t.Fatalf("失敗時舊 binary 要放回原位:%q", b)
+	}
+	if executableReplaced.Load() {
+		t.Error("換失敗不設 executableReplaced")
 	}
 }
 

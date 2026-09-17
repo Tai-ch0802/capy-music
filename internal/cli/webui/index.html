@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>capy</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-connected="true">
+<nav class="rail" aria-label="頁面">
+  <div class="rail__brand">capy<span class="rail__cursor" aria-hidden="true">_</span></div>
+  <a class="rail__item is-active" href="#/console" data-page="console">主控台</a>
+  <span class="rail__item is-disabled" aria-disabled="true" title="T5">搜尋</span>
+  <span class="rail__item is-disabled" aria-disabled="true" title="T5">播放清單</span>
+  <span class="rail__item is-disabled" aria-disabled="true" title="T5">同步</span>
+  <span class="rail__item is-disabled" aria-disabled="true" title="T4">ISRC</span>
+  <span class="rail__item is-disabled" aria-disabled="true" title="T5">帳號</span>
+  <span class="rail__item is-disabled" aria-disabled="true" title="T5">診斷</span>
+  <div class="rail__meta"><span id="version">—</span> · <span id="default-provider">—</span></div>
+</nav>
+<main class="main" id="main">
+  <section class="console" id="console" role="region" aria-label="主控台"></section>
+</main>
+<footer class="dock">
+  <div class="dock__now" id="now" data-playing="false">播放面板(T4)</div>
+  <div class="dock__notice" id="notice" hidden></div>
+  <div class="dock__cmd" id="cmdline" role="group" aria-label="命令列">
+    <label class="dock__prompt" for="cmd">capy</label>
+    <input id="cmd" name="cmd" class="dock__input" list="commands" autocomplete="off" spellcheck="false" placeholder="pl show 通勤 · search 五月天 · auth status">
+    <datalist id="commands"></datalist>
+    <button type="button" class="btn btn--primary" id="run">執行</button>
+    <button type="button" class="btn btn--ghost" id="cancel" hidden>取消</button>
+  </div>
+</footer>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

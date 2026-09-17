@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -413,6 +414,10 @@ func goInstall(ctx context.Context, goBin, sha, ver, gobin string, stderr io.Wri
 // 但 Windows 不能覆寫執行中的 exe、只能改名,兩邊走同一條路。失敗就把舊檔放回去;.old 在 Windows 上
 // 執行中刪不掉,留給下次更新開頭清。新檔沿用舊檔的權限:解壓與 go install 都吃 umask,umask 077 會把
 // 裝在共用位置的 0755 換成 0700,同機器其他使用者就突然 permission denied。
+// executableReplaced:這個行程跑的 binary 已被 replaceExecutable 換掉(只 rename 不 re-exec)。長駐的 capy --web
+// 用它把 /api/run 停用直到重啟(計畫決策 40 第 5 點);「已是最新」的 no-op 不設。
+var executableReplaced atomic.Bool
+
 func replaceExecutable(dst, src string) error {
 	if fi, err := os.Stat(dst); err == nil {
 		_ = os.Chmod(src, fi.Mode().Perm())
@@ -427,5 +432,6 @@ func replaceExecutable(dst, src string) error {
 		return fmt.Errorf("放入新 binary:%w", err)
 	}
 	_ = os.Remove(old)
+	executableReplaced.Store(true)
 	return nil
 }
