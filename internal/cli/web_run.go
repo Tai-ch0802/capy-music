@@ -198,15 +198,17 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusForbidden, msg)
 		return
 	}
-	if s.stale.Load() {
-		httpErr(w, http.StatusServiceUnavailable, webStaleMsg)
-		return
-	}
 	if !s.runMu.TryLock() {
 		httpErr(w, http.StatusConflict, "另一個命令執行中,等它結束或取消")
 		return
 	}
 	defer s.runMu.Unlock()
+	// 鎖內才檢查:換掉 binary 的那個 job 是在鎖內結束時才立旗,鎖外讀會讀到它立旗之前的值,
+	// 然後在「磁碟上已是新 binary」的舊行程裡再跑一個命令——正是這道閘要擋的 state.db 互相 retire。
+	if s.stale.Load() {
+		httpErr(w, http.StatusServiceUnavailable, webStaleMsg)
+		return
+	}
 	resetDefaultProvider() // 長駐行程要看到終端機改的 config.json
 	root := newRootCmd()
 	path, ok := s.allowed(root, args)

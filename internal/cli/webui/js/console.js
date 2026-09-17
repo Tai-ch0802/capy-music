@@ -2,6 +2,19 @@
 import { renderTable } from './table.js';
 
 const SYSTEM_DIALOG = ['auth logout', 'config set', 'history clear', 'doctor', 'auth login'];
+// 回聲遮罩是第二層(這三個 flag 在伺服器端本來就 403):值不進畫面、不留在 DOM(設計規格 §8)。
+const SECRET_FLAGS = ['--developer-token', '--user-token', '--client-secret'];
+
+function maskSecrets(line) {
+  const parts = line.split(' ');
+  for (let i = 0; i < parts.length; i++) {
+    const name = parts[i].split('=')[0];
+    if (!SECRET_FLAGS.includes(name)) continue;
+    if (parts[i].includes('=')) parts[i] = name + '=***';
+    else if (i + 1 < parts.length) parts[i + 1] = '***';
+  }
+  return parts.join(' ');
+}
 
 export class Console {
   constructor(root, api, notice) {
@@ -15,8 +28,9 @@ export class Console {
     b.dataset.running = '';
     const head = document.createElement('div');
     head.className = 'block__head';
+    head.setAttribute('role', 'status'); // 狀態行才播報;串流 pre 不是 live region(設計規格 §11)
     head.innerHTML = '<span class="prompt">capy</span>';
-    head.appendChild(document.createTextNode(' ' + line));
+    head.appendChild(document.createTextNode(' ' + maskSecrets(line)));
     b.appendChild(head);
     if (SYSTEM_DIALOG.some((p) => line.startsWith(p))) {
       const h = document.createElement('div');
@@ -37,12 +51,19 @@ export class Console {
       b.appendChild(el);
     }
     el.textContent += text;
-    b.scrollIntoView({ block: 'end' });
+    this.stick(b);
+  }
+
+  // 貼底:已經在底部才跟著捲,使用者往上捲讀舊輸出就不打斷他(設計規格 §5;浮動「新輸出 ↓」鈕留給 T5)。
+  stick(b) {
+    const m = this.root.parentElement || this.root;
+    if (m.scrollHeight - m.scrollTop - m.clientHeight < 80) b.scrollIntoView({ block: 'end' });
   }
 
   async run(line) {
     const b = this.block(line || '(help)');
     this.running = true; this.notice('');
+    document.body.dataset.connected = 'true';
     try {
       const r = await this.api.fetch('/api/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line }),
@@ -50,9 +71,7 @@ export class Console {
       if (!r.ok) {
         let msg = r.statusText;
         try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
-        this.exit(b, 1, msg, r.status === 503 ? 'stale' : (r.status === 409 ? 'busy' : 'refused'));
-        if (r.status === 503) document.body.dataset.stale = '';
-        if (r.status === 401) this.notice(msg);
+        this.refused(b, r.status, msg);
         return;
       }
       await this.stream(r.body, b);
@@ -99,6 +118,7 @@ export class Console {
     const el = document.createElement('div');
     el.className = 'block__exit';
     el.dataset.code = String(code);
+    el.setAttribute('role', 'status');
     const mark = code === 0 ? '✓' : (code === 2 || code === 3 ? '·' : '✗');
     let text = `${mark} exit ${code}`;
     if (reason === 'cancelled') text += ' · 已取消';
@@ -110,7 +130,22 @@ export class Console {
     if (code === 2 && /--yes/.test(message || '')) text += '(未套用:加 --yes 重跑)';
     el.textContent = text;
     b.appendChild(el);
-    b.scrollIntoView({ block: 'end' });
+    this.stick(b);
+  }
+
+  // 非 200 = 命令根本沒跑:不畫成 ✗ exit 1(那是命令真的執行而失敗的樣子),標「未執行」並把原因放到命令列上方。
+  refused(b, status, msg) {
+    b.dataset.refused = String(status);
+    const el = document.createElement('div');
+    el.className = 'block__exit';
+    el.dataset.code = 'refused';
+    el.setAttribute('role', 'status');
+    const why = { 401: 'token 不對或已失效', 403: '這個命令在 web 不提供', 409: '另一個命令執行中', 503: '請重啟 capy --web' }[status] || ('HTTP ' + status);
+    el.textContent = `· 未執行(${why})· ${msg}`;
+    b.appendChild(el);
+    this.notice(msg);
+    if (status === 503) document.body.dataset.stale = '';
+    this.stick(b);
   }
 
   async cancel() {

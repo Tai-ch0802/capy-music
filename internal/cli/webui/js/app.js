@@ -52,6 +52,7 @@ const cancelBtn = document.getElementById('cancel');
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
 async function submit() {
   if (con.running) return;
+  if (document.body.hasAttribute('data-stale')) { notice('binary 已更新,這個 capy --web 仍是舊版,請重啟'); return; }
   const line = input.value.trim();
   input.value = '';
   input.disabled = true; runBtn.disabled = true; cancelBtn.hidden = false;
@@ -62,7 +63,13 @@ async function submit() {
     input.focus();
   }
 }
-input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } });
+// 組字中的 Enter 是「確認候選字」,不是「送出」:注音 / 拼音使用者按的第一個 Enter 會被輸入法吃掉。
+// Safari 先送 compositionend 再送這個 keydown(isComposing 已是 false),所以還要看 keyCode 229。
+input.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229) return;
+  ev.preventDefault();
+  submit();
+});
 runBtn.addEventListener('click', submit);
 cancelBtn.addEventListener('click', () => con.cancel());
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });

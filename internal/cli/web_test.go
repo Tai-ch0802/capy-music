@@ -612,12 +612,23 @@ func TestWebGlobalStderrAfterJobEndsFallsBackToOsStderr(t *testing.T) {
 	}
 }
 
+// TestWebLockNoticeNamesPanelPoll:token 鎖等的可能是同一行程的面板 / ISRC 頁在換發 token,整句改寫;
+// pull.lock 等的真的是另一個 capy 行程(終端機 / cron),原文不能被改掉——只有 Ctrl-C 換成頁面上有的鈕。
 func TestWebLockNoticeNamesPanelPoll(t *testing.T) {
 	var b bytes.Buffer
 	w := &webLockStderr{&b}
 	io.WriteString(w, "等待另一個 capy 釋放 spotify.token.lock(對方正在換發);要放棄按 Ctrl-C。\n")
 	if got := b.String(); !strings.Contains(got, "播放面板 / ISRC 頁") || strings.Contains(got, "Ctrl-C") || !strings.Contains(got, "spotify.token.lock") {
-		t.Errorf("web 的等鎖提示要點名面板 / ISRC 頁、不講 Ctrl-C:%q", got)
+		t.Errorf("token 鎖:要點名面板 / ISRC 頁、不講 Ctrl-C:%q", got)
+	}
+	b.Reset()
+	io.WriteString(w, "等待另一個 capy 釋放 pull.lock(對方正在同步播放清單);要放棄按 Ctrl-C。\n")
+	got := b.String()
+	if !strings.Contains(got, "等待另一個 capy 釋放 pull.lock") || strings.Contains(got, "播放面板") {
+		t.Errorf("pull.lock:等的真的是另一個行程,原文不可被改寫:%q", got)
+	}
+	if strings.Contains(got, "Ctrl-C") || !strings.Contains(got, "要放棄按取消") {
+		t.Errorf("pull.lock:網頁沒有 Ctrl-C,只換這半句:%q", got)
 	}
 }
 
@@ -788,8 +799,66 @@ func TestWebPortFlagRefuses8888AndRequiresWeb(t *testing.T) {
 	if _, err := runCLI(t, "--port", "1"); err == nil || !strings.Contains(err.Error(), "--web") {
 		t.Errorf("--port 沒配 --web 要報錯:%v", err)
 	}
-	if _, err := runCLI(t, "--web", "--port", "8888"); err == nil || !strings.Contains(err.Error(), "8888") {
-		t.Errorf("8888 是 Spotify 回呼 port,listen 前拒絕:%v", err)
+	for _, tc := range []struct{ port, why string }{
+		{"8888", "Spotify"}, // 授權回呼固定 port
+		{"80", "Host"},      // 瀏覽器會從 Host 拿掉預設埠號 → 逐字比對必不符 → 每個請求 421,頁面打不開
+		{"443", "Host"},     // 同上;這兩個不能只靠 listen 失敗,沒有權限的錯誤訊息裡也有數字
+	} {
+		_, err := runCLI(t, "--web", "--port", tc.port)
+		if err == nil || !strings.Contains(err.Error(), tc.port) || !strings.Contains(err.Error(), tc.why) {
+			t.Errorf("--port %s 要在 listen 前拒絕並說明理由(%s):%v", tc.port, tc.why, err)
+		}
+	}
+}
+
+// TestWebStaticFrontendContracts:前端沒有自動化測試(計畫 §5),但幾條「壞掉不會有人發現」的契約可以在 embed 的
+// 位元組上釘住:IME 守衛(拿掉 <form> 後回歸過一次)、log 面板不是 live region、時長對齊終端機、secret 回聲遮罩、
+// 發光只准在 glow budget 註解塊裡、長 token 不撐破版面。
+func TestWebStaticFrontendContracts(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := webUI.ReadFile("webui/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	index, app, console, table, css := read("index.html"), read("js/app.js"), read("js/console.js"), read("js/table.js"), read("css/app.css")
+
+	// 組字中的 Enter 是確認候選字:注音使用者按第一個 Enter 不該把半截命令送出去。
+	if !strings.Contains(app, "ev.isComposing") || !strings.Contains(app, "ev.keyCode === 229") {
+		t.Error("命令列的 Enter 要擋 IME 組字(isComposing + Safari 的 keyCode 229)")
+	}
+	// 設計規格 §11:log 面板 role=region(不是 live region,高吞吐會把螢幕閱讀器淹掉);狀態行才 role=status。
+	if !strings.Contains(index, `role="region"`) || strings.Contains(index, "aria-live") {
+		t.Error("log 面板要 role=region、不可是 live region")
+	}
+	if strings.Count(console, `setAttribute('role', 'status')`) < 2 {
+		t.Error("命令回聲與退出碼兩個狀態行要 role=status")
+	}
+	// 時長對齊 ui.FormatDuration 的整數除法(四捨五入會讓同一首歌在網頁與終端機差一秒)。
+	if !strings.Contains(table, "Math.floor(ms / 1000)") || strings.Contains(table, "Math.round(ms") {
+		t.Error("時長要用整數除法,對齊 ui.FormatDuration")
+	}
+	// 設計規格 §8:三個 secret flag 的值在回聲裡遮成 ***(伺服器 403 之外的第二層,值不留在 DOM)。
+	for _, f := range []string{"--developer-token", "--user-token", "--client-secret"} {
+		if !strings.Contains(console, f) {
+			t.Errorf("回聲遮罩要涵蓋 %s", f)
+		}
+	}
+	// 設計規格 §6:全站的 --glow / --glow-text 只准在 glow budget 註解塊底下。
+	budget := strings.Index(css, "glow budget")
+	if budget < 0 {
+		t.Fatal("app.css 要有 glow budget 註解塊")
+	}
+	for _, tok := range []string{"var(--glow)", "var(--glow-text)"} {
+		if i := strings.Index(css, tok); i >= 0 && i < budget {
+			t.Errorf("%s 出現在 glow budget 註解塊之外(設計規格 §6:那就是 review finding)", tok)
+		}
+	}
+	// 授權 URL 約 330 字且沒有可斷點:沒有 overflow-wrap 會讓整個主窗格橫向捲。
+	if !strings.Contains(css, "overflow-wrap: anywhere") {
+		t.Error("主控台輸出要 overflow-wrap: anywhere")
 	}
 }
 

@@ -3,8 +3,11 @@ package cli
 // capy --web(P7,2026-09-17;計畫 docs/superpowers/plans/2026-09-17-web-mode.md 決策 40–41)。
 //
 // 不變式(-race 會抓,寫在檔頭給後人):Serve 開始後,newRootCmd()、defaultProvider()、resetDefaultProvider()、
-// 任何 var 接縫、五個匯出 stderr 全域的**寫入**只在 runMu 內發生;允許清單與 /api/commands 的命令樹在 Serve 前
-// 算一次;/api/now、/api/isrc 兩個直達端點(T4)不經 cobra、不進 runMu、不呼叫 defaultProvider()。
+// 任何 var 接縫的**寫入**只在 runMu 內發生;允許清單與 /api/commands 的命令樹在 Serve 前算一次;
+// /api/now、/api/isrc 兩個直達端點(T4)不經 cobra、不進 runMu、不呼叫 defaultProvider()。
+// 五個 stderr 全域是例外:它們在 Serve 前指派一次(之後不再寫那幾個 var),但**寫入那些 writer** 的 goroutine
+// 不只 job——兩個直達端點也會經 BackoffStderr / LockStderr 印退避與等鎖提示(決策 42),所以併發安全靠的是
+// sseWriter 的 mu + closed 與 curMu,不是 runMu。
 // s.cur 由 curMu 守,是唯一的「目前 job」;橋接接縫(T3b)從它取 job,s.cur == nil 時回明確錯誤而不是掛住。
 
 import (
@@ -97,8 +100,11 @@ func newWebServer(ctx context.Context) (*webServer, error) {
 // runWeb:root 的 --web。非 TTY 啟動(launchd / nohup)也能開:只印網址、不開瀏覽器;網址連 token 一起
 // 印到 stdout,轉向到檔案就在檔案裡(決策 41 的誠實邊界:同一個 OS 使用者)。
 func runWeb(cmd *cobra.Command, port int) error {
-	if port == 8888 {
+	switch port {
+	case 8888:
 		return errors.New("--port 8888 是 Spotify 授權回呼的固定 port,請換一個")
+	case 80, 443: // 瀏覽器會把預設埠號從 Host / Origin 拿掉,逐字比對必然不符 → 每個請求都 421,頁面完全打不開
+		return errors.New("--port 80 / 443 不能用:瀏覽器會把預設埠號從 Host 標頭拿掉,每個請求都會被擋下")
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -260,8 +266,9 @@ func (g *webGlobalStderr) Write(p []byte) (int, error) {
 	return g.s.fallbackStderr.Write(p)
 }
 
-// webLockStderr:LockFile 的「等待另一個 capy 釋放 …;要放棄按 Ctrl-C」在 web 會落進當下 job,而「另一個 capy」
-// 可能是同一行程的面板 / ISRC 頁(review #56 第 1 點)——改寫成講對的那句。
+// webLockStderr:LockFile 的「等待另一個 capy 釋放 …;要放棄按 Ctrl-C」在 web 會落進當下 job。
+// <key>.token.lock:等的可能是同一行程的面板 / ISRC 頁在換發 token(review #56 第 1 點),整句改寫;
+// pull.lock:等的真的是另一個 capy 行程(終端機 / cron),原文是對的,只把 Ctrl-C 換成頁面上有的鈕。
 type webLockStderr struct{ w io.Writer }
 
 var webLockNotice = strings.NewReplacer(
@@ -270,7 +277,13 @@ var webLockNotice = strings.NewReplacer(
 )
 
 func (l *webLockStderr) Write(p []byte) (int, error) {
-	if _, err := io.WriteString(l.w, webLockNotice.Replace(string(p))); err != nil {
+	s := string(p)
+	if strings.Contains(s, ".token.lock") {
+		s = webLockNotice.Replace(s)
+	} else {
+		s = strings.ReplaceAll(s, ";要放棄按 Ctrl-C", ";要放棄按取消")
+	}
+	if _, err := io.WriteString(l.w, s); err != nil {
 		return 0, err
 	}
 	return len(p), nil

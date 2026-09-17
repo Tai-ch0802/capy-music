@@ -3,7 +3,7 @@
 const ATOMIC = /^(ID|CID|PID|ISRC|DEVICE)$|_ID$/;
 
 function mmss(ms) {
-  const s = Math.round(ms / 1000);
+  const s = Math.floor(ms / 1000); // 對齊 ui.FormatDuration 的整數除法:同一首歌在終端機與網頁要是同一個長度
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
