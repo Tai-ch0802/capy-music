@@ -11,19 +11,24 @@
 <body data-connected="true">
 <nav class="rail" aria-label="頁面">
   <div class="rail__brand">capy<span class="rail__cursor" aria-hidden="true">_</span></div>
-  <a class="rail__item is-active" href="#/console" data-page="console">主控台</a>
-  <span class="rail__item is-disabled" aria-disabled="true" title="T5">搜尋</span>
-  <span class="rail__item is-disabled" aria-disabled="true" title="T5">播放清單</span>
-  <span class="rail__item is-disabled" aria-disabled="true" title="T5">同步</span>
-  <a class="rail__item" href="#/isrc" data-page="isrc">ISRC</a>
-  <span class="rail__item is-disabled" aria-disabled="true" title="T5">帳號</span>
-  <span class="rail__item is-disabled" aria-disabled="true" title="T5">診斷</span>
+  <a class="rail__item is-active" href="#/console" data-page="console">主控台<span class="rail__key">1</span></a>
+  <a class="rail__item" href="#/search" data-page="search">搜尋<span class="rail__key">2</span></a>
+  <a class="rail__item" href="#/playlists" data-page="playlists">播放清單<span class="rail__key">3</span></a>
+  <a class="rail__item" href="#/sync" data-page="sync">同步<span class="rail__key">4</span></a>
+  <a class="rail__item" href="#/isrc" data-page="isrc">ISRC<span class="rail__key">5</span></a>
+  <a class="rail__item" href="#/account" data-page="account">帳號<span class="rail__key">6</span></a>
+  <a class="rail__item" href="#/doctor" data-page="doctor">診斷<span class="rail__key">7</span></a>
   <div class="rail__meta"><span id="version">—</span> · <span id="default-provider">—</span></div>
 </nav>
 <main class="main" id="main">
   <section class="page" id="page-console">
     <section class="console" id="console" role="region" aria-label="主控台"></section>
   </section>
+  <section class="page" id="page-search" hidden></section>
+  <section class="page" id="page-playlists" hidden></section>
+  <section class="page" id="page-sync" hidden></section>
+  <section class="page" id="page-account" hidden></section>
+  <section class="page" id="page-doctor" hidden></section>
   <section class="page" id="page-isrc" hidden>
     <h2 class="page__title">ISRC 查詢</h2>
     <div class="isrc__bar">
@@ -54,6 +59,22 @@
     <button type="button" class="btn btn--ghost" id="cancel" hidden>取消</button>
   </div>
 </footer>
+<dialog id="keys" class="keys">
+  <h2 class="keys__title">鍵位</h2>
+  <dl class="keys__list">
+    <dt>space</dt><dd>播放與暫停</dd>
+    <dt>n p</dt><dd>下一首、上一首</dd>
+    <dt>← →</dt><dd>前後各十秒</dd>
+    <dt>+ -</dt><dd>音量升降五格</dd>
+    <dt>1 – 7</dt><dd>跳到左邊第 n 頁</dd>
+    <dt>/</dt><dd>跳到命令列</dd>
+    <dt>r</dt><dd>讀不到播放狀態而停擺後,重新連上</dd>
+    <dt>?</dt><dd>開這張表</dd>
+    <dt>Esc</dt><dd>回到指令模式(離開輸入框)</dd>
+  </dl>
+  <p class="keys__note">任何輸入框有焦點時,單鍵快捷鍵全部失效。</p>
+  <form method="dialog"><button class="btn btn--ghost">關閉</button></form>
+</dialog>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

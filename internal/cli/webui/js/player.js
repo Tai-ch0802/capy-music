@@ -57,6 +57,7 @@ export class Player {
   }
 
   render(d) {
+    this.last = d; // ← → 與 + - 要用它算絕對值:seek 吃秒數、vol 吃 0-100
     this.root.dataset.playing = String(!!d.playing);
     this.root.dataset.stale = d.stale ? 'true' : '';
     if (d.error) {
@@ -72,6 +73,20 @@ export class Player {
     const age = d.stale ? ` · ${Math.round((d.stale_ms || 0) / 1000)} 秒前` : '';
     this.line.textContent = `${d.playing ? '▶' : '⏸'} ${t.title} — ${(t.artists || []).join(', ')}` +
       ` · ${mmss(d.position_ms)} / ${mmss(t.duration_ms)}${dev}${age}`;
+  }
+
+  // 前後各十秒、音量升降五格:鏡射 TUI 的鍵位。沒有最後一份狀態就不動作(算不出絕對值)。
+  seekBy(sec) {
+    const d = this.last;
+    if (!d || !d.track) return;
+    const pos = Math.max(0, Math.round((d.position_ms || 0) / 1000) + sec);
+    this.control(`seek ${pos}`);
+  }
+
+  volBy(delta) {
+    const dev = this.last && this.last.device;
+    if (!dev || !dev.volume_known) return; // 平台沒回報音量時不亂猜一個基準
+    this.control(`vol ${Math.min(100, Math.max(0, dev.volume_pct + delta))}`);
   }
 
   // 控制走 /api/run:序列槽忙碌時會 409,照實說,不假裝按了有效。
