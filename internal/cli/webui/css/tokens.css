@@ -1,0 +1,24 @@
+/* GeekGreen(2026-09-17-web-mode-design.md §3):深色單主題,不做淺色 */
+:root {
+  --ink: #0D1117;
+  --surface: #161B22;
+  --surface-2: #1C232B;
+  --line: #2A323C;
+  --line-hi: #646E7B;
+  --accent: #3FB27F;
+  --accent-dim: #2A6E52;
+  --accent-rgb: 63 178 127;
+  --text: #C9D1D9;
+  --text-hi: #E6EDF3;
+  --muted: #7D8794;
+  --warn: #D9A441;
+  --danger: #ED567A;
+  --glow: 0 0 12px rgb(var(--accent-rgb) / .45);
+  --glow-text: 0 0 8px rgb(var(--accent-rgb) / .6);
+  --scan: .03;
+  --r: 0;
+  --mono: "Iosevka Fixed", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --rail-w: 13.5rem;
+  color-scheme: dark;
+}
