@@ -760,6 +760,42 @@ func TestWebStaticHasCSPAndNoInline(t *testing.T) {
 	}
 }
 
+// TestWebCapybaraMatchesTUI:網頁的空白態與終端機用同一隻水豚。JS 那份是手抄的常數(沒有共用執行期),
+// 所以在這裡逐行比對——差一個空格,兩邊的招牌就長得不一樣,而這是使用者第一眼看到的東西。
+func TestWebCapybaraMatchesTUI(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/console.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	start := strings.Index(src, "export const CAPYBARA = [")
+	if start < 0 {
+		t.Fatal("console.js 要有 CAPYBARA 常數")
+	}
+	end := strings.Index(src[start:], "];")
+	if end < 0 {
+		t.Fatal("CAPYBARA 常數沒有結尾")
+	}
+	var got []string
+	for _, ln := range strings.Split(src[start:start+end], "\n") {
+		ln = strings.TrimSpace(ln)
+		if !strings.HasPrefix(ln, "'") {
+			continue
+		}
+		ln = strings.TrimSuffix(strings.TrimSuffix(ln, ","), "'")
+		got = append(got, strings.ReplaceAll(strings.TrimPrefix(ln, "'"), `\\`, `\`))
+	}
+	want := capybaraStill()
+	if len(got) != len(want) {
+		t.Fatalf("行數 %d,終端機是 %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 行不一樣:\n web %q\n tui %q", i+1, got[i], want[i])
+		}
+	}
+}
+
 func walkEmbedded(t *testing.T, dir string, fn func(name string, b []byte)) error {
 	t.Helper()
 	entries, err := webUI.ReadDir(dir)
@@ -857,6 +893,23 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// 授權 URL 約 330 字且沒有可斷點:沒有 overflow-wrap 會讓整個主窗格橫向捲。
 	if !strings.Contains(css, "overflow-wrap: anywhere") {
 		t.Error("主控台輸出要 overflow-wrap: anywhere")
+	}
+	// 七頁都要有殼層,且 rail 的每一項都是可點的連結(不再有 T5 的 is-disabled 佔位)。
+	for _, page := range []string{"console", "search", "playlists", "sync", "isrc", "account", "doctor"} {
+		if !strings.Contains(index, `id="page-`+page+`"`) {
+			t.Errorf("殼層缺 %s 頁", page)
+		}
+	}
+	if strings.Contains(index, "is-disabled") {
+		t.Error("rail 不該還有停用的佔位項")
+	}
+	if !strings.Contains(index, `<dialog id="keys"`) {
+		t.Error("? 的鍵位表要是原生 dialog")
+	}
+	// showIdle 會被叫兩次(route 一次、/api/commands 回來再一次)。第二次重畫會把 power-on 那一幀洗掉,
+	// 而簽名時刻一個 session 只有一次——所以它必須是冪等的:已經畫過就只更新招牌。
+	if !strings.Contains(console, "const shown = this.root.querySelector('.capy')") {
+		t.Error("showIdle 要冪等,否則 power-on 會被第二次呼叫洗掉")
 	}
 	// 面板:stale 是「伺服器忙」不是「伺服器不在」——用連續次數會把「慢但一直有新資料」判成失聯,而且回不來。
 	player := read("js/player.js")

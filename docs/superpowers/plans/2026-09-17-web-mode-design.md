@@ -105,7 +105,7 @@ glow 由 `::after` 偽元素扛 box-shadow,進出只動偽元素的 opacity;box-
 - **kbd 與 `?` 鍵位表**:kbd 同 guide(mono、accent 字、`--surface-2` 底、1px `--line`)但 `--r`;`?` 開原生 `<dialog>`,mono 兩欄,內容與 guide 的 `.keys` 清單一字不差,加 web 專屬三行(1 到 7 跳頁、反引號切 log、j / k 表格列)。
 - **骨架**:靜態 `--surface-2` 條 12px 高(寬 40% / 70% / 55%)或照目標形狀(表格 5 列、ISRC 4 格、封面方塊),opacity .55 到 1 的 1.2s 脈衝;不 shimmer、不轉圈。
 - **掃描線**:`body::after { position:fixed; inset:0; pointer-events:none; z-index:var(--z-scan); background: repeating-linear-gradient(0deg, rgb(201 209 217 / var(--scan)) 0 1px, transparent 1px 3px) }`,永不動畫。整個 cyberpunk 材質就這一條,不喜歡就把 `--scan` 設 0。
-- **圖示**:Phosphor regular 子集約 24 顆做成一個 sprite:play、pause、skip-back、skip-forward、speaker-high、speaker-low、speaker-x、magnifying-glass、playlist、arrows-clockwise、barcode、user-circle、first-aid、terminal-window、copy、arrow-square-out、arrow-line-down、arrow-line-up、arrow-line-right、minus、caret-down、x、check、warning、music-note、keyboard;`<svg class="i"><use href="#i-play"/></svg>`,`fill: currentColor`,16px 在導覽 / 按鈕、14px 在列動作;資料格裡不放圖示。
+- **圖示**:Phosphor regular 子集約 24 顆做成一個 sprite:play、pause、skip-back、skip-forward、speaker-high、speaker-low、speaker-x、magnifying-glass、playlist、arrows-clockwise、barcode、user-circle、first-aid、terminal-window、copy、arrow-square-out、arrow-line-down、arrow-line-up、arrow-line-right、minus、caret-down、x、check、warning、music-note、keyboard;`<svg class="i"><use href="#i-play"/></svg>`,`fill: currentColor`,16px 在導覽 / 按鈕、14px 在列動作;資料格裡不放圖示。**T5 實作偏差(2026-09-17)**:sprite 沒有 vendor。目前用的是 CLI 自己就在印的字符(▶ ⏸ ⏮ ⏭ ✓ · ⚠),與「終端機的第二個視窗」同調;vendor 26 顆第三方 SVG 是另一個決定,要做就跟字型同一個 PR。尺寸與間距都由 token 決定,補上 sprite 不會動到版面。
 
 ## 9. 動效規則
 

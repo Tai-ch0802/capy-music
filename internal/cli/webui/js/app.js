@@ -2,6 +2,11 @@
 import { Console } from './console.js';
 import { Player } from './player.js';
 import { initISRC } from './pages/isrc.js';
+import { initSearch } from './pages/search.js';
+import { initPlaylists } from './pages/playlists.js';
+import { initSync } from './pages/sync.js';
+import { initAccount } from './pages/account.js';
+import { initDoctor } from './pages/doctor.js';
 
 export const api = {
   token: '',
@@ -75,27 +80,69 @@ input.addEventListener('keydown', (ev) => {
 runBtn.addEventListener('click', submit);
 cancelBtn.addEventListener('click', () => con.cancel());
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
-// 路由:只有兩頁(主控台 / ISRC),其餘 rail 項目在 T5 才開。
-let isrcPage = null;
+// ── 路由:七頁,#/<page>[/<arg>];每頁第一次到達時才初始化 ──
+const providers = { list: ['spotify', 'apple', 'local'], current: 'spotify' };
+const PAGES = ['console', 'search', 'playlists', 'sync', 'isrc', 'account', 'doctor'];
+const ready = new Set();
+
 function showPage(name) {
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
   for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
 }
+
 function route() {
-  // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 ISRC 頁。
-  const m = /^#\/isrc(?:\/([^/?#]+))?$/.exec(location.hash || '');
-  if (!m) { showPage('console'); input.focus(); return; }
-  showPage('isrc');
-  const want = m[1] ? decodeURIComponent(m[1]) : '';
-  // 每次都把目前 hash 的值餵下去:上一頁 / 直接改網址列都要生效,不然網址寫 A、畫面是 B。
-  // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
-  if (!isrcPage) isrcPage = initISRC(document.getElementById('page-isrc'), api, want);
-  else if (want) isrcPage.show(want);
-  document.getElementById('isrc-input').focus();
+  const m = /^#\/([a-z]+)(?:\/([^/?#]+))?/.exec(location.hash || '');
+  const name = m && PAGES.includes(m[1]) ? m[1] : 'console';
+  const arg = m && m[2] ? decodeURIComponent(m[2]) : '';
+  showPage(name);
+  const root = document.getElementById('page-' + name);
+  if (!ready.has(name)) {
+    ready.add(name);
+    const args = [root, api, con, notice, providers];
+    if (name === 'search') initSearch(...args);
+    else if (name === 'playlists') initPlaylists(...args);
+    else if (name === 'sync') initSync(...args);
+    else if (name === 'account') initAccount(...args);
+    else if (name === 'doctor') initDoctor(...args);
+    else if (name === 'isrc') initISRC(root, api, arg);
+  }
+  if (name === 'console') { con.showIdle(providers.current); input.focus(); }
+  else if (name === 'isrc') document.getElementById('isrc-input').focus();
 }
 window.addEventListener('hashchange', route);
 
+// ── 鍵盤層:任何可編輯元素有焦點時單鍵全部失效,由一個集中的 inInput() 守門(設計規格 §11)──
+function inInput() {
+  const a = document.activeElement;
+  if (!a) return false;
+  if (a.isContentEditable) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
+}
+
+const keysDialog = document.getElementById('keys');
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
+  if (inInput() || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const n = PAGES[Number(ev.key) - 1];
+  if (n) { location.hash = '#/' + n; return; }
+  switch (ev.key) {
+    case '?': ev.preventDefault(); keysDialog.showModal(); break;
+    case '/': ev.preventDefault(); input.focus(); break;
+    case 'r': player.start(); break;
+    case ' ': ev.preventDefault(); player.control(player.root.dataset.playing === 'true' ? 'pause' : 'play'); break;
+    case 'n': player.control('next'); break;
+    case 'p': player.control('prev'); break;
+    default: break;
+  }
+});
+
 const player = new Player(document.getElementById('now'), api, notice);
-loadCommands().catch((e) => notice('連不上 capy --web:' + e.message));
+loadCommands()
+  .then((d) => {
+    if (d && d.default_provider) providers.current = d.default_provider;
+    if (d && d.providers) providers.list = d.providers;
+    if (!location.hash || location.hash === '#/console') con.showIdle(providers.current);
+  })
+  .catch((e) => notice('連不上 capy --web:' + e.message));
 route();
 player.start();

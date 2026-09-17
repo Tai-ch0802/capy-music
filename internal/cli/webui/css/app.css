@@ -16,7 +16,7 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .rail__cursor { animation: blink 1.2s steps(2) infinite; }
 .rail__item { display: block; padding: .4rem .6rem; color: var(--text); text-decoration: none; border-left: 2px solid transparent; }
 .rail__item.is-active { color: var(--text-hi); border-left-color: var(--accent); background: var(--surface-2); }
-.rail__item.is-disabled { color: var(--muted); cursor: default; }
+.rail__key { float: right; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .rail__meta { margin-top: auto; font-family: var(--mono); font-size: 12px; color: var(--muted); }
 
 /* ── main / console ── */
@@ -41,7 +41,64 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .block__hint { font-size: 12px; color: var(--muted); }
 
 /* ── pages(主控台 / ISRC)── */
-.page__title { font-size: 20px; color: var(--text-hi); margin: 0 0 1rem; font-weight: 600; }
+/* 頁標題列:標題 + 同基線的 CLI 等價命令(點了填進命令列、不執行)。 */
+.page__head { display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 1rem; }
+.page__title { font-family: var(--mono); font-size: 20px; color: var(--text-hi); margin: 0; font-weight: 600; }
+.page__cli { background: none; border: 0; padding: 0; font: 13px var(--mono); color: var(--muted); cursor: pointer; }
+.page__cli::before { content: '> '; }
+.page__cli:hover { color: var(--text); }
+.page__out { margin-top: 1rem; }
+.page__note { font-size: 12px; color: var(--muted); margin: .5rem 0 0; }
+.page__warn { font-size: 13px; color: var(--warn); margin: .5rem 0 0; }
+
+/* 表單:label 在上、4px 間距;placeholder 是範例值,絕不當 label。 */
+.form-row { display: flex; gap: .75rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: .75rem; }
+.field { display: flex; flex-direction: column; gap: .25rem; font-size: 12px; color: var(--text); }
+.field__label { color: var(--muted); }
+.in { background: var(--surface); color: var(--text-hi); border: 1px solid var(--line-hi); border-radius: var(--r); padding: 0 .5rem; height: 32px; font: 14px var(--sans); min-width: 9rem; }
+.in--mono { font-family: var(--mono); font-size: 13px; }
+.in:focus { border-color: var(--accent); outline: none; }
+select.in { min-width: 7rem; }
+input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* 空白態本身就是下一步。 */
+.empty { margin: 1rem 0; }
+.empty__cmd { background: none; border: 0; padding: 0; font: 13px var(--mono); color: var(--muted); cursor: pointer; }
+.empty__cmd:hover { color: var(--accent); }
+
+/* 表格容器:sticky 表頭只在有高度上限的 wrapper 裡成立。 */
+.tbl-wrap { overflow: auto; max-width: 100%; }
+.tbl-wrap--tall { max-height: 60vh; }
+.tbl-wrap--tall thead th { position: sticky; top: 0; background: var(--ink); }
+.row-actions { white-space: nowrap; }
+.row-actions .btn { padding: .1rem .5rem; font-size: 12px; }
+.tbl td[data-action="add"] { color: var(--accent); }
+.tbl td[data-action="remove"] { color: var(--danger); }
+
+/* 帳號頁:狀態由字符承載(✓ / · / ⚠),不靠顏色單獨表意。 */
+.acct { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+.acct__name { font-family: var(--mono); color: var(--text-hi); min-width: 11rem; }
+.acct__state { font-family: var(--mono); font-size: 13px; }
+.acct[data-state="ok"] .acct__state { color: var(--accent); }
+.acct[data-state="warn"] .acct__state { color: var(--warn); }
+.acct[data-state="muted"] .acct__state { color: var(--muted); }
+.acct__detail { flex: 1; min-width: 12rem; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* 診斷:輸出原樣,不解析 ✅ / ❌ / 🎉。 */
+.doctor__out { margin: 1rem 0 0; padding: .75rem 1rem; background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 13px; color: var(--text); min-height: 3rem; }
+.doctor__out[data-running]::after { content: '執行中…'; color: var(--muted); }
+
+/* 播放清單:≥ 80rem 兩欄,以下上下疊。 */
+.pl__cols { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+@media (min-width: 80rem) { .pl__cols { grid-template-columns: 20rem minmax(0, 1fr); } }
+.pl__left { display: flex; flex-direction: column; gap: 1px; }
+.pl__item { display: flex; gap: .5rem; align-items: center; text-align: left; background: var(--surface); border: 0; border-left: 2px solid transparent; padding: .5rem .75rem; color: var(--text); cursor: pointer; font: 13px var(--sans); }
+.pl__item:hover { border-left-color: var(--line-hi); }
+.pl__item.is-active { border-left-color: var(--accent); color: var(--text-hi); }
+.pl__name { font-family: var(--mono); flex: 1; min-width: 0; }
+.pl__chips { display: flex; gap: .25rem; }
+.pl__count { font-variant-numeric: tabular-nums; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
 .isrc__bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .5rem; }
 .isrc__label { font-family: var(--mono); color: var(--muted); font-size: 12px; }
 .isrc__status { color: var(--muted); font-size: 13px; min-height: 1.2em; margin: 0 0 1rem; }
@@ -118,11 +175,38 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .dock__cmd:focus-within .dock__prompt { text-shadow: var(--glow-text); }
 /* 另外兩處(進行中的區塊左線、播放中的 seek 拇指)在 T5 補齊 */
 
+/* ── 簽名時刻:水豚 power-on(每個 session 一次;§7)── */
+.capy { padding: 2rem 0; }
+.capy__art { margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.2; color: var(--accent); }
+.capy__tag { margin: .5rem 0 0; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.capy[data-poweron] .capy__art { animation: capy-on 2s steps(3) 1 both; }
+@keyframes capy-on { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── 鍵位表(原生 dialog:自帶焦點陷阱與 Esc)── */
+.keys::backdrop { background: rgb(13 17 23 / .72); }
+.keys { background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: var(--r); padding: 1rem 1.25rem; max-width: 34rem; }
+.keys__title { font-family: var(--mono); font-size: 14px; color: var(--text-hi); margin: 0 0 .75rem; }
+.keys__list { display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem; margin: 0 0 .75rem; font-size: 13px; }
+.keys__list dt { font-family: var(--mono); color: var(--accent); }
+.keys__list dd { margin: 0; }
+.keys__note { font-size: 12px; color: var(--muted); margin: 0 0 .75rem; }
+
 /* ── states ── */
 body[data-connected="false"] .dock__now { color: var(--warn); }
 body[data-stale] .dock__input { border-color: var(--warn); }
 @keyframes blink { to { visibility: hidden; } }
-@media (prefers-reduced-motion: reduce) { .rail__cursor { animation: none; } }
+
+/* 掃描線:整個 cyberpunk 材質就這一條靜態細線,永不動畫;不喜歡就把 --scan 設 0。 */
+body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 40;
+  background: repeating-linear-gradient(0deg, rgb(201 209 217 / var(--scan)) 0 1px, transparent 1px 3px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail__cursor { animation: none; }
+  .capy[data-poweron] .capy__art { animation: none; } /* 直接畫最終幀 */
+}
+/* 高對比:掃描線關掉、線色提到可見的那一階。 */
+@media (prefers-contrast: more) { :root { --scan: 0; --line: var(--line-hi); } }
 @media (max-width: 720px) {
   body { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; grid-template-areas: "rail" "main" "dock"; }
   .rail { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }

@@ -1,6 +1,19 @@
 // console.js:POST /api/run 的 SSE 串流 → 區塊(回聲 / stdout / stderr / table / exit)。
 import { renderTable } from './table.js';
 
+// CAPYBARA:與 tui_capybara.go 的 capybaraStill() 逐字元相同(TestWebCapybaraMatchesTUI 釘住)。
+// 全部純 ASCII:方框繪製字元在 CJK 終端機是兩欄,會讓橫幅垮掉——網頁沿用同一份是為了兩邊長得一樣。
+export const CAPYBARA = [
+  '    __            __      ',
+  '   /  \\__________/  \\     ',
+  '  |                  |    ',
+  '  |   O          O   |    ',
+  '  |                  |    ',
+  '  |      ______      |    ',
+  '  |     (__..__)~~~~~~~~~ ',
+  '   \\________________/     ',
+];
+
 const SYSTEM_DIALOG = ['auth logout', 'config set', 'history clear', 'doctor', 'auth login'];
 // 回聲遮罩是第二層(這三個 flag 在伺服器端本來就 403):值不進畫面、不留在 DOM(設計規格 §8)。
 const SECRET_FLAGS = ['--developer-token', '--user-token', '--client-secret'];
@@ -19,10 +32,41 @@ function maskSecrets(line) {
 export class Console {
   constructor(root, api, notice) {
     this.root = root; this.api = api; this.notice = notice;
-    this.running = false; this.job = null;
+    this.running = false; this.job = null; this.hooks = {};
+  }
+
+  // 空白態:水豚 + 招牌(設計規格 §10)。第一次繪製時 power-on(§7 的簽名時刻),每個 session 一次。
+  showIdle(provider) {
+    if (this.root.querySelector('.block')) return;
+    // 已經畫過就只更新招牌:route() 會先叫一次(還不知道 provider),/api/commands 回來後再叫一次,
+    // 重畫會把 power-on 那一幀洗掉——簽名時刻一個 session 只有一次,洗掉就永遠看不到了。
+    const shown = this.root.querySelector('.capy');
+    if (shown) {
+      shown.querySelector('.capy__tag').textContent = provider ? `capy · ${provider}` : 'capy';
+      return;
+    }
+    const box = document.createElement('div');
+    box.className = 'capy';
+    const pre = document.createElement('pre');
+    pre.className = 'capy__art';
+    pre.setAttribute('aria-hidden', 'true');
+    pre.textContent = CAPYBARA.join('\n');
+    box.appendChild(pre);
+    box.appendChild(Object.assign(document.createElement('p'), {
+      className: 'capy__tag', textContent: provider ? `capy · ${provider}` : 'capy',
+    }));
+    let seen = false;
+    try { seen = sessionStorage.getItem('capy.poweron') === '1'; } catch (_) { /* 私密視窗 */ }
+    if (!seen) {
+      box.dataset.poweron = '';
+      try { sessionStorage.setItem('capy.poweron', '1'); } catch (_) { /* 同上 */ }
+    }
+    this.root.replaceChildren(box);
   }
 
   block(line) {
+    const idle = this.root.querySelector('.capy');
+    if (idle) idle.remove();
     const b = document.createElement('article');
     b.className = 'block';
     b.dataset.running = '';
@@ -60,7 +104,10 @@ export class Console {
     if (m.scrollHeight - m.scrollTop - m.clientHeight < 80) b.scrollIntoView({ block: 'end' });
   }
 
-  async run(line) {
+  // run(line, hooks):hooks.onTable / onStdout / onExit 讓發起命令的頁面拿到解析後的輸出。
+  // 命令本身照樣完整跑在 dock 裡(回聲、串流、提示、退出碼都在),頁面只是多一份結構化的複本。
+  async run(line, hooks = {}) {
+    this.hooks = hooks;
     const b = this.block(line || '(help)');
     this.running = true; this.notice('');
     document.body.dataset.connected = 'true';
@@ -79,7 +126,7 @@ export class Console {
       this.exit(b, 1, '連線中斷:' + e.message, 'disconnected');
       document.body.dataset.connected = 'false';
     } finally {
-      this.running = false; this.job = null;
+      this.running = false; this.job = null; this.hooks = {};
       delete b.dataset.running;
     }
   }
@@ -105,10 +152,10 @@ export class Console {
   event(ev, b) {
     switch (ev.type) {
       case 'start': this.job = ev.job; b.dataset.job = ev.job; break;
-      case 'stdout': this.append(b, 'block__out', ev.text); break;
+      case 'stdout': this.append(b, 'block__out', ev.text); this.hooks.onStdout?.(ev.text); break;
       case 'stderr': this.append(b, 'block__err', ev.text); break;
-      case 'table': b.appendChild(renderTable(ev.header, ev.rows)); break;
-      case 'exit': this.exit(b, ev.code, ev.message, ev.reason); break;
+      case 'table': b.appendChild(renderTable(ev.header, ev.rows)); this.hooks.onTable?.(ev.header, ev.rows); break;
+      case 'exit': this.exit(b, ev.code, ev.message, ev.reason); this.hooks.onExit?.(ev.code, ev.message, ev.reason); break;
       case 'prompt': this.prompt(ev, b); break;
       case 'prompt_closed': this.promptClosed(ev, b); break;
       case 'open_url': this.openURL(ev, b); break;
