@@ -96,6 +96,7 @@ capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify
 capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
 capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
 capy                    # 直接打 capy(在終端機裡)= 互動式介面;pipe / cron 下仍是印 help
+capy --web              # 在瀏覽器操作:只綁 127.0.0.1、啟動時印一次性網址;所有命令都能在頁面上跑
 capy pause / next / prev / now / devices
 capy seek 1:23          # 跳到曲目內的位置;也吃 h:mm:ss(1:05:30)與純秒數(83)
 capy vol 40             # 音量 0-100
@@ -165,6 +166,28 @@ capy update [--dev]                      # 見上方「更新」
 `capy resolve` 補 `pl pull` 不做的事:清單連結了兩個平台、曲目只從其中一邊 pull 進來時,另一邊的 id 由它找——先用 ISRC 反查(信心 95),沒有再用標題 + 藝人 + 時長模糊比對(0–100;標題一邊有 live / remix / acoustic / cover 之類、或時長差 >3 秒,上限 84)。≥85 自動寫入,走 `pl pull` 同一套鎖、閘與寫入順序;其餘印成 review 佇列——候選已屬另一首的一律進佇列,**合併只由人決定**。exit code:`0` 無事可寫或已寫入(佇列有東西仍是 0,cron 放 `capy resolve --yes` 不會因為永遠有幾首解不開而報錯)、`1` 錯誤、`2` 有可自動寫入的 mapping 但沒確認(`--dry-run`、非 TTY 沒 `--yes`、取消)。非 TTY 的 TSV:`action cid provider provider_id confidence source title artists reason`(`action` ∈ `map` 待寫入 / `review` 要人裁決 / `conflict` 同 ISRC 觀測到不同 id)。`--review` 在終端機逐筆裁決,決定寫成釘選(之後自動程序不再改);非 TTY 只印佇列並以 exit 2 結束——腳本用 `capy resolve pin`。單次 resolve 打超過 200 次 API 會在 stderr 提醒(未解開的曲目每次都會重查,目前沒有 negative cache)。某個平台授權失效時只跳過那個平台(stderr 會說),別的平台照解;單次查詢失敗的那首列成 `review` 並在 reason 寫明,下次再查。`pl pull` 結尾會提示「N 首尚未對應到 <provider>」。
 
 兩個逃生口:`capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),把 Drive 檔的合併形式輸出到 stdout——鍵是檔名(`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`)、值是該檔內容的縮排形式(壓回 compact 後與 Drive 上逐位元相同);本機沒資料時 exit 1 且不印東西。它用唯讀方式開 `state.db`:壞檔不刪、版本不符不改名、全新機器不建檔,而且整份匯出是一個一致的快照(與 cron 的 `pl pull` 同時跑也不會撕裂)。`capy drive init --from-local` 是 `pl pull` 以 exit 3 擋下「Drive 不完整」之後的出口:只建 Drive 缺的檔、不覆寫還在的檔、不動本機快取,別台裝置的 `dev__` 檔不代為上傳;先列出要建的檔(非 TTY 是 TSV `action file`),`--yes` 或在終端機確認後才上傳,`--dry-run` 只列不傳。確認訊息會帶目前登入的 Google 帳號:登錯帳號會把整個曲庫傳到別人的 appdata。
+
+### 網頁介面
+
+```bash
+capy --web
+```
+
+在你這台電腦上起一個只綁 `127.0.0.1` 的網頁介面,啟動時印一行網址(帶一次性 token)並開瀏覽器。所有 CLI 命令都可以在頁面上執行:命令列跟終端機一樣可以打任何子命令,要確認的會在區塊裡問你,表格畫成真的表格。另外多兩個只有網頁有的東西:**ISRC 查詢頁**(一次問三個平台,加上本機 canonical 的對應與含它的清單)與**播放狀態面板**。
+
+```bash
+capy --web --port 43117   # 指定 port(預設隨機;不可用 8888、80、443)
+```
+
+幾件先知道的事:
+
+- **只在你這台電腦上。** 只綁 `127.0.0.1`,不是區網服務;每次啟動產生一次性 token,行程結束網址就失效。頁面不用 cookie。
+- **一次跑一個命令。** 第二個命令會被擋(頁面會說「另一個命令執行中」),因為它跟終端機一樣共用同一份 Drive 與本機資料。
+- **憑證不會經過頁面。** 精靈輸入的 secret 只從瀏覽器送進行程再進 keychain,不會出現在事件、log 或網址裡;命令回聲裡的 token 值一律遮成 `***`。
+- **有幾個命令在網頁上不提供**:`debug` 群組、`--auto`、`--client-secret` / `--developer-token` / `--user-token`(請走精靈)、`now --watch`(看面板就好)。`capy update` 可以跑,但更新完這個網頁行程還是舊版,會要你重啟。
+- **Windows 第一次啟動**可能跳防火牆提示。它只聽 `127.0.0.1`,選「取消」也不影響本機連線。
+
+終端機的互動式介面(`capy` 無參數)是**重新執行 capy 自己**,所以每個子命令都保有它原本的樣子;網頁介面則在**同一個行程裡**跑並由頁面回答提示。兩條路不同是因為終端機已經有 TTY 可以讓給子行程,瀏覽器沒有;而網頁的表格與提示要能結構化送到瀏覽器,所以接的是同一組接縫。
 
 ### 跨平台複製清單(例:Apple Music → Spotify)
 

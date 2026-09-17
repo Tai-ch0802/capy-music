@@ -384,6 +384,14 @@ p.JL68l7EhogEeXd  冬日暖調          -
   </section>
 
   <section>
+    <h2>網頁介面</h2>
+    <p><code>capy --web</code> 在你這台電腦上起一個只綁 127.0.0.1 的網頁介面,啟動時印一行帶一次性 token 的網址並開瀏覽器。所有命令都可以在頁面上跑:命令列跟終端機一樣、要確認的會在區塊裡問你、表格畫成真的表格。另外多兩個只有網頁有的東西:ISRC 查詢頁(一次問三個平台,加上本機 canonical 的對應與含它的清單)與播放狀態面板。</p>
+    <p class="note">網頁只在你這台電腦上:只綁 127.0.0.1、不是區網服務,每次啟動產生一次性 token,行程結束網址就失效。憑證不會經過頁面 —— 精靈輸入的 secret 只從瀏覽器送進行程再進 keychain,命令回聲裡的 token 值一律遮成 ***。</p>
+    <p>一次跑一個命令(第二個會被擋),因為它跟終端機共用同一份 Drive 與本機資料。有幾個命令在網頁上不提供:<code>debug</code> 群組、<code>--auto</code>、三個 secret flag(請走精靈)、<code>now --watch</code>(看面板就好);<code>capy update</code> 可以跑,但更新完這個網頁行程還是舊版,會要你重啟。</p>
+    <p>終端機的互動式介面是重新執行 capy 自己,所以每個子命令都保有它原本的樣子;網頁介面則在同一個行程裡跑並由頁面回答提示。兩條路不同是因為終端機已經有 TTY 可以讓給子行程,瀏覽器沒有。</p>
+  </section>
+
+  <section>
     <h2>它能做什麼</h2>
     <p class="sub">下面按主題分組。每個命令在終端機裡是給人看的表格(放不下時儲存格換行、不截斷,ID 永遠完整;比終端機還寬時先開一個檢視窗格:每列一行,<kbd>←</kbd> <kbd>→</kbd> 橫向、<kbd>↑</kbd> <kbd>↓</kbd> 上下、<kbd>g</kbd> <kbd>G</kbd> 頭尾、<kbd>q</kbd> 離開,<kbd>Ctrl-C</kbd> 則是中止整個命令;離開後表格以換行的形式留在捲動區。帶 <code>--yes</code> 的命令不開窗格,<code>CAPY_PAGER=never</code> 一律不開),在管線裡是 TSV,可以直接餵給 cut 與 awk。</p>
     <div class="groups">
