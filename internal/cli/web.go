@@ -43,7 +43,9 @@ var webUI embed.FS
 var webOpenURL = browser.Open
 
 // webCSP:前端零 inline(TestWebStaticHasCSPAndNoInline 讀 index.html 斷言);兩家 CDN host 依常見回應推定
-// (Spotify 試聽是 p.scdn.co,review #58),T4 拿真回應驗證再定案。
+// (Spotify 封面 i.scdn.co / 試聽 p.scdn.co;Apple is1-ssl.mzstatic.com 被 *.mzstatic.com 蓋到、試聽 audio-ssl.itunes.apple.com)。
+// **還沒被真回應驗證過**:T4 的 smoke 是在沒有憑證的乾淨 config 下跑的,沒有任何一張封面真的被載入。
+// 驗收點是 R-10 / R-11(真帳號唯讀):查一首有封面與試聽的歌,看 console 有沒有 CSP 違規,不合就放寬到 https:。
 const webCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; " +
 	"img-src 'self' https://i.scdn.co https://*.mzstatic.com; media-src https://p.scdn.co https://audio-ssl.itunes.apple.com https://*.mzstatic.com; " +
 	"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
@@ -63,6 +65,14 @@ type webServer struct {
 	stale atomic.Bool // capy update 成功後為 true:/api/run 一律 503,直到重啟
 
 	fallbackStderr io.Writer // webGlobalStderr 沒有 job 時的去處(os.Stderr;測試換 buffer)
+
+	// 播放面板(web_api.go):provFlag 是啟動時的 --provider(有明指才算);now 是每個 provider 的 PlaybackController
+	// 快取(伺服器 ctx 建一次);pollMu 讓同時只有一個 poll 真的打平台;lastNow 是給 stale 回應用的上一份快照。
+	provFlag string
+	nowMu    sync.Mutex
+	now      map[string]provider.PlaybackController
+	pollMu   sync.Mutex
+	lastNow  atomic.Pointer[nowSnapshot]
 }
 
 type webCommand struct {
@@ -116,6 +126,9 @@ func runWeb(cmd *cobra.Command, port int) error {
 		return err
 	}
 	s.hostport = ln.Addr().String()
+	if cmd.Flags().Changed(flagProvider) { // 同 runTUI:只有明指才覆蓋 config 的 default_provider
+		s.provFlag, _ = cmd.Flags().GetString(flagProvider)
+	}
 	restore := installWebSeams(s)
 	defer restore()
 	url := "http://" + s.hostport + "/#t=" + s.token
@@ -146,6 +159,8 @@ func (s *webServer) serve(ln net.Listener) error {
 func (s *webServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/commands", s.api(s.handleCommands))
+	mux.HandleFunc("GET /api/isrc/{isrc}", s.api(s.handleISRC))
+	mux.HandleFunc("GET /api/now", s.api(s.handleNow))
 	mux.HandleFunc("POST /api/run", s.api(s.handleRun))
 	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.api(s.handleCancel))
 	mux.HandleFunc("POST /api/jobs/{job}/answer", s.api(s.handleAnswer))
