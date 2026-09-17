@@ -20,4 +20,4 @@
 - 任何會刪除使用者播放清單曲目的程式路徑,都必須先過 dry-run 與閾值檢查。
 - **清單順序是使用者的記憶(2026-09-15,附錄 C 決策 38)。** 任何路徑都不得排序或打亂清單:沒動到的項目相對順序永遠不變;去重只拿掉後出現的那份、搬移只在尾端新增;只有平台自己重排了才採平台順序(DERIVE 規則 6′)。
 - SQLite 是 cache,不是 source of truth。刪除 db 必須能從 Drive 完整重建(此約束要有測試)。
-- **`capy --web` 只綁 127.0.0.1、不可用 8888、每次啟動一次性 token;keychain 內容與精靈輸入的 secret 絕不進頁面 / 事件 / URL / log(2026-09-17,附錄 C 決策 40–41)。** `debug` 群組、`--auto`、`--web`、`--client-secret` / `--developer-token` / `--user-token` 在 web 一律 403;命令由單一序列槽在行程內執行,`/api/now` 與 `/api/isrc` 兩個直達端點不碰任何接縫;任何新的 huh 表單必須包成 var 並進 `installWebSeams`,不得直接 `newForm(...).Run()`;非 TTY 純文字契約一個位元組不改。
+- **`capy --web` 只綁 127.0.0.1、不可用 8888、每次啟動一次性 token;keychain 內容與精靈輸入的 secret 絕不進頁面 / 事件 / URL / log(2026-09-17,附錄 C 決策 40–41)。** `debug` 群組、`--auto`、`--web`、`--client-secret` / `--developer-token` / `--user-token` 在 web 一律 403;命令由單一序列槽在行程內執行,`/api/now` 與 `/api/isrc` 兩個直達端點不經 cobra、不進序列槽、不呼叫 `defaultProvider()`(它們仍經 `BackoffStderr` / `LockStderr` 兩個 stderr 接縫寫提示);任何新的 huh 表單必須包成 var 並進 `installWebSeams`,不得直接 `newForm(...).Run()`;非 TTY 純文字契約一個位元組不改。
