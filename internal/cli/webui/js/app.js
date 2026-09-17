@@ -1,5 +1,7 @@
 // app.js:token 引導、/api/commands、命令列;命令的串流與區塊在 console.js。
 import { Console } from './console.js';
+import { Player } from './player.js';
+import { initISRC } from './pages/isrc.js';
 
 export const api = {
   token: '',
@@ -73,5 +75,26 @@ input.addEventListener('keydown', (ev) => {
 runBtn.addEventListener('click', submit);
 cancelBtn.addEventListener('click', () => con.cancel());
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
+// 路由:只有兩頁(主控台 / ISRC),其餘 rail 項目在 T5 才開。
+let isrcReady = false;
+function showPage(name) {
+  for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
+  for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
+}
+function route() {
+  const m = /^#\/isrc(?:\/([^/?#]+))?/.exec(location.hash || '');
+  if (!m) { showPage('console'); input.focus(); return; }
+  showPage('isrc');
+  const want = m[1] ? decodeURIComponent(m[1]) : '';
+  if (!isrcReady) {
+    initISRC(document.getElementById('page-isrc'), api, want);
+    isrcReady = true;
+  }
+  document.getElementById('isrc-input').focus();
+}
+window.addEventListener('hashchange', route);
+
+const player = new Player(document.getElementById('now'), api, notice);
 loadCommands().catch((e) => notice('連不上 capy --web:' + e.message));
-input.focus();
+route();
+player.start();

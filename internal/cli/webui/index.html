@@ -15,16 +15,36 @@
   <span class="rail__item is-disabled" aria-disabled="true" title="T5">搜尋</span>
   <span class="rail__item is-disabled" aria-disabled="true" title="T5">播放清單</span>
   <span class="rail__item is-disabled" aria-disabled="true" title="T5">同步</span>
-  <span class="rail__item is-disabled" aria-disabled="true" title="T4">ISRC</span>
+  <a class="rail__item" href="#/isrc" data-page="isrc">ISRC</a>
   <span class="rail__item is-disabled" aria-disabled="true" title="T5">帳號</span>
   <span class="rail__item is-disabled" aria-disabled="true" title="T5">診斷</span>
   <div class="rail__meta"><span id="version">—</span> · <span id="default-provider">—</span></div>
 </nav>
 <main class="main" id="main">
-  <section class="console" id="console" role="region" aria-label="主控台"></section>
+  <section class="page" id="page-console">
+    <section class="console" id="console" role="region" aria-label="主控台"></section>
+  </section>
+  <section class="page" id="page-isrc" hidden>
+    <h2 class="page__title">ISRC 查詢</h2>
+    <div class="isrc__bar">
+      <label class="isrc__label" for="isrc-input">ISRC</label>
+      <input id="isrc-input" class="dock__input" spellcheck="false" autocomplete="off" placeholder="TWK231680790">
+      <button type="button" class="btn btn--primary" id="isrc-go">查詢</button>
+    </div>
+    <p class="isrc__status" id="isrc-status" role="status"></p>
+    <div id="isrc-out"></div>
+  </section>
 </main>
 <footer class="dock">
-  <div class="dock__now" id="now" data-playing="false">播放面板(T4)</div>
+  <div class="dock__now" id="now" data-playing="false">
+    <span class="dock__now-line" id="now-line">讀取播放狀態…</span>
+    <span class="dock__now-ctl">
+      <button type="button" class="btn btn--ghost" data-cmd="play" aria-label="播放">▶</button>
+      <button type="button" class="btn btn--ghost" data-cmd="pause" aria-label="暫停">⏸</button>
+      <button type="button" class="btn btn--ghost" data-cmd="prev" aria-label="上一首">⏮</button>
+      <button type="button" class="btn btn--ghost" data-cmd="next" aria-label="下一首">⏭</button>
+    </span>
+  </div>
   <div class="dock__notice" id="notice" hidden></div>
   <div class="dock__cmd" id="cmdline" role="group" aria-label="命令列">
     <label class="dock__prompt" for="cmd">capy</label>

@@ -63,6 +63,14 @@ type webServer struct {
 	stale atomic.Bool // capy update 成功後為 true:/api/run 一律 503,直到重啟
 
 	fallbackStderr io.Writer // webGlobalStderr 沒有 job 時的去處(os.Stderr;測試換 buffer)
+
+	// 播放面板(web_api.go):provFlag 是啟動時的 --provider(有明指才算);now 是每個 provider 的 PlaybackController
+	// 快取(伺服器 ctx 建一次);pollMu 讓同時只有一個 poll 真的打平台;lastNow 是給 stale 回應用的上一份快照。
+	provFlag string
+	nowMu    sync.Mutex
+	now      map[string]provider.PlaybackController
+	pollMu   sync.Mutex
+	lastNow  atomic.Pointer[nowSnapshot]
 }
 
 type webCommand struct {
@@ -116,6 +124,9 @@ func runWeb(cmd *cobra.Command, port int) error {
 		return err
 	}
 	s.hostport = ln.Addr().String()
+	if cmd.Flags().Changed(flagProvider) { // 同 runTUI:只有明指才覆蓋 config 的 default_provider
+		s.provFlag, _ = cmd.Flags().GetString(flagProvider)
+	}
 	restore := installWebSeams(s)
 	defer restore()
 	url := "http://" + s.hostport + "/#t=" + s.token
@@ -146,6 +157,8 @@ func (s *webServer) serve(ln net.Listener) error {
 func (s *webServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/commands", s.api(s.handleCommands))
+	mux.HandleFunc("GET /api/isrc/{isrc}", s.api(s.handleISRC))
+	mux.HandleFunc("GET /api/now", s.api(s.handleNow))
 	mux.HandleFunc("POST /api/run", s.api(s.handleRun))
 	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.api(s.handleCancel))
 	mux.HandleFunc("POST /api/jobs/{job}/answer", s.api(s.handleAnswer))

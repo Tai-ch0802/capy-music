@@ -262,6 +262,9 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		s.stale.Store(true)
 		_ = sse.event(map[string]any{"type": "stderr", "text": webStaleMsg + "\n"})
 	}
+	if webNowInvalidatedBy(path) { // 帳號 / 預設平台變了:快取的 PlaybackController 不再有效
+		s.dropNow()
+	}
 	_ = sse.event(map[string]any{"type": "exit", "code": code, "message": msg, "reason": webExitReason(jobCtx)})
 }
 

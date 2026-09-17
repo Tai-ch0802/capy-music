@@ -56,7 +56,7 @@ export class Console {
 
   // 貼底:已經在底部才跟著捲,使用者往上捲讀舊輸出就不打斷他(設計規格 §5;浮動「新輸出 ↓」鈕留給 T5)。
   stick(b) {
-    const m = this.root.parentElement || this.root;
+    const m = document.getElementById('main') || this.root; // .main 才是捲動容器(頁面容器不捲)
     if (m.scrollHeight - m.scrollTop - m.clientHeight < 80) b.scrollIntoView({ block: 'end' });
   }
 
