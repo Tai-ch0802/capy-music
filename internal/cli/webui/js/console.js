@@ -36,6 +36,8 @@ function isCancelled([code, , reason]) {
 
 // progress 事件的階段 → 白話(決策 47)。進度條只吃伺服器送來的 done / total;沒有事件就不畫,不編百分比。
 export const STAGES = { read: '讀取來源清單', match: '比對歌曲', write: '寫入目的地' };
+// 使用者自己中止時,交給頁面 onExit 的訊息。頁面要認它就 import 這個常數,不要各自抄一份字面(review #69)。
+export const CANCELLED_MSG = '已中止';
 
 // 播放控制(quiet)跑超過這麼久才亮執行狀態列:按一下暫停不該整條 dock 閃一下,
 // 但卡住(等 token 鎖沒有上限、在等系統對話框)時一定要看得到在等什麼、也要按得到中止(review #65 第 1 點)。
@@ -186,7 +188,7 @@ export class Console {
     let ex = this.ex || [1, '串流在 exit 之前就結束了', 'disconnected'];
     // 使用者自己中止的:頁面拿到的是「已中止」,不是一串「Get …: context canceled」(完整原文留在主控台)。
     // exit 0 = 命令其實做完了(中止落在不吃取消的那一段,例如 osascript),照「完成」算。
-    if (isCancelled(ex)) ex = [ex[0], '已中止', ex[2]];
+    if (isCancelled(ex)) ex = [ex[0], CANCELLED_MSG, ex[2]];
     if (!quiet || this.barShown) this.announce(shown, ex); // 按一下暫停不必念「完成:pause」
     // 頁面的 onExit 與等著的自動讀取可能立刻接著跑下一個命令(它會清掉命令列上方那行):
     // 收尾的那句話放在它們之後說,不然從別頁看的人連一眼都看不到。
@@ -278,7 +280,7 @@ export class Console {
   // 結束的那一句給螢幕閱讀器(role=status)。
   announce(shown, ex) {
     const [code, , reason] = ex;
-    const done = isCancelled(ex) ? '已中止' : reason === 'refused' ? '未執行' : (code === 0 ? '完成' : `結束(exit ${code})`);
+    const done = isCancelled(ex) ? CANCELLED_MSG : reason === 'refused' ? '未執行' : (code === 0 ? '完成' : `結束(exit ${code})`);
     this.lastDone = `${done}:${shown}`;
     this.barSR.textContent = this.lastDone;
   }

@@ -5,7 +5,7 @@
 import { el, btn, providerName, emptyState } from './common.js';
 import { parseStatus, stateOf } from './account.js';
 import { renderTable } from '../table.js';
-import { STAGES } from '../console.js';
+import { STAGES, CANCELLED_MSG } from '../console.js';
 
 // 首頁的每一句主張都要查得到出處(決策 48):MIT LICENSE、憑證只進鑰匙圈、migrate 只新增不刪來源、順序不動(決策 38)。
 const FACTS = ['免費', '開源(MIT)', '在你自己的電腦上執行', '不刪來源,只新增'];
@@ -183,7 +183,7 @@ export function initMove(root, api, con, notice, providers) {
       onPrompt,
       onPromptClosed: (ev) => { state.closedBy = ev.reason; },
       onTable: (h, rows) => { state.preview = { h, rows }; render(); },
-      onProgress: (ev) => { state.progress = ev; if (!state.preview) render(); },
+      onProgress: (ev) => { state.progress = ev; if (!state.preview) paintProgress(); },
       onExit: (code, msg) => {
         const p = state.preview || {};
         Object.assign(state, { running: false, result: { code, msg, ...tally(p.h, p.rows) } });
@@ -219,6 +219,18 @@ export function initMove(root, api, con, notice, providers) {
       ul.appendChild(li);
     }
     return ul;
+  }
+
+  // 比對階段每一首歌一個 progress 事件(三百首 = 三百個):就地改這兩個節點,不為了它重畫整個步驟(review #69)。
+  // 進度條只在 total > 0 時出現,值只來自伺服器(決策 47)。
+  const liveStage = el('p', 'wiz__stage');
+  const liveBar = el('progress', 'bar');
+  function paintProgress() {
+    const p = state.progress;
+    const name = p ? STAGES[p.stage] || p.stage : '';
+    liveStage.textContent = !p ? '正在準備…' : name + (p.total > 0 ? ` ${p.done} / ${p.total}` : '…');
+    liveBar.hidden = !(p && p.total > 0);
+    if (!liveBar.hidden) { liveBar.max = p.total; liveBar.value = p.done; liveBar.setAttribute('aria-label', name); }
   }
 
   // ── 各步的畫面 ──
@@ -390,16 +402,8 @@ export function initMove(root, api, con, notice, providers) {
       // 進度是真的才畫(決策 47):這裡只有階段說明與預覽;做到哪裡看底部的執行狀態列,要停按那裡的「中止」。
       if (state.preview) live.appendChild(preview(state.preview.h, state.preview.rows));
       else {
-        const p = state.progress;
-        live.appendChild(el('p', 'wiz__stage', p ? (STAGES[p.stage] || p.stage) + (p.total > 0 ? ` ${p.done} / ${p.total}` : '…')
-          : '正在準備…'));
-        if (p && p.total > 0) {
-          const bar = el('progress', 'bar');
-          bar.max = p.total; bar.value = p.done;
-          bar.setAttribute('aria-label', STAGES[p.stage] || p.stage);
-          live.appendChild(bar);
-        }
-        live.appendChild(el('p', 'page__note', '清單越長越久。想停下來,按底部的「中止」。'));
+        live.append(liveStage, liveBar, el('p', 'page__note', '清單越長越久。想停下來,按底部的「中止」。'));
+        paintProgress();
       }
     } else if (!r) {
       out.push(el('p', 'page__note', '按下去之後會先比對、列出要搬的歌,再問你一次;你確認了才會寫入。來源的清單不會被更動,原本的順序也不會變。'));
@@ -418,7 +422,7 @@ export function initMove(root, api, con, notice, providers) {
       // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
       // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。
       // 「已中止」(底部的中止鈕)另外說:中止前可能已經開始寫入,但再搬一次不會重複。
-      const stopped = r.msg === '已中止';
+      const stopped = r.msg === CANCELLED_MSG;
       const quit = stopped || r.code === 2 || (r.code === 1 && ['dismissed', 'timeout'].includes(state.closedBy));
       live.appendChild(el('p', quit ? 'wiz__stage' : 'page__warn',
         !quit ? (r.msg || '沒有完成。').replace(/^Error: /, '')

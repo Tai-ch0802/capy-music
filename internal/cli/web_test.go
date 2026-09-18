@@ -1103,8 +1103,17 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(index, `<progress class="bar dock__busy-bar" id="busy-progress" max="1" value="0" hidden`) {
 		t.Error("dock 的進度條要是預設 hidden 的原生 <progress>")
 	}
-	if !strings.Contains(console, "this.barProg.hidden = !counted;") || !strings.Contains(move, "if (p && p.total > 0) {") {
+	if !strings.Contains(console, "this.barProg.hidden = !counted;") || !strings.Contains(move, "liveBar.hidden = !(p && p.total > 0);") {
 		t.Error("進度條只在 total > 0 的 progress 事件到達時才畫(不編百分比)")
+	}
+	// 每一首歌一個 progress 事件:精靈就地改值,不為了它重畫整個步驟(review #69)。
+	if !strings.Contains(move, "onProgress: (ev) => { state.progress = ev; if (!state.preview) paintProgress(); },") {
+		t.Error("精靈的 onProgress 要就地更新進度,不可以每一首歌 render() 一次")
+	}
+	// 精靈認「使用者自己中止」靠 console.js 匯出的常數,不自己抄一份字面(review #69):不然有人改了說法,
+	// 這裡會安靜地把中止畫成紅字錯誤。
+	if !strings.Contains(move, "const stopped = r.msg === CANCELLED_MSG;") || strings.Contains(move, "'已中止'") {
+		t.Error("move.js 要用 console.js 的 CANCELLED_MSG")
 	}
 	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
 	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
@@ -1176,7 +1185,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(console, "if (this.stopping) this.cancel()") {
 		t.Error("start 事件到達時,若已經按過中止要立刻送 cancel")
 	}
-	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], '已中止', ex[2]]") {
+	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], CANCELLED_MSG, ex[2]]") || !strings.Contains(console, "export const CANCELLED_MSG = '已中止';") {
 		t.Error("中止的命令交給頁面的訊息要是「已中止」,不是 context canceled 那串內部錯誤")
 	}
 	// 中止中的按鈕不可以用 disabled:disabled 會把焦點丟到 body,鍵盤使用者失去位置、收尾也交不回命令列。

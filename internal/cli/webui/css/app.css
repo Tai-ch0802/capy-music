@@ -342,7 +342,7 @@ body[data-busy] .dock { border-top-color: var(--accent); }
 .bar::-webkit-progress-value { background: var(--accent); border-radius: var(--r-pill); }
 .bar::-moz-progress-bar { background: var(--accent); border-radius: var(--r-pill); }
 .dock__busy-bar { flex: 0 0 8rem; }
-.dock__busy-bar[hidden] { display: none; }
+.dock__busy-bar[hidden], .bar[hidden] { display: none; }
 .wiz__live .bar { max-width: 28rem; margin: .5rem 0; }
 /* 中止鈕不讓出寬度:CJK 會在任兩字之間斷行,擠一下「中止」就變成上下兩行;讓命令與活動說明去縮、去省略。 */
 .dock__busy .btn { flex: none; white-space: nowrap; }
