@@ -214,7 +214,11 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	if cur.RefreshToken == "" {
 		return nil, fmt.Errorf("keychain %s 內沒有 refresh token,請重新 auth login", s.key)
 	}
-	rctx, cancel := context.WithTimeout(s.ctx, refreshTimeout)
+	// refresh 一送出就不吃呼叫端的取消(只剩 refreshTimeout 這個上限):Spotify 的 refresh token 會輪替,
+	// 對方發了新的、我們卻在讀回應前腰斬,新的就沒存下來、舊的已作廢,等於登出。web 的「中止」與關分頁、
+	// 終端機的 Ctrl-C 都會在命令剛開始、正好要 refresh 的時候落下;等檔案鎖那段仍然照常可取消(lockFile 用 s.ctx)。
+	// WithoutCancel 保留 ctx 的值(oauth2.HTTPClient),只拿掉取消。
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), refreshTimeout)
 	defer cancel()
 	// 只帶 RT 進去:oauth2 視為無效 token,立刻打 refresh。
 	tok, err := s.conf.TokenSource(rctx, &oauth2.Token{RefreshToken: cur.RefreshToken}).Token()

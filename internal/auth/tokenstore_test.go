@@ -481,6 +481,52 @@ func TestTokenSourceRefreshRotatesAndPersists(t *testing.T) {
 	}
 }
 
+// refresh 請求已送出後才取消(web 的「中止」、關分頁、Ctrl-C 正好落在命令一開始):對方已經發了新的 RT、
+// 舊的已作廢,這時腰斬 = 新 RT 沒存下來 = 登出。refresh 必須做完並寫回,取消只能擋在「等檔案鎖」那段。
+func TestTokenSourceRefreshSurvivesCancelAfterSend(t *testing.T) {
+	setTokenTest(t)
+	got := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		close(got)
+		<-release // 取消落在「對方已收到請求、還沒回」的那一刻
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at1", "rt1"))
+	}))
+	defer srv.Close()
+	if err := SaveToken(testKey, staleToken("rt0")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ts, err := NewTokenSource(ctx, testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type res struct {
+		tok *oauth2.Token
+		err error
+	}
+	done := make(chan res, 1)
+	go func() { tok, err := ts.Token(); done <- res{tok, err} }()
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh 請求沒送到")
+	}
+	cancel()
+	time.Sleep(20 * time.Millisecond) // 讓取消先傳到 transport,再放行回應
+	close(release)
+	r := <-done
+	if r.err != nil || r.tok.AccessToken != "at1" {
+		t.Fatalf("已送出的 refresh 不該被取消腰斬:(%v, %v)", r.tok, r.err)
+	}
+	if stored, err := LoadToken(testKey); err != nil || stored.RefreshToken != "rt1" {
+		t.Errorf("輪替後的新 RT 要寫回 keychain,不然就是登出了:(%+v, %v)", stored, err)
+	}
+}
+
 // Google 形狀:refresh 回應不帶 refresh_token → 沿用舊的寫回,不能寫成空字串。
 func TestTokenSourceCarriesRefreshTokenForward(t *testing.T) {
 	setTokenTest(t)
