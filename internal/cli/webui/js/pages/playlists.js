@@ -59,7 +59,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       row.type = 'button';
       row.appendChild(el('span', 'pl__name', pl.name || pl.pid));
       const chips = el('span', 'pl__chips');
-      for (const prov of Object.keys(pl.links || {})) chips.appendChild(el('span', 'chip', `${prov} ✓`));
+      for (const linked of Object.keys(pl.links || {})) chips.appendChild(el('span', 'chip', `${linked} ✓`));
       row.appendChild(chips);
       row.appendChild(el('span', 'pl__count num', String((pl.items || []).length)));
       row.addEventListener('click', () => {

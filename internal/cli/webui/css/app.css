@@ -198,7 +198,7 @@ body[data-stale] .dock__input { border-color: var(--warn); }
 
 /* 掃描線:整個 cyberpunk 材質就這一條靜態細線,永不動畫;不喜歡就把 --scan 設 0。 */
 body::after {
-  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 40;
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: var(--z-scan);
   background: repeating-linear-gradient(0deg, rgb(201 209 217 / var(--scan)) 0 1px, transparent 1px 3px);
 }
 @media (prefers-reduced-motion: reduce) {

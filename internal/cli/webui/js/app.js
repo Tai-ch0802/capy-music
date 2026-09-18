@@ -112,7 +112,7 @@ function route() {
     // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
     isrcPage?.show(arg);
   }
-  if (name === 'console') { con.showIdle(providers.current); input.focus(); }
+  if (name === 'console') { con.showIdle(providers.current); if (!con.focusPrompt()) input.focus(); }
   else if (name === 'isrc') document.getElementById('isrc-input').focus();
 }
 window.addEventListener('hashchange', route);
@@ -130,6 +130,8 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
   // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
   if (inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  // 按鈕有焦點時空白鍵就是「按下它」:在這裡搶走,整頁的按鈕都不能用空白鍵按了(review #62 第 8 點)。
+  if (ev.key === ' ' && document.activeElement?.tagName === 'BUTTON') return;
   const n = PAGES[Number(ev.key) - 1];
   if (n) { location.hash = '#/' + n; return; }
   switch (ev.key) {

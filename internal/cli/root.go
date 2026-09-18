@@ -44,7 +44,7 @@ func newRootCmd() *cobra.Command {
 	}
 	providerFlag(cmd)
 	cmd.Flags().Bool("web", false, "在瀏覽器操作:只綁 127.0.0.1,啟動時印一次性網址")
-	cmd.Flags().Int("port", 0, "--web 的 port(預設 0 = 動態;不可用 8888)")
+	cmd.Flags().Int("port", 0, "--web 的 port(預設 0 = 動態;不可用 8888、80、443)")
 	cmd.AddCommand(newDebugCmd())
 	cmd.AddCommand(newAuthCmd())
 	cmd.AddCommand(newSearchCmd())
