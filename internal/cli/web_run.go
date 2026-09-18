@@ -33,7 +33,7 @@ type webJob struct {
 }
 
 var (
-	errWebCancelled  = errors.New("已取消")    // 使用者按取消 / 關分頁
+	errWebCancelled  = errors.New("已取消")    // 使用者按中止 / 關分頁
 	errWebShutdown   = errors.New("伺服器關閉")  // SIGINT / SIGTERM
 	errPromptTimeout = errors.New("等待回答逾時") // T3b:job 級提示逾時
 	errSSEClosed     = errors.New("串流已關閉")
@@ -207,7 +207,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.runMu.TryLock() {
-		httpErr(w, http.StatusConflict, "另一個命令執行中,等它結束或取消")
+		httpErr(w, http.StatusConflict, "另一個命令執行中,等它結束或按「中止」")
 		return
 	}
 	defer s.runMu.Unlock()
@@ -265,13 +265,15 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	if webNowInvalidatedBy(path) { // 帳號 / 預設平台變了:快取的 PlaybackController 不再有效
 		s.dropNow()
 	}
-	_ = sse.event(map[string]any{"type": "exit", "code": code, "message": msg, "reason": webExitReason(jobCtx)})
+	_ = sse.event(map[string]any{"type": "exit", "code": code, "message": msg, "reason": webExitReason(jobCtx, err)})
 }
 
-func webExitReason(ctx context.Context) string {
+// webExitReason:命令回 nil 就是做完了,即使中止 / 關分頁在它做完之後才落下(或落在不吃取消的那一段,
+// 例如 Apple 的 osascript)——回 cancelled 會讓頁面說「已中止」、叫人重跑一個已經做完的命令(review)。
+func webExitReason(ctx context.Context, err error) string {
 	cause := context.Cause(ctx)
 	switch {
-	case cause == nil:
+	case err == nil || cause == nil:
 		return "done"
 	case errors.Is(cause, errWebShutdown):
 		return "shutdown"

@@ -123,6 +123,7 @@ glow 由 `::after` 偽元素扛 box-shadow,進出只動偽元素的 opacity;box-
 - **empty**:主控台空白 = 水豚 + `capy · spotify`;各頁空白 = 一行 mono muted 可點命令(`> search <關鍵字>`、`> pl link --create`、`> auth login spotify`、ISRC 頁是輸入框本身),點了填進命令列;空白態本身就是下一步。
 - **error**:exit 1 區塊左線 danger、✗ 前綴、stderr 原文;表單驗證錯誤在欄位下方 sans 12 danger;`/api/*` 的 4xx / 5xx(401 token 失效、409 忙碌、503 stale)在命令列上方一行 warn 文字,不是 toast;沒有 modal。exit 2 / 3 是 warn 左線 + `·`,不是失敗;stderr 那句原文就是說明,不翻譯成 UI 文案。
 - **running**:dock 頂線 glow、● 脈衝、badge `running 00:12`、`中止` 按鈕;一次一個;命令列可打字、Enter 不排隊。
+  > **實作(2026-09-18,使用者回報「按了沒反應、像當機」且要能中止)**:區塊在別頁時看不到,所以 ● / 命令 / stderr 最後一行 / 計時 / `中止` 集中在 dock 新增的一列執行狀態列(七頁都看得到),`中止` 放在這一列而不是命令列右側;點下去的那顆頁面按鈕也掛 ●、其他發起命令的按鈕調暗,執行中再按只說明、不送出。沒有百分比(伺服器沒有進度事件)。`reason: cancelled` 畫成 `·` + muted 左線、不印 `context canceled`。Ctrl-C 只在命令列有焦點且沒選取文字時攔(log 不可聚焦;Windows 的 Ctrl-C 是複製)。區塊裡有變更表、又按了「套用」之後,`中止` 要按第二次(停在一半可能只寫了一部分,計畫 Q24)。
 - **prompt pending**:提示區 1px accent 全框,焦點移進第一個控制項;超過 5 分鐘沒答(伺服器逾時,`prompt_closed reason:timeout`)區塊落定為 exit 事件說的樣子。
 - **interrupted / cancelled**:`中止` 或 Ctrl-C(焦點在 log 或命令列)打 cancel 端點;exit 事件 reason 是 cancelled 時 badge 接「已取消」,已串出的輸出原樣保留,命令列預填同一條命令供重跑。
 - **stale(now)**:`/api/now` 回 `stale:true`(上一次 poll 還在等 token 鎖或平台回應)時正在播放列的數字與進度變 `--muted`、右側 mono 12「n 秒前」,不動畫、不換文案;連續 5 次才進 disconnected。

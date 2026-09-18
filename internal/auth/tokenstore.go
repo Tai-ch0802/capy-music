@@ -214,8 +214,25 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	if cur.RefreshToken == "" {
 		return nil, fmt.Errorf("keychain %s 內沒有 refresh token,請重新 auth login", s.key)
 	}
-	rctx, cancel := context.WithTimeout(s.ctx, refreshTimeout)
+	// 送出前最後一次看取消:lockFile 拿得到沒人搶的鎖時不看 ctx(:113),之後 loadStored 也不吃 ctx,
+	// 已經取消的呼叫若走到這裡,不能因為下面的 WithoutCancel 而把 refresh 照樣送出去(review)。
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
+	// refresh 一送出就不吃呼叫端的取消(只剩 refreshTimeout 這個上限):Spotify 的 refresh token 會輪替,
+	// 對方發了新的、我們卻在讀回應前腰斬,新的就沒存下來、舊的已作廢,等於登出。web 的「中止」與關分頁、
+	// 終端機的 Ctrl-C 都會在命令剛開始、正好要 refresh 的時候落下。送出前的取消由上面那行接住。
+	// WithoutCancel 保留 ctx 的值(oauth2.HTTPClient),只拿掉取消。
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), refreshTimeout)
 	defer cancel()
+	// 送出後才到的取消要等 refresh 回來才生效(終端機連按 Ctrl-C 也一樣,最多 refreshTimeout):說一聲為什麼
+	// 沒有馬上停,不然使用者只會以為當掉了(review #65)。web 的主控台、終端機都看得到。w 先拿好,別在
+	// AfterFunc 的 goroutine 裡讀可被替換的全域變數。
+	w := LockStderr
+	stopNote := context.AfterFunc(s.ctx, func() {
+		fmt.Fprintf(w, "正在換發 %s 的登入 token:請求已經送出,半路放棄會讓登入失效,等它回來(最多 %v)…\n", providerOf(s.key), refreshTimeout)
+	})
+	defer stopNote()
 	// 只帶 RT 進去:oauth2 視為無效 token,立刻打 refresh。
 	tok, err := s.conf.TokenSource(rctx, &oauth2.Token{RefreshToken: cur.RefreshToken}).Token()
 	if err != nil {

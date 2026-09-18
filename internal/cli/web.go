@@ -284,12 +284,12 @@ func (g *webGlobalStderr) Write(p []byte) (int, error) {
 
 // webLockStderr:LockFile 的「等待另一個 capy 釋放 …;要放棄按 Ctrl-C」在 web 會落進當下 job。
 // <key>.token.lock:等的可能是同一行程的面板 / ISRC 頁在換發 token(review #56 第 1 點),整句改寫;
-// pull.lock:等的真的是另一個 capy 行程(終端機 / cron),原文是對的,只把 Ctrl-C 換成頁面上有的鈕。
+// pull.lock:等的真的是另一個 capy 行程(終端機 / cron),原文是對的,只把 Ctrl-C 換成頁面上有的鈕(dock 的「中止」)。
 type webLockStderr struct{ w io.Writer }
 
 var webLockNotice = strings.NewReplacer(
 	"等待另一個 capy 釋放 ", "等待 token 鎖釋放(另一個 capy,或本頁面的播放面板 / ISRC 頁正在換發 token):",
-	";要放棄按 Ctrl-C", ";要放棄按取消",
+	";要放棄按 Ctrl-C", ";要放棄按「中止」",
 )
 
 func (l *webLockStderr) Write(p []byte) (int, error) {
@@ -297,7 +297,7 @@ func (l *webLockStderr) Write(p []byte) (int, error) {
 	if strings.Contains(s, ".token.lock") {
 		s = webLockNotice.Replace(s)
 	} else {
-		s = strings.ReplaceAll(s, ";要放棄按 Ctrl-C", ";要放棄按取消")
+		s = strings.ReplaceAll(s, ";要放棄按 Ctrl-C", ";要放棄按「中止」")
 	}
 	if _, err := io.WriteString(l.w, s); err != nil {
 		return 0, err

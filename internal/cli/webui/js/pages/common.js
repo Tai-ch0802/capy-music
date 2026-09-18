@@ -15,10 +15,21 @@ export function quote(s) {
   return v.includes(' ') ? `"${v}"` : v;
 }
 
+// btn:頁面上用它建的按鈕一律是「發起一個 capy 命令」(純 UI 的控制用 el('button') 自己建),所以在這裡標 data-run。
+// 序列槽被佔著(body[data-slot],播放控制也算)時點了不呼叫 fn——頁面不會先清掉自己的內容再被擋,改由 app.js
+// 說明(capy:busy 事件);調暗由 CSS 看 data-busy。真的開跑的那一顆掛 data-pending,● 脈衝到命令收尾。
+const slotTaken = () => document.body.hasAttribute('data-slot');
+
 export function btn(label, cls, fn) {
   const b = el('button', 'btn ' + (cls || ''), label);
   b.type = 'button';
-  b.addEventListener('click', fn);
+  b.dataset.run = '';
+  if (slotTaken()) b.setAttribute('aria-disabled', 'true'); // 執行中才長出來的(例如結果表的「播放」)也要標
+  b.addEventListener('click', () => {
+    if (slotTaken()) { document.dispatchEvent(new Event('capy:busy')); return; }
+    fn();
+    if (slotTaken()) b.dataset.pending = '';
+  });
   return b;
 }
 
