@@ -182,6 +182,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		}
 	}
 	// 來源的曲目:直接讀,不連結、不記 base
+	reportProgress("read", 0, 0)
 	tracksA, err := rA.GetPlaylistItems(ctx, src.id)
 	switch {
 	case errors.Is(err, provider.ErrRestricted):
@@ -404,6 +405,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 				return err
 			}
 		}
+		reportProgress("write", 0, 0)
 		applied, touched, deferred = applyPlans(ctx, s, plans, stderr)
 		if applied > 0 {
 			fmt.Fprintf(stderr, "已推送 %d 筆變更\n", applied)

@@ -5,6 +5,7 @@
 import { el, btn, providerName, emptyState } from './common.js';
 import { parseStatus, stateOf } from './account.js';
 import { renderTable } from '../table.js';
+import { STAGES } from '../console.js';
 
 // 首頁的每一句主張都要查得到出處(決策 48):MIT LICENSE、憑證只進鑰匙圈、migrate 只新增不刪來源、順序不動(決策 38)。
 const FACTS = ['免費', '開源(MIT)', '在你自己的電腦上執行', '不刪來源,只新增'];
@@ -70,6 +71,7 @@ export function initMove(root, api, con, notice, providers) {
     listError: '', filter: '',  // filter:步驟二的過濾字串(放在 state 才活得過 render)
     closedBy: '',                  // 這一次最後一則提示是怎麼收的(prompt_closed 的 reason)
     running: false, preview: null, // 搬家那一次命令在跑 / 它送來的預覽表 { h, rows }
+    progress: null,                // 伺服器送來的最新一筆進度 { stage, done, total };沒有就不畫進度條
     result: null,                  // 跑完之後 { code, msg, moved, missed }
   };
 
@@ -175,12 +177,13 @@ export function initMove(root, api, con, notice, providers) {
 
   function start() {
     prompts.replaceChildren();
-    Object.assign(state, { result: null, preview: null, closedBy: '', running: true });
+    Object.assign(state, { result: null, preview: null, progress: null, closedBy: '', running: true });
     const target = state.dst.mode === 'new' ? state.to : `${state.to}:${state.dst.id}`;
     con.run('', {
       onPrompt,
       onPromptClosed: (ev) => { state.closedBy = ev.reason; },
       onTable: (h, rows) => { state.preview = { h, rows }; render(); },
+      onProgress: (ev) => { state.progress = ev; if (!state.preview) render(); },
       onExit: (code, msg) => {
         const p = state.preview || {};
         Object.assign(state, { running: false, result: { code, msg, ...tally(p.h, p.rows) } });
@@ -385,8 +388,19 @@ export function initMove(root, api, con, notice, providers) {
     const acts = el('div', 'form-row wiz__acts');
     if (state.running) {
       // 進度是真的才畫(決策 47):這裡只有階段說明與預覽;做到哪裡看底部的執行狀態列,要停按那裡的「中止」。
-      live.appendChild(state.preview ? preview(state.preview.h, state.preview.rows)
-        : el('p', 'wiz__stage', '正在讀取清單、比對每一首歌。清單越長越久,底部看得到目前做到哪裡,也可以從那裡中止。'));
+      if (state.preview) live.appendChild(preview(state.preview.h, state.preview.rows));
+      else {
+        const p = state.progress;
+        live.appendChild(el('p', 'wiz__stage', p ? (STAGES[p.stage] || p.stage) + (p.total > 0 ? ` ${p.done} / ${p.total}` : '…')
+          : '正在準備…'));
+        if (p && p.total > 0) {
+          const bar = el('progress', 'bar');
+          bar.max = p.total; bar.value = p.done;
+          bar.setAttribute('aria-label', STAGES[p.stage] || p.stage);
+          live.appendChild(bar);
+        }
+        live.appendChild(el('p', 'page__note', '清單越長越久。想停下來,按底部的「中止」。'));
+      }
     } else if (!r) {
       out.push(el('p', 'page__note', '按下去之後會先比對、列出要搬的歌,再問你一次;你確認了才會寫入。來源的清單不會被更動,原本的順序也不會變。'));
       acts.append(btn('上一步', 'btn--ghost', () => { state.step = 2; render(); }), btn('開始搬家', 'btn--primary', start));
@@ -403,10 +417,13 @@ export function initMove(root, api, con, notice, providers) {
     } else {
       // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
       // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。
-      const quit = r.code === 2 || (r.code === 1 && ['dismissed', 'timeout'].includes(state.closedBy));
+      // 「已中止」(底部的中止鈕)另外說:中止前可能已經開始寫入,但再搬一次不會重複。
+      const stopped = r.msg === '已中止';
+      const quit = stopped || r.code === 2 || (r.code === 1 && ['dismissed', 'timeout'].includes(state.closedBy));
       live.appendChild(el('p', quit ? 'wiz__stage' : 'page__warn',
         !quit ? (r.msg || '沒有完成。').replace(/^Error: /, '')
-          : state.closedBy === 'timeout' ? '等太久沒有回答,這次已經取消,什麼都沒有寫入。' : '已取消,什麼都沒有寫入。'));
+          : stopped ? '已中止。中止前如果已經開始寫入,可能只搬了一部分;再搬一次不會重複,已經在目的地的歌會自動略過。'
+            : state.closedBy === 'timeout' ? '等太久沒有回答,這次已經取消,什麼都沒有寫入。' : '已取消,什麼都沒有寫入。'));
       if (!quit) {
         const c = el('a', 'wiz__link', '到主控台看完整的輸出 →');
         c.href = '#/console';

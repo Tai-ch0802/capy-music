@@ -34,6 +34,9 @@ function isCancelled([code, , reason]) {
   return reason === 'cancelled' && code !== 0;
 }
 
+// progress 事件的階段 → 白話(決策 47)。進度條只吃伺服器送來的 done / total;沒有事件就不畫,不編百分比。
+export const STAGES = { read: '讀取來源清單', match: '比對歌曲', write: '寫入目的地' };
+
 // 播放控制(quiet)跑超過這麼久才亮執行狀態列:按一下暫停不該整條 dock 閃一下,
 // 但卡住(等 token 鎖沒有上限、在等系統對話框)時一定要看得到在等什麼、也要按得到中止(review #65 第 1 點)。
 const QUIET_MS = 800;
@@ -47,6 +50,7 @@ export class Console {
     this.barCmd = document.getElementById('busy-cmd');
     this.barAct = document.getElementById('busy-act');
     this.barTime = document.getElementById('busy-time');
+    this.barProg = document.getElementById('busy-progress');
     this.barSR = document.getElementById('busy-sr');
     this.stopBtn = document.getElementById('cancel');
     this.stopBtn.addEventListener('click', () => this.stop());
@@ -217,6 +221,7 @@ export class Console {
     this.stopping = false; this.wrote = false; this.armed = false; this.barShown = false; this.lastAct = '';
     this.barCmd.textContent = shown;
     this.barAct.textContent = '';
+    this.barProg.hidden = true;
     this.stopBtn.removeAttribute('aria-disabled');
     this.stopBtn.textContent = '中止';
     document.body.dataset.slot = '';
@@ -259,6 +264,15 @@ export class Console {
     if (!last) return;
     this.lastAct = last; // 兩段式中止的警告過期時要還原成這一行
     if (!this.stopping && !this.armed) this.barAct.textContent = last; // 中止相關的說明優先,不被後面的輸出蓋掉
+  }
+
+  // 真實進度(決策 47):total > 0 才有進度條與「n / total」;total == 0 只是階段的標記。
+  progress(ev) {
+    const counted = ev.total > 0;
+    this.barProg.hidden = !counted;
+    if (counted) { this.barProg.max = ev.total; this.barProg.value = ev.done; }
+    this.lastAct = (STAGES[ev.stage] || ev.stage) + (counted ? ` ${ev.done} / ${ev.total}` : '');
+    if (!this.stopping && !this.armed && !this.openPrompt) this.barAct.textContent = this.lastAct;
   }
 
   // 結束的那一句給螢幕閱讀器(role=status)。
@@ -312,6 +326,7 @@ export class Console {
       case 'stdout': this.append(b, 'block__out', ev.text); this.hooks.onStdout?.(ev.text); break;
       case 'stderr': this.append(b, 'block__err', ev.text); this.activity(ev.text); break;
       case 'table': b.appendChild(renderTable(ev.header, ev.rows)); this.hooks.onTable?.(ev.header, ev.rows); break;
+      case 'progress': this.progress(ev); this.hooks.onProgress?.(ev); break;
       // onExit 不在這裡叫,由 run() 在串流收尾後叫(理由見 run())。
       case 'exit': this.exit(b, ev.code, ev.message, ev.reason); this.ex = [ev.code, ev.message, ev.reason]; break;
       case 'prompt':

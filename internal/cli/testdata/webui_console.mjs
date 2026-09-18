@@ -356,6 +356,31 @@ await scenario('8f', async () => {
   check(cmd.value === 'pl pull 通勤', `手打的命令中止後要預填回去:「${cmd.value}」`);
 });
 
+// 8g. 真實進度(決策 47):progress 事件才有進度條與 n / total;total 0 只是階段標記;下一個命令開始時條要收起來。
+await scenario('8g', async () => {
+  reset();
+  const [g, release] = gate();
+  script = {
+    m: {
+      first: [{ type: 'progress', stage: 'read', done: 0, total: 0 }, { type: 'progress', stage: 'match', done: 37, total: 120 }],
+      gate: g,
+    },
+  };
+  const seen = [];
+  const p = con.run('m', { onProgress: (ev) => seen.push(`${ev.stage}:${ev.done}/${ev.total}`) });
+  await tick(10);
+  const bar = globalThis.document.getElementById('busy-progress');
+  const act = globalThis.document.getElementById('busy-act');
+  check(seen.join(' ') === 'read:0/0 match:37/120', `onProgress 要逐筆收到:${seen}`);
+  check(bar.hidden === false && bar.max === 120 && bar.value === 37, `進度條吃伺服器的數字:hidden=${bar.hidden} ${bar.value}/${bar.max}`);
+  check(act.textContent === '比對歌曲 37 / 120', `狀態列說人話:「${act.textContent}」`);
+  release();
+  await p;
+  const q = con.run('x');
+  check(bar.hidden === true, '下一個命令開始時,上一次的進度條要收起來(沒有事件就不畫)');
+  await q;
+});
+
 // 8e. 容器所在的頁面是 hidden(使用者做到一半切去別頁):提示出現時要切回那一頁,不是主控台。
 await scenario('8e', async () => {
   reset();

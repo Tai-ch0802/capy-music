@@ -164,8 +164,13 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 	calls := 0
 	failed := map[string]bool{} // provider 級失敗:這輪跳過它
 	var items []resolveItem
-	for _, need := range resolve.Needs(pls, s.tracks.Tracks) {
-		if only != "" && need.Provider != only || failed[need.Provider] {
+	needs := resolve.Needs(pls, s.tracks.Tracks)
+	if only != "" { // 先篩出這一輪真的要查的,進度的分母才是真的
+		needs = slices.DeleteFunc(needs, func(n resolve.Need) bool { return n.Provider != only })
+	}
+	for i, need := range needs {
+		reportProgress("match", i+1, len(needs)) // 最久的一段:每一首都是一到數次 API 呼叫
+		if failed[need.Provider] {
 			continue
 		}
 		tr := s.tracks.Tracks[need.CID]

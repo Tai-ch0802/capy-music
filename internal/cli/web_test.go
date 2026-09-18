@@ -1099,6 +1099,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Count(move, "promptHost: prompts") < 3 || strings.Contains(move, ".answer(") {
 		t.Error("精靈的命令要把提示畫進自己的容器,而且不可以自己呼叫 answer()")
 	}
+	// 真實進度(決策 47):進度條是原生 <progress>,只在 progress 事件到達時才顯示;精靈沒有事件就不畫。
+	if !strings.Contains(index, `<progress class="bar dock__busy-bar" id="busy-progress" max="1" value="0" hidden`) {
+		t.Error("dock 的進度條要是預設 hidden 的原生 <progress>")
+	}
+	if !strings.Contains(console, "this.barProg.hidden = !counted;") || !strings.Contains(move, "if (p && p.total > 0) {") {
+		t.Error("進度條只在 total > 0 的 progress 事件到達時才畫(不編百分比)")
+	}
 	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
 	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
 		t.Error("命令在跑時路線示意要停住")
@@ -1345,6 +1352,54 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 	}
 	if !strings.Contains(string(pl), `[]string{"ID", "名稱", "曲數", "擁有者"}`) || !strings.Contains(move, "[h.indexOf('ID'), h.indexOf('名稱'), h.indexOf('曲數')]") {
 		t.Error("pl list 的欄名與 move.js 的 loadLists() 要一致")
+	}
+}
+
+// TestWebProgressEventsAreRealAndCLIStaysSilent(P8 決策 47):web 跑 migrate 時,讀來源 → 逐首比對各送 progress 事件,
+// 比對的 done 從 1 數到 total(total = 真的要查的首數);同一條命令在終端機 / 非 TTY 下,輸出裡沒有任何進度的痕跡
+// (reportProgress 預設 no-op;非 TTY 純文字契約一個位元組不改)。
+func TestWebProgressEventsAreRealAndCLIStaysSilent(t *testing.T) {
+	fs1, fs2, _, _ := twoPlatforms(t)
+	catalogISRC(fs1, "a", "b", "c")
+	fs2.set("q1", "公路旅行", "a", "b", "c")
+	args := []string{"migrate", "q1", "--from", "apple", "--to", "spotify", "--dry-run"}
+
+	out, errs, err := runPull(t, args...)
+	if exitOf(t, err) != 2 || strings.Contains(out+errs, "progress") || strings.Contains(out+errs, "match") {
+		t.Fatalf("CLI 的輸出不可以有進度的痕跡:%v\n%s%s", err, out, errs)
+	}
+
+	_, c := startWeb(t)
+	_, ev, _ := c.run(map[string]any{"args": args})
+	var stages []string
+	var match [][2]float64
+	for _, e := range ev {
+		if e["type"] != "progress" {
+			continue
+		}
+		stage, _ := e["stage"].(string)
+		if len(stages) == 0 || stages[len(stages)-1] != stage {
+			stages = append(stages, stage)
+		}
+		if stage == "match" {
+			done, _ := e["done"].(float64)
+			total, _ := e["total"].(float64)
+			match = append(match, [2]float64{done, total})
+		}
+	}
+	if !slices.Equal(stages, []string{"read", "match"}) { // dry-run 不寫入,所以沒有 write
+		t.Fatalf("階段順序要是 read → match:%v", stages)
+	}
+	if len(match) != 3 {
+		t.Fatalf("三首要查就是三個 match 事件:%v", match)
+	}
+	for i, m := range match {
+		if m[0] != float64(i+1) || m[1] != 3 {
+			t.Errorf("match 的 done 要從 1 數到 total、total 是真的要查的首數:%v", match)
+		}
+	}
+	if ex := evExit(t, ev); ex["code"] != float64(2) {
+		t.Errorf("dry-run 有東西要搬 = exit 2:%v", ex)
 	}
 }
 
