@@ -1092,8 +1092,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("Console.run 有 args 時要送 { args },不送 line")
 	}
 	// 同名清單:送出前用手上的目的地清單自己比對,不解析 CLI 的錯誤字串(review #66 第 6 點)。
-	if !strings.Contains(move, "const sameName = () =>") || !strings.Contains(move, "state.dst = { mode: 'existing', id: dup.id }") {
-		t.Error("目的地有同名清單時,精靈要自己改成「加進它」")
+	// 同名 → 預設「加進它」,但只套一次、而且不可以把「建新的」停用:CLI 的撞名只算讀得到的清單,精靈比它嚴會把
+	// 「追蹤了別人的同名清單」的人關在沒有出路的分支裡(review #68 第二輪)。
+	if !strings.Contains(move, "const sameName = () =>") || !strings.Contains(move, "state.dst = dup ? { mode: 'existing', id: dup.id }") {
+		t.Error("目的地有同名清單時,精靈要預設成「加進它」")
+	}
+	if !strings.Contains(move, "const canNew = CAN_CREATE.includes(state.to);") || strings.Contains(move, "&& !dup") {
+		t.Error("同名不可以把「建一個同名的新清單」停用(CLI 真的撞名時自己會擋並指路)")
 	}
 	// 提示就地回答:會問人的命令都帶 promptHost;頁面只補白話(onPrompt),不替使用者回答。
 	if strings.Count(move, "promptHost: prompts") < 3 || strings.Contains(move, ".answer(") {

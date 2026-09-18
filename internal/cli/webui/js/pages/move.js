@@ -164,12 +164,20 @@ export function initMove(root, api, con, notice, providers) {
       state.srcLists = src; render();
       loadLists(state.to, (dst, msg2) => {
         if (!dst) { state.listError = msg2 || `讀不到 ${providerName(state.to)} 的清單`; render(); return; }
-        state.dstLists = dst; render();
+        state.dstLists = dst; defaultDst(); render();
       });
     });
   }
 
   // 目的地已經有同名清單時 CLI 會擋(migrate.go):送出前自己比對,直接給「加進它」,不去解析那句錯誤字串。
+  // 目的地的預設:同名就「加進它」,否則能建就建新的。只在「剛挑了來源清單 / 目的地清單剛讀到」時套一次,
+  // 之後使用者要換隨他——不可以每次重畫都改回來、也不可以因為同名就把「建新的」停用:CLI 的撞名判定比這裡嚴
+  // (sameNamePlaylists 只算讀得到的;你追蹤的別人的同名清單不算),精靈比它嚴會把人關在沒有出路的分支裡(review #68)。
+  const defaultDst = () => {
+    const dup = sameName();
+    state.dst = dup ? { mode: 'existing', id: dup.id } : { mode: CAN_CREATE.includes(state.to) ? 'new' : 'existing', id: '' };
+  };
+
   const sameName = () => (state.src && state.dstLists
     ? state.dstLists.find((x) => x.name.toLowerCase() === state.src.name.toLowerCase()) : null);
 
@@ -314,7 +322,7 @@ export function initMove(root, api, con, notice, providers) {
       list.replaceChildren(list.firstChild);
       for (const p of state.srcLists.filter((x) => !filter || x.name.toLowerCase().includes(filter))) {
         list.appendChild(radioCard('pl__item', 'wiz-src', !!state.src && state.src.id === p.id, false,
-          () => { state.src = p; render(); },
+          () => { state.src = p; defaultDst(); render(); },
           el('span', 'pl__name', p.name), el('span', 'pl__count', p.count && p.count !== '-' ? `${p.count} 首` : '')));
       }
     };
@@ -333,7 +341,6 @@ export function initMove(root, api, con, notice, providers) {
     if (!state.dstLists) out.push(skeleton());
     else {
       const dup = sameName();
-      if (dup && state.dst.mode === 'new') { state.dst = { mode: 'existing', id: dup.id }; }
       const where = el('div', 'wiz__where');
       const opt = (mode, text, enabled) => {
         const lab = el('label', 'wiz__opt');
@@ -343,7 +350,7 @@ export function initMove(root, api, con, notice, providers) {
         lab.append(r, el('span', null, text));
         return lab;
       };
-      const canNew = CAN_CREATE.includes(state.to) && !dup;
+      const canNew = CAN_CREATE.includes(state.to);
       where.appendChild(opt('new', CAN_CREATE.includes(state.to)
         ? '建一個同名的新清單(私人)'
         : `建一個新清單(${providerName(state.to)} 做不到,只能加進既有的)`, canNew));
@@ -362,7 +369,9 @@ export function initMove(root, api, con, notice, providers) {
         where.appendChild(sel);
       }
       out.push(where);
-      if (dup) out.push(el('p', 'page__note', `${providerName(state.to)} 上已經有一個叫「${dup.name}」的清單,所以改成加進它;想放到別的清單可以在上面換。`));
+      if (dup) out.push(el('p', 'page__note', `${providerName(state.to)} 上已經有一個叫「${dup.name}」的清單,所以預設加進它。如果那個清單不是你的(例如你追蹤的別人的清單),改選「建一個同名的新清單」;想放到別的清單也可以在上面換。`));
+      // 兩條路都走不通(不能新建、也沒有既有的):說原因,不要只留兩個灰掉的選項(review #68)。
+      if (!canNew && !state.dstLists.length) out.push(el('p', 'page__warn', `${providerName(state.to)} 上還沒有可以加進去的清單,而它不能新建${state.to === 'local' ? '(本機曲庫只能加進既有的 M3U 檔):先建一個檔案' : ''},或回上一步改搬到別的平台。`));
     }
     const acts = el('div', 'form-row wiz__acts');
     const next = btn('下一步:確認', 'btn--primary', () => { state.step = 3; state.result = null; render(); });
