@@ -128,7 +128,8 @@ function route() {
     // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
     isrcPage?.show(arg);
   }
-  if (name === 'console') { con.showIdle(providers.current); if (!con.focusPrompt()) input.focus(); }
+  const prompted = con.focusPrompt(root); // 這一頁有開著的提示(主控台的區塊或精靈的就地提示)就把焦點給它
+  if (name === 'console') { con.showIdle(providers.current); if (!prompted) input.focus(); }
   else if (name === 'isrc') document.getElementById('isrc-input').focus();
 }
 window.addEventListener('hashchange', route);

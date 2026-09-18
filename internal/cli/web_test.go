@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +24,9 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/provider/apple"
+	"github.com/Tai-ch0802/capy-music/internal/provider/local"
+	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
 )
 
 // ── 測試骨架 ──
@@ -1076,8 +1081,39 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
 		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
 	}
-	if !strings.Contains(move, "disabled: true") || !strings.Contains(move, "目前只能當來源") {
+	if !strings.Contains(move, "const READ_ONLY = ['apple'];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? '目前只能當來源' : ''") {
 		t.Error("Apple Music 當目的地要是不可選並說明原因,不是直接消失")
+	}
+	// 精靈的命令走 args 陣列(決策 46;review #66 第 2 點):splitArgs 沒有跳脫,local 的清單 ID 含空白 / 雙引號會組不出來。
+	if !strings.Contains(move, "args: ['migrate', state.src.id, '--from', state.from, '--to', target],") || strings.Contains(move, "quote(") {
+		t.Error("搬家精靈要用 args 陣列送命令,不可以自己組字串再 quote()")
+	}
+	if !strings.Contains(console, "body: JSON.stringify(args ? { args } : { line }),") {
+		t.Error("Console.run 有 args 時要送 { args },不送 line")
+	}
+	// 同名清單:送出前用手上的目的地清單自己比對,不解析 CLI 的錯誤字串(review #66 第 6 點)。
+	// 同名 → 預設「加進它」,但只套一次、而且不可以把「建新的」停用:CLI 的撞名只算讀得到的清單,精靈比它嚴會把
+	// 「追蹤了別人的同名清單」的人關在沒有出路的分支裡(review #68 第二輪)。
+	if !strings.Contains(move, "const sameName = () =>") || !strings.Contains(move, "state.dst = dup ? { mode: 'existing', id: dup.id }") {
+		t.Error("目的地有同名清單時,精靈要預設成「加進它」")
+	}
+	if !strings.Contains(move, "const canNew = CAN_CREATE.includes(state.to);") || strings.Contains(move, "&& !dup") {
+		t.Error("同名不可以把「建一個同名的新清單」停用(CLI 真的撞名時自己會擋並指路)")
+	}
+	// 提示就地回答:會問人的命令都帶 promptHost;頁面只補白話(onPrompt),不替使用者回答。
+	if strings.Count(move, "promptHost: prompts") < 3 || strings.Contains(move, ".answer(") {
+		t.Error("精靈的命令要把提示畫進自己的容器,而且不可以自己呼叫 answer()")
+	}
+	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
+	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
+		t.Error("命令在跑時路線示意要停住")
+	}
+	// 路線示意的小卡外層跟路線一樣寬、整個滑出去:路線不裁掉的話,400px 會多出橫向捲動(smoke 量到 main.scrollWidth 641)。
+	if !strings.Contains(css, ".route__lane { position: relative; height: 6.5rem; display: grid; place-items: center; overflow: hidden; }") {
+		t.Error(".route__lane 要 overflow: hidden")
+	}
+	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".route__note { animation: none;") || !strings.Contains(reduced, ".beat__row") {
+		t.Error("prefers-reduced-motion 下示意動畫要是靜態構圖")
 	}
 	if strings.Contains(index, "is-disabled") {
 		t.Error("rail 不該還有停用的佔位項")
@@ -1234,22 +1270,27 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// 從別頁按鈕發出的命令,區塊在被 hidden 的主控台頁裡:提示與授權連結不切回主控台就看不到,命令卡到逾時,
 	// Apple 的揭露只剩伺服器端「送出過」(review #62 第 5 點)。
-	if !strings.Contains(between("prompt(ev, b) {", "reveal() {"), "this.reveal()") { // 結束標記貼著 prompt() 的尾巴(review #64)
+	if !strings.Contains(between("prompt(ev, b) {", "reveal(host) {"), "this.reveal(host)") { // 結束標記貼著 prompt() 的尾巴(review #64)
 		t.Error("prompt() 要 reveal():提示畫在 hidden 的主控台頁裡等於沒畫")
 	}
-	if !strings.Contains(between("openURL(ev, b) {", "exit(b,"), "this.reveal()") {
+	if !strings.Contains(between("openURL(ev, b) {", "exit(b,"), "this.reveal(host)") {
 		t.Error("openURL() 要 reveal():auth login spotify 的授權連結要看得到")
 	}
-	if r := between("reveal() {", "focusPrompt()"); !strings.Contains(r, ".page") || !strings.Contains(r, "'#/console'") {
+	if r := between("reveal(host) {", "focusPrompt(page)"); !strings.Contains(r, ".page") || !strings.Contains(r, "'#/console'") {
 		t.Error("reveal() 要在主控台頁 hidden 時切到 #/console")
 	}
 	// 斷線後殘留的提示(沒有 prompt_closed)與答案送出後已 disabled 的控制項,都不可以讓 focusPrompt() 回 true,
 	// 否則命令列在那個分頁再也拿不到焦點(review #64)。
-	if fp := between("focusPrompt() {", "async answer("); !strings.Contains(fp, ".block[data-running]") || !strings.Contains(fp, "f.disabled") {
-		t.Error("focusPrompt() 只認還在跑的區塊,且跳過已 disabled 的控制項")
+	// P8 T2 起提示可以畫在頁面給的容器裡,「只認還在跑的那一次」從選擇器(.block[data-running])改成狀態:
+	// this.openPrompt 只在 running 時算數,run() 收尾時清掉;本意不變(行為見 TestWebConsoleBehaviour)。
+	if fp := between("focusPrompt(page) {", "async answer("); !strings.Contains(fp, "this.running ? this.openPrompt : null") || !strings.Contains(fp, "f.disabled") {
+		t.Error("focusPrompt() 只認還在跑的那一次開著的提示,且跳過已 disabled 的控制項")
+	}
+	if !strings.Contains(run, "this.promptHost = null; this.openPrompt = null;") {
+		t.Error("run() 收尾要清掉 openPrompt:串流斷掉時 prompt_closed 不會到,殘留的提示不可以再搶焦點")
 	}
 	// 切頁的 hashchange 可能晚於 prompt() 的 setTimeout:route() 不可以再用 input.focus() 把焦點從提示搶走。
-	if !strings.Contains(app, "if (!con.focusPrompt()) input.focus();") {
+	if !strings.Contains(app, "const prompted = con.focusPrompt(root);") || !strings.Contains(app, "if (!prompted) input.focus();") {
 		t.Error("route() 到主控台時,有開著的提示要先把焦點給提示")
 	}
 	// 按鈕有焦點時空白鍵是「按下它」,單鍵層不可以搶(review #62 第 8 點)。
@@ -1259,6 +1300,105 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// z-index 一律走 tokens.css 的 --z-*(設計規格 §8 / §13),字面數字會跟之後加的層打架(review #62 第 15 點)。
 	if m := regexp.MustCompile(`z-index:\s*-?\d`).FindString(css); m != "" {
 		t.Errorf("app.css 的 z-index 要用 var(--z-*):%q", m)
+	}
+}
+
+// TestWebMoveWizardCapabilitiesAndHeadersMatchGo:move.js 裡有三樣東西是 Go 這邊的手抄本——哪些平台不能當目的地
+// (asPlaylistWriter)、哪些能新建清單(asPlaylistCreator)、兩張表的欄名(h.indexOf 找不到會安靜地回 -1:報 0 首、
+// 清單變成一排 undefined)。/api/commands 只回 provider ID、不回能力,所以兩邊一起釘(review #68):gate R-8 過了、
+// Apple 能寫了,這裡就紅並指向 move.js。
+func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/move.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	move := string(b)
+	provs := map[string]provider.Provider{
+		"spotify": spotify.New(http.DefaultClient, "http://127.0.0.1:1"),
+		"apple":   apple.New(http.DefaultClient, "http://127.0.0.1:1", "dev", "user", "tw"),
+		"local":   local.New(t.TempDir(), "dev1"),
+	}
+	var readOnly, canCreate []string
+	for _, id := range providerIDs {
+		p := provs[id]
+		if p == nil {
+			t.Fatalf("多了一個平台 %q:這個測試與 move.js 都要跟上", id)
+		}
+		if _, err := asPlaylistWriter(p); err != nil {
+			readOnly = append(readOnly, id)
+		}
+		if _, err := asPlaylistCreator(p); err == nil {
+			canCreate = append(canCreate, id)
+		}
+	}
+	for _, want := range []string{
+		"const READ_ONLY = ['" + strings.Join(readOnly, "', '") + "'];",
+		"const CAN_CREATE = ['" + strings.Join(canCreate, "', '") + "'];",
+	} {
+		if !strings.Contains(move, want) {
+			t.Errorf("平台的能力變了,move.js 要是:%s", want)
+		}
+	}
+	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON"} {
+		if !slices.Contains(syncHeader, col) || !strings.Contains(move, "'"+col+"'") {
+			t.Errorf("migrate 的表要有 %s 欄,move.js 的 tally() 也要認它", col)
+		}
+	}
+	pl, err := os.ReadFile("pl.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pl), `[]string{"ID", "名稱", "曲數", "擁有者"}`) || !strings.Contains(move, "[h.indexOf('ID'), h.indexOf('名稱'), h.indexOf('曲數')]") {
+		t.Error("pl list 的欄名與 move.js 的 loadLists() 要一致")
+	}
+}
+
+// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩個中文字面認東西——「現在逐筆裁決?」(那一則確認
+// 旁邊要補白話)與 reason 開頭的「推到 」(這一首推得過去)。純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,
+// 所以兩邊一起釘(同 TestWebAccountPageKeysOnAuthStatusWording):CLI 改字,這裡就紅並指向 move.js。
+func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/move.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile("migrate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{
+		{"const REVIEW_MARK = '現在逐筆裁決?';", "現在逐筆裁決?(否 = 先推有對應的"},
+		{"const PUSHABLE_MARK = '推到 ';", `fmt.Sprintf("推到 %s:%s(%s %d)"`},
+	} {
+		if !strings.Contains(string(b), pair[0]) {
+			t.Errorf("move.js 要有 %s", pair[0])
+		}
+		if !strings.Contains(string(src), pair[1]) {
+			t.Errorf("migrate.go 的原文變了(%q 不見了):move.js 的字面要跟著改", pair[1])
+		}
+	}
+}
+
+// TestWebRunArgsArrayReachesCommandIntact:/api/run 收 args 陣列時不經 splitArgs——含空白與雙引號的參數
+// (local 的清單 ID 是 <device_id>/<檔名>)要原樣到達;同一個值走 line 會被切碎(這就是精靈不走 line 的原因)。
+func TestWebRunArgsArrayReachesCommandIntact(t *testing.T) {
+	pullWorld(t)
+	_, c := startWeb(t)
+	id := `dev1/My "Road" Trip.m3u8`
+	startArgs := func(body map[string]any) []any {
+		t.Helper()
+		_, ev, _ := c.run(body)
+		if len(ev) == 0 || ev[0]["type"] != "start" {
+			t.Fatalf("第一個事件要是 start:%v", ev)
+		}
+		got, _ := ev[0]["args"].([]any)
+		return got
+	}
+	got := startArgs(map[string]any{"args": []string{"pl", "show", id, "--provider", "local"}})
+	if len(got) != 5 || got[2] != id {
+		t.Errorf("args 陣列要原樣到達:%q", got)
+	}
+	if viaLine := startArgs(map[string]any{"line": "pl show " + id + " --provider local"}); len(viaLine) == 5 && viaLine[2] == id {
+		t.Errorf("同一個值走 line 居然沒被切碎?那 args 這條路就沒有存在的理由:%q", viaLine)
 	}
 }
 
@@ -1274,32 +1414,32 @@ func TestWebConsoleBehaviour(t *testing.T) {
 		}
 		t.Skip("沒有 node,跳過前端行為測試")
 	}
+	// 整棵 webui/js 複製過去、一律改成 .mjs(import 路徑跟著改):不靠 node 對 .js 的 ESM 自動偵測(各版本預設不同)。
 	dir := t.TempDir()
-	js := func(name string) string {
-		t.Helper()
-		b, err := webUI.ReadFile("webui/js/" + name)
-		if err != nil {
-			t.Fatal(err)
+	imports := regexp.MustCompile(`(from '\.{1,2}/[^']+)\.js'`)
+	err = fs.WalkDir(webUI, "webui/js", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
-		return string(b)
-	}
-	// 一律用 .mjs:不靠 node 對 .js 的 ESM 自動偵測(各版本預設不同),import 路徑跟著改。
-	console := js("console.js")
-	if !strings.Contains(console, "from './table.js'") {
-		t.Fatal("console.js 的 import 路徑變了,這個測試的改寫要跟著改")
+		b, err := webUI.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(dir, strings.TrimSuffix(strings.TrimPrefix(p, "webui/js/"), ".js")+".mjs")
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, imports.ReplaceAll(b, []byte("$1.mjs'")), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	harness, err := os.ReadFile(filepath.Join("testdata", "webui_console.mjs"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{
-		"console.mjs": strings.Replace(console, "from './table.js'", "from './table.mjs'", 1),
-		"table.mjs":   js("table.js"),
-		"harness.mjs": string(harness),
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "harness.mjs"), harness, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

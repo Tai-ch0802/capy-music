@@ -17,10 +17,13 @@ function mk(tag = 'div') {
     get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); },
     set textContent(v) { this._text = String(v); this.children = []; },
     set innerHTML(_) { this._text = ''; this.children = []; },
-    appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
+    appendChild(c) { if (c.parentNode?.children) c.parentNode.children = c.parentNode.children.filter((x) => x !== c); this.children.push(c); c.parentNode = this; return c; }, // 同真的 DOM:append 已掛著的節點 = 搬家
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
     replaceChildren(...cs) { this.children = []; this.append(...cs); },
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); },
+    insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); c.parentNode = this; return c; },
+    get firstChild() { return this.children[0] || null; },
+    contains(x) { for (let n = x; n; n = n.parentNode) if (n === this) return true; return false; },
     get lastElementChild() { return this.children[this.children.length - 1] || null; },
     querySelector(sel) { return find(this, sel); },
     querySelectorAll() { return []; },
@@ -36,12 +39,20 @@ function mk(tag = 'div') {
     scrollHeight: 0, scrollTop: 0, clientHeight: 0,
   };
 }
-// 只認 '.class' 與 'tag':block() / showIdle() 用到的就這些,其餘回 null。
+// 只認 '.class'、'tag'、'[data-x]' 與 '.class[data-k="v"]':console.js 用到的就這些,其餘回 null。
+const camel = (k) => k.replace(/-(\w)/g, (_, c) => c.toUpperCase());
 function find(root, sel) {
   const cls = /^\.([\w-]+)$/.exec(sel);
   const tag = /^([a-z]+)$/.exec(sel);
-  if (!cls && !tag) return null;
-  const hit = (e) => (cls ? e.classList?.contains(cls[1]) : e.tagName === tag[1].toUpperCase());
+  const data = /^\[data-([\w-]+)\]$/.exec(sel);
+  const clsData = /^\.([\w-]+)\[data-([\w-]+)="([^"]*)"\]$/.exec(sel);
+  if (!cls && !tag && !data && !clsData) return null;
+  const hit = (e) => {
+    if (cls) return e.classList?.contains(cls[1]);
+    if (tag) return e.tagName === tag[1].toUpperCase();
+    if (data) return e.dataset && camel(data[1]) in e.dataset;
+    return e.classList?.contains(clsData[1]) && e.dataset?.[camel(clsData[2])] === clsData[3];
+  };
   const walk = (e) => {
     for (const c of e.children || []) {
       if (hit(c)) return c;
@@ -69,6 +80,8 @@ const { Console, maskSecrets } = await import('./console.mjs');
 
 // ── 假的伺服器:/api/run 回 SSE(start → [gate] → events),cancel 端點記下來 ──
 const calls = [];
+const bodies = [];
+const answers = [];
 const cancels = [];
 let script = {};
 const sse = (evs) => evs.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
@@ -76,7 +89,9 @@ const done = { type: 'exit', code: 0, message: '', reason: 'done' };
 const api = {
   async fetch(path, init) {
     if (path === '/api/run') {
-      const { line } = JSON.parse(init.body);
+      const sent = JSON.parse(init.body);
+      bodies.push(sent);
+      const line = sent.line ?? sent.args.join(' ');
       calls.push(line);
       const spec = script[line] || {};
       if (spec.fetchGate) await spec.fetchGate;
@@ -87,13 +102,18 @@ const api = {
       const enc = new TextEncoder();
       const body = new ReadableStream({
         async start(c) {
-          c.enqueue(enc.encode(sse([{ type: 'start', job }])));
+          c.enqueue(enc.encode(sse([{ type: 'start', job }, ...(spec.first || [])])));
           if (spec.gate) await spec.gate;
           c.enqueue(enc.encode(sse(spec.events || [done])));
           c.close();
         },
       });
       return new Response(body, { status: 200 });
+    }
+    if (/^\/api\/jobs\/[^/]+\/answer$/.test(path)) {
+      answers.push(JSON.parse(init.body));
+      script.onAnswer?.();
+      return new Response(null, { status: 204 });
     }
     if (/^\/api\/jobs\/[^/]+\/cancel$/.test(path)) {
       cancels.push(path);
@@ -117,7 +137,7 @@ const check = (ok, msg) => { if (!ok) failures.push(msg); };
 const scenario = async (name, fn) => {
   try { await fn(); } catch (e) { failures.push(`情境 ${name} 丟出例外:${e.message}`); }
 };
-const reset = () => { calls.length = 0; cancels.length = 0; notices.length = 0; script = {}; pages.hidden = false; globalThis.document.getElementById('cmd').value = ''; };
+const reset = () => { bodies.length = 0; answers.length = 0; globalThis.location.hash = ''; calls.length = 0; cancels.length = 0; notices.length = 0; script = {}; pages.hidden = false; globalThis.document.getElementById('cmd').value = ''; };
 
 // 1. 回聲遮罩:切法跟伺服器的 splitArgs 一樣寬(連續空白、tab、引號包住的 flag 名與值)。
 check(typeof maskSecrets === 'function', 'console.js 要匯出 maskSecrets');
@@ -282,6 +302,101 @@ await scenario('8c', async () => {
   check((notices[notices.length - 1] || '').includes('讀取 Spotify 上的清單'), `被擋的說明也用白話:${JSON.stringify(notices)}`);
   release();
   await p;
+});
+
+// 8d. 精靈的兩個選項(決策 46):args 送出的 body 只有 args(伺服器端 line 會蓋掉 args;review #66);
+//     promptHost 讓提示畫進頁面的容器、不切頁,onPrompt 讓頁面補白話;回答照樣走 answer 端點。
+await scenario('8d', async () => {
+  reset();
+  const host = mk();
+  const [g, release] = gate();
+  const args = ['migrate', 'dev1/My "Road" Trip.m3u8', '--from', 'local', '--to', 'spotify'];
+  script = {
+    [args.join(' ')]: {
+      first: [{ type: 'prompt', id: 7, kind: 'confirm', title: '把 14 首加進去?', affirmative: '套用', negative: '取消', default: false }],
+      gate: g,
+      events: [{ type: 'prompt_closed', id: 7, reason: 'answered' }, { type: 'exit', code: 2, message: '已取消', reason: 'done' }],
+    },
+    onAnswer: release,
+  };
+  let prompted = null;
+  let ex = null;
+  const blocksBefore = con.root.children.length;
+  const p = con.run('', { onPrompt: (ev, box) => { prompted = [ev.title, box]; }, onExit: (...e) => { ex = e; } },
+    { args, label: '把清單搬到 Spotify', promptHost: host });
+  await tick(20);
+  check(JSON.stringify(bodies[0]) === JSON.stringify({ args }), `args 送出的 body 只能有 args、不可以帶 line:${JSON.stringify(bodies[0])}`);
+  const box = host.children.find((c) => c.classList.contains('prompt'));
+  check(!!box, '提示要畫進呼叫端給的容器');
+  const block = con.root.children[con.root.children.length - 1];
+  check(con.root.children.length === blocksBefore + 1 && !block.children.some((c) => c.classList?.contains('prompt')), '主控台的區塊照畫,但提示不畫在裡面');
+  check(globalThis.location.hash === '', `容器所在的頁面看得到時不切頁:${globalThis.location.hash}`);
+  check(prompted?.[0] === '把 14 首加進去?' && prompted?.[1] === box, 'onPrompt 要拿到事件與那個提示框');
+  check(con.focusPrompt() === true && globalThis.document.activeElement?.textContent === '取消', '焦點給提示的預設鍵(取消)');
+  const no = find(box, '.prompt__row').children.find((b) => b.textContent === '取消');
+  no.click();
+  await p;
+  check(answers.length === 1 && answers[0].id === 7 && answers[0].value === false, `回答走 answer 端點,頁面沒有替使用者回答:${JSON.stringify(answers)}`);
+  check(box.classList.contains('is-closed'), 'prompt_closed 要在容器裡找得到那個提示並收掉它');
+  check(block.children.includes(box) && !host.children.includes(box), '收掉的提示要搬進主控台的區塊(主控台是完整紀錄),頁面上只留現在在問的那一則');
+  check(ex?.[0] === 2, `取消 → onExit 拿到 exit 2:${ex}`);
+  check(con.focusPrompt() === false, '命令收尾後殘留的提示不可以再搶焦點');
+});
+
+// 8f. 中止後的預填:手打的命令(line)預填回命令列供重跑;args 的那一次不預填——接起來的那一行走 splitArgs 會被切碎。
+await scenario('8f', async () => {
+  reset();
+  const cancelled = [{ type: 'exit', code: 1, message: 'Error: context canceled', reason: 'cancelled' }];
+  const args = ['migrate', 'dev1/My Road Trip.m3u8', '--from', 'local', '--to', 'spotify'];
+  script = { [args.join(' ')]: { events: cancelled }, 'pl pull 通勤': { events: cancelled } };
+  await con.run('', {}, { args });
+  const cmd = globalThis.document.getElementById('cmd');
+  check(cmd.value === '', `args 的那一次中止後不可以預填命令列:「${cmd.value}」`);
+  await con.run('pl pull 通勤');
+  check(cmd.value === 'pl pull 通勤', `手打的命令中止後要預填回去:「${cmd.value}」`);
+});
+
+// 8e. 容器所在的頁面是 hidden(使用者做到一半切去別頁):提示出現時要切回那一頁,不是主控台。
+await scenario('8e', async () => {
+  reset();
+  const host = mk();
+  host.closest = () => ({ hidden: true, id: 'page-move' });
+  script = { q: { first: [{ type: 'prompt', id: 1, kind: 'confirm', title: '?', default: false }], events: [{ type: 'exit', code: 2, message: '', reason: 'done' }] } };
+  await con.run('q', {}, { promptHost: host });
+  check(globalThis.location.hash === '#/move', `提示所在的頁面 hidden 時要切回那一頁:${globalThis.location.hash}`);
+});
+
+// 8h. 串流在提示開著時斷掉(prompt_closed 不會到):那一則要自己收掉,不可以留在頁面的容器裡看起來還能按(review #68)。
+await scenario('8h', async () => {
+  reset();
+  const host = mk();
+  script = { d: { first: [{ type: 'prompt', id: 3, kind: 'confirm', title: '?', default: false }], events: [] } };
+  let closedBy = 'none';
+  await con.run('d', { onPromptClosed: (ev) => { closedBy = ev.reason; } }, { promptHost: host });
+  const block = con.root.children[con.root.children.length - 1];
+  const box = block.children.find((c) => c.classList?.contains('prompt'));
+  check(!!box && box.classList.contains('is-closed') && box.dataset.reason === 'disconnected', '斷線時開著的提示要收掉並標 disconnected');
+  check(!host.children.some((c) => c.classList?.contains('prompt')), '收掉的提示不留在頁面的容器裡');
+  check(closedBy === 'none', 'onPromptClosed 只轉交伺服器真的送來的 prompt_closed');
+});
+
+// 8i. 精靈的計數(move.js 的 tally;review #66 第三輪 / #68):migrate 與 push 兩種列都吃、以 CID 去重。
+await scenario('8i', async () => {
+  const { tally } = await import('./pages/move.mjs');
+  const H = ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON'];
+  const row = (dir, action, cid, reason) => [dir, action, 'spotify', '公路旅行', '0', cid, 'x', 'song-' + cid, 'artist', reason];
+  const ok = '推到 spotify:x(isrc 95)';
+  // 加進既有清單:migrate 列的 ACTION 永遠是 add,推不出去只寫在 REASON;同一批 CID 還會有 push 列
+  let t = tally(H, [row('pull', 'add', 'z', ''), row('migrate', 'add', 'a', ok), row('migrate', 'add', 'b', ok), row('migrate', 'add', 'c', 'spotify 沒有對應,這次不推'),
+    row('push', 'add', 'a', ''), row('push', 'add', 'b', ''), row('push', 'skip', 'c', '沒有對應')]);
+  check(t.moved === 2 && t.missed.length === 1 && t.missed[0].title === 'song-c', `加進既有清單:2 首搬、1 首沒搬:${JSON.stringify(t)}`);
+  // 新建清單、正本已連著來源(follow):一列 migrate 都沒有,全部是 push 列
+  t = tally(H, [row('push', 'add', 'a', ok), row('push', 'add', 'b', ok), row('push', 'add', 'c', ok), row('push', 'skip', 'd', '有 mapping 但推不出去')]);
+  check(t.moved === 3 && t.missed.length === 1, `follow:整份都是 push 列,不可以報成 0 首:${JSON.stringify(t)}`);
+  // 新建清單、正本原本就有曲目:push 列(既有的)+ migrate 列(新接的)
+  t = tally(H, [row('push', 'add', 'a', ok), row('migrate', 'add', 'b', ok), row('migrate', 'add', 'c', ok)]);
+  check(t.moved === 3 && t.missed.length === 0, `既有的與新接的都算:${JSON.stringify(t)}`);
+  check(tally(null, null).moved === 0, '沒有表 = 0');
 });
 
 // 9. 被伺服器拒絕(別的分頁佔著槽):說一句,並回報 refused 讓命令列把那行還給使用者。
