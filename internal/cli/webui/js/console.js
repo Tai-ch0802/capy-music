@@ -154,7 +154,9 @@ export class Console {
     // 串流結束才通知頁面:此刻伺服器已放開序列槽(runMu 在 handler return 前 Unlock,回應在那之後才收尾)、
     // 這邊的 running 也已歸零。在 exit 事件當下叫的話,onExit 裡再跑一個命令(帳號頁登入完刷新)
     // 會被上面的閘擋掉,或撞上伺服器還沒放的鎖(review #62 第 2 點)。
-    const ex = this.ex || [1, '串流在 exit 之前就結束了', 'disconnected'];
+    let ex = this.ex || [1, '串流在 exit 之前就結束了', 'disconnected'];
+    // 使用者自己中止的:頁面拿到的是「已中止」,不是一串「Get …: context canceled」(完整原文留在主控台)。
+    if (ex[2] === 'cancelled') ex = [ex[0], '已中止', ex[2]];
     this.report(line, shown, ex);
     try { hooks.onExit?.(...ex); } finally { this.wake(); }
   }
@@ -178,7 +180,7 @@ export class Console {
     this.stopping = false; this.wrote = false; this.armed = false;
     this.barCmd.textContent = shown;
     this.barAct.textContent = '';
-    this.stopBtn.disabled = false;
+    this.stopBtn.removeAttribute('aria-disabled');
     this.stopBtn.textContent = '中止';
     this.tick();
     this.timer = setInterval(() => this.tick(), 1000);
@@ -427,7 +429,8 @@ export class Console {
     if (cancelled) { b.dataset.exit = 'cancelled'; el.dataset.code = 'cancelled'; }
     const mark = code === 0 ? '✓' : (cancelled || code === 2 || code === 3 ? '·' : '✗');
     let text = `${mark} exit ${code}`;
-    if (cancelled) { text += ' · 已取消'; if (/context canceled/.test(message || '')) message = ''; }
+    // 取消原因本身(errWebCancelled「已取消」)或 context canceled 那串都只是在重複「已取消」,不印。
+    if (cancelled) { text += ' · 已取消'; if (/context canceled|^(Error: )?已取消$/.test(message || '')) message = ''; }
     else if (reason === 'shutdown') text += ' · capy --web 已結束';
     else if (reason === 'timeout') text += ' · 等待回答逾時';
     else if (reason === 'busy') text += ' · 另一個命令執行中,等它結束或按「中止」';
@@ -470,7 +473,9 @@ export class Console {
     }
     clearTimeout(this.disarm);
     this.stopping = true;
-    this.stopBtn.disabled = true;
+    // 不用 disabled:disabled 的按鈕會把焦點丟到 body,鍵盤使用者就失去位置,收尾時也交不回命令列。
+    // 重複按由上面的 this.stopping 擋。
+    this.stopBtn.setAttribute('aria-disabled', 'true');
     this.stopBtn.textContent = '中止中…';
     this.barAct.textContent = '已送出中止,等命令收尾';
     // 網路請求、等鎖、退避都會立刻停;鑰匙圈與 Music.app 的 osascript 不吃取消,要等它們自己回來。
@@ -490,7 +495,7 @@ export class Console {
       this.notice('中止沒送到:' + e.message);
       clearTimeout(this.stuck);
       this.stopping = false;
-      this.stopBtn.disabled = false;
+      this.stopBtn.removeAttribute('aria-disabled');
       this.stopBtn.textContent = '中止';
     }
   }

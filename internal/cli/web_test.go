@@ -1036,6 +1036,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(console, "if (this.stopping) this.cancel()") {
 		t.Error("start 事件到達時,若已經按過中止要立刻送 cancel")
 	}
+	if !strings.Contains(run, "if (ex[2] === 'cancelled') ex = [ex[0], '已中止', ex[2]]") {
+		t.Error("中止的命令交給頁面的訊息要是「已中止」,不是 context canceled 那串內部錯誤")
+	}
+	// 中止中的按鈕不可以用 disabled:disabled 會把焦點丟到 body,鍵盤使用者失去位置、收尾也交不回命令列。
+	if strings.Contains(console, "stopBtn.disabled") || !strings.Contains(console, "document.activeElement === this.stopBtn") {
+		t.Error("中止鈕用 aria-disabled 擋重複按,收尾時把焦點交回命令列")
+	}
 	if !strings.Contains(between("async stop() {", "async cancel() {"), "this.wrote && !this.armed") {
 		t.Error("已答應寫入之後的中止要按第二次確認(計畫 Q24 的半套狀態)")
 	}

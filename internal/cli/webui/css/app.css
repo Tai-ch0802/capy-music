@@ -186,7 +186,7 @@ body[data-busy] [data-run]:not([data-pending]) { opacity: .45; cursor: progress;
 .btn--primary { border-color: var(--accent); color: var(--accent); }
 .btn--ghost { color: var(--muted); }
 .btn--danger { color: var(--danger); border-color: var(--danger); } /* 設計規格 §8:危險 = 次要框改 --danger,不發光、不填色 */
-.btn:disabled { opacity: .5; cursor: default; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: default; }
 
 /* ── glow budget(設計規格 §6:全站只有這個註解塊能出現 --glow / --glow-text,之外再出現就是 review finding)── */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: var(--glow); }
