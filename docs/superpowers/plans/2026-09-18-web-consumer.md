@@ -31,9 +31,12 @@
 ### 決策 46:搬家精靈的形狀 —— 只組命令,確認照 CLI,提示就地回答
 
 - 三步:**① 選路線**(來源與目的地;每個平台顯示連線狀態,沒連的給「連接」鈕走既有的 `auth login <平台>`)→ **② 選清單**(來源平台的清單;目的地選「建一個同名的新清單」或既有清單)→ **③ 確認並搬家**。
-- ③ 只跑一次 `migrate <來源清單 ID> --from X --to Y[:<目標 ID>]`:用 ID 不用名字(同名清單不會歧義);table 事件 = 預覽,CLI 自己的確認提示 = 「開始搬家」。**頁面絕不代加 `--yes` / `--force`,也不自動回答確認**(同 `sync.js` 的規矩)。取消 = exit 2、零寫入、清單也沒建。
+- ③ 只跑一次 `migrate <來源清單 ID> --from X --to Y[:<目標 ID>]`:用 ID 不用名字(同名清單不會歧義)。**頁面絕不代加 `--yes` / `--force`,也不自動回答確認**(同 `sync.js` 的規矩)。取消 = exit 2、零寫入、清單也沒建。
+- **命令走 `/api/run` 的 `args` 陣列,不走 `line` 字串**(review #66 第 2 點):`splitArgs` 只認雙引號、沒有跳脫,而 local 的清單 ID 是 `<device_id>/<檔名>`(含空白是常態、含 `"` 時 `quote()` 會組出壞命令)。`Console.run` 加一個 `args` 選項:有給就送 `{ args }`,`line` 只拿來顯示(照樣過 `maskSecrets`);伺服器端的 `webDenied` / 允許清單本來就是對 argv 做的,不變。手打的命令列照舊走 `line`。
+- **步驟 ③ 實際會到達的提示序列**(web 底下 `migrateIsTTY` 恆真;`migrate.go:293-378`):① `planResolve`(逐首反查,最久)→ ② 有沒對到的歌時,**先問「N 首 … 沒有自動對應到,現在逐筆裁決?」**(是 = 逐筆 select;否 = 先搬對得上的,不是取消;關掉 = 整輪不寫入)→ ③ table 事件(預覽)→ ④ 最終確認(「在 spotify 建立清單 … 推過去?」= 開始搬家)。沒對到的歌是跨平台的常態,所以 ② 是主線不是邊角。
+- ② 那句原文帶著一條 CLI 命令(`capy resolve … --review`)。處置:**原文照留(規格 §9:伺服器問的話不改寫),精靈在它旁邊補一句白話**(「有幾首歌在目的地找不到完全一樣的。選『是』一首一首挑;選『否』就先搬找得到的,其餘之後可以在主控台處理。」)。不改 CLI 的措辭(會動到終端機契約與既有測試)。精靈靠原文裡的「現在逐筆裁決?」認出這一則;這個字面由 Go 測試兩邊一起釘(同 `TestWebAccountPageKeysOnAuthStatusWording` 的手法),CLI 改字測試就紅。pre-flight #1 的「第一眼沒有命令字串」指的是頁面自己的文案,伺服器的原文是明列的例外。
 - 提示(確認、逐筆裁決、登入精靈、Apple 揭露、授權連結)在精靈裡就地渲染:`Console.run` 多一個選項把提示畫進呼叫端給的容器,不切到主控台。Apple 揭露照舊不可收合、不可跳過。
-- 照實呈現限制:Apple 當目的地是灰的並寫明「目前只能從 Apple Music 搬出來」;本機曲庫當目的地只列既有的 M3U;目的地已有同名清單時 CLI 會擋,精靈把那句話翻成「加進它」的選項。
+- 照實呈現限制:Apple 當目的地是灰的並寫明「目前只能從 Apple Music 搬出來」;本機曲庫當目的地只列既有的 M3U。目的地已有同名清單時 CLI 會擋(`migrate.go:170`,是 error 不是 prompt):**精靈不解析那句錯誤字串**——步驟 ② 本來就抓了目的地的 `pl list`,送出前自己比對同名,直接給「加進它 / 改用別的清單」;CLI 那句話只當 fallback 原文顯示(review #66 第 6 點)。
 - 完成報告:搬了幾首、沒搬到的歌逐首列出(來源 = table 裡 `skip` 的列與原因)、下一步(想持續同步 → 同步頁)。
 - 一次搬一個清單。多選排隊是 Q39。
 
@@ -64,12 +67,12 @@
 ### T0 — 本計畫 + 視覺規格 v2 + ARCHITECTURE(docs only;分支 `feat/web-consumer-plan`)
 
 ### T1 — 視覺系統與外殼(分支 `feat/web-consumer-shell`)
-`tokens.css` 換色票 / 圓角 / 字級 / 動效 token;`app.css` 跟進;導覽兩層 + 八頁路由(`#/move` 先放一個誠實的佔位:一句話 + 「到同步頁用 migrate」的連結,T2 換掉);命令列只在主控台頁;各頁按鈕與空白態改白話、標題旁的 CLI 命令拿掉;`Console.run` 的 `label` 選項。
+`tokens.css` 換色票 / 圓角 / 字級 / 動效 token;`app.css` 跟進;導覽兩層 + 八頁路由(`#/move` 這一版是開場 + 原本在同步頁的 migrate 表單搬過來,T2 換成精靈);路由落在「進階」底下任一頁時 `details.open = true`(不然 active 項目與焦點都在收合區裡看不到;review #66 第 3 點);命令列只在主控台頁,`?` 鍵位表的 Ctrl-C 與 `/` 兩列跟著改成說「主控台的命令列」;各頁按鈕與空白態改白話、標題旁的 CLI 命令拿掉;`Console.run` 的 `label` 選項——**沒給 label 的 fallback 仍然是 `maskSecrets(line)`,釘進靜態契約**(review #66 第 4 點);被擋的說明與螢幕閱讀器那句跟著念 label。
 測試:`TestWebStaticFrontendContracts` 逐條處理——安全與無障礙的照留(IME、role=status、no aria-live、CSP 零 inline、secret 遮罩、z-index 走 token、reduced-motion);「glow 只准在 budget 註解塊」「掃描線」這類隨規格退役的,**刪掉並在測試註解寫明被哪一條新規格取代**,不是放寬到會過;新增:預設路由是 move、命令列在非主控台頁 hidden、八頁鍵位表一致。`TestWebConsoleBehaviour` 加 label 情境。瀏覽器 smoke 八頁 + 400px。
 
 ### T2 — 搬家精靈 + 示意動畫(分支 `feat/web-move-wizard`;依賴 T1)
 `js/pages/move.js`;`Console.run` 的提示容器選項(提示就地渲染、不 reveal;`focusPrompt` / `promptClosed` 跟著容器走);首頁示意動畫與三步說明(純 CSS `transform` / `opacity`);完成報告。
-測試:node 行為測試加情境(提示進容器、不切頁;取消 → onExit 拿到 exit 2;沒有 `--yes`);靜態契約釘「move.js 組出來的命令不含 --yes / --force」「Apple 目的地 disabled」;Go 端既有的 migrate e2e(假平台)不動。**真帳號只跑到預覽(會停在確認提示,按取消),不按確認。**
+測試:node 行為測試加情境(提示進容器、不切頁;取消 → onExit 拿到 exit 2;`args` 選項送的是陣列、顯示的那一行有遮罩);靜態契約釘「move.js 走 `args` 陣列、不含 --yes / --force」「Apple 目的地 disabled」「送出前比對同名」;Go 測試釘「現在逐筆裁決?」的字面兩邊一致、`/api/run` 收 `args` 時含空白與 `"` 的 local ID 原樣到達;既有的 migrate e2e(假平台)不動。**真帳號只跑到預覽(會停在確認提示,按取消),不按確認。**
 
 ### T3 — 真實進度(分支 `feat/web-progress`;可與 T2 平行,T2 先合)
 Go:`progress` 接縫 + SSE 事件;`planResolve` 與 migrate 里程碑呼叫。前端:`hooks.onProgress`、執行狀態列顯示 `n / total`、精靈的進度條改吃它。
