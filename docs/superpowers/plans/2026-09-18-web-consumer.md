@@ -66,19 +66,29 @@
 
 ### T0 — 本計畫 + 視覺規格 v2 + ARCHITECTURE(docs only;分支 `feat/web-consumer-plan`)
 
+> **已完成:PR #66**(review 三輪:精靈走 `args` 陣列且不可同時帶 `line`、步驟 ③ 的提示序列、完成報告吃 `migrate` 與 `push` 兩種列、關掉 / 逾時是 exit 1)。
+
 ### T1 — 視覺系統與外殼(分支 `feat/web-consumer-shell`)
+
+> **已完成:PR #67**(review 兩輪六則:去除重複的說明補回警告、exit 2 也要說、收起「進階」前搬走焦點、來源與目的地不同、只看變更的收尾不叫人「加 --yes」、搜尋沒命中要說一句)。
 `tokens.css` 換色票 / 圓角 / 字級 / 動效 token;`app.css` 跟進;導覽兩層 + 八頁路由(`#/move` 這一版是開場 + 原本在同步頁的 migrate 表單搬過來,T2 換成精靈);路由落在「進階」底下任一頁時 `details.open = true`(不然 active 項目與焦點都在收合區裡看不到;review #66 第 3 點);命令列只在主控台頁,`?` 鍵位表的 Ctrl-C 與 `/` 兩列跟著改成說「主控台的命令列」;各頁按鈕與空白態改白話、標題旁的 CLI 命令拿掉;`Console.run` 的 `label` 選項——**沒給 label 的 fallback 仍然是 `maskSecrets(line)`,釘進靜態契約**(review #66 第 4 點);被擋的說明與螢幕閱讀器那句跟著念 label。
 測試:`TestWebStaticFrontendContracts` 逐條處理——安全與無障礙的照留(IME、role=status、no aria-live、CSP 零 inline、secret 遮罩、z-index 走 token、reduced-motion);「glow 只准在 budget 註解塊」「掃描線」這類隨規格退役的,**刪掉並在測試註解寫明被哪一條新規格取代**,不是放寬到會過;新增:預設路由是 move、命令列在非主控台頁 hidden、八頁鍵位表一致。`TestWebConsoleBehaviour` 加 label 情境。瀏覽器 smoke 八頁 + 400px。
 
 ### T2 — 搬家精靈 + 示意動畫(分支 `feat/web-move-wizard`;依賴 T1)
+
+> **已完成:PR #68**(review 兩份九則:`tally()` 兩種列以 CID 去重、關掉 / 逾時靠 `prompt_closed` 的 reason、過濾字串進 state、能力與欄名兩邊釘、斷線的提示自己收掉(殘留提示的 id 每個 job 從 1 重數,會答到下一個 job)、同名只是預設不停用「建新的」、兩條路都走不通時說原因)。Q40 出的是 B 案(單色幾何 SVG 水豚),等維護者看過。
 `js/pages/move.js`;`Console.run` 的提示容器選項(提示就地渲染、不 reveal;`focusPrompt` / `promptClosed` 跟著容器走);首頁示意動畫與三步說明(純 CSS `transform` / `opacity`);完成報告。
 測試:node 行為測試加情境(提示進容器、不切頁;取消 → onExit 拿到 exit 2;`args` 選項送出的 body 只有 `args`、**沒有 `line` 鍵**,顯示的那一行有遮罩);靜態契約釘「move.js 走 `args` 陣列、不含 --yes / --force」「Apple 目的地 disabled」「送出前比對同名」;Go 測試釘「現在逐筆裁決?」的字面兩邊一致、`/api/run` 收 `args` 時含空白與 `"` 的 local ID 原樣到達;既有的 migrate e2e(假平台)不動。**真帳號只跑到預覽(會停在確認提示,按取消),不按確認。**
 
 ### T3 — 真實進度(分支 `feat/web-progress`;可與 T2 平行,T2 先合)
+
+> **已完成:PR #69**(review 三則:進度只數真的去查的、失敗的 provider 剩下的從分母扣掉;精靈就地更新進度;`CANCELLED_MSG` 共用常數)。`write` 階段只有標記、沒有逐批的數字:`ApplyOps` 的批次在 provider 裡,要畫就得動 SPI,先不做。
 Go:`progress` 接縫 + SSE 事件;`planResolve` 與 migrate 里程碑呼叫。前端:`hooks.onProgress`、執行狀態列顯示 `n / total`、精靈的進度條改吃它。
 測試:假平台 e2e 斷言事件順序與 `done == total`;非 TTY 輸出 golden 不變(既有測試);node 行為測試加 onProgress。
 
 ### T4 — 文件(分支 `docs/web-consumer`)
+
+> **本 PR**。
 README 與 guide.html 的網頁介面段改寫(搬家精靈、開源免費、BYO 的實話)、ARCHITECTURE §9 P8 結論、指南重發 Artifact。
 
 ## §4 仍待拍板
