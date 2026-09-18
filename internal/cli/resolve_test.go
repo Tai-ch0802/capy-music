@@ -652,7 +652,25 @@ func TestResolvePlanDegradesProviderAndCallFailures(t *testing.T) {
 		return orig(ctx, id)
 	}
 	t.Cleanup(func() { newProvider = orig })
+	// 進度只數真的去查的(P8 決策 47;review #69):apple 一失敗,它剩下的都從分母扣掉——不可以空轉衝到底。
+	type tick struct{ done, total int }
+	var ticks []tick
+	origProgress := reportProgress
+	reportProgress = func(stage string, done, total int) {
+		if stage == "match" {
+			ticks = append(ticks, tick{done, total})
+		}
+	}
+	t.Cleanup(func() { reportProgress = origProgress })
 	out, errs := mustPull(t, "resolve", "--yes")
+	if len(ticks) == 0 || ticks[len(ticks)-1] != (tick{1, 1}) {
+		t.Fatalf("三首要查、apple 的兩首查不了:最後的進度要是 1 / 1(真的查了的那一首):%v", ticks)
+	}
+	for _, k := range ticks {
+		if k.done > k.total {
+			t.Fatalf("done 不可以超過 total:%v", ticks)
+		}
+	}
 	if strings.Count(errs, "apple 這輪跳過:授權已過期") != 1 || !strings.HasPrefix(out, "map\t"+fakeCID("c")+"\tspotify\tsp-c\t") || strings.Contains(out, "\tapple\t") {
 		t.Fatalf("只跳過 apple、只說一次:%v\n%s", out, errs)
 	}

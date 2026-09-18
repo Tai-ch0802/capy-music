@@ -251,19 +251,25 @@ func (s *webServer) current() *webJob {
 // now --watch 指路面板;互動閘與每個 huh 接縫由 installWebPromptSeams(web_prompt.go)換成提示橋。
 // runMu 保證同時只有一個 job,process 全域 var 沒有競態。
 func installWebSeams(s *webServer) (restore func()) {
-	origTUI, origWatch := runTUI, runWatch
+	origTUI, origWatch, origProgress := runTUI, runWatch, reportProgress
 	origBackoff, origStore, origDrive, origLogin, origLock := provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr, auth.LockStderr
 	restorePrompts := installWebPromptSeams(s)
 	runTUI = func(cmd *cobra.Command) error { return cmd.Help() }
 	runWatch = func(*cobra.Command, provider.Provider, provider.PlaybackController) error {
 		return errors.New("web 模式請看頁面上的播放狀態面板;單次用 capy now")
 	}
+	// 真實進度(P8 決策 47):送給當下的 job;沒有 job(或串流已關)就丟掉——進度不是輸出,不退回 stderr。
+	reportProgress = func(stage string, done, total int) {
+		if j := s.current(); j != nil {
+			_ = j.sse.event(map[string]any{"type": "progress", "stage": stage, "done": done, "total": total})
+		}
+	}
 	g := &webGlobalStderr{s: s}
 	provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr = g, g, g, g
 	auth.LockStderr = &webLockStderr{g}
 	return func() {
 		restorePrompts()
-		runTUI, runWatch = origTUI, origWatch
+		runTUI, runWatch, reportProgress = origTUI, origWatch, origProgress
 		provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr, auth.LockStderr = origBackoff, origStore, origDrive, origLogin, origLock
 	}
 }

@@ -336,6 +336,14 @@ body[data-busy] .dock { border-top-color: var(--accent); }
 .dock__busy-act { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock__busy-time { flex: none; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: var(--r); padding: 1px 8px; font-family: var(--mono); font-size: var(--t-12); font-variant-numeric: tabular-nums; }
 @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+/* 進度條:原生 <progress>(語意與無障礙是現成的),值只來自伺服器的 progress 事件(決策 47) */
+.bar { appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 6px; border: 0; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
+.bar::-webkit-progress-bar { background: var(--surface-2); border-radius: var(--r-pill); }
+.bar::-webkit-progress-value { background: var(--accent); border-radius: var(--r-pill); }
+.bar::-moz-progress-bar { background: var(--accent); border-radius: var(--r-pill); }
+.dock__busy-bar { flex: 0 0 8rem; }
+.dock__busy-bar[hidden], .bar[hidden] { display: none; }
+.wiz__live .bar { max-width: 28rem; margin: .5rem 0; }
 /* 中止鈕不讓出寬度:CJK 會在任兩字之間斷行,擠一下「中止」就變成上下兩行;讓命令與活動說明去縮、去省略。 */
 .dock__busy .btn { flex: none; white-space: nowrap; }
 /* 有命令在跑時,其他會發起命令的按鈕調暗(點了由 app.js 說明,不排隊);真的開跑的那一顆掛 ●。
@@ -386,6 +394,7 @@ body[data-stale] .dock__input { border-color: var(--warn); }
   .main { padding: 1.25rem 1rem; }
   .dock { padding: .5rem 1rem .6rem; }
   .hero__title { font-size: var(--t-28); }
+  .dock__busy-bar { display: none; } /* 窄畫面:狀態列只留「比對歌曲 37 / 120」的字,條讓給中止鈕 */
   .route { grid-template-columns: minmax(0, 1fr); }
   .route__lane { height: 5rem; }
 }

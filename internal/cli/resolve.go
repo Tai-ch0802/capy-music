@@ -164,10 +164,17 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 	calls := 0
 	failed := map[string]bool{} // provider 級失敗:這輪跳過它
 	var items []resolveItem
-	for _, need := range resolve.Needs(pls, s.tracks.Tracks) {
-		if only != "" && need.Provider != only || failed[need.Provider] {
+	needs := resolve.Needs(pls, s.tracks.Tracks)
+	if only != "" { // 先篩出這一輪真的要查的,進度的分母才是真的
+		needs = slices.DeleteFunc(needs, func(n resolve.Need) bool { return n.Provider != only })
+	}
+	done, total := 0, len(needs) // 進度只數真的去查的(決策 47):provider 級失敗之後跳過的那些不算做了
+	for i, need := range needs {
+		if failed[need.Provider] {
 			continue
 		}
+		done++
+		reportProgress("match", done, total) // 最久的一段:每一首都是一到數次 API 呼叫
 		tr := s.tracks.Tracks[need.CID]
 		it := resolveItem{action: "review", cid: need.CID, prov: need.Provider, track: tr}
 		c, err := clientsFor(ctx, clients, need.Provider)
@@ -181,6 +188,15 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 		case c == nil || errors.Is(err, provider.ErrAuthExpired):
 			failed[need.Provider] = true
 			fmt.Fprintf(stderr, "%s 這輪跳過:%v\n", need.Provider, friendlyErr(need.Provider, err))
+			// 這個 provider 從這一首起都不會查了:從分母扣掉(含沒查成的這一首)。不扣的話進度條會從這一刻
+			// 空轉衝到底,看起來像「很快就比對完了」,其實一首都沒查(review #69)。
+			done--
+			for _, rest := range needs[i:] {
+				if rest.Provider == need.Provider {
+					total--
+				}
+			}
+			reportProgress("match", done, total)
 			continue
 		default:
 			it.reason = "查詢失敗:" + friendlyErr(need.Provider, err).Error()
