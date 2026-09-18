@@ -1,11 +1,11 @@
 // account.js:#/account —— auth status 的三段文字解析成三列。登入一律打進主控台(Apple 的揭露是提示橋的 note,
 // 不可收合);web 不自動擷取任何 token、不開瀏覽器抓 cookie、--auto 在伺服器端 403。
-import { el, btn, emptyState, pageHead } from './common.js';
+import { el, btn, providerName, emptyState, pageHead } from './common.js';
 
 const PROVIDERS = [
-  { id: 'spotify', label: 'spotify' },
-  { id: 'google', label: 'google(Drive 同步)' },
-  { id: 'apple', label: 'apple' },
+  { id: 'spotify', label: providerName('spotify') },
+  { id: 'apple', label: providerName('apple') },
+  { id: 'google', label: `${providerName('google')}(保管你的清單)` },
 ];
 
 // parseStatus:auth status 的輸出是「平台:」後面接縮排兩格的欄位行。不改 CLI 的純文字輸出,在這邊解析。
@@ -50,7 +50,7 @@ export function stateOf(id, lines) {
 }
 
 export function initAccount(root, api, con, notice) {
-  pageHead(root, '帳號', 'auth status');
+  pageHead(root, '帳號', '連接你自己的帳號。登入資料只存在這台電腦的鑰匙圈裡,capy 沒有伺服器可以存它。');
   const out = el('div', 'page__out');
   root.appendChild(out);
 
@@ -62,13 +62,13 @@ export function initAccount(root, api, con, notice) {
         render(parseStatus(text));
         if (code !== 0 && !text) notice(msg || '');
       },
-    });
+    }, { label: '檢查帳號的連接狀態' });
   };
 
   function render(parsed) {
     out.replaceChildren();
     if (!Object.keys(parsed).length) {
-      out.appendChild(emptyState('auth login spotify'));
+      out.appendChild(emptyState('讀不到帳號狀態。按「重新整理」再試一次。'));
       return;
     }
     for (const p of PROVIDERS) {
@@ -80,8 +80,8 @@ export function initAccount(root, api, con, notice) {
       row.appendChild(el('span', 'acct__state', `${st.mark} ${st.text}`));
       const detail = el('span', 'acct__detail', (lines || []).join(' · ') || '—');
       row.appendChild(detail);
-      row.appendChild(btn(st.kind === 'ok' ? '重新登入' : '登入', 'btn--ghost', () => {
-        con.run(`auth login ${p.id}`, { onExit: () => refresh() });
+      row.appendChild(btn(st.kind === 'ok' ? '重新連接' : '連接', st.kind === 'ok' ? 'btn--ghost' : '', () => {
+        con.run(`auth login ${p.id}`, { onExit: () => refresh() }, { label: `連接 ${providerName(p.id)}` });
       }));
       out.appendChild(row);
     }
@@ -90,6 +90,6 @@ export function initAccount(root, api, con, notice) {
     out.appendChild(note);
   }
 
-  root.appendChild(btn('重新讀取', 'btn--ghost', refresh));
+  root.appendChild(btn('重新整理', 'btn--ghost', refresh));
   con.idle(refresh); // 第一次進來時若有命令在跑,等它結束再讀,不要撞上它、畫成「未登入」
 }

@@ -1001,25 +1001,70 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 			t.Errorf("回聲遮罩要涵蓋 %s", f)
 		}
 	}
-	// 設計規格 §6:全站的 --glow / --glow-text 只准在 glow budget 註解塊底下。
-	budget := strings.Index(css, "glow budget")
-	if budget < 0 {
-		t.Fatal("app.css 要有 glow budget 註解塊")
-	}
-	for _, tok := range []string{"var(--glow)", "var(--glow-text)"} {
-		if i := strings.Index(css, tok); i >= 0 && i < budget {
-			t.Errorf("%s 出現在 glow budget 註解塊之外(設計規格 §6:那就是 review finding)", tok)
+	// 視覺規格 v2 §2:v1 的「glow budget 註解塊、四處可數」退役,換成更簡單的規則——發光只有兩處:
+	// 鍵盤焦點環與進行中的 dock 頂線。逐條宣告檢查(不是「第一次出現的位置」,那個擋不住註解塊之後再加的)。
+	for _, rule := range regexp.MustCompile(`(?m)^([^{}\n]+)\{[^}]*var\(--glow[^)]*\)`).FindAllStringSubmatch(css, -1) {
+		if sel := strings.TrimSpace(rule[1]); sel != ":focus-visible" && sel != ".dock::after" {
+			t.Errorf("發光只准出現在 :focus-visible 與 .dock::after(視覺規格 v2 §2),多了:%q", sel)
 		}
+	}
+	if strings.Contains(css, "box-shadow") && regexp.MustCompile(`transition:[^;]*box-shadow`).MatchString(css) {
+		t.Error("box-shadow 不進 transition(glow 的進出只動偽元素的 opacity)")
 	}
 	// 授權 URL 約 330 字且沒有可斷點:沒有 overflow-wrap 會讓整個主窗格橫向捲。
 	if !strings.Contains(css, "overflow-wrap: anywhere") {
 		t.Error("主控台輸出要 overflow-wrap: anywhere")
 	}
-	// 七頁都要有殼層,且 rail 的每一項都是可點的連結(不再有 T5 的 is-disabled 佔位)。
-	for _, page := range []string{"console", "search", "playlists", "sync", "isrc", "account", "doctor"} {
+	// 八頁(決策 45):殼層、rail 的連結、app.js 的 PAGES 三處同一組、同一個順序(鍵位 1–8 靠這個順序);
+	// 預設落在搬家頁;主控台 / ISRC / 診斷收在「進階」但一個不少。
+	pages := []string{"move", "playlists", "sync", "search", "account", "console", "isrc", "doctor"}
+	last := -1
+	for _, page := range pages {
 		if !strings.Contains(index, `id="page-`+page+`"`) {
 			t.Errorf("殼層缺 %s 頁", page)
 		}
+		i := strings.Index(index, `href="#/`+page+`" data-page="`+page+`"`)
+		if i < 0 || i < last {
+			t.Errorf("rail 要有 %s 的連結,而且順序與 PAGES 相同", page)
+		}
+		last = i
+	}
+	if !strings.Contains(app, "const PAGES = ['"+strings.Join(pages, "', '")+"'];") {
+		t.Error("app.js 的 PAGES 要與 rail 同一組、同一個順序")
+	}
+	if !strings.Contains(app, ": 'move';") || !strings.Contains(app, "location.pathname + '#/move'") {
+		t.Error("預設路由與 token 引導後的落點都要是搬家頁")
+	}
+	if !strings.Contains(index, "<dt>1 – 8</dt>") {
+		t.Error("? 鍵位表要寫 1 – 8")
+	}
+	// label(決策 45):執行狀態列顯示頁面給的白話;沒給 label 的 fallback 仍然要過 maskSecrets(review #66 第 4 點:
+	// 重構 label 時最容易掉的就是這一行,掉了 secret 就上了每一頁都看得到的狀態列)。
+	if !strings.Contains(console, "const raw = maskSecrets(line || '(help)');") || !strings.Contains(console, "const shown = label || raw;") {
+		t.Error("run() 的顯示文字:label 優先,fallback 是 maskSecrets(line)")
+	}
+	// 命令列只在主控台頁(決策 45):CSS 看 body[data-page],showPage 負責設它;/ 先切到主控台再聚焦。
+	if !strings.Contains(css, `body:not([data-page="console"]) .dock__cmd { display: none; }`) || !strings.Contains(app, "document.body.dataset.page = name") {
+		t.Error("命令列要只在主控台頁出現")
+	}
+	if !strings.Contains(app, "document.getElementById('rail-more').open = ADVANCED.includes(name);") {
+		t.Error("路由落在進階頁時「進階」要是打開的(active 項目與鍵盤焦點不能在收合區裡;review #66 第 3 點)")
+	}
+	if !strings.Contains(app, "case '/': ev.preventDefault(); location.hash = '#/console'; input.focus(); break;") {
+		t.Error("/ 要先切到主控台再聚焦命令列(別頁的命令列是藏起來的)")
+	}
+	// 每頁的第一眼不出現命令字串(決策 45):頁標題旁的 CLI 等價命令與「空白態是一條命令」都退役。
+	common := read("js/pages/common.js")
+	if strings.Contains(common, "page__cli") || strings.Contains(common, "empty__cmd") {
+		t.Error("pageHead / emptyState 不該再把命令字串放到頁面上")
+	}
+	// 搬家頁:頁面絕不代加 --yes / --force(決策 46);Apple 當目的地要留在選單裡、不可選、說原因。
+	move := read("js/pages/move.js")
+	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
+		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
+	}
+	if !strings.Contains(move, "disabled: true") || !strings.Contains(move, "目前只能當來源") {
+		t.Error("Apple Music 當目的地要是不可選並說明原因,不是直接消失")
 	}
 	if strings.Contains(index, "is-disabled") {
 		t.Error("rail 不該還有停用的佔位項")
@@ -1108,7 +1153,6 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("命令列的 Ctrl-C 要中止(有選取文字時放行複製),並列進鍵位表")
 	}
 	// 頁面按鈕:執行中點了不呼叫 fn(頁面不先清掉自己的內容),點下去真的開跑的那一顆掛 data-pending。
-	common := read("js/pages/common.js")
 	// 比對程式碼本身,不是事件名(事件名也出現在註解裡,拿掉閘測試照樣會過;review)。
 	if !strings.Contains(common, "b.dataset.run = ''") || !strings.Contains(common, "b.dataset.pending = ''") ||
 		!strings.Contains(common, "if (slotTaken()) { document.dispatchEvent(new Event('capy:busy')); return; }") ||
@@ -1162,7 +1206,8 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// doctor 會彈系統對話框,不可以由切頁動作觸發。
 	doctor := read("js/pages/doctor.js")
-	if !strings.Contains(doctor, "emptyState('doctor')") {
+	// 空白態改成一句白話(決策 45),契約的本意不變:初始化時只畫空白態,go() 只掛在按鈕上。
+	if !strings.Contains(doctor, "root.appendChild(idle);") || strings.Contains(doctor, "\n  go();") || strings.Contains(doctor, "con.idle(go)") {
 		t.Error("診斷頁要先畫空白態,由使用者按鈕觸發")
 	}
 	// 鍵位表列出來的鍵要真的有實作,且表開著時單鍵不換頁。

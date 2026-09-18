@@ -1,17 +1,17 @@
 // search.js:#/search —— 表單組出 capy search,結果表加一個「播放」列動作(play --id 是精確命中、不再搜尋)。
-import { el, quote, btn, field, input, select, emptyState, pageHead } from './common.js';
+import { el, quote, btn, field, input, select, providerOptions, providerName, emptyState, pageHead } from './common.js';
 import { renderTable } from '../table.js';
 
 export function initSearch(root, api, con, notice, providers) {
-  pageHead(root, '搜尋', 'search <關鍵字>');
+  pageHead(root, '搜尋', '在平台上找歌,找到了可以直接播。');
   const q = input('sans', '五月天 派對動物');
-  const prov = select(providers.list, providers.current);
-  const limit = el('input', 'in in--mono');
+  const prov = select(providerOptions(providers.list), providers.current);
+  const limit = el('input', 'in');
   limit.type = 'number';
   limit.min = '1';
   limit.value = '10';
   const bar = el('div', 'form-row');
-  bar.append(field('關鍵字', q), field('平台', prov), field('結果數', limit));
+  bar.append(field('關鍵字', q, true), field('平台', prov), field('結果數', limit));
   const out = el('div', 'page__out');
 
   const go = () => {
@@ -21,8 +21,8 @@ export function initSearch(root, api, con, notice, providers) {
     const n = Math.max(1, Number(limit.value) || 10); // 輸入框可以被清空,min 只在原生送出時驗
     con.run(`search ${quote(text)} --provider ${prov.value} --limit ${n}`, {
       onTable: (header, rows) => out.replaceChildren(resultTable(header, rows, prov.value, con)),
-      onExit: (code) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState('search <關鍵字>')); },
-    });
+      onExit: (code, msg) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState(msg || '沒有找到。換個關鍵字試試。')); },
+    }, { label: `在 ${providerName(prov.value)} 找「${text}」` });
   };
   const goBtn = btn('搜尋', 'btn--primary', go);
   bar.appendChild(goBtn);
@@ -32,7 +32,7 @@ export function initSearch(root, api, con, notice, providers) {
     goBtn.click(); // 走按鈕那條路:執行中會被擋下並說明,不會先把目前的結果清掉
   });
   root.append(bar, out);
-  out.appendChild(emptyState('search <關鍵字>'));
+  out.appendChild(emptyState('輸入歌名或歌手,按「搜尋」。'));
   q.focus();
 }
 
@@ -46,7 +46,7 @@ function resultTable(header, rows, prov, con) {
     const td = el('td', 'row-actions');
     const id = rows[i][0];
     // local 的 id 是 <device_id>/<檔名>,含空白是常態:不 quote 會被 splitArgs 切斷(review #62)。
-    td.appendChild(btn('播放', 'btn--ghost', () => con.run(`play --id ${quote(id)} --provider ${prov}`)));
+    td.appendChild(btn('播放', 'btn--ghost', () => con.run(`play --id ${quote(id)} --provider ${prov}`, {}, { label: `播放「${rows[i][1] || id}」` })));
     tr.appendChild(td);
   });
   wrap.appendChild(t);
