@@ -44,7 +44,7 @@ export function initSync(root, api, con, notice, providers) {
   for (const [verb, text, label] of VERBS) acts.appendChild(btn(text, verb === 'sync' ? 'btn--primary' : '', () => run(verb, label)));
 
   root.append(bar, acts,
-    el('p', 'page__note', '「去除重複」不分平台:它整理的是 capy 保管的那一份;清單留空時會讓你挑一個。要把清單搬到另一個平台,請到「搬家」。'),
+    el('p', 'page__note', '「去除重複」整理的是 capy 保管的那一份(不分平台);上面選的平台只決定這次去檢查哪個平台上的重複——沒選到的平台這次不會檢查。清單留空時會讓你挑一個。要把清單搬到另一個平台,請到「搬家」。'),
     out);
   out.appendChild(emptyState('選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。'));
 

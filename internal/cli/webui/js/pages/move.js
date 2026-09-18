@@ -24,6 +24,18 @@ export function initMove(root, api, con, notice, providers) {
   const to = select(providers.list.map((id) => (id === 'apple'
     ? { value: id, label: `${providerName(id)}(目前只能當來源)`, disabled: true }
     : { value: id, label: providerName(id) })), 'spotify');
+  // 來源選了的平台,在目的地那邊不可選(migrate 沒有 from == to 的擋門,同平台複製一份不是「搬家」;review #67)。
+  const why = new Map([...to.options].map((o) => [o.value, o.textContent]));
+  const syncTo = () => {
+    for (const o of to.options) {
+      const taken = o.value === from.value;
+      o.disabled = taken || o.value === 'apple';
+      o.textContent = taken ? `${providerName(o.value)}(來源已經選了它)` : why.get(o.value);
+    }
+    if (to.selectedOptions[0]?.disabled) to.value = [...to.options].find((o) => !o.disabled)?.value || '';
+  };
+  from.addEventListener('change', syncTo);
+  syncTo();
   const name = input('sans', '清單名稱,例如:公路旅行(留空會讓你挑)');
   const form = el('div', 'form-row');
   form.append(field('從', from), field('搬到', to), field('哪一個清單', name, true));
@@ -34,9 +46,9 @@ export function initMove(root, api, con, notice, providers) {
     const n = name.value.trim() ? ' ' + quote(name.value) : '';
     con.run(`migrate${n} --from ${from.value} --to ${to.value}${dry ? ' --dry-run' : ''}`, {
       onTable: (h, r) => out.replaceChildren(wrap(h, r)),
-      onExit: (code, msg) => {
-        if (code === 1 || code === 3) out.appendChild(el('p', 'page__warn', msg || ''));
-        else if (code === 0 && !out.firstChild) out.appendChild(emptyState('沒有需要搬的歌:目的地已經都有了。'));
+      onExit: (code, msg) => { // exit 2(清單名對到多個、在確認按了取消)也要說,不然剛按完什麼都沒長出來(review #67)
+        if (code !== 0) { if (msg) out.appendChild(el('p', 'page__warn', msg)); }
+        else if (!out.firstChild) out.appendChild(emptyState('沒有需要搬的歌:目的地已經都有了。'));
       },
     }, { label: dry ? '看看會搬哪些歌' : `把清單搬到 ${providerName(to.value)}` });
   };

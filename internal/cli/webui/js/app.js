@@ -99,7 +99,11 @@ function showPage(name) {
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
   for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
   // 人在進階頁時那一段一定是打開的(active 項目與焦點不能落在收合區裡;review #66);離開就收起來。
-  document.getElementById('rail-more').open = ADVANCED.includes(name);
+  // 收起來之前,焦點若還在裡面就先搬到新的 active 項目:不然它會掉回 <body>,鍵盤使用者的位置就沒了(review #67)。
+  const more = document.getElementById('rail-more');
+  const open = ADVANCED.includes(name);
+  if (!open && more.open && more.contains(document.activeElement)) document.querySelector(`.rail__item[data-page="${name}"]`)?.focus();
+  more.open = open;
 }
 
 function route() {

@@ -1047,8 +1047,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, `body:not([data-page="console"]) .dock__cmd { display: none; }`) || !strings.Contains(app, "document.body.dataset.page = name") {
 		t.Error("命令列要只在主控台頁出現")
 	}
-	if !strings.Contains(app, "document.getElementById('rail-more').open = ADVANCED.includes(name);") {
-		t.Error("路由落在進階頁時「進階」要是打開的(active 項目與鍵盤焦點不能在收合區裡;review #66 第 3 點)")
+	if !strings.Contains(app, "const open = ADVANCED.includes(name);") || !strings.Contains(app, "more.open = open;") ||
+		!strings.Contains(app, "if (!open && more.open && more.contains(document.activeElement))") {
+		t.Error("「進階」跟著路由開合:進去要打開(review #66 第 3 點),收起來之前把還在裡面的焦點搬到新的 active 項目(review #67)")
+	}
+	// 「去除重複」的說明要留著警告那一半:--provider 沒選到的平台這次不會檢查(review #67;會移除曲目的路徑不可以只說讓人安心的半句)。
+	if !strings.Contains(read("js/pages/sync.js"), "沒選到的平台這次不會檢查") {
+		t.Error("同步頁「去除重複」的說明要講明沒選到的平台這次不會檢查")
 	}
 	if !strings.Contains(app, "case '/': ev.preventDefault(); location.hash = '#/console'; input.focus(); break;") {
 		t.Error("/ 要先切到主控台再聚焦命令列(別頁的命令列是藏起來的)")
