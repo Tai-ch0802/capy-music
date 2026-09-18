@@ -223,19 +223,49 @@ await scenario('7', async () => {
   check(e?.[1] !== '已中止' && cmdValue === '', `做完的命令不可以當成中止:${e} / 預填「${cmdValue}」`);
 });
 
-// 8. 播放控制佔著槽(hold):run() 要擋、idle() 要等。
+// 8. 播放控制(quiet):同一個閘、idle() 要等;不畫區塊;卡住超過 0.8 秒要亮狀態列、而且中止得了(review #65 第 1 點)。
 await scenario('8', async () => {
   reset();
+  const bar = globalThis.document.getElementById('busy');
+  bar.hidden = true;
+  const blocksBefore = con.root.children.length;
   const [g, release] = gate();
-  const held = con.hold(() => g);
+  script = { play: { gate: g } };
+  const p = con.run('play', {}, { quiet: true });
+  await tick(5);
   const r = await con.run('x');
-  check(r?.[2] === 'busy' && !calls.includes('x'), '播放控制佔著槽時 run() 要就地擋下');
+  check(r?.[2] === 'busy' && !calls.includes('x'), '播放控制在跑時 run() 要就地擋下');
   let ran = false;
   con.idle(() => { ran = true; });
   check(!ran, 'idle() 要等播放控制結束');
+  check(bar.hidden === true, '短的播放控制不亮狀態列');
+  check(globalThis.document.body.dataset.slot === '' && !('busy' in globalThis.document.body.dataset), '佔槽當下就標 data-slot,看得到的 data-busy 要等 0.8 秒');
+  await tick(900);
+  check(bar.hidden === false && 'busy' in globalThis.document.body.dataset, '卡住超過 0.8 秒要亮狀態列');
+  await con.stop();
+  check(cancels.length === 1, `卡住的播放控制要中止得了:${cancels}`);
   release();
-  await held;
+  await p;
   check(ran, '播放控制結束後 idle() 要跑');
+  check(con.root.children.length === blocksBefore, '播放控制不在主控台畫區塊');
+});
+
+// 8b. 兩段式中止的警告過期:按鈕與活動列都要還原,別留著一句看起來還在等確認的警告(review #65 第 2 點)。
+await scenario('8b', async () => {
+  reset();
+  const [g, release] = gate();
+  script = { w: { gate: g } };
+  const p = con.run('w');
+  await tick(5);
+  con.activity('讀取 Drive…\n');
+  con.wrote = true;
+  await con.stop();
+  const act = globalThis.document.getElementById('busy-act');
+  check(act.textContent.includes('寫'), '已答應寫入時第一次按中止要先警告');
+  await tick(5200);
+  check(!con.armed && act.textContent === '讀取 Drive…', `警告過期後活動列要還原成最後一行:「${act.textContent}」`);
+  release();
+  await p;
 });
 
 // 9. 被伺服器拒絕(別的分頁佔著槽):說一句,並回報 refused 讓命令列把那行還給使用者。

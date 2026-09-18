@@ -1,5 +1,5 @@
 // player.js:dock 的正在播放列。每 2 秒打 GET /api/now(輪詢不串流),document.hidden 時停;
-// 控制鈕不另做端點,直接 POST /api/run 跑既有命令(決策 42)。
+// 控制鈕不另做端點,跑既有命令(決策 42):走 Console.run 的 quiet 模式,跟其他命令共用同一個序列槽、閘與中止。
 // POLL_MS 要大於伺服器的 webNowWait(2 s):相等的話單飛的 TryLock 幾乎每兩輪就固定失敗一次。
 const POLL_MS = 2500;
 // 上一份快照超過這麼久沒更新才算失聯。用時間而不是「連續幾次 stale」:State 穩定超過 webNowWait 時
@@ -11,23 +11,10 @@ function mmss(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-// lastExit:整條 SSE 裡的 exit 事件(沒有 = null)。
-function lastExit(sse) {
-  let ex = null;
-  for (const ln of sse.split('\n')) {
-    if (!ln.startsWith('data: ')) continue;
-    try {
-      const ev = JSON.parse(ln.slice(6));
-      if (ev.type === 'exit') ex = ev;
-    } catch (_) { /* 不完整的一行 */ }
-  }
-  return ex;
-}
-
 export class Player {
   constructor(root, api, notice, con) {
     this.root = root; this.api = api; this.notice = notice;
-    this.con = con; // 控制命令也佔伺服器的序列槽:經 con.hold() 讓主控台與頁面都知道
+    this.con = con; // 控制命令也佔伺服器的序列槽:走 con.run(quiet),同一個閘、同一顆中止
     this.timer = null; this.fails = 0;
     this.line = root.querySelector('#now-line');
     this.root.querySelectorAll('[data-cmd]').forEach((b) => {
@@ -103,32 +90,15 @@ export class Player {
     this.control(`vol ${Math.min(100, Math.max(0, dev.volume_pct + delta))}`);
   }
 
-  // 控制走 /api/run:序列槽忙碌時會 409,照實說,不假裝按了有效。
+  // 控制走 con.run 的 quiet 模式:同一個序列槽、同一個閘、同一顆中止,只是不畫區塊,卡住超過 0.8 秒才亮狀態列。
+  // 以前自己打 /api/run 再 body.cancel():關連線 = 伺服器把命令當成分頁關了而取消(自我取消);改成讀完之後
+  // 又因為沒有中止路徑,卡在等 token 鎖時整個介面會鎖死到重啟(review #65 第 1 點)。
   async control(cmd) {
-    if (this.con.running) { this.notice('正在執行別的命令:等它結束,或按「中止」'); return; }
-    if (this.con.held) return; // 上一個控制還在跑(連按兩下):第二下不送,送了也只是 409
-    const text = await this.con.hold(async () => {
-      try {
-        const r = await this.api.fetch('/api/run', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line: cmd }),
-        });
-        if (!r.ok) {
-          let msg = r.statusText;
-          try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
-          this.notice(msg);
-          return null;
-        }
-        // 一定要讀完:半路丟掉串流 = 關掉連線 = 伺服器當成「分頁關了」而取消這個命令(TestWebDisconnectCancelsJobAndPrompt
-        // 釘住的行為)。以前這裡直接取消串流,瀏覽器約 1ms 就關連線,Spotify 的暫停 / 下一首幾乎都被自己腰斬。
-        return await r.text();
-      } catch (e) {
-        this.notice('播放控制沒送到:' + e.message);
-        return null;
-      }
-    });
-    if (text == null) return;
-    const ex = lastExit(text); // 控制命令的輸出不進主控台;失敗(沒有作用中的裝置、授權過期…)要說
-    if (ex && ex.code !== 0) this.notice(`${cmd}:${(ex.message || `exit ${ex.code}`).replace(/^Error: /, '')}`);
-    this.tick(); // 命令已經跑完,立刻再輪詢一次,不等下一個 2.5 秒
+    if (this.con.running) { // 連按兩下的第二下不必說話;別的命令在跑才說
+      if (!this.con.quiet) this.notice('正在執行別的命令:等它結束,或按「中止」');
+      return;
+    }
+    const [code] = await this.con.run(cmd, {}, { quiet: true }); // 失敗的說明由 Console.report 負責
+    if (code !== -1) this.tick(); // 命令已經跑完,立刻再輪詢一次,不等下一個 2.5 秒
   }
 }

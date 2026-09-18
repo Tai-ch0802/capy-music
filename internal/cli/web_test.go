@@ -1053,7 +1053,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// 一次一個:進行中再叫 run() 要在碰任何狀態之前就地擋下。以前照送、吃 409,被擋那一次的收尾會把進行中
 	// 那次的 job / hooks 清掉(中止、提示回答、頁面結果全失效;連點兩下就撞到)。
 	run := between("async run(", "  idle(fn) {")
-	guard, mutate := strings.Index(run, "if (this.running || this.held) {"), strings.Index(run, "this.running = true")
+	guard, mutate := strings.Index(run, "if (this.running) {"), strings.Index(run, "this.running = true")
 	if guard < 0 || mutate < 0 || guard > mutate || !strings.Contains(run[guard:mutate], "return busy;") {
 		t.Error("run() 開頭要先擋掉進行中的第二次呼叫(在設 running / job / hooks 之前就 return)")
 	}
@@ -1126,9 +1126,14 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 			t.Errorf("%s 的自動讀取要用 con.idle(fn)", name)
 		}
 	}
-	// 播放控制要把串流讀完:半路 cancel = 關連線 = 伺服器把命令當成分頁關了而取消(瀏覽器約 1ms 就關)。
-	if strings.Contains(player, "r.body.cancel(") || !strings.Contains(player, "await r.text()") {
-		t.Error("player.control() 不可以丟掉串流,要讀到 exit")
+	// 播放控制走 con.run 的 quiet 模式:自己打 /api/run 會繞過閘與中止——以前 body.cancel() 讓命令自我取消,
+	// 改成讀完之後又因為沒有中止路徑,卡在等 token 鎖時整個介面鎖死(review #65 第 1 點;行為見 TestWebConsoleBehaviour)。
+	if strings.Contains(player, "fetch('/api/run'") || !strings.Contains(player, "this.con.run(cmd, {}, { quiet: true })") {
+		t.Error("player.control() 要走 con.run(quiet),不可以自己打 /api/run")
+	}
+	// 佔槽(閘、aria-disabled)當下就做;看得到的調暗與狀態列跟著 busyOn(播放控制過 QUIET_MS 才亮)。
+	if !strings.Contains(console, "document.body.dataset.slot = ''") || !strings.Contains(common, "document.body.hasAttribute('data-slot')") {
+		t.Error("頁面按鈕的閘要看 body[data-slot](播放控制也算)")
 	}
 	// 狀態列的樣子:hidden 要真的藏得住(display:flex 會蓋掉 UA 的 [hidden])、脈衝在減少動態時改靜態。
 	if !strings.Contains(css, ".dock__busy[hidden] { display: none; }") || !strings.Contains(css, "body[data-busy] .dock::after { opacity: 1; }") {

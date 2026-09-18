@@ -174,9 +174,9 @@ body[data-busy] .dock { border-top-color: var(--accent); }
 @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
 /* 中止鈕不讓出寬度:CJK 會在任兩字之間斷行,擠一下「中止」就變成上下兩行;讓命令與活動說明去縮、去省略。 */
 .dock__busy .btn { flex: none; white-space: nowrap; }
-/* 有命令在跑(或播放控制佔著槽)時,其他會發起命令的按鈕調暗(點了由 app.js 說明,不排隊);真的開跑的那一顆掛 ●。
-   aria-disabled 由 Console 同步掛上,輔助技術也知道它們現在按了沒用。 */
-body[data-busy] [data-run], body[data-held] [data-run] { opacity: .45; cursor: progress; }
+/* 有命令在跑時,其他會發起命令的按鈕調暗(點了由 app.js 說明,不排隊);真的開跑的那一顆掛 ●。
+   aria-disabled 由 Console 在佔槽的當下就掛上(播放控制也算),調暗則跟著狀態列(播放控制過 0.8 秒才亮)。 */
+body[data-busy] [data-run] { opacity: .45; cursor: progress; }
 body[data-busy] [data-run][data-pending] { opacity: 1; }
 /* ● 是裝飾:第二個 content 是替代文字語法(空字串 = 不進無障礙名稱),不支援的瀏覽器會退回第一個。 */
 [data-run][data-pending]::before { content: '● '; content: '● ' / ''; color: var(--accent); animation: pulse var(--dur-3) ease-in-out infinite alternate; }
@@ -191,7 +191,7 @@ body[data-busy] [data-run][data-pending] { opacity: 1; }
 .btn--primary { border-color: var(--accent); color: var(--accent); }
 .btn--ghost { color: var(--muted); }
 .btn--danger { color: var(--danger); border-color: var(--danger); } /* 設計規格 §8:危險 = 次要框改 --danger,不發光、不填色 */
-.btn:disabled, .btn[aria-disabled="true"] { opacity: .5; cursor: default; }
+.btn:disabled, #cancel[aria-disabled="true"] { opacity: .5; cursor: default; } /* [data-run] 的調暗看 body[data-busy],不看 aria-disabled */
 
 /* ── glow budget(設計規格 §6:全站只有這個註解塊能出現 --glow / --glow-text,之外再出現就是 review finding)── */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: var(--glow); }

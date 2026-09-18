@@ -225,6 +225,14 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	// WithoutCancel 保留 ctx 的值(oauth2.HTTPClient),只拿掉取消。
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), refreshTimeout)
 	defer cancel()
+	// 送出後才到的取消要等 refresh 回來才生效(終端機連按 Ctrl-C 也一樣,最多 refreshTimeout):說一聲為什麼
+	// 沒有馬上停,不然使用者只會以為當掉了(review #65)。web 的主控台、終端機都看得到。w 先拿好,別在
+	// AfterFunc 的 goroutine 裡讀可被替換的全域變數。
+	w := LockStderr
+	stopNote := context.AfterFunc(s.ctx, func() {
+		fmt.Fprintf(w, "正在換發 %s 的登入 token:請求已經送出,半路放棄會讓登入失效,等它回來(最多 %v)…\n", providerOf(s.key), refreshTimeout)
+	})
+	defer stopNote()
 	// 只帶 RT 進去:oauth2 視為無效 token,立刻打 refresh。
 	tok, err := s.conf.TokenSource(rctx, &oauth2.Token{RefreshToken: cur.RefreshToken}).Token()
 	if err != nil {
