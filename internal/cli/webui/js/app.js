@@ -7,6 +7,7 @@ import { initPlaylists } from './pages/playlists.js';
 import { initSync } from './pages/sync.js';
 import { initAccount } from './pages/account.js';
 import { initDoctor } from './pages/doctor.js';
+import { initMove } from './pages/move.js';
 
 export const api = {
   token: '',
@@ -22,7 +23,7 @@ function bootToken() {
   if (m) {
     try { sessionStorage.setItem('capy.token', m[1]); } catch (_) { /* 私密視窗:留在記憶體 */ }
     api.token = m[1];
-    history.replaceState(null, '', location.pathname + '#/console');
+    history.replaceState(null, '', location.pathname + '#/move');
     return;
   }
   try { api.token = sessionStorage.getItem('capy.token') || ''; } catch (_) { api.token = ''; }
@@ -54,7 +55,7 @@ bootToken();
 const con = new Console(document.getElementById('console'), api, notice);
 const input = document.getElementById('cmd');
 const runBtn = document.getElementById('run');
-const BUSY_HINT = '正在執行別的命令:等它結束,或按「中止」(命令列有焦點時 Ctrl-C)';
+const BUSY_HINT = '還有事情在跑:等它結束,或按底部的「中止」';
 
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
 // 執行中命令列照樣可以打字(設計規格 §5 / §10):Enter 只說明、不排隊、不並行,打好的那一行留著。
@@ -85,28 +86,38 @@ input.addEventListener('keydown', (ev) => {
 runBtn.addEventListener('click', submit);
 document.addEventListener('capy:busy', () => notice(BUSY_HINT)); // 頁面按鈕在執行中被按(common.js btn)
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
-// ── 路由:七頁,#/<page>[/<arg>];每頁第一次到達時才初始化 ──
+// ── 路由:八頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–8;
+// 預設落在搬家(決策 45),後三頁收在「進階」。
 const providers = { list: ['spotify', 'apple', 'local'], current: 'spotify' };
-const PAGES = ['console', 'search', 'playlists', 'sync', 'isrc', 'account', 'doctor'];
+const PAGES = ['move', 'playlists', 'sync', 'search', 'account', 'console', 'isrc', 'doctor'];
+const ADVANCED = ['console', 'isrc', 'doctor'];
 const ready = new Set();
 let isrcPage = null;
 
 function showPage(name) {
+  document.body.dataset.page = name; // 命令列只在主控台頁(CSS 看這個屬性)
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
   for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
+  // 人在進階頁時那一段一定是打開的(active 項目與焦點不能落在收合區裡;review #66);離開就收起來。
+  // 收起來之前,焦點若還在裡面就先搬到新的 active 項目:不然它會掉回 <body>,鍵盤使用者的位置就沒了(review #67)。
+  const more = document.getElementById('rail-more');
+  const open = ADVANCED.includes(name);
+  if (!open && more.open && more.contains(document.activeElement)) document.querySelector(`.rail__item[data-page="${name}"]`)?.focus();
+  more.open = open;
 }
 
 function route() {
   // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 isrc 頁(review #61)。
   const m = /^#\/([a-z]+)(?:\/([^/?#]+))?$/.exec(location.hash || '');
-  const name = m && PAGES.includes(m[1]) ? m[1] : 'console';
+  const name = m && PAGES.includes(m[1]) ? m[1] : 'move';
   const arg = m && m[2] ? decodeURIComponent(m[2]) : '';
   showPage(name);
   const root = document.getElementById('page-' + name);
   if (!ready.has(name)) {
     ready.add(name);
     const args = [root, api, con, notice, providers];
-    if (name === 'search') initSearch(...args);
+    if (name === 'move') initMove(...args);
+    else if (name === 'search') initSearch(...args);
     else if (name === 'playlists') initPlaylists(...args);
     else if (name === 'sync') initSync(...args);
     else if (name === 'account') initAccount(...args);
@@ -141,7 +152,7 @@ document.addEventListener('keydown', (ev) => {
   if (n) { location.hash = '#/' + n; return; }
   switch (ev.key) {
     case '?': ev.preventDefault(); keysDialog.showModal(); break;
-    case '/': ev.preventDefault(); input.focus(); break;
+    case '/': ev.preventDefault(); location.hash = '#/console'; input.focus(); break; // 命令列只在主控台頁
     case 'r': player.start(); break;
     case ' ': ev.preventDefault(); player.control(player.root.dataset.playing === 'true' ? 'pause' : 'play'); break;
     case 'n': player.control('next'); break;

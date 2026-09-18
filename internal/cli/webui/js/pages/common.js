@@ -1,5 +1,9 @@
-// common.js:頁面共用的小工具。頁面本身不打 /api/run 以外的東西——表單只負責組出一條 capy 命令
-// (設計規格 §5),輸出的呈現靠 Console 的 hooks。
+// common.js:頁面共用的小工具。頁面本身不打 /api/run 以外的東西——表單只負責組出一條 capy 命令,
+// 輸出的呈現靠 Console 的 hooks。頁面的第一眼不出現命令字串(決策 45):按鈕說人話,命令原文在主控台。
+
+// 平台的顯示名稱:文字就好,不用官方標誌(決策 48)。
+const PROVIDER_NAMES = { spotify: 'Spotify', apple: 'Apple Music', local: '本機曲庫', google: 'Google Drive' };
+export const providerName = (id) => PROVIDER_NAMES[id] || id;
 export const el = (tag, cls, text) => {
   const x = document.createElement(tag);
   if (cls) x.className = cls;
@@ -33,8 +37,8 @@ export function btn(label, cls, fn) {
   return b;
 }
 
-export function field(labelText, node) {
-  const wrap = el('label', 'field');
+export function field(labelText, node, grow) {
+  const wrap = el('label', grow ? 'field field--grow' : 'field');
   wrap.appendChild(el('span', 'field__label', labelText));
   wrap.appendChild(node);
   return wrap;
@@ -50,46 +54,33 @@ export function input(kind, placeholder, value) {
   return i;
 }
 
+// select:options 可以是字串,或 { value, label, disabled }(不可選的要留著並說原因,不是直接消失)。
 export function select(options, value) {
-  const s = el('select', 'in in--mono');
+  const s = el('select', 'in');
   for (const o of options) {
-    const op = el('option', null, o);
-    op.value = o;
+    const v = typeof o === 'string' ? { value: o, label: o } : o;
+    const op = el('option', null, v.label);
+    op.value = v.value;
+    if (v.disabled) op.disabled = true;
     s.appendChild(op);
   }
   if (value) s.value = value;
   return s;
 }
 
-// emptyState:空白態本身就是下一步(設計規格 §10)——點了把命令填進命令列,不執行。
-export function emptyState(cmd) {
-  const p = el('p', 'empty');
-  const a = el('button', 'empty__cmd', '> ' + cmd);
-  a.type = 'button';
-  a.addEventListener('click', () => {
-    const i = document.getElementById('cmd');
-    i.value = cmd;
-    i.focus();
-  });
-  p.appendChild(a);
-  return p;
+// providerOptions:平台下拉,顯示名稱、送出 id。
+export const providerOptions = (ids) => ids.map((id) => ({ value: id, label: providerName(id) }));
+
+// emptyState:空白態是一句白話,告訴人下一步是什麼(主控台的空白態是水豚)。
+export function emptyState(text) {
+  return el('p', 'empty', text);
 }
 
-// pageHead:標題 + 該頁的 CLI 等價命令(點了填進命令列、不執行)。
-export function pageHead(root, title, cliCmd) {
+// pageHead:頁標題 + 一句白話說明。
+export function pageHead(root, title, lead) {
   const h = el('div', 'page__head');
   h.appendChild(el('h2', 'page__title', title));
-  if (cliCmd) {
-    const c = el('button', 'page__cli', cliCmd);
-    c.type = 'button';
-    c.title = '填進命令列';
-    c.addEventListener('click', () => {
-      const i = document.getElementById('cmd');
-      i.value = cliCmd;
-      i.focus();
-    });
-    h.appendChild(c);
-  }
+  if (lead) h.appendChild(el('p', 'page__lead', lead));
   root.appendChild(h);
   return h;
 }

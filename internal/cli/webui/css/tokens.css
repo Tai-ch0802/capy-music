@@ -1,27 +1,40 @@
-/* GeekGreen(2026-09-17-web-mode-design.md §3):深色單主題,不做淺色 */
+/* 視覺規格 v2(docs/superpowers/plans/2026-09-18-web-consumer-design.md §3–§7):帶綠的深色、單一主題、不做淺色(Q38)。
+   灰階全部同一個色相;對比實算的數字在規格 §3。 */
 :root {
-  --ink: #0D1117;
-  --surface: #161B22;
-  --surface-2: #1C232B;
-  --line: #2A323C;
-  --line-hi: #646E7B;
-  --accent: #3FB27F;
+  --ink: #0E1512;
+  --surface: #16201B;
+  --surface-2: #1E2A24;
+  --line: #2B3A33;      /* 裝飾線,不當控制項邊界 */
+  --line-hi: #6A7D73;   /* 控制項邊界(三層底都過 WCAG 1.4.11) */
+  --accent: #3FB27F;    /* 唯一主色 */
+  --accent-hi: #5CC596; /* 主要按鈕 hover */
   --accent-dim: #2A6E52;
   --accent-rgb: 63 178 127;
-  --text: #C9D1D9;
-  --text-hi: #E6EDF3;
-  --muted: #7D8794;
+  --text: #DCE7E0;
+  --text-hi: #F2F7F4;
+  --muted: #8DA096;
   --warn: #D9A441;
-  --danger: #ED567A;
-  --glow: 0 0 12px rgb(var(--accent-rgb) / .45);
-  --glow-text: 0 0 8px rgb(var(--accent-rgb) / .6);
-  --scan: .03;
-  --r: 0;
-  --mono: "Iosevka Fixed", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
-  --rail-w: 13.5rem;
-  --dur-2: 120ms;  /* 設計規格 §9:L1 / L2 的進出 */
-  --dur-3: 1.2s;   /* 設計規格 §9:● 脈衝 */
-  --z-scan: 40; /* 原生 <dialog> 的 showModal() 走 top layer,不必排進來 */
+  --danger: #ED567A;    /* 不放在 surface-2 上當小字(4.40) */
+  --glow: 0 0 12px rgb(var(--accent-rgb) / .45); /* 只給鍵盤焦點環與進行中的 dock 頂線 */
+  --shadow: 0 8px 24px rgb(4 12 8 / .45);        /* 帶綠的深色,只給浮起來的東西 */
+  /* 圓角只有三種:容器、控制項、主要動作鈕(膠囊) */
+  --r-lg: 16px;
+  --r: 10px;
+  --r-pill: 999px;
+  --sans: -apple-system, "SF Pro Text", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace; /* 只給主控台、ID、時長與計數 */
+  --t-12: 12px;
+  --t-14: 14px;
+  --t-16: 16px;
+  --t-20: 20px;
+  --t-28: 28px;
+  --t-40: 40px;
+  --dur-1: 120ms; /* 按壓 */
+  --dur-2: 200ms; /* hover / 選中 / 進場 */
+  --dur-3: 1.2s;  /* 脈衝 */
+  --dur-loop: 6s; /* 示意動畫一輪 */
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --rail-w: 15rem;
+  --z-dock: 20;
   color-scheme: dark;
 }

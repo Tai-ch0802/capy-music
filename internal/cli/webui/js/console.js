@@ -125,7 +125,8 @@ export class Console {
   // 命令本身照樣完整跑在 dock 裡(回聲、串流、提示、退出碼都在),頁面只是多一份結構化的複本。
   // quiet:播放控制用——同一個序列槽、同一個閘、同一顆中止,但不畫區塊(輸出不進主控台),
   // 執行狀態列過了 QUIET_MS 還沒結束才亮。
-  async run(line, hooks = {}, { quiet = false } = {}) {
+  // label:頁面給的白話(「讀取你的清單」);執行狀態列與收尾的那句話用它,命令原文留在主控台與 title(決策 45)。
+  async run(line, hooks = {}, { quiet = false, label = '' } = {}) {
     // 一次一個(決策 40 的序列槽)。進行中再叫就地擋下:不送出、不碰進行中那一次的 job / hooks。
     // 以前是照送、吃 409,而被擋的那一次收尾時會把進行中那次的 job 與 hooks 清掉——中止、提示回答、
     // 頁面結果全跟著失效;連點兩下、或跑 sync 時第一次切到帳號頁就會撞到。
@@ -135,11 +136,12 @@ export class Console {
       hooks.onExit?.(...busy);
       return busy;
     }
-    const shown = maskSecrets(line || '(help)');
+    const raw = maskSecrets(line || '(help)');
+    const shown = label || raw;
     this.running = true; this.quiet = quiet; this.job = null; this.hooks = hooks; this.ex = null;
     // quiet 的區塊不掛上主控台;有提示 / 授權連結時才掛上去(event())。
     const b = quiet ? document.createElement('article') : this.block(line || '(help)');
-    this.slotOn(shown);
+    this.slotOn(shown, raw);
     if (quiet) this.later = setTimeout(() => this.busyOn(), QUIET_MS);
     else { this.busyOn(); this.notice(''); }
     document.body.dataset.connected = 'true';
@@ -198,8 +200,9 @@ export class Console {
 
   // 佔槽(每一次都有,當下就做):頁面按鈕的閘(body[data-slot])與 aria-disabled——按了沒用這件事,
   // 輔助技術從第一刻就要知道。看得到的部分(調暗、狀態列、頂線)在 busyOn()。
-  slotOn(shown) {
+  slotOn(shown, raw) {
     this.t0 = Date.now();
+    this.barCmd.title = `${raw}(到主控台看完整輸出)`;
     this.stopping = false; this.wrote = false; this.armed = false; this.barShown = false; this.lastAct = '';
     this.barCmd.textContent = shown;
     this.barAct.textContent = '';

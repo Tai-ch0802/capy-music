@@ -10,18 +10,23 @@
 </head>
 <body data-connected="true">
 <nav class="rail" aria-label="頁面">
-  <div class="rail__brand">capy<span class="rail__cursor" aria-hidden="true">_</span></div>
-  <a class="rail__item is-active" href="#/console" data-page="console">主控台<span class="rail__key">1</span></a>
-  <a class="rail__item" href="#/search" data-page="search">搜尋<span class="rail__key">2</span></a>
-  <a class="rail__item" href="#/playlists" data-page="playlists">播放清單<span class="rail__key">3</span></a>
-  <a class="rail__item" href="#/sync" data-page="sync">同步<span class="rail__key">4</span></a>
-  <a class="rail__item" href="#/isrc" data-page="isrc">ISRC<span class="rail__key">5</span></a>
-  <a class="rail__item" href="#/account" data-page="account">帳號<span class="rail__key">6</span></a>
-  <a class="rail__item" href="#/doctor" data-page="doctor">診斷<span class="rail__key">7</span></a>
-  <div class="rail__meta"><span id="version">—</span> · <span id="default-provider">—</span></div>
+  <div class="rail__brand">capy<span>.</span></div>
+  <a class="rail__item is-active" href="#/move" data-page="move"><span class="rail__glyph" aria-hidden="true">⇄</span>搬家<span class="rail__key">1</span></a>
+  <a class="rail__item" href="#/playlists" data-page="playlists"><span class="rail__glyph" aria-hidden="true">♫</span>我的清單<span class="rail__key">2</span></a>
+  <a class="rail__item" href="#/sync" data-page="sync"><span class="rail__glyph" aria-hidden="true">↻</span>同步<span class="rail__key">3</span></a>
+  <a class="rail__item" href="#/search" data-page="search"><span class="rail__glyph" aria-hidden="true">⚲</span>搜尋<span class="rail__key">4</span></a>
+  <a class="rail__item" href="#/account" data-page="account"><span class="rail__glyph" aria-hidden="true">☺</span>帳號<span class="rail__key">5</span></a>
+  <details class="rail__more" id="rail-more">
+    <summary>進階</summary>
+    <a class="rail__item" href="#/console" data-page="console"><span class="rail__glyph" aria-hidden="true">›</span>主控台<span class="rail__key">6</span></a>
+    <a class="rail__item" href="#/isrc" data-page="isrc"><span class="rail__glyph" aria-hidden="true">#</span>ISRC 查詢<span class="rail__key">7</span></a>
+    <a class="rail__item" href="#/doctor" data-page="doctor"><span class="rail__glyph" aria-hidden="true">✓</span>診斷<span class="rail__key">8</span></a>
+  </details>
+  <div class="rail__meta"><span id="version">—</span> · 預設平台 <span id="default-provider">—</span></div>
 </nav>
 <main class="main" id="main">
-  <section class="page" id="page-console">
+  <section class="page" id="page-move"></section>
+  <section class="page" id="page-console" hidden>
     <section class="console" id="console" role="region" aria-label="主控台"></section>
   </section>
   <section class="page" id="page-search" hidden></section>
@@ -30,10 +35,13 @@
   <section class="page" id="page-account" hidden></section>
   <section class="page" id="page-doctor" hidden></section>
   <section class="page" id="page-isrc" hidden>
-    <h2 class="page__title">ISRC 查詢</h2>
+    <div class="page__head">
+      <h2 class="page__title">ISRC 查詢</h2>
+      <p class="page__lead">ISRC 是每首歌的國際編號。輸入一個,看它在三個平台上分別是哪一首。</p>
+    </div>
     <div class="isrc__bar">
       <label class="isrc__label" for="isrc-input">ISRC</label>
-      <input id="isrc-input" class="dock__input" spellcheck="false" autocomplete="off" placeholder="TWK231680790">
+      <input id="isrc-input" class="in in--mono" spellcheck="false" autocomplete="off" placeholder="TWK231680790">
       <button type="button" class="btn btn--primary" id="isrc-go">查詢</button>
     </div>
     <p class="isrc__status" id="isrc-status" role="status"></p>
@@ -73,9 +81,9 @@
     <dt>n p</dt><dd>下一首、上一首</dd>
     <dt>← →</dt><dd>前後各十秒</dd>
     <dt>+ -</dt><dd>音量升降五格</dd>
-    <dt>1 – 7</dt><dd>跳到左邊第 n 頁</dd>
-    <dt>/</dt><dd>跳到命令列</dd>
-    <dt>Ctrl-C</dt><dd>命令列有焦點、沒選取文字時:中止執行中的命令(同 dock 的「中止」)</dd>
+    <dt>1 – 8</dt><dd>跳到左邊第 n 頁(6 – 8 在「進階」裡)</dd>
+    <dt>/</dt><dd>到主控台的命令列</dd>
+    <dt>Ctrl-C</dt><dd>在主控台的命令列、沒選取文字時:中止執行中的命令(每一頁底部的「中止」鈕也一樣)</dd>
     <dt>r</dt><dd>讀不到播放狀態而停擺後,重新連上</dd>
     <dt>?</dt><dd>開這張表</dd>
     <dt>Esc</dt><dd>回到指令模式(離開輸入框)</dd>

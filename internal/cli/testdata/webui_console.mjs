@@ -268,6 +268,22 @@ await scenario('8b', async () => {
   await p;
 });
 
+// 8c. label(決策 45):執行狀態列與說明用頁面給的白話,命令原文只在 title 與主控台;秘密照樣遮。
+await scenario('8c', async () => {
+  reset();
+  const [g, release] = gate();
+  script = { 'pl list --provider spotify': { gate: g } };
+  const p = con.run('pl list --provider spotify', {}, { label: '讀取 Spotify 上的清單' });
+  await tick(5);
+  const cmd = globalThis.document.getElementById('busy-cmd');
+  check(cmd.textContent === '讀取 Spotify 上的清單', `執行狀態列要顯示白話標籤:「${cmd.textContent}」`);
+  check((cmd.title || '').includes('pl list --provider spotify'), `命令原文要留在 title:「${cmd.title}」`);
+  await con.run('x');
+  check((notices[notices.length - 1] || '').includes('讀取 Spotify 上的清單'), `被擋的說明也用白話:${JSON.stringify(notices)}`);
+  release();
+  await p;
+});
+
 // 9. 被伺服器拒絕(別的分頁佔著槽):說一句,並回報 refused 讓命令列把那行還給使用者。
 await scenario('9', async () => {
   reset();
