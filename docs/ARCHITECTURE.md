@@ -834,8 +834,10 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 ### P6 — 抽象驗證 ✅(2026-09-08 計畫與結論:docs/superpowers/plans/2026-09-08-p6-local.md)
 接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單(A1–A12)與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。**結論(T3):SPI 撐得住**——local 全走原本的能力介面、沒有特例分支,唯一的新語意是 `CapDeviceBound` + `DeviceScoped`。接下一個真實平台前先補:rename 會改 id 的平台要能回新 id(A12)、`Pushable` 要能回「推不出去」的原因而不是 CLI 猜(A10)、`friendlyErr` 第四個平台時改成 provider 自己回訊息(A2)、`Search` 正規化下沉到 `provider`(A6)。
 
-### P7 — 網頁介面(2026-09-17 計畫:docs/superpowers/plans/2026-09-17-web-mode.md;視覺規格 2026-09-17-web-mode-design.md)
+### P7 — 網頁介面(2026-09-17 計畫與結論:docs/superpowers/plans/2026-09-17-web-mode.md;視覺規格 2026-09-17-web-mode-design.md)
 **行程內、一次一個命令、接縫換成瀏覽器**(決策 40–44):T1 接縫與匯出(零行為變更)→ T2 provider 豐富欄位 + `ParseISRC` → T3a 伺服器 / 執行器 / 安全 / dock → T3b 提示橋 → T4 ISRC API + 播放面板 API → T5 七頁與視覺定稿 → T6 文件收尾 + 真帳號驗收(R-1…R-12)。T0 不當 gate(使用者定案,決策 44)。
+
+**結論(2026-09-17)**:T0–T6 的程式與文件全部進 main —— #56 計畫與視覺規格、#57 接縫與匯出(零行為變更)、#58 `Track` 豐富欄位 + `ParseISRC`、#59 伺服器 / 執行器 / 安全模型 / 主控台、#60 提示橋、#61 ISRC 與播放面板兩個直達端點、#62 七頁與視覺定稿、#63 文件收尾,以及 #64(補上 #62 review 漏修的一則:從別頁按鈕發出的命令,提示原本畫在被 hidden 的主控台頁裡)。**證實可行的那件事:互動提示不必動 huh。** 把既有的 package var 接縫整組換成「送 JSON 事件到瀏覽器、等 POST 回答」,命令本體一個位元組不改,`ExitCode` 與非 TTY 純文字契約也不動;表格靠 `ui.Table` 開頭的 `TableWriter` 選用介面整張含標題送出去。**代價**(計畫 §5):一次一個命令(`runMu`,重疊 409)、關分頁即取消、等提示時 `pull.lock` 最長握 5 分鐘(`auth login *` 放寬到 30 分鐘但不是無上限——`runMu` 壓在整個 handler 上)、`update` 後整個 `/api/run` 停用到重啟。**兩處刻意不做**:Iosevka 子集不內嵌(Q37 定案 C,退回系統 mono 堆疊)、Phosphor sprite 不 vendor(用 CLI 自己就在印的字符)。**仍在維護者手上**:R-1…R-12 真帳號驗收(計畫 §2)。這是 T6 的 gate,跑完才在標題打 ✅,跟 P5 同一個慣例:程式進 main 不等於這個階段收尾。其中 R-10 / R-11 同時是 CSP 兩家 CDN host 推定的驗收點——T4 的 smoke 沒有憑證,沒有任何封面真的被載入過。
 
 ---
 
