@@ -153,7 +153,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .block__link a { font-family: var(--mono); font-size: 13px; word-break: break-all; }
 
 /* ── dock ── */
-.dock { grid-area: dock; position: relative; background: var(--surface); border-top: 1px solid var(--line); padding: .5rem 1.25rem .75rem; display: flex; flex-direction: column; gap: .5rem; }
+.dock { grid-area: dock; min-width: 0; position: relative; background: var(--surface); border-top: 1px solid var(--line); padding: .5rem 1.25rem .75rem; display: flex; flex-direction: column; gap: .5rem; }
 .dock__now { font-family: var(--mono); font-size: 12px; color: var(--text); display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
 .dock__now[data-stale="true"] .dock__now-line { color: var(--muted); }
 .dock__now-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -172,9 +172,14 @@ body[data-busy] .dock { border-top-color: var(--accent); }
 .dock__busy-act { flex: 1; min-width: 0; color: var(--muted); font-family: var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock__busy-time { flex: none; color: var(--accent); border: 1px solid var(--accent); padding: 1px 6px; font-size: 11px; font-variant-numeric: tabular-nums; }
 @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
-/* 有命令在跑時,其他會發起命令的按鈕調暗(點了由 Console 說明,不排隊);真的開跑的那一顆掛 ● */
-body[data-busy] [data-run]:not([data-pending]) { opacity: .45; cursor: progress; }
-[data-run][data-pending]::before { content: '● '; color: var(--accent); animation: pulse var(--dur-3) ease-in-out infinite alternate; }
+/* 中止鈕不讓出寬度:CJK 會在任兩字之間斷行,擠一下「中止」就變成上下兩行;讓命令與活動說明去縮、去省略。 */
+.dock__busy .btn { flex: none; white-space: nowrap; }
+/* 有命令在跑(或播放控制佔著槽)時,其他會發起命令的按鈕調暗(點了由 app.js 說明,不排隊);真的開跑的那一顆掛 ●。
+   aria-disabled 由 Console 同步掛上,輔助技術也知道它們現在按了沒用。 */
+body[data-busy] [data-run], body[data-held] [data-run] { opacity: .45; cursor: progress; }
+body[data-busy] [data-run][data-pending] { opacity: 1; }
+/* ● 是裝飾:第二個 content 是替代文字語法(空字串 = 不進無障礙名稱),不支援的瀏覽器會退回第一個。 */
+[data-run][data-pending]::before { content: '● '; content: '● ' / ''; color: var(--accent); animation: pulse var(--dur-3) ease-in-out infinite alternate; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .dock__cmd { display: flex; gap: .5rem; align-items: center; }
 .dock__prompt { font-family: var(--mono); color: var(--accent); }

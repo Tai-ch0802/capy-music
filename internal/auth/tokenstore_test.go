@@ -527,6 +527,37 @@ func TestTokenSourceRefreshSurvivesCancelAfterSend(t *testing.T) {
 	}
 }
 
+// 取消落在 refresh 送出之前(web 在 start 事件前就按了中止、Ctrl-C 早一步):一個請求都不能送,
+// 否則會白白輪替掉 RT,對方不回時還要卡滿 refreshTimeout(送出後不吃取消,見上一個測試)。
+func TestTokenSourceCancelledBeforeSendDoesNotRefresh(t *testing.T) {
+	setTokenTest(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at1", "rt1"))
+	}))
+	defer srv.Close()
+	if err := SaveToken(testKey, staleToken("rt0")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ts, err := NewTokenSource(ctx, testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, err := ts.Token(); !errors.Is(err, context.Canceled) {
+		t.Errorf("已取消的呼叫要回 context.Canceled:%v", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("已取消就不該送 refresh(會白白輪替 RT),token 端點被打了 %d 次", n)
+	}
+	if stored, err := LoadToken(testKey); err != nil || stored.RefreshToken != "rt0" {
+		t.Errorf("keychain 要原封不動:(%+v, %v)", stored, err)
+	}
+}
+
 // Google 形狀:refresh 回應不帶 refresh_token → 沿用舊的寫回,不能寫成空字串。
 func TestTokenSourceCarriesRefreshTokenForward(t *testing.T) {
 	setTokenTest(t)

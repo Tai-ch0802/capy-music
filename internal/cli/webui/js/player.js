@@ -25,9 +25,9 @@ function lastExit(sse) {
 }
 
 export class Player {
-  constructor(root, api, notice, busy) {
+  constructor(root, api, notice, con) {
     this.root = root; this.api = api; this.notice = notice;
-    this.busy = busy || (() => false); // 主控台有命令在跑:伺服器的序列槽一定 409,先在這邊說清楚
+    this.con = con; // 控制命令也佔伺服器的序列槽:經 con.hold() 讓主控台與頁面都知道
     this.timer = null; this.fails = 0;
     this.line = root.querySelector('#now-line');
     this.root.querySelectorAll('[data-cmd]').forEach((b) => {
@@ -105,25 +105,28 @@ export class Player {
 
   // 控制走 /api/run:序列槽忙碌時會 409,照實說,不假裝按了有效。
   async control(cmd) {
-    if (this.busy()) { this.notice('正在執行別的命令:等它結束,或按「中止」'); return; }
-    let text;
-    try {
-      const r = await this.api.fetch('/api/run', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line: cmd }),
-      });
-      if (!r.ok) {
-        let msg = r.statusText;
-        try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
-        this.notice(msg);
-        return;
+    if (this.con.running) { this.notice('正在執行別的命令:等它結束,或按「中止」'); return; }
+    if (this.con.held) return; // 上一個控制還在跑(連按兩下):第二下不送,送了也只是 409
+    const text = await this.con.hold(async () => {
+      try {
+        const r = await this.api.fetch('/api/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line: cmd }),
+        });
+        if (!r.ok) {
+          let msg = r.statusText;
+          try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
+          this.notice(msg);
+          return null;
+        }
+        // 一定要讀完:半路丟掉串流 = 關掉連線 = 伺服器當成「分頁關了」而取消這個命令(TestWebDisconnectCancelsJobAndPrompt
+        // 釘住的行為)。以前這裡直接取消串流,瀏覽器約 1ms 就關連線,Spotify 的暫停 / 下一首幾乎都被自己腰斬。
+        return await r.text();
+      } catch (e) {
+        this.notice('播放控制沒送到:' + e.message);
+        return null;
       }
-      // 一定要讀完:半路丟掉串流 = 關掉連線 = 伺服器當成「分頁關了」而取消這個命令(TestWebDisconnectCancelsJobAndPrompt
-      // 釘住的行為)。以前這裡是 body.cancel(),瀏覽器約 1ms 就關連線,Spotify 的暫停 / 下一首幾乎都被自己腰斬。
-      text = await r.text();
-    } catch (e) {
-      this.notice('播放控制沒送到:' + e.message);
-      return;
-    }
+    });
+    if (text == null) return;
     const ex = lastExit(text); // 控制命令的輸出不進主控台;失敗(沒有作用中的裝置、授權過期…)要說
     if (ex && ex.code !== 0) this.notice(`${cmd}:${(ex.message || `exit ${ex.code}`).replace(/^Error: /, '')}`);
     this.tick(); // 命令已經跑完,立刻再輪詢一次,不等下一個 2.5 秒

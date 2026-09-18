@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -467,6 +469,48 @@ func TestWebExitReasonCancelled(t *testing.T) {
 	release()
 	if st := c.status(http.MethodPost, "/api/jobs/"+job.id+"/cancel", nil, nil); st != http.StatusNotFound {
 		t.Errorf("已結束的 job cancel → 404,得到 %d", st)
+	}
+}
+
+// pauseIgnoresCtx:Pause 不吃取消(同 Apple 的 osascript 走 exec.Command、沒有 ctx):卡到 release 才回 nil。
+type pauseIgnoresCtx struct {
+	*nowFake
+	entered, release chan struct{}
+}
+
+func (f *pauseIgnoresCtx) Pause(context.Context) error {
+	close(f.entered)
+	<-f.release
+	return nil
+}
+
+// TestWebExitReasonDoneWhenCommandFinishedDespiteCancel:中止落在不吃取消的那一段、命令其實做完了(exit 0):
+// reason 要是 done——回 cancelled 會讓頁面說「已中止」、還把命令預填回命令列叫人重跑(review)。【fails-before-fix】
+func TestWebExitReasonDoneWhenCommandFinishedDespiteCancel(t *testing.T) {
+	f := &pauseIgnoresCtx{nowFake: newNowFake(), entered: make(chan struct{}), release: make(chan struct{})}
+	s, c := startWeb(t)
+	swapProviderWith(t, f)
+	done := make(chan []map[string]any, 1)
+	go func() {
+		_, ev, _ := c.run(map[string]any{"args": []string{"pause"}})
+		done <- ev
+	}()
+	waitFor(t, "pause 進 provider", f.entered)
+	job := s.current()
+	if job == nil {
+		t.Fatal("要有目前 job")
+	}
+	if st := c.status(http.MethodPost, "/api/jobs/"+job.id+"/cancel", nil, nil); st != http.StatusNoContent {
+		t.Fatalf("cancel → 204,得到 %d", st)
+	}
+	close(f.release)
+	select {
+	case ev := <-done:
+		if ex := evExit(t, ev); ex["code"] != float64(0) || ex["reason"] != "done" {
+			t.Errorf("命令做完了(exit 0)就是 done,不是 cancelled:%v", ex)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("job 沒結束")
 	}
 }
 
@@ -1008,13 +1052,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// 一次一個:進行中再叫 run() 要在碰任何狀態之前就地擋下。以前照送、吃 409,被擋那一次的收尾會把進行中
 	// 那次的 job / hooks 清掉(中止、提示回答、頁面結果全失效;連點兩下就撞到)。
-	run := between("async run(", "async idle()")
-	guard, mutate := strings.Index(run, "if (this.running) {"), strings.Index(run, "this.running = true")
-	if guard < 0 || mutate < 0 || guard > mutate || !strings.Contains(run[guard:mutate], "return;") {
+	run := between("async run(", "  idle(fn) {")
+	guard, mutate := strings.Index(run, "if (this.running || this.held) {"), strings.Index(run, "this.running = true")
+	if guard < 0 || mutate < 0 || guard > mutate || !strings.Contains(run[guard:mutate], "return busy;") {
 		t.Error("run() 開頭要先擋掉進行中的第二次呼叫(在設 running / job / hooks 之前就 return)")
 	}
 	// 被擋、409 / 401 / 503 也要通知發起的頁面,否則那一頁永遠不會收尾。
-	if !strings.Contains(run, "onExit?.(-1") || !strings.Contains(run, "this.ex = [-1, msg, 'refused']") {
+	if !strings.Contains(run, "[-1, '另一個命令執行中', 'busy']") || !strings.Contains(run, "hooks.onExit?.(...busy)") || !strings.Contains(run, "this.ex = [-1, msg, 'refused']") {
 		t.Error("被擋與被伺服器拒絕都要以 -1 通知頁面的 onExit,否則那一頁會永久空白")
 	}
 	// onExit 要等串流收尾(伺服器已放開序列槽、running 已歸零)才叫:帳號頁在 onExit 裡接著跑 auth status,
@@ -1036,12 +1080,15 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(console, "if (this.stopping) this.cancel()") {
 		t.Error("start 事件到達時,若已經按過中止要立刻送 cancel")
 	}
-	if !strings.Contains(run, "if (ex[2] === 'cancelled') ex = [ex[0], '已中止', ex[2]]") {
+	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], '已中止', ex[2]]") {
 		t.Error("中止的命令交給頁面的訊息要是「已中止」,不是 context canceled 那串內部錯誤")
 	}
 	// 中止中的按鈕不可以用 disabled:disabled 會把焦點丟到 body,鍵盤使用者失去位置、收尾也交不回命令列。
 	if strings.Contains(console, "stopBtn.disabled") || !strings.Contains(console, "document.activeElement === this.stopBtn") {
 		t.Error("中止鈕用 aria-disabled 擋重複按,收尾時把焦點交回命令列")
+	}
+	if !strings.Contains(console, "if (b.querySelector('table')) this.wrote = true;") {
+		t.Error("區塊有變更表又按了肯定,要記下「已答應寫入」(兩段式中止靠它)")
 	}
 	if !strings.Contains(between("async stop() {", "async cancel() {"), "this.wrote && !this.armed") {
 		t.Error("已答應寫入之後的中止要按第二次確認(計畫 Q24 的半套狀態)")
@@ -1062,13 +1109,21 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// 頁面按鈕:執行中點了不呼叫 fn(頁面不先清掉自己的內容),點下去真的開跑的那一顆掛 data-pending。
 	common := read("js/pages/common.js")
-	if !strings.Contains(common, "b.dataset.run = ''") || !strings.Contains(common, "b.dataset.pending = ''") || !strings.Contains(common, "capy:busy") {
-		t.Error("btn() 要標 data-run、執行中擋下點擊並說明、標出正在跑的那一顆")
+	// 比對程式碼本身,不是事件名(事件名也出現在註解裡,拿掉閘測試照樣會過;review)。
+	if !strings.Contains(common, "b.dataset.run = ''") || !strings.Contains(common, "b.dataset.pending = ''") ||
+		!strings.Contains(common, "if (slotTaken()) { document.dispatchEvent(new Event('capy:busy')); return; }") ||
+		!strings.Contains(app, "document.addEventListener('capy:busy'") {
+		t.Error("btn() 要標 data-run、執行中擋下點擊並說明(app.js 要接 capy:busy)、標出正在跑的那一顆")
+	}
+	// 搜尋框的 Enter 走按鈕那條路,執行中才會被同一道閘擋下(不先清掉結果)。
+	if !strings.Contains(read("js/pages/search.js"), "goBtn.click()") {
+		t.Error("搜尋框 Enter 要走按鈕(btn 的閘)")
 	}
 	// 頁面第一次進來的自動讀取:有命令在跑就等它結束,不要撞上它、畫成「未登入」/「沒有清單」。
 	for _, name := range []string{"js/pages/account.js", "js/pages/playlists.js"} {
-		if !strings.Contains(read(name), "con.idle().then(") {
-			t.Errorf("%s 的自動讀取要等 con.idle()", name)
+		// idle(fn) 而不是 await idle() 再 run():兩頁同時等時,後者兩頁都看到空檔、第二頁撞閘(review;行為見 TestWebConsoleBehaviour)。
+		if !strings.Contains(read(name), "con.idle(") || strings.Contains(read(name), "con.idle().then(") {
+			t.Errorf("%s 的自動讀取要用 con.idle(fn)", name)
 		}
 	}
 	// 播放控制要把串流讀完:半路 cancel = 關連線 = 伺服器把命令當成分頁關了而取消(瀏覽器約 1ms 就關)。
@@ -1081,6 +1136,19 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".dock__busy-dot") {
 		t.Error("prefers-reduced-motion 要把 ● 脈衝改成靜態")
+	}
+	// dock 是 1fr 軌道裡的 grid item:沒有 min-width:0,一行很長的 stderr(授權網址、等鎖提示)會把整頁撐寬、
+	// 把中止推出畫面;中止鈕本身不讓出寬度(CJK 會把「中止」拆成兩行)(review)。
+	if !strings.Contains(css, ".dock { grid-area: dock; min-width: 0;") || !strings.Contains(css, ".dock__busy .btn { flex: none; white-space: nowrap; }") {
+		t.Error("dock 要 min-width:0,狀態列的中止鈕不換行")
+	}
+	// 執行中被擋的說明(#notice)要念得出來;按鈕上的 ● 是裝飾,不進無障礙名稱。
+	if !strings.Contains(index, `id="notice" role="status"`) || !strings.Contains(css, "content: '● ' / '';") {
+		t.Error("#notice 要是 role=status;pending 的 ● 要用 content 替代文字")
+	}
+	// 回聲遮罩的切法要跟 splitArgs 一樣寬:只切單一空白會漏掉連續空白、tab 與引號(行為見 TestWebConsoleBehaviour)。
+	if strings.Contains(between("export function maskSecrets(", "}"), "split(' ')") {
+		t.Error("maskSecrets 不可以只切單一空白")
 	}
 	// pl dedup 沒有 --all:清單留空時不可以送它。
 	sync := read("js/pages/sync.js")
@@ -1128,6 +1196,54 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// z-index 一律走 tokens.css 的 --z-*(設計規格 §8 / §13),字面數字會跟之後加的層打架(review #62 第 15 點)。
 	if m := regexp.MustCompile(`z-index:\s*-?\d`).FindString(css); m != "" {
 		t.Errorf("app.css 的 z-index 要用 var(--z-*):%q", m)
+	}
+}
+
+// TestWebConsoleBehaviour:在 node 裡跑真的 console.js(testdata/webui_console.mjs 有最小的 DOM 替身與假的 /api/run)。
+// 字串契約證明不了時序:一次一個的閘、onExit 在串流收尾後、兩頁同時等 idle()、start 之前就按中止、收尾那句不被
+// 接著自動跑的命令清掉、做完的命令不當成中止、播放控制佔著槽。本機沒有 node 就跳過;CI(GitHub 的 runner 都有
+// node)沒有就算失敗,免得它默默不跑。
+func TestWebConsoleBehaviour(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("CI 上要有 node 才能跑前端行為測試")
+		}
+		t.Skip("沒有 node,跳過前端行為測試")
+	}
+	dir := t.TempDir()
+	js := func(name string) string {
+		t.Helper()
+		b, err := webUI.ReadFile("webui/js/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	// 一律用 .mjs:不靠 node 對 .js 的 ESM 自動偵測(各版本預設不同),import 路徑跟著改。
+	console := js("console.js")
+	if !strings.Contains(console, "from './table.js'") {
+		t.Fatal("console.js 的 import 路徑變了,這個測試的改寫要跟著改")
+	}
+	harness, err := os.ReadFile(filepath.Join("testdata", "webui_console.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"console.mjs": strings.Replace(console, "from './table.js'", "from './table.mjs'", 1),
+		"table.mjs":   js("table.js"),
+		"harness.mjs": string(harness),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, "harness.mjs")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("前端行為不成立(%v):\n%s", err, out)
 	}
 }
 

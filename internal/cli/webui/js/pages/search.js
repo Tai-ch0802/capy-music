@@ -24,11 +24,12 @@ export function initSearch(root, api, con, notice, providers) {
       onExit: (code) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState('search <關鍵字>')); },
     });
   };
-  bar.appendChild(btn('搜尋', 'btn--primary', go));
+  const goBtn = btn('搜尋', 'btn--primary', go);
+  bar.appendChild(goBtn);
   q.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229) return;
     ev.preventDefault();
-    go();
+    goBtn.click(); // 走按鈕那條路:執行中會被擋下並說明,不會先把目前的結果清掉
   });
   root.append(bar, out);
   out.appendChild(emptyState('search <關鍵字>'));
