@@ -618,7 +618,7 @@ func TestWebLockNoticeNamesPanelPoll(t *testing.T) {
 	if !strings.Contains(got, "等待另一個 capy 釋放 pull.lock") || strings.Contains(got, "播放面板") {
 		t.Errorf("pull.lock:等的真的是另一個行程,原文不可被改寫:%q", got)
 	}
-	if strings.Contains(got, "Ctrl-C") || !strings.Contains(got, "要放棄按取消") {
+	if strings.Contains(got, "Ctrl-C") || !strings.Contains(got, "要放棄按「中止」") {
 		t.Errorf("pull.lock:網頁沒有 Ctrl-C,只換這半句:%q", got)
 	}
 }
@@ -1006,13 +1006,74 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "]+))?$/") {
 		t.Error("hash 路由的正規式要有結尾錨點")
 	}
-	// 巢狀 run():hooks 綁在這一次呼叫上,外層的 finally 不可以洗掉內層的狀態(review #62)。
-	if !strings.Contains(console, "this.cur === mine") {
-		t.Error("run() 的 finally 要先確認還是自己那一次才清狀態")
+	// 一次一個:進行中再叫 run() 要在碰任何狀態之前就地擋下。以前照送、吃 409,被擋那一次的收尾會把進行中
+	// 那次的 job / hooks 清掉(中止、提示回答、頁面結果全失效;連點兩下就撞到)。
+	run := between("async run(", "async idle()")
+	guard, mutate := strings.Index(run, "if (this.running) {"), strings.Index(run, "this.running = true")
+	if guard < 0 || mutate < 0 || guard > mutate || !strings.Contains(run[guard:mutate], "return;") {
+		t.Error("run() 開頭要先擋掉進行中的第二次呼叫(在設 running / job / hooks 之前就 return)")
 	}
-	// 409 / 401 / 503 也要通知發起的頁面,否則那一頁永遠不會收尾。
-	if !strings.Contains(console, "onExit?.(-1") {
-		t.Error("refused() 要發 onExit,否則單一序列槽擋掉的那一頁會永久空白")
+	// 被擋、409 / 401 / 503 也要通知發起的頁面,否則那一頁永遠不會收尾。
+	if !strings.Contains(run, "onExit?.(-1") || !strings.Contains(run, "this.ex = [-1, msg, 'refused']") {
+		t.Error("被擋與被伺服器拒絕都要以 -1 通知頁面的 onExit,否則那一頁會永久空白")
+	}
+	// onExit 要等串流收尾(伺服器已放開序列槽、running 已歸零)才叫:帳號頁在 onExit 裡接著跑 auth status,
+	// 在 exit 事件當下叫會被上面的閘擋掉或撞 409(review #62 第 2 點)。
+	if fin, call := strings.Index(run, "} finally {"), strings.Index(run, "hooks.onExit?.(...ex)"); fin < 0 || call < fin {
+		t.Error("onExit 要在 run() 的 finally 之後才叫")
+	}
+	if strings.Contains(between("event(ev, b) {", "prompt(ev, b) {"), "hooks.onExit?.(") {
+		t.Error("exit 事件當下不可以叫 onExit(那時伺服器還握著序列槽)")
+	}
+	// 執行狀態列:run() 一開始就亮、finally 才熄(不是 exit 事件)——頁面按鈕發起的命令也看得到、按得到中止。
+	if !strings.Contains(run[mutate:], "this.busyOn(") || !strings.Contains(run[strings.Index(run, "} finally {"):], "this.busyOff()") {
+		t.Error("run() 要在開頭 busyOn、在 finally busyOff")
+	}
+	if !strings.Contains(console, "document.body.dataset.busy = ''") || !strings.Contains(console, "delete document.body.dataset.busy") {
+		t.Error("忙碌狀態要切 body[data-busy](CSS 靠它畫頂線、調暗按鈕)")
+	}
+	// 中止:start 還沒到(不知道 job id)就按了,要記著、start 一到就送;已答應寫入的要按第二次。
+	if !strings.Contains(console, "if (this.stopping) this.cancel()") {
+		t.Error("start 事件到達時,若已經按過中止要立刻送 cancel")
+	}
+	if !strings.Contains(between("async stop() {", "async cancel() {"), "this.wrote && !this.armed") {
+		t.Error("已答應寫入之後的中止要按第二次確認(計畫 Q24 的半套狀態)")
+	}
+	// 中止鈕與忙碌 UI 歸 Console 管,不歸 submit():頁面按鈕發起的命令以前根本看不到中止鈕。
+	if strings.Contains(app, "cancelBtn") || strings.Contains(app, "input.disabled = true") {
+		t.Error("submit() 不可以再自己管取消鈕與停用輸入框(設計規格:執行中命令列仍可打字)")
+	}
+	if !strings.Contains(index, `id="busy"`) || !strings.Contains(index, `id="cancel">中止</button>`) || strings.Contains(index, `id="cancel" hidden`) {
+		t.Error("dock 要有執行狀態列,中止鈕在列裡、標籤是「中止」")
+	}
+	if !strings.Contains(index, `id="busy-time" aria-hidden="true"`) || !strings.Contains(index, `id="busy-sr" role="status"`) {
+		t.Error("每秒跳的計時不能被播報;開始 / 結束由另一個 role=status 說一次")
+	}
+	// Ctrl-C = 中止,但沒有選取文字時才攔(Windows 的 Ctrl-C 是複製);? 鍵位表要列出來。
+	if !strings.Contains(app, "con.stop()") || !strings.Contains(app, "input.selectionStart === input.selectionEnd") || !strings.Contains(index, "<dt>Ctrl-C</dt>") {
+		t.Error("命令列的 Ctrl-C 要中止(有選取文字時放行複製),並列進鍵位表")
+	}
+	// 頁面按鈕:執行中點了不呼叫 fn(頁面不先清掉自己的內容),點下去真的開跑的那一顆掛 data-pending。
+	common := read("js/pages/common.js")
+	if !strings.Contains(common, "b.dataset.run = ''") || !strings.Contains(common, "b.dataset.pending = ''") || !strings.Contains(common, "capy:busy") {
+		t.Error("btn() 要標 data-run、執行中擋下點擊並說明、標出正在跑的那一顆")
+	}
+	// 頁面第一次進來的自動讀取:有命令在跑就等它結束,不要撞上它、畫成「未登入」/「沒有清單」。
+	for _, name := range []string{"js/pages/account.js", "js/pages/playlists.js"} {
+		if !strings.Contains(read(name), "con.idle().then(") {
+			t.Errorf("%s 的自動讀取要等 con.idle()", name)
+		}
+	}
+	// 播放控制要把串流讀完:半路 cancel = 關連線 = 伺服器把命令當成分頁關了而取消(瀏覽器約 1ms 就關)。
+	if strings.Contains(player, "r.body.cancel(") || !strings.Contains(player, "await r.text()") {
+		t.Error("player.control() 不可以丟掉串流,要讀到 exit")
+	}
+	// 狀態列的樣子:hidden 要真的藏得住(display:flex 會蓋掉 UA 的 [hidden])、脈衝在減少動態時改靜態。
+	if !strings.Contains(css, ".dock__busy[hidden] { display: none; }") || !strings.Contains(css, "body[data-busy] .dock::after { opacity: 1; }") {
+		t.Error("執行狀態列要能藏起來,進行中 dock 頂線要亮(glow 在 budget 註解塊裡)")
+	}
+	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".dock__busy-dot") {
+		t.Error("prefers-reduced-motion 要把 ● 脈衝改成靜態")
 	}
 	// pl dedup 沒有 --all:清單留空時不可以送它。
 	sync := read("js/pages/sync.js")

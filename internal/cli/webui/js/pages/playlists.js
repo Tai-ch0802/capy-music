@@ -22,7 +22,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       onTable: (h, r) => pout.replaceChildren(wrapTable(h, r)),
     })),
   );
-  load();
+  con.idle().then(load); // 同帳號頁:有命令在跑就等它結束,不要撞上它、畫成「沒有清單」
 
   function load() {
     let text = '';

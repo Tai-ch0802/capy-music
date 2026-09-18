@@ -44,19 +44,26 @@
   <div class="dock__now" id="now" data-playing="false">
     <span class="dock__now-line" id="now-line">讀取播放狀態…</span>
     <span class="dock__now-ctl">
-      <button type="button" class="btn btn--ghost" data-cmd="play" aria-label="播放">▶</button>
-      <button type="button" class="btn btn--ghost" data-cmd="pause" aria-label="暫停">⏸</button>
-      <button type="button" class="btn btn--ghost" data-cmd="prev" aria-label="上一首">⏮</button>
-      <button type="button" class="btn btn--ghost" data-cmd="next" aria-label="下一首">⏭</button>
+      <button type="button" class="btn btn--ghost" data-cmd="play" data-run aria-label="播放">▶</button>
+      <button type="button" class="btn btn--ghost" data-cmd="pause" data-run aria-label="暫停">⏸</button>
+      <button type="button" class="btn btn--ghost" data-cmd="prev" data-run aria-label="上一首">⏮</button>
+      <button type="button" class="btn btn--ghost" data-cmd="next" data-run aria-label="下一首">⏭</button>
     </span>
   </div>
+  <div class="dock__busy" id="busy" hidden>
+    <span class="dock__busy-dot" aria-hidden="true">●</span>
+    <a class="dock__busy-cmd" id="busy-cmd" href="#/console" title="到主控台看完整輸出"></a>
+    <span class="dock__busy-act" id="busy-act"></span>
+    <span class="dock__busy-time" id="busy-time" aria-hidden="true">running 00:00</span>
+    <button type="button" class="btn btn--danger" id="cancel">中止</button>
+  </div>
+  <span class="sr-only" id="busy-sr" role="status"></span>
   <div class="dock__notice" id="notice" hidden></div>
   <div class="dock__cmd" id="cmdline" role="group" aria-label="命令列">
     <label class="dock__prompt" for="cmd">capy</label>
     <input id="cmd" name="cmd" class="dock__input" list="commands" autocomplete="off" spellcheck="false" placeholder="pl show 通勤 · search 五月天 · auth status">
     <datalist id="commands"></datalist>
-    <button type="button" class="btn btn--primary" id="run">執行</button>
-    <button type="button" class="btn btn--ghost" id="cancel" hidden>取消</button>
+    <button type="button" class="btn btn--primary" id="run" data-run>執行</button>
   </div>
 </footer>
 <dialog id="keys" class="keys">
@@ -68,6 +75,7 @@
     <dt>+ -</dt><dd>音量升降五格</dd>
     <dt>1 – 7</dt><dd>跳到左邊第 n 頁</dd>
     <dt>/</dt><dd>跳到命令列</dd>
+    <dt>Ctrl-C</dt><dd>命令列有焦點、沒選取文字時:中止執行中的命令(同 dock 的「中止」)</dd>
     <dt>r</dt><dd>讀不到播放狀態而停擺後,重新連上</dd>
     <dt>?</dt><dd>開這張表</dd>
     <dt>Esc</dt><dd>回到指令模式(離開輸入框)</dd>

@@ -15,10 +15,18 @@ export function quote(s) {
   return v.includes(' ') ? `"${v}"` : v;
 }
 
+// btn:頁面上用它建的按鈕一律是「發起一個 capy 命令」(純 UI 的控制用 el('button') 自己建),所以在這裡標 data-run。
+// 有命令在跑時:CSS 把這些按鈕調暗,點了也不呼叫 fn——頁面不會先清掉自己的內容再被擋,改由 Console 說明
+// (capy:busy 事件)。真的開跑的那一顆掛 data-pending,● 脈衝到命令收尾(Console.busyOff 拿掉)。
 export function btn(label, cls, fn) {
   const b = el('button', 'btn ' + (cls || ''), label);
   b.type = 'button';
-  b.addEventListener('click', fn);
+  b.dataset.run = '';
+  b.addEventListener('click', () => {
+    if (document.body.hasAttribute('data-busy')) { document.dispatchEvent(new Event('capy:busy')); return; }
+    fn();
+    if (document.body.hasAttribute('data-busy')) b.dataset.pending = '';
+  });
   return b;
 }
 

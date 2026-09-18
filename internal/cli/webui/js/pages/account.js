@@ -91,5 +91,5 @@ export function initAccount(root, api, con, notice) {
   }
 
   root.appendChild(btn('重新讀取', 'btn--ghost', refresh));
-  refresh();
+  con.idle().then(refresh); // 第一次進來時若有命令在跑,等它結束再讀,不要撞上它、畫成「未登入」
 }

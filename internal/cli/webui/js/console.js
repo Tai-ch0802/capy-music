@@ -32,7 +32,15 @@ function maskSecrets(line) {
 export class Console {
   constructor(root, api, notice) {
     this.root = root; this.api = api; this.notice = notice;
-    this.running = false; this.job = null; this.hooks = {};
+    this.running = false; this.job = null; this.hooks = {}; this.waiters = [];
+    // dock 的執行狀態列(設計規格 §6 規則 2 / §10 running):七頁都看得到,頁面按鈕發起的命令也算。
+    this.bar = document.getElementById('busy');
+    this.barCmd = document.getElementById('busy-cmd');
+    this.barAct = document.getElementById('busy-act');
+    this.barTime = document.getElementById('busy-time');
+    this.barSR = document.getElementById('busy-sr');
+    this.stopBtn = document.getElementById('cancel');
+    this.stopBtn.addEventListener('click', () => this.stop());
   }
 
   // 空白態:水豚 + 招牌(設計規格 §10)。第一次繪製時 power-on(§7 的簽名時刻),每個 session 一次。
@@ -107,13 +115,19 @@ export class Console {
   // run(line, hooks):hooks.onTable / onStdout / onExit 讓發起命令的頁面拿到解析後的輸出。
   // 命令本身照樣完整跑在 dock 裡(回聲、串流、提示、退出碼都在),頁面只是多一份結構化的複本。
   async run(line, hooks = {}) {
-    // hooks / running / job 綁在「這一次呼叫」上:onExit 裡再叫一次 run()(帳號頁登入完要刷新)時,
-    // 外層的 finally 會晚一步執行,不能把內層那次的狀態洗掉(review #62)。
-    const mine = Symbol('run');
-    this.cur = mine;
-    this.hooks = hooks;
+    // 一次一個(決策 40 的序列槽)。進行中再叫就地擋下:不送出、不碰進行中那一次的 job / hooks。
+    // 以前是照送、吃 409,而被擋的那一次收尾時會把進行中那次的 job 與 hooks 清掉——中止、提示回答、
+    // 頁面結果全跟著失效;連點兩下、或跑 sync 時第一次切到帳號頁就會撞到。
+    if (this.running) {
+      this.notice(`正在執行 ${this.barCmd.textContent},等它結束或按「中止」`);
+      hooks.onExit?.(-1, '另一個命令執行中', 'busy');
+      return;
+    }
+    const shown = maskSecrets(line || '(help)');
+    this.running = true; this.job = null; this.hooks = hooks; this.ex = null;
     const b = this.block(line || '(help)');
-    this.running = true; this.notice('');
+    this.busyOn(shown);
+    this.notice('');
     document.body.dataset.connected = 'true';
     try {
       const r = await this.api.fetch('/api/run', {
@@ -123,16 +137,90 @@ export class Console {
         let msg = r.statusText;
         try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
         this.refused(b, r.status, msg);
-        return;
+        this.ex = [-1, msg, 'refused'];
+      } else {
+        await this.stream(r.body, b);
       }
-      await this.stream(r.body, b);
     } catch (e) {
-      this.exit(b, 1, '連線中斷:' + e.message, 'disconnected');
+      const msg = '連線中斷:' + e.message;
+      this.exit(b, 1, msg, 'disconnected');
       document.body.dataset.connected = 'false';
+      this.ex = [1, msg, 'disconnected'];
     } finally {
-      if (this.cur === mine) { this.running = false; this.job = null; this.hooks = {}; }
+      this.running = false; this.job = null; this.hooks = {};
       delete b.dataset.running;
+      this.busyOff();
     }
+    // 串流結束才通知頁面:此刻伺服器已放開序列槽(runMu 在 handler return 前 Unlock,回應在那之後才收尾)、
+    // 這邊的 running 也已歸零。在 exit 事件當下叫的話,onExit 裡再跑一個命令(帳號頁登入完刷新)
+    // 會被上面的閘擋掉,或撞上伺服器還沒放的鎖(review #62 第 2 點)。
+    const ex = this.ex || [1, '串流在 exit 之前就結束了', 'disconnected'];
+    this.report(line, shown, ex);
+    try { hooks.onExit?.(...ex); } finally { this.wake(); }
+  }
+
+  // 等目前的命令結束(頁面第一次進來的自動讀取用):跑 sync 時切到帳號頁,不該撞上它、也不該畫成「未登入」。
+  // 醒來再檢查一次:onExit 裡可能又接著跑了一個命令。
+  async idle() {
+    while (this.running) await new Promise((res) => this.waiters.push(res));
+  }
+
+  wake() {
+    const w = this.waiters;
+    this.waiters = [];
+    w.forEach((f) => f());
+  }
+
+  // 執行狀態列:點下去的當下就亮(不等伺服器回 start),串流收尾才熄——在 exit 事件就熄的話,
+  // 使用者以為可以按下一個了,伺服器卻還握著序列槽。
+  busyOn(shown) {
+    this.t0 = Date.now();
+    this.stopping = false; this.wrote = false; this.armed = false;
+    this.barCmd.textContent = shown;
+    this.barAct.textContent = '';
+    this.stopBtn.disabled = false;
+    this.stopBtn.textContent = '中止';
+    this.tick();
+    this.timer = setInterval(() => this.tick(), 1000);
+    this.bar.hidden = false;
+    document.body.dataset.busy = '';
+    this.barSR.textContent = '執行中:' + shown;
+  }
+
+  busyOff() {
+    clearInterval(this.timer); clearTimeout(this.stuck); clearTimeout(this.disarm);
+    if (document.activeElement === this.stopBtn) document.getElementById('cmd')?.focus(); // 別讓焦點跟著列一起消失
+    this.bar.hidden = true;
+    delete document.body.dataset.busy;
+    document.querySelectorAll('[data-pending]').forEach((x) => { delete x.dataset.pending; });
+  }
+
+  // 計時是頁面自己算的(伺服器沒有進度事件,也不該編一個百分比);這一格 aria-hidden,不會每秒播報。
+  tick() {
+    const s = Math.floor((Date.now() - this.t0) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    this.barTime.textContent = `running ${mm}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  // 活動列:stderr 最後一行(等鎖、rate limit 退避、doctor 的逐項結果……stderr 是進度不是失敗,設計規格 §5)。
+  activity(text) {
+    if (this.stopping || this.armed) return; // 中止相關的說明優先,不被後面的輸出蓋掉
+    const last = text.split('\n').map((s) => s.trim()).filter(Boolean).pop();
+    if (last) this.barAct.textContent = last;
+  }
+
+  // 收尾的一句話:讀不到主控台那一頁時(命令從別頁的按鈕發出),失敗與中止要在命令列上方說,
+  // 不然沒掛 onExit 的頁面動作(play、pl list、migrate …)失敗了一點痕跡都沒有。refused / busy 已經說過了。
+  report(line, shown, [code, msg, reason]) {
+    const done = { cancelled: '已中止', refused: '未執行' }[reason] || (code === 0 ? '完成' : `結束(exit ${code})`);
+    this.barSR.textContent = `${done}:${shown}`;
+    if (reason === 'cancelled') {
+      const i = document.getElementById('cmd'); // 設計規格 §10:中止後命令列預填同一條命令供重跑
+      if (i && !i.value && line) i.value = line;
+    }
+    if (!this.root.closest('.page')?.hidden) return;
+    if (reason === 'cancelled') this.notice(`已中止:${shown}`);
+    else if (code === 1) this.notice(`✗ ${shown}:${(msg || '').replace(/^Error: /, '')}(完整輸出在主控台)`);
   }
 
   async stream(body, b) {
@@ -155,13 +243,23 @@ export class Console {
 
   event(ev, b) {
     switch (ev.type) {
-      case 'start': this.job = ev.job; b.dataset.job = ev.job; break;
+      case 'start':
+        this.job = ev.job; b.dataset.job = ev.job;
+        if (this.stopping) this.cancel(); // start 之前就按了中止:job id 一到就送
+        break;
       case 'stdout': this.append(b, 'block__out', ev.text); this.hooks.onStdout?.(ev.text); break;
-      case 'stderr': this.append(b, 'block__err', ev.text); break;
+      case 'stderr': this.append(b, 'block__err', ev.text); this.activity(ev.text); break;
       case 'table': b.appendChild(renderTable(ev.header, ev.rows)); this.hooks.onTable?.(ev.header, ev.rows); break;
-      case 'exit': this.exit(b, ev.code, ev.message, ev.reason); this.hooks.onExit?.(ev.code, ev.message, ev.reason); break;
-      case 'prompt': this.prompt(ev, b); break;
-      case 'prompt_closed': this.promptClosed(ev, b); break;
+      // onExit 不在這裡叫,由 run() 在串流收尾後叫(理由見 run())。
+      case 'exit': this.exit(b, ev.code, ev.message, ev.reason); this.ex = [ev.code, ev.message, ev.reason]; break;
+      case 'prompt':
+        this.prompt(ev, b);
+        if (!this.stopping) this.barAct.textContent = '等你回答:' + ev.title;
+        break;
+      case 'prompt_closed':
+        this.promptClosed(ev, b);
+        if (!this.stopping && !this.armed) this.barAct.textContent = '';
+        break;
       case 'open_url': this.openURL(ev, b); break;
       default: break;
     }
@@ -198,7 +296,11 @@ export class Console {
     let focus = null;
     switch (ev.kind) {
       case 'confirm': {
-        const yes = btn(ev.affirmative || '確定', ev.default === true ? 'btn--primary' : '', () => answer(false, true));
+        const yes = btn(ev.affirmative || '確定', ev.default === true ? 'btn--primary' : '', () => {
+          // 區塊裡有變更表、又按了肯定 = 答應寫入:之後的中止可能停在半套,stop() 要按第二次。
+          if (b.querySelector('table')) this.wrote = true;
+          answer(false, true);
+        });
         const no = btn(ev.negative || '取消', ev.default === false ? 'btn--primary' : '', () => answer(false, false));
         row.append(yes, no);
         focus = ev.default === false ? no : yes;
@@ -320,12 +422,15 @@ export class Console {
     el.className = 'block__exit';
     el.dataset.code = String(code);
     el.setAttribute('role', 'status');
-    const mark = code === 0 ? '✓' : (code === 2 || code === 3 ? '·' : '✗');
+    // 使用者自己按的中止(或關掉提示)不是錯誤:· 與 muted 左線,不印「context canceled」這種內部字眼。
+    const cancelled = reason === 'cancelled';
+    if (cancelled) { b.dataset.exit = 'cancelled'; el.dataset.code = 'cancelled'; }
+    const mark = code === 0 ? '✓' : (cancelled || code === 2 || code === 3 ? '·' : '✗');
     let text = `${mark} exit ${code}`;
-    if (reason === 'cancelled') text += ' · 已取消';
+    if (cancelled) { text += ' · 已取消'; if (/context canceled/.test(message || '')) message = ''; }
     else if (reason === 'shutdown') text += ' · capy --web 已結束';
     else if (reason === 'timeout') text += ' · 等待回答逾時';
-    else if (reason === 'busy') text += ' · 另一個命令執行中,等它結束或取消';
+    else if (reason === 'busy') text += ' · 另一個命令執行中,等它結束或按「中止」';
     else if (reason === 'stale') text += ' · 請重啟 capy --web';
     if (message) text += ' · ' + message.replace(/^Error: /, '');
     if (code === 2 && /--yes/.test(message || '')) text += '(未套用:加 --yes 重跑)';
@@ -347,17 +452,46 @@ export class Console {
     this.notice(msg);
     if (status === 503) document.body.dataset.stale = '';
     this.stick(b);
-    // 沒跑成也要通知發起的頁面:否則 409(單一序列槽)之後那一頁的 render 永遠不會收尾,
+    // 沒跑成也要通知發起的頁面(run() 收尾時以 -1 叫 onExit):否則那一頁的 render 永遠不會收尾,
     // 而 route() 的 ready 又保證不會重新初始化——頁面就永久空白了(review #62)。
-    this.hooks.onExit?.(-1, msg, 'refused');
+  }
+
+  // 中止(設計規格 §10 interrupted / cancelled):打 cancel 端點,生效點與終端機的 Ctrl-C 相同。
+  // 按下去不等於停了:燈要等串流收尾才熄;start 還沒到(不知道 job id)就先記著,start 一到就送。
+  async stop() {
+    if (!this.running || this.stopping) return;
+    // 已答應寫入:中止可能停在「平台已寫、Drive 未寫」的半套(計畫 Q24),要再按一次確認。
+    if (this.wrote && !this.armed) {
+      this.armed = true;
+      this.stopBtn.textContent = '確定中止?';
+      this.barAct.textContent = '已經開始寫入:現在中止可能只寫了一半,下一次 sync 會把差異列出來';
+      this.disarm = setTimeout(() => { this.armed = false; this.stopBtn.textContent = '中止'; }, 5000);
+      return;
+    }
+    clearTimeout(this.disarm);
+    this.stopping = true;
+    this.stopBtn.disabled = true;
+    this.stopBtn.textContent = '中止中…';
+    this.barAct.textContent = '已送出中止,等命令收尾';
+    // 網路請求、等鎖、退避都會立刻停;鑰匙圈與 Music.app 的 osascript 不吃取消,要等它們自己回來。
+    this.stuck = setTimeout(() => {
+      this.barAct.textContent = '命令還沒停下:可能在等這台電腦上的系統對話框(鑰匙圈 / Music.app);真的卡住就在終端機按 Ctrl-C 結束 capy --web';
+    }, 8000);
+    if (this.job) await this.cancel();
   }
 
   async cancel() {
     if (!this.job) return;
     try {
-      await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/cancel`, { method: 'POST' });
+      const r = await this.api.fetch(`/api/jobs/${encodeURIComponent(this.job)}/cancel`, { method: 'POST' });
+      // 404 = 那個 job 已經收尾(中止與結束擦身而過),串流馬上就會結束,不必多說。
+      if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
     } catch (e) { // 同 answer():裸 await 在斷線時是 unhandled rejection,使用者只看到「按了沒反應」
-      this.notice('取消沒送到:' + e.message);
+      this.notice('中止沒送到:' + e.message);
+      clearTimeout(this.stuck);
+      this.stopping = false;
+      this.stopBtn.disabled = false;
+      this.stopBtn.textContent = '中止';
     }
   }
 }

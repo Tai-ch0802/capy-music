@@ -20,6 +20,8 @@
   --mono: "Iosevka Fixed", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
   --rail-w: 13.5rem;
+  --dur-2: 120ms;  /* 設計規格 §9:L1 / L2 的進出 */
+  --dur-3: 1.2s;   /* 設計規格 §9:● 脈衝 */
   --z-scan: 40; /* 原生 <dialog> 的 showModal() 走 top layer,不必排進來 */
   color-scheme: dark;
 }

@@ -27,6 +27,7 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .block[data-exit="0"] { border-left-color: var(--accent-dim); }
 .block[data-exit="1"] { border-left-color: var(--danger); }
 .block[data-exit="2"], .block[data-exit="3"] { border-left-color: var(--warn); }
+.block[data-exit="cancelled"] { border-left-color: var(--muted); } /* 使用者自己中止的:不是錯誤 */
 .block__head { font-family: var(--mono); color: var(--text-hi); display: flex; gap: .5rem; align-items: baseline; }
 .block__head .prompt { color: var(--accent); }
 .block__out, .block__err { margin: .25rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 13px; }
@@ -152,13 +153,29 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .block__link a { font-family: var(--mono); font-size: 13px; word-break: break-all; }
 
 /* ── dock ── */
-.dock { grid-area: dock; background: var(--surface); border-top: 1px solid var(--line); padding: .5rem 1.25rem .75rem; display: flex; flex-direction: column; gap: .5rem; }
+.dock { grid-area: dock; position: relative; background: var(--surface); border-top: 1px solid var(--line); padding: .5rem 1.25rem .75rem; display: flex; flex-direction: column; gap: .5rem; }
 .dock__now { font-family: var(--mono); font-size: 12px; color: var(--text); display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
 .dock__now[data-stale="true"] .dock__now-line { color: var(--muted); }
 .dock__now-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock__now-ctl { display: flex; gap: .25rem; flex: none; }
 .dock__now-ctl .btn { padding: .2rem .5rem; }
 .dock__notice { font-size: 13px; color: var(--warn); }
+
+/* 執行狀態列(設計規格 §6 規則 2 / §10 running):點下去就亮、七頁都看得到;● 脈衝 + 命令 + 最新一行 stderr
+   + 計時 + 中止。沒有百分比:伺服器沒有進度事件,編一個出來就是說謊。顏色瞬間換,不進 transition。 */
+body[data-busy] .dock { border-top-color: var(--accent); }
+.dock__busy { display: flex; gap: .75rem; align-items: center; min-height: 32px; font-family: var(--mono); font-size: 12px; }
+.dock__busy[hidden] { display: none; }
+.dock__busy-dot { flex: none; color: var(--accent); animation: pulse var(--dur-3) ease-in-out infinite alternate; }
+.dock__busy-cmd { flex: 0 1 auto; max-width: 45%; min-width: 0; color: var(--text-hi); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock__busy-cmd:hover { text-decoration: underline; }
+.dock__busy-act { flex: 1; min-width: 0; color: var(--muted); font-family: var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock__busy-time { flex: none; color: var(--accent); border: 1px solid var(--accent); padding: 1px 6px; font-size: 11px; font-variant-numeric: tabular-nums; }
+@keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+/* 有命令在跑時,其他會發起命令的按鈕調暗(點了由 Console 說明,不排隊);真的開跑的那一顆掛 ● */
+body[data-busy] [data-run]:not([data-pending]) { opacity: .45; cursor: progress; }
+[data-run][data-pending]::before { content: '● '; color: var(--accent); animation: pulse var(--dur-3) ease-in-out infinite alternate; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .dock__cmd { display: flex; gap: .5rem; align-items: center; }
 .dock__prompt { font-family: var(--mono); color: var(--accent); }
 .dock__input { flex: 1; min-width: 0; background: var(--ink); color: var(--text-hi); border: 1px solid var(--line); border-radius: var(--r); padding: .45rem .6rem; font: 14px var(--mono); }
@@ -168,12 +185,16 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .btn:active { transform: translateY(1px); }
 .btn--primary { border-color: var(--accent); color: var(--accent); }
 .btn--ghost { color: var(--muted); }
+.btn--danger { color: var(--danger); border-color: var(--danger); } /* 設計規格 §8:危險 = 次要框改 --danger,不發光、不填色 */
 .btn:disabled { opacity: .5; cursor: default; }
 
 /* ── glow budget(設計規格 §6:全站只有這個註解塊能出現 --glow / --glow-text,之外再出現就是 review finding)── */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: var(--glow); }
 .dock__cmd:focus-within .dock__prompt { text-shadow: var(--glow-text); }
-/* 另外兩處(進行中的區塊左線、播放中的 seek 拇指)在 T5 補齊 */
+/* 規則 2 進行中:dock 頂線。glow 在偽元素上,進出只動 opacity(box-shadow 永不進 transition)。 */
+.dock::after { content: ''; position: absolute; left: 0; right: 0; top: -1px; height: 1px; box-shadow: var(--glow); opacity: 0; transition: opacity var(--dur-2); pointer-events: none; }
+body[data-busy] .dock::after { opacity: 1; }
+/* 規則 3(播放中的 seek 拇指)等 dock 有了 range 元件再補 */
 
 /* ── 簽名時刻:水豚 power-on(每個 session 一次;§7)── */
 .capy { padding: 2rem 0; }
@@ -204,6 +225,8 @@ body::after {
 @media (prefers-reduced-motion: reduce) {
   .rail__cursor { animation: none; }
   .capy[data-poweron] .capy__art { animation: none; } /* 直接畫最終幀 */
+  .dock__busy-dot, [data-run][data-pending]::before { animation: none; opacity: .8; } /* 設計規格 §9:脈衝改靜態 .8 */
+  .dock::after { transition: none; } /* 靜態 glow 保留:它是狀態不是動效 */
 }
 /* 高對比:掃描線關掉、線色提到可見的那一階。 */
 @media (prefers-contrast: more) { :root { --scan: 0; --line: var(--line-hi); } }

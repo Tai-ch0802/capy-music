@@ -54,31 +54,35 @@ bootToken();
 const con = new Console(document.getElementById('console'), api, notice);
 const input = document.getElementById('cmd');
 const runBtn = document.getElementById('run');
-const cancelBtn = document.getElementById('cancel');
+const BUSY_HINT = '正在執行別的命令:等它結束,或按「中止」(命令列有焦點時 Ctrl-C)';
 
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
+// 執行中命令列照樣可以打字(設計規格 §5 / §10):Enter 只說明、不排隊、不並行,打好的那一行留著。
+// 執行狀態列與中止鈕由 Console.run 管,頁面按鈕發起的命令也一樣。
 async function submit() {
-  if (con.running) return;
+  if (con.running) { notice(BUSY_HINT); return; }
   if (document.body.hasAttribute('data-stale')) { notice('binary 已更新,這個 capy --web 仍是舊版,請重啟'); return; }
   const line = input.value.trim();
   input.value = '';
-  input.disabled = true; runBtn.disabled = true; cancelBtn.hidden = false;
-  try {
-    await con.run(line);
-  } finally {
-    input.disabled = false; runBtn.disabled = false; cancelBtn.hidden = true;
-    input.focus();
-  }
+  await con.run(line);
+  input.focus();
 }
 // 組字中的 Enter 是「確認候選字」,不是「送出」:注音 / 拼音使用者按的第一個 Enter 會被輸入法吃掉。
 // Safari 先送 compositionend 再送這個 keydown(isComposing 已是 false),所以還要看 keyCode 229。
 input.addEventListener('keydown', (ev) => {
+  // Ctrl-C = 中止(設計規格 §10,同終端機)。只在有命令在跑、輸入框沒有選取文字時攔:Windows 的 Ctrl-C 是複製。
+  if (ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.toLowerCase() === 'c' && con.running &&
+      input.selectionStart === input.selectionEnd) {
+    ev.preventDefault();
+    con.stop();
+    return;
+  }
   if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229) return;
   ev.preventDefault();
   submit();
 });
 runBtn.addEventListener('click', submit);
-cancelBtn.addEventListener('click', () => con.cancel());
+document.addEventListener('capy:busy', () => notice(BUSY_HINT)); // 頁面按鈕在執行中被按(common.js btn)
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
 // ── 路由:七頁,#/<page>[/<arg>];每頁第一次到達時才初始化 ──
 const providers = { list: ['spotify', 'apple', 'local'], current: 'spotify' };
@@ -149,7 +153,7 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
-const player = new Player(document.getElementById('now'), api, notice);
+const player = new Player(document.getElementById('now'), api, notice, () => con.running);
 // 先拿到 providers 再路由:深連結或在某頁 F5 時,該頁的平台下拉才不會用寫死的預設值建起來
 // (ready 保證每頁只初始化一次,建好之後不會補正)。連不上時照樣路由,頁面至少畫得出來。
 loadCommands()

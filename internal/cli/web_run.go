@@ -33,7 +33,7 @@ type webJob struct {
 }
 
 var (
-	errWebCancelled  = errors.New("已取消")    // 使用者按取消 / 關分頁
+	errWebCancelled  = errors.New("已取消")    // 使用者按中止 / 關分頁
 	errWebShutdown   = errors.New("伺服器關閉")  // SIGINT / SIGTERM
 	errPromptTimeout = errors.New("等待回答逾時") // T3b:job 級提示逾時
 	errSSEClosed     = errors.New("串流已關閉")
@@ -207,7 +207,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.runMu.TryLock() {
-		httpErr(w, http.StatusConflict, "另一個命令執行中,等它結束或取消")
+		httpErr(w, http.StatusConflict, "另一個命令執行中,等它結束或按「中止」")
 		return
 	}
 	defer s.runMu.Unlock()
