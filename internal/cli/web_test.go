@@ -1076,8 +1076,34 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
 		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
 	}
-	if !strings.Contains(move, "disabled: true") || !strings.Contains(move, "目前只能當來源") {
+	if !strings.Contains(move, "const READ_ONLY = ['apple'];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? '目前只能當來源' : ''") {
 		t.Error("Apple Music 當目的地要是不可選並說明原因,不是直接消失")
+	}
+	// 精靈的命令走 args 陣列(決策 46;review #66 第 2 點):splitArgs 沒有跳脫,local 的清單 ID 含空白 / 雙引號會組不出來。
+	if !strings.Contains(move, "args: ['migrate', state.src.id, '--from', state.from, '--to', target],") || strings.Contains(move, "quote(") {
+		t.Error("搬家精靈要用 args 陣列送命令,不可以自己組字串再 quote()")
+	}
+	if !strings.Contains(console, "body: JSON.stringify(args ? { args } : { line }),") {
+		t.Error("Console.run 有 args 時要送 { args },不送 line")
+	}
+	// 同名清單:送出前用手上的目的地清單自己比對,不解析 CLI 的錯誤字串(review #66 第 6 點)。
+	if !strings.Contains(move, "const sameName = () =>") || !strings.Contains(move, "state.dst = { mode: 'existing', id: dup.id }") {
+		t.Error("目的地有同名清單時,精靈要自己改成「加進它」")
+	}
+	// 提示就地回答:會問人的命令都帶 promptHost;頁面只補白話(onPrompt),不替使用者回答。
+	if strings.Count(move, "promptHost: prompts") < 3 || strings.Contains(move, ".answer(") {
+		t.Error("精靈的命令要把提示畫進自己的容器,而且不可以自己呼叫 answer()")
+	}
+	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
+	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
+		t.Error("命令在跑時路線示意要停住")
+	}
+	// 路線示意的小卡外層跟路線一樣寬、整個滑出去:路線不裁掉的話,400px 會多出橫向捲動(smoke 量到 main.scrollWidth 641)。
+	if !strings.Contains(css, ".route__lane { position: relative; height: 6.5rem; display: grid; place-items: center; overflow: hidden; }") {
+		t.Error(".route__lane 要 overflow: hidden")
+	}
+	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".route__note { animation: none;") || !strings.Contains(reduced, ".beat__row") {
+		t.Error("prefers-reduced-motion 下示意動畫要是靜態構圖")
 	}
 	if strings.Contains(index, "is-disabled") {
 		t.Error("rail 不該還有停用的佔位項")
@@ -1234,22 +1260,27 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// 從別頁按鈕發出的命令,區塊在被 hidden 的主控台頁裡:提示與授權連結不切回主控台就看不到,命令卡到逾時,
 	// Apple 的揭露只剩伺服器端「送出過」(review #62 第 5 點)。
-	if !strings.Contains(between("prompt(ev, b) {", "reveal() {"), "this.reveal()") { // 結束標記貼著 prompt() 的尾巴(review #64)
+	if !strings.Contains(between("prompt(ev, b) {", "reveal(host) {"), "this.reveal(host)") { // 結束標記貼著 prompt() 的尾巴(review #64)
 		t.Error("prompt() 要 reveal():提示畫在 hidden 的主控台頁裡等於沒畫")
 	}
-	if !strings.Contains(between("openURL(ev, b) {", "exit(b,"), "this.reveal()") {
+	if !strings.Contains(between("openURL(ev, b) {", "exit(b,"), "this.reveal(host)") {
 		t.Error("openURL() 要 reveal():auth login spotify 的授權連結要看得到")
 	}
-	if r := between("reveal() {", "focusPrompt()"); !strings.Contains(r, ".page") || !strings.Contains(r, "'#/console'") {
+	if r := between("reveal(host) {", "focusPrompt(page)"); !strings.Contains(r, ".page") || !strings.Contains(r, "'#/console'") {
 		t.Error("reveal() 要在主控台頁 hidden 時切到 #/console")
 	}
 	// 斷線後殘留的提示(沒有 prompt_closed)與答案送出後已 disabled 的控制項,都不可以讓 focusPrompt() 回 true,
 	// 否則命令列在那個分頁再也拿不到焦點(review #64)。
-	if fp := between("focusPrompt() {", "async answer("); !strings.Contains(fp, ".block[data-running]") || !strings.Contains(fp, "f.disabled") {
-		t.Error("focusPrompt() 只認還在跑的區塊,且跳過已 disabled 的控制項")
+	// P8 T2 起提示可以畫在頁面給的容器裡,「只認還在跑的那一次」從選擇器(.block[data-running])改成狀態:
+	// this.openPrompt 只在 running 時算數,run() 收尾時清掉;本意不變(行為見 TestWebConsoleBehaviour)。
+	if fp := between("focusPrompt(page) {", "async answer("); !strings.Contains(fp, "this.running ? this.openPrompt : null") || !strings.Contains(fp, "f.disabled") {
+		t.Error("focusPrompt() 只認還在跑的那一次開著的提示,且跳過已 disabled 的控制項")
+	}
+	if !strings.Contains(run, "this.promptHost = null; this.openPrompt = null;") {
+		t.Error("run() 收尾要清掉 openPrompt:串流斷掉時 prompt_closed 不會到,殘留的提示不可以再搶焦點")
 	}
 	// 切頁的 hashchange 可能晚於 prompt() 的 setTimeout:route() 不可以再用 input.focus() 把焦點從提示搶走。
-	if !strings.Contains(app, "if (!con.focusPrompt()) input.focus();") {
+	if !strings.Contains(app, "const prompted = con.focusPrompt(root);") || !strings.Contains(app, "if (!prompted) input.focus();") {
 		t.Error("route() 到主控台時,有開著的提示要先把焦點給提示")
 	}
 	// 按鈕有焦點時空白鍵是「按下它」,單鍵層不可以搶(review #62 第 8 點)。
@@ -1259,6 +1290,55 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	// z-index 一律走 tokens.css 的 --z-*(設計規格 §8 / §13),字面數字會跟之後加的層打架(review #62 第 15 點)。
 	if m := regexp.MustCompile(`z-index:\s*-?\d`).FindString(css); m != "" {
 		t.Errorf("app.css 的 z-index 要用 var(--z-*):%q", m)
+	}
+}
+
+// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩個中文字面認東西——「現在逐筆裁決?」(那一則確認
+// 旁邊要補白話)與 reason 開頭的「推到 」(這一首推得過去)。純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,
+// 所以兩邊一起釘(同 TestWebAccountPageKeysOnAuthStatusWording):CLI 改字,這裡就紅並指向 move.js。
+func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/move.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile("migrate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{
+		{"const REVIEW_MARK = '現在逐筆裁決?';", "現在逐筆裁決?(否 = 先推有對應的"},
+		{"const PUSHABLE_MARK = '推到 ';", `fmt.Sprintf("推到 %s:%s(%s %d)"`},
+	} {
+		if !strings.Contains(string(b), pair[0]) {
+			t.Errorf("move.js 要有 %s", pair[0])
+		}
+		if !strings.Contains(string(src), pair[1]) {
+			t.Errorf("migrate.go 的原文變了(%q 不見了):move.js 的字面要跟著改", pair[1])
+		}
+	}
+}
+
+// TestWebRunArgsArrayReachesCommandIntact:/api/run 收 args 陣列時不經 splitArgs——含空白與雙引號的參數
+// (local 的清單 ID 是 <device_id>/<檔名>)要原樣到達;同一個值走 line 會被切碎(這就是精靈不走 line 的原因)。
+func TestWebRunArgsArrayReachesCommandIntact(t *testing.T) {
+	pullWorld(t)
+	_, c := startWeb(t)
+	id := `dev1/My "Road" Trip.m3u8`
+	startArgs := func(body map[string]any) []any {
+		t.Helper()
+		_, ev, _ := c.run(body)
+		if len(ev) == 0 || ev[0]["type"] != "start" {
+			t.Fatalf("第一個事件要是 start:%v", ev)
+		}
+		got, _ := ev[0]["args"].([]any)
+		return got
+	}
+	got := startArgs(map[string]any{"args": []string{"pl", "show", id, "--provider", "local"}})
+	if len(got) != 5 || got[2] != id {
+		t.Errorf("args 陣列要原樣到達:%q", got)
+	}
+	if viaLine := startArgs(map[string]any{"line": "pl show " + id + " --provider local"}); len(viaLine) == 5 && viaLine[2] == id {
+		t.Errorf("同一個值走 line 居然沒被切碎?那 args 這條路就沒有存在的理由:%q", viaLine)
 	}
 }
 

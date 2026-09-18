@@ -126,7 +126,11 @@ export class Console {
   // quiet:播放控制用——同一個序列槽、同一個閘、同一顆中止,但不畫區塊(輸出不進主控台),
   // 執行狀態列過了 QUIET_MS 還沒結束才亮。
   // label:頁面給的白話(「讀取你的清單」);執行狀態列與收尾的那句話用它,命令原文留在主控台與 title(決策 45)。
-  async run(line, hooks = {}, { quiet = false, label = '' } = {}) {
+  // args:直接送 argv 陣列(精靈用,決策 46):伺服器的 splitArgs 只認雙引號、沒有跳脫,而 local 的清單 ID 含空白是常態、
+  //   含 " 就組不出來。有給 args 時 line 只拿來顯示(沒給就用 args 接起來),伺服器端的拒絕清單本來就是對 argv 做的。
+  // promptHost:提示與授權連結畫進這個容器,不畫進主控台的區塊(精靈做到一半不把人丟進終端機);hooks.onPrompt 讓
+  //   頁面在提示旁補一句白話。容器所在的頁面若是 hidden,照樣會切過去(同 #64:看不到的提示等於沒有)。
+  async run(line, hooks = {}, { quiet = false, label = '', args = null, promptHost = null } = {}) {
     // 一次一個(決策 40 的序列槽)。進行中再叫就地擋下:不送出、不碰進行中那一次的 job / hooks。
     // 以前是照送、吃 409,而被擋的那一次收尾時會把進行中那次的 job 與 hooks 清掉——中止、提示回答、
     // 頁面結果全跟著失效;連點兩下、或跑 sync 時第一次切到帳號頁就會撞到。
@@ -136,9 +140,11 @@ export class Console {
       hooks.onExit?.(...busy);
       return busy;
     }
+    if (args && !line) line = args.join(' ');
     const raw = maskSecrets(line || '(help)');
     const shown = label || raw;
     this.running = true; this.quiet = quiet; this.job = null; this.hooks = hooks; this.ex = null;
+    this.promptHost = promptHost; this.openPrompt = null;
     // quiet 的區塊不掛上主控台;有提示 / 授權連結時才掛上去(event())。
     const b = quiet ? document.createElement('article') : this.block(line || '(help)');
     this.slotOn(shown, raw);
@@ -147,7 +153,7 @@ export class Console {
     document.body.dataset.connected = 'true';
     try {
       const r = await this.api.fetch('/api/run', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args ? { args } : { line }),
       });
       if (!r.ok) {
         let msg = r.statusText;
@@ -164,6 +170,7 @@ export class Console {
       this.ex = [1, msg, 'disconnected'];
     } finally {
       this.running = false; this.job = null; this.hooks = {};
+      this.promptHost = null; this.openPrompt = null; // 串流斷掉時 prompt_closed 不會到:殘留的提示不可以再搶焦點(review #64)
       delete b.dataset.running;
       this.busyOff();
     }
@@ -178,7 +185,9 @@ export class Console {
     // 頁面的 onExit 與等著的自動讀取可能立刻接著跑下一個命令(它會清掉命令列上方那行):
     // 收尾的那句話放在它們之後說,不然從別頁看的人連一眼都看不到。
     try { hooks.onExit?.(...ex); } finally { this.wake(); this.lastDone = ''; }
-    this.report(line, shown, ex, quiet);
+    // args 的那一次不預填命令列:接起來的那一行走 splitArgs 會被切碎(含空白的 local ID),正是 args 要避開的事;
+    // 發起它的頁面有自己的「再試一次」。
+    this.report(args ? '' : line, shown, ex, quiet);
     return ex;
   }
 
@@ -304,16 +313,17 @@ export class Console {
       // onExit 不在這裡叫,由 run() 在串流收尾後叫(理由見 run())。
       case 'exit': this.exit(b, ev.code, ev.message, ev.reason); this.ex = [ev.code, ev.message, ev.reason]; break;
       case 'prompt':
-        if (!b.parentNode) this.root.appendChild(b); // quiet 的區塊平常不掛上去;要問人就得看得到
+        if (!b.parentNode && !this.promptHost) this.root.appendChild(b); // quiet 的區塊平常不掛上去;要問人就得看得到
         this.prompt(ev, b);
-        if (!this.stopping && !this.armed) this.barAct.textContent = '等你回答:' + ev.title; // 別蓋掉「確定中止?」的警告
+        // 別蓋掉「確定中止?」的警告。提示畫在頁面自己的容器裡時,那一頁就看得到原文,狀態列只說在等。
+        if (!this.stopping && !this.armed) this.barAct.textContent = this.promptHost ? '等你回答' : '等你回答:' + ev.title;
         break;
       case 'prompt_closed':
         this.promptClosed(ev, b);
         if (!this.stopping && !this.armed) this.barAct.textContent = '';
         break;
       case 'open_url':
-        if (!b.parentNode) this.root.appendChild(b);
+        if (!b.parentNode && !this.promptHost) this.root.appendChild(b);
         this.openURL(ev, b);
         break;
       default: break;
@@ -404,9 +414,12 @@ export class Console {
     }
     row.appendChild(btn('✕ 關掉', 'btn--ghost', () => answer(true, null)));
     box.appendChild(row);
-    b.appendChild(box);
+    const host = this.promptHost || b;
+    host.appendChild(box);
+    this.openPrompt = box;
     if (focus) focus.dataset.autofocus = ''; // 切頁時 route() 靠它把焦點交回提示,見 reveal()
-    this.reveal();
+    this.hooks.onPrompt?.(ev, box);
+    this.reveal(host);
     this.stick(b);
     if (focus) setTimeout(() => focus.focus({ preventScroll: true }), 0); // 不覆蓋 stick() 的捲動判斷
   }
@@ -414,16 +427,19 @@ export class Console {
   // 從別頁按鈕發出的命令,區塊一樣在主控台頁裡,而那一頁此刻是 hidden:提示與授權連結畫在那裡等於沒畫,
   // 命令只會卡到提示逾時,Apple 的揭露也只剩伺服器端「送出過」(review #62 第 5 點)。所以要切回主控台。
   // 切頁的 hashchange 可能晚於上面的 setTimeout(那時焦點落在 hidden 子樹裡是 no-op),由 route() 叫 focusPrompt() 補上。
-  reveal() {
-    const page = this.root.closest('.page');
-    if (page && page.hidden) location.hash = '#/console';
+  // host = 提示實際畫在哪裡:主控台的區塊,或呼叫端給的 promptHost。它所在的頁面是 hidden 就切過去。
+  reveal(host) {
+    const page = (host && host.closest('.page')) || this.root.closest('.page');
+    if (page && page.hidden) location.hash = page.id === 'page-console' || !page.id ? '#/console' : '#/' + page.id.replace(/^page-/, '');
   }
 
-  focusPrompt() {
-    // 只認還在跑的區塊:串流斷掉時 prompt_closed 永遠不會到,那個提示不會有 is-closed,不限定的話它會
-    // 永久搶走命令列的焦點。disabled = 答案已送出、prompt_closed 還沒回來,focus() 打在它上面是 no-op(review #64)。
-    const f = this.root.querySelector('.block[data-running] .prompt:not(.is-closed) [data-autofocus]');
-    if (!f || f.disabled) return false;
+  // page:剛切到的那一頁。只認「還在跑的那一次」開著的提示(this.openPrompt 在 run() 收尾時清掉):串流斷掉時
+  // prompt_closed 永遠不會到,殘留的提示不可以永久搶走命令列的焦點。disabled = 答案已送出、prompt_closed
+  // 還沒回來,focus() 打在它上面是 no-op(review #64)。
+  focusPrompt(page) {
+    const box = this.running ? this.openPrompt : null;
+    const f = box && !box.classList.contains('is-closed') ? box.querySelector('[data-autofocus]') : null;
+    if (!f || f.disabled || (page && !page.contains(box))) return false;
     f.focus(); // 不帶 preventScroll:剛從別頁切過來,要捲到提示那裡
     return true;
   }
@@ -447,8 +463,12 @@ export class Console {
   }
 
   promptClosed(ev, b) {
-    const box = b.querySelector(`.prompt[data-id="${CSS.escape(String(ev.id))}"]`);
+    const box = (this.promptHost || b).querySelector(`.prompt[data-id="${CSS.escape(String(ev.id))}"]`);
     if (!box) return;
+    if (this.openPrompt === box) this.openPrompt = null;
+    // 提示畫在頁面的容器裡時,收掉之後搬進主控台的區塊:頁面上只留「現在在問的那一則」,
+    // 主控台仍然是每個命令完整的紀錄(問了什麼、怎麼收的,含 Apple 的揭露)。
+    if (this.promptHost && b.parentNode) b.appendChild(box);
     box.classList.add('is-closed');
     box.dataset.reason = ev.reason;
     box.querySelectorAll('button,input').forEach((c) => { c.disabled = true; });
@@ -466,8 +486,10 @@ export class Console {
     a.href = ev.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.textContent = '在瀏覽器開啟授權頁:' + ev.url;
     p.appendChild(a);
-    b.appendChild(p);
-    this.reveal();
+    const host = this.promptHost || b;
+    host.appendChild(p);
+    if (host !== b) b.appendChild(p.cloneNode(true)); // 主控台的紀錄也留一份
+    this.reveal(host);
     this.stick(b);
   }
 
