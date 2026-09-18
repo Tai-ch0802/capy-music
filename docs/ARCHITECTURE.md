@@ -843,6 +843,8 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 ### P8 — 網頁介面面向一般使用者(2026-09-18 計畫:docs/superpowers/plans/2026-09-18-web-consumer.md;視覺規格 v2 2026-09-18-web-consumer-design.md)
 **首頁是搬家精靈,終端機退到「進階」**(決策 45–48):T1 視覺系統與外殼(帶綠的深色、sans、圓角;導覽兩層八頁、命令列只在主控台頁、按鈕說人話)→ T2 搬家精靈(只組 `migrate` 命令、確認照 CLI、提示就地回答)+ 示意動畫 → T3 真實進度(`progress` 事件接縫,CLI 輸出不變)→ T4 文件。功能一個不少;安全模型、一次一個命令、非 TTY 純文字契約不動。
 
+**狀態(2026-09-19)**:程式與文件都進 main —— #66 計畫與視覺規格 v2、#67 視覺系統與外殼、#68 搬家精靈與示意動畫、#69 真實進度、T4 文件。**做下來確認的事**:精靈不需要任何新的伺服器端點——`auth status`、`pl list`、`migrate` 三條既有命令加上提示橋就夠了,新增的只有 `Console.run` 的四個選項(`label` / `args` / `promptHost` / `onPrompt`)與一個預設 no-op 的 `reportProgress` 接縫;確認一律留在 CLI,頁面不代加 `--yes`、不自動回答。**代價與已知邊角**:第一步「連接帳號」做不到一鍵(BYO 憑證,決策 8);一次搬一個清單(Q39);`write` 階段沒有逐批進度(要動 SPI);頁面靠 migrate 的兩個中文字面與兩張表的欄名認東西,由 Go 測試兩邊一起釘。**仍在維護者手上**:R-13…R-18 真帳號驗收(計畫 §2;R-14 是真的寫入),跑完才在標題打 ✅;Q40 水豚用 SVG 還是 ASCII。
+
 ---
 
 ## 10. 交接給 Claude Code 的重點
