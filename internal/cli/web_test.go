@@ -1035,7 +1035,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// 從別頁按鈕發出的命令,區塊在被 hidden 的主控台頁裡:提示與授權連結不切回主控台就看不到,命令卡到逾時,
 	// Apple 的揭露只剩伺服器端「送出過」(review #62 第 5 點)。
-	if !strings.Contains(between("prompt(ev, b) {", "async answer("), "this.reveal()") {
+	if !strings.Contains(between("prompt(ev, b) {", "reveal() {"), "this.reveal()") { // 結束標記貼著 prompt() 的尾巴(review #64)
 		t.Error("prompt() 要 reveal():提示畫在 hidden 的主控台頁裡等於沒畫")
 	}
 	if !strings.Contains(between("openURL(ev, b) {", "exit(b,"), "this.reveal()") {
@@ -1043,6 +1043,11 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	if r := between("reveal() {", "focusPrompt()"); !strings.Contains(r, ".page") || !strings.Contains(r, "'#/console'") {
 		t.Error("reveal() 要在主控台頁 hidden 時切到 #/console")
+	}
+	// 斷線後殘留的提示(沒有 prompt_closed)與答案送出後已 disabled 的控制項,都不可以讓 focusPrompt() 回 true,
+	// 否則命令列在那個分頁再也拿不到焦點(review #64)。
+	if fp := between("focusPrompt() {", "async answer("); !strings.Contains(fp, ".block[data-running]") || !strings.Contains(fp, "f.disabled") {
+		t.Error("focusPrompt() 只認還在跑的區塊,且跳過已 disabled 的控制項")
 	}
 	// 切頁的 hashchange 可能晚於 prompt() 的 setTimeout:route() 不可以再用 input.focus() 把焦點從提示搶走。
 	if !strings.Contains(app, "if (!con.focusPrompt()) input.focus();") {

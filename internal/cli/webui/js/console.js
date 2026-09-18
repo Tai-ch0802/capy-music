@@ -263,8 +263,10 @@ export class Console {
   }
 
   focusPrompt() {
-    const f = this.root.querySelector('.prompt:not(.is-closed) [data-autofocus]');
-    if (!f) return false;
+    // 只認還在跑的區塊:串流斷掉時 prompt_closed 永遠不會到,那個提示不會有 is-closed,不限定的話它會
+    // 永久搶走命令列的焦點。disabled = 答案已送出、prompt_closed 還沒回來,focus() 打在它上面是 no-op(review #64)。
+    const f = this.root.querySelector('.block[data-running] .prompt:not(.is-closed) [data-autofocus]');
+    if (!f || f.disabled) return false;
     f.focus(); // 不帶 preventScroll:剛從別頁切過來,要捲到提示那裡
     return true;
   }
