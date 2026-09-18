@@ -32,7 +32,7 @@
 
 - 三步:**① 選路線**(來源與目的地;每個平台顯示連線狀態,沒連的給「連接」鈕走既有的 `auth login <平台>`)→ **② 選清單**(來源平台的清單;目的地選「建一個同名的新清單」或既有清單)→ **③ 確認並搬家**。
 - ③ 只跑一次 `migrate <來源清單 ID> --from X --to Y[:<目標 ID>]`:用 ID 不用名字(同名清單不會歧義)。**頁面絕不代加 `--yes` / `--force`,也不自動回答確認**(同 `sync.js` 的規矩)。取消 = exit 2、零寫入、清單也沒建。
-- **命令走 `/api/run` 的 `args` 陣列,不走 `line` 字串**(review #66 第 2 點):`splitArgs` 只認雙引號、沒有跳脫,而 local 的清單 ID 是 `<device_id>/<檔名>`(含空白是常態、含 `"` 時 `quote()` 會組出壞命令)。`Console.run` 加一個 `args` 選項:有給就送 `{ args }`,`line` 只拿來顯示(照樣過 `maskSecrets`);伺服器端的 `webDenied` / 允許清單本來就是對 argv 做的,不變。手打的命令列照舊走 `line`。
+- **命令走 `/api/run` 的 `args` 陣列,不走 `line` 字串**(review #66 第 2 點):`splitArgs` 只認雙引號、沒有跳脫,而 local 的清單 ID 是 `<device_id>/<檔名>`(含空白是常態、含 `"` 時 `quote()` 會組出壞命令)。`Console.run` 加一個 `args` 選項:**有給 `args` 時送出的 body 只有 `{ args }`,絕不同時帶 `line`**——`web_run.go:197-200` 裡 `line` 非空會蓋掉 `args`,兩個都送等於靜悄悄退回 `splitArgs`(review #66 第二輪)。要顯示的那一行是前端自己留著過 `maskSecrets`,不進 request body。伺服器端的 `webDenied` / 允許清單本來就是對最終的 argv 做的,不變。手打的命令列照舊走 `line`。
 - **步驟 ③ 實際會到達的提示序列**(web 底下 `migrateIsTTY` 恆真;`migrate.go:293-378`):① `planResolve`(逐首反查,最久)→ ② 有沒對到的歌時,**先問「N 首 … 沒有自動對應到,現在逐筆裁決?」**(是 = 逐筆 select;否 = 先搬對得上的,不是取消;關掉 = 整輪不寫入)→ ③ table 事件(預覽)→ ④ 最終確認(「在 spotify 建立清單 … 推過去?」= 開始搬家)。沒對到的歌是跨平台的常態,所以 ② 是主線不是邊角。
 - ② 那句原文帶著一條 CLI 命令(`capy resolve … --review`)。處置:**原文照留(規格 §9:伺服器問的話不改寫),精靈在它旁邊補一句白話**(「有幾首歌在目的地找不到完全一樣的。選『是』一首一首挑;選『否』就先搬找得到的,其餘之後可以在主控台處理。」)。不改 CLI 的措辭(會動到終端機契約與既有測試)。精靈靠原文裡的「現在逐筆裁決?」認出這一則;這個字面由 Go 測試兩邊一起釘(同 `TestWebAccountPageKeysOnAuthStatusWording` 的手法),CLI 改字測試就紅。pre-flight #1 的「第一眼沒有命令字串」指的是頁面自己的文案,伺服器的原文是明列的例外。
 - 提示(確認、逐筆裁決、登入精靈、Apple 揭露、授權連結)在精靈裡就地渲染:`Console.run` 多一個選項把提示畫進呼叫端給的容器,不切到主控台。Apple 揭露照舊不可收合、不可跳過。
@@ -72,7 +72,7 @@
 
 ### T2 — 搬家精靈 + 示意動畫(分支 `feat/web-move-wizard`;依賴 T1)
 `js/pages/move.js`;`Console.run` 的提示容器選項(提示就地渲染、不 reveal;`focusPrompt` / `promptClosed` 跟著容器走);首頁示意動畫與三步說明(純 CSS `transform` / `opacity`);完成報告。
-測試:node 行為測試加情境(提示進容器、不切頁;取消 → onExit 拿到 exit 2;`args` 選項送的是陣列、顯示的那一行有遮罩);靜態契約釘「move.js 走 `args` 陣列、不含 --yes / --force」「Apple 目的地 disabled」「送出前比對同名」;Go 測試釘「現在逐筆裁決?」的字面兩邊一致、`/api/run` 收 `args` 時含空白與 `"` 的 local ID 原樣到達;既有的 migrate e2e(假平台)不動。**真帳號只跑到預覽(會停在確認提示,按取消),不按確認。**
+測試:node 行為測試加情境(提示進容器、不切頁;取消 → onExit 拿到 exit 2;`args` 選項送出的 body 只有 `args`、**沒有 `line` 鍵**,顯示的那一行有遮罩);靜態契約釘「move.js 走 `args` 陣列、不含 --yes / --force」「Apple 目的地 disabled」「送出前比對同名」;Go 測試釘「現在逐筆裁決?」的字面兩邊一致、`/api/run` 收 `args` 時含空白與 `"` 的 local ID 原樣到達;既有的 migrate e2e(假平台)不動。**真帳號只跑到預覽(會停在確認提示,按取消),不按確認。**
 
 ### T3 — 真實進度(分支 `feat/web-progress`;可與 T2 平行,T2 先合)
 Go:`progress` 接縫 + SSE 事件;`planResolve` 與 migrate 里程碑呼叫。前端:`hooks.onProgress`、執行狀態列顯示 `n / total`、精靈的進度條改吃它。
