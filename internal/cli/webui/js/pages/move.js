@@ -40,6 +40,25 @@ function capybara() {
   return s;
 }
 
+// 表的欄位:DIR ACTION PROVIDER PLAYLIST POS CID PROVIDER_ID TITLE ARTISTS REASON(TestWebMoveWizardKeysOnMigrateWording 釘住欄名)。
+// 兩條路的列長得不一樣(migrate.go;review #68):「加進既有清單」接進去的每一首都是 migrate 列、ACTION 永遠是 add,
+// 推不出去只寫在 REASON;「新建清單」時正本既有的曲目是 push 列(add / skip),正本已連著來源時甚至一列 migrate 都沒有。
+// 所以兩種列都吃、以 CID 去重:沒搬到 = ACTION 是 skip,或 migrate 列的 REASON 不以「推到 」開頭;其餘都算搬了。
+export function tally(h, rows) {
+  if (!h || !rows) return { moved: 0, missed: [] };
+  const [dir, action, cid, title, artists, reason] = ['DIR', 'ACTION', 'CID', 'TITLE', 'ARTISTS', 'REASON'].map((k) => h.indexOf(k));
+  const songs = new Map();
+  for (const r of rows) {
+    if (r[dir] !== 'migrate' && r[dir] !== 'push') continue;
+    const miss = r[action] === 'skip' || (r[dir] === 'migrate' && !String(r[reason] || '').startsWith(PUSHABLE_MARK));
+    const seen = songs.get(r[cid]);
+    if (!seen) songs.set(r[cid], { title: r[title], artists: r[artists], reason: r[reason], miss });
+    else if (miss && !seen.miss) Object.assign(seen, { miss, reason: r[reason] });
+  }
+  const missed = [...songs.values()].filter((x) => x.miss);
+  return { moved: songs.size - missed.length, missed };
+}
+
 export function initMove(root, api, con, notice, providers) {
   const state = {
     step: 1,
@@ -48,7 +67,8 @@ export function initMove(root, api, con, notice, providers) {
     status: null,               // auth status 解析後的三段;null = 還沒讀到
     src: null, srcLists: null,  // 選中的來源清單 { id, name, count } / 來源平台的清單
     dst: { mode: 'new', id: '' }, dstLists: null,
-    listError: '',
+    listError: '', filter: '',  // filter:步驟二的過濾字串(放在 state 才活得過 render)
+    closedBy: '',                  // 這一次最後一則提示是怎麼收的(prompt_closed 的 reason)
     running: false, preview: null, // 搬家那一次命令在跑 / 它送來的預覽表 { h, rows }
     result: null,                  // 跑完之後 { code, msg, moved, missed }
   };
@@ -136,7 +156,7 @@ export function initMove(root, api, con, notice, providers) {
   }
 
   function enterStep2() {
-    state.step = 2; state.src = null; state.srcLists = null; state.dstLists = null; state.listError = '';
+    state.step = 2; state.src = null; state.srcLists = null; state.dstLists = null; state.listError = ''; state.filter = '';
     state.dst = { mode: CAN_CREATE.includes(state.to) ? 'new' : 'existing', id: '' };
     render();
     loadLists(state.from, (src, msg) => {
@@ -155,10 +175,11 @@ export function initMove(root, api, con, notice, providers) {
 
   function start() {
     prompts.replaceChildren();
-    Object.assign(state, { result: null, preview: null, running: true });
+    Object.assign(state, { result: null, preview: null, closedBy: '', running: true });
     const target = state.dst.mode === 'new' ? state.to : `${state.to}:${state.dst.id}`;
     con.run('', {
       onPrompt,
+      onPromptClosed: (ev) => { state.closedBy = ev.reason; },
       onTable: (h, rows) => { state.preview = { h, rows }; render(); },
       onExit: (code, msg) => {
         const p = state.preview || {};
@@ -171,17 +192,6 @@ export function initMove(root, api, con, notice, providers) {
       promptHost: prompts,
     });
     render();
-  }
-
-  // 表的欄位:DIR ACTION PROVIDER PLAYLIST POS CID PROVIDER_ID TITLE ARTISTS REASON。migrate 列 = 來源接進去的曲目;
-  // reason 以「推到 」開頭的推得過去,其餘(沒有對應、推不出去)這次搬不了。
-  function tally(h, rows) {
-    if (!h || !rows) return { moved: 0, missed: [] };
-    const [dir, title, artists, reason] = ['DIR', 'TITLE', 'ARTISTS', 'REASON'].map((k) => h.indexOf(k));
-    const mine = rows.filter((r) => r[dir] === 'migrate');
-    const missed = mine.filter((r) => !String(r[reason] || '').startsWith(PUSHABLE_MARK))
-      .map((r) => ({ title: r[title], artists: r[artists], reason: r[reason] }));
-    return { moved: mine.length - missed.length, missed };
   }
 
   function preview(h, rows) {
@@ -217,7 +227,11 @@ export function initMove(root, api, con, notice, providers) {
     routeFrom.replaceChildren(el('span', 'route__role', '來源'), el('strong', 'route__name', providerName(state.from)));
     routeTo.replaceChildren(el('span', 'route__role', '目的地'), el('strong', 'route__name', providerName(state.to)));
     route.setAttribute('aria-label', `示意:把 ${providerName(state.from)} 的歌單搬到 ${providerName(state.to)}`);
+    const a = document.activeElement;
+    const group = a && body.contains(a) && a.type === 'radio' ? a.name : '';
     body.replaceChildren(...[step1, step2, step3][state.step - 1]());
+    // 點了卡片 / 清單列會整段重畫:把焦點還給同一組單選裡選中的那一顆,不然它會掉回 <body>
+    if (group) body.querySelector(`input[name="${group}"]:checked`)?.focus();
   }
 
   // 單選卡:真的 radio(方向鍵、表單語意都是原生的),藏起來,樣子由 label 扛(CSS 的 :has())。
@@ -295,7 +309,8 @@ export function initMove(root, api, con, notice, providers) {
     }
     const list = el('fieldset', 'wiz__list');
     list.appendChild(el('legend', 'sr-only', '來源清單'));
-    const draw = (filter) => {
+    const draw = () => {
+      const filter = state.filter.trim().toLowerCase();
       list.replaceChildren(list.firstChild);
       for (const p of state.srcLists.filter((x) => !filter || x.name.toLowerCase().includes(filter))) {
         list.appendChild(radioCard('pl__item', 'wiz-src', !!state.src && state.src.id === p.id, false,
@@ -306,10 +321,11 @@ export function initMove(root, api, con, notice, providers) {
     if (state.srcLists.length > 8) {
       const f = el('input', 'in wiz__filter');
       f.type = 'search'; f.placeholder = '過濾清單名稱'; f.setAttribute('aria-label', '過濾清單名稱');
-      f.addEventListener('input', () => draw(f.value.trim().toLowerCase()));
+      f.value = state.filter; // 挑了一個清單會整段重畫:過濾字串放在 state 才不會被洗掉(review #68)
+      f.addEventListener('input', () => { state.filter = f.value; draw(); });
       out.push(f);
     }
-    draw('');
+    draw();
     out.push(list);
 
     // 放到哪裡:新建(只有能建清單的平台)或加進既有的。
@@ -385,9 +401,13 @@ export function initMove(root, api, con, notice, providers) {
       sync.href = '#/sync';
       acts.appendChild(sync);
     } else {
-      live.appendChild(el('p', r.code === 2 ? 'wiz__stage' : 'page__warn',
-        r.code === 2 ? '已取消,什麼都沒有寫入。' : (r.msg || '沒有完成。').replace(/^Error: /, '')));
-      if (r.code !== 2) {
+      // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
+      // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。
+      const quit = r.code === 2 || (r.code === 1 && ['dismissed', 'timeout'].includes(state.closedBy));
+      live.appendChild(el('p', quit ? 'wiz__stage' : 'page__warn',
+        !quit ? (r.msg || '沒有完成。').replace(/^Error: /, '')
+          : state.closedBy === 'timeout' ? '等太久沒有回答,這次已經取消,什麼都沒有寫入。' : '已取消,什麼都沒有寫入。'));
+      if (!quit) {
         const c = el('a', 'wiz__link', '到主控台看完整的輸出 →');
         c.href = '#/console';
         live.appendChild(c);

@@ -366,6 +366,39 @@ await scenario('8e', async () => {
   check(globalThis.location.hash === '#/move', `提示所在的頁面 hidden 時要切回那一頁:${globalThis.location.hash}`);
 });
 
+// 8h. 串流在提示開著時斷掉(prompt_closed 不會到):那一則要自己收掉,不可以留在頁面的容器裡看起來還能按(review #68)。
+await scenario('8h', async () => {
+  reset();
+  const host = mk();
+  script = { d: { first: [{ type: 'prompt', id: 3, kind: 'confirm', title: '?', default: false }], events: [] } };
+  let closedBy = 'none';
+  await con.run('d', { onPromptClosed: (ev) => { closedBy = ev.reason; } }, { promptHost: host });
+  const block = con.root.children[con.root.children.length - 1];
+  const box = block.children.find((c) => c.classList?.contains('prompt'));
+  check(!!box && box.classList.contains('is-closed') && box.dataset.reason === 'disconnected', '斷線時開著的提示要收掉並標 disconnected');
+  check(!host.children.some((c) => c.classList?.contains('prompt')), '收掉的提示不留在頁面的容器裡');
+  check(closedBy === 'none', 'onPromptClosed 只轉交伺服器真的送來的 prompt_closed');
+});
+
+// 8i. 精靈的計數(move.js 的 tally;review #66 第三輪 / #68):migrate 與 push 兩種列都吃、以 CID 去重。
+await scenario('8i', async () => {
+  const { tally } = await import('./pages/move.mjs');
+  const H = ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON'];
+  const row = (dir, action, cid, reason) => [dir, action, 'spotify', '公路旅行', '0', cid, 'x', 'song-' + cid, 'artist', reason];
+  const ok = '推到 spotify:x(isrc 95)';
+  // 加進既有清單:migrate 列的 ACTION 永遠是 add,推不出去只寫在 REASON;同一批 CID 還會有 push 列
+  let t = tally(H, [row('pull', 'add', 'z', ''), row('migrate', 'add', 'a', ok), row('migrate', 'add', 'b', ok), row('migrate', 'add', 'c', 'spotify 沒有對應,這次不推'),
+    row('push', 'add', 'a', ''), row('push', 'add', 'b', ''), row('push', 'skip', 'c', '沒有對應')]);
+  check(t.moved === 2 && t.missed.length === 1 && t.missed[0].title === 'song-c', `加進既有清單:2 首搬、1 首沒搬:${JSON.stringify(t)}`);
+  // 新建清單、正本已連著來源(follow):一列 migrate 都沒有,全部是 push 列
+  t = tally(H, [row('push', 'add', 'a', ok), row('push', 'add', 'b', ok), row('push', 'add', 'c', ok), row('push', 'skip', 'd', '有 mapping 但推不出去')]);
+  check(t.moved === 3 && t.missed.length === 1, `follow:整份都是 push 列,不可以報成 0 首:${JSON.stringify(t)}`);
+  // 新建清單、正本原本就有曲目:push 列(既有的)+ migrate 列(新接的)
+  t = tally(H, [row('push', 'add', 'a', ok), row('migrate', 'add', 'b', ok), row('migrate', 'add', 'c', ok)]);
+  check(t.moved === 3 && t.missed.length === 0, `既有的與新接的都算:${JSON.stringify(t)}`);
+  check(tally(null, null).moved === 0, '沒有表 = 0');
+});
+
 // 9. 被伺服器拒絕(別的分頁佔著槽):說一句,並回報 refused 讓命令列把那行還給使用者。
 await scenario('9', async () => {
   reset();

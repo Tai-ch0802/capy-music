@@ -170,7 +170,9 @@ export class Console {
       this.ex = [1, msg, 'disconnected'];
     } finally {
       this.running = false; this.job = null; this.hooks = {};
-      this.promptHost = null; this.openPrompt = null; // 串流斷掉時 prompt_closed 不會到:殘留的提示不可以再搶焦點(review #64)
+      // 串流斷掉時 prompt_closed 不會到:還開著的那一則自己收掉(不可以看起來還能按),也不可以再搶焦點(review #64 / #68)。
+      if (this.openPrompt) this.closeBox(this.openPrompt, 'disconnected', b);
+      this.promptHost = null; this.openPrompt = null;
       delete b.dataset.running;
       this.busyOff();
     }
@@ -465,14 +467,21 @@ export class Console {
   promptClosed(ev, b) {
     const box = (this.promptHost || b).querySelector(`.prompt[data-id="${CSS.escape(String(ev.id))}"]`);
     if (!box) return;
+    this.closeBox(box, ev.reason, b);
+    this.hooks.onPromptClosed?.(ev); // 頁面要知道是怎麼收的:關掉 / 逾時是 exit 1 + user aborted,不是「取消」的 exit 2
+  }
+
+  // closeBox:一則提示收掉的樣子(不能再按、標明怎麼收的)。reason 除了伺服器的四種,還有 disconnected:
+  // 串流斷掉時 prompt_closed 不會到,run() 收尾時自己收——不然它畫在頁面的容器裡,看起來還能按、按了沒反應(review #68)。
+  closeBox(box, reason, b) {
     if (this.openPrompt === box) this.openPrompt = null;
     // 提示畫在頁面的容器裡時,收掉之後搬進主控台的區塊:頁面上只留「現在在問的那一則」,
     // 主控台仍然是每個命令完整的紀錄(問了什麼、怎麼收的,含 Apple 的揭露)。
     if (this.promptHost && b.parentNode) b.appendChild(box);
     box.classList.add('is-closed');
-    box.dataset.reason = ev.reason;
+    box.dataset.reason = reason;
     box.querySelectorAll('button,input').forEach((c) => { c.disabled = true; });
-    const text = { answered: '已回答', dismissed: '已關掉', timeout: '等待回答逾時,命令已取消', cancelled: '命令已取消' }[ev.reason] || ev.reason;
+    const text = { answered: '已回答', dismissed: '已關掉', timeout: '等待回答逾時,命令已取消', cancelled: '命令已取消', disconnected: '連線中斷,這一則已經失效' }[reason] || reason;
     const tag = document.createElement('div');
     tag.className = 'prompt__closed';
     tag.textContent = text;

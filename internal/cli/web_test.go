@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +24,9 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/provider/apple"
+	"github.com/Tai-ch0802/capy-music/internal/provider/local"
+	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
 )
 
 // ── 測試骨架 ──
@@ -1293,6 +1298,56 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 }
 
+// TestWebMoveWizardCapabilitiesAndHeadersMatchGo:move.js 裡有三樣東西是 Go 這邊的手抄本——哪些平台不能當目的地
+// (asPlaylistWriter)、哪些能新建清單(asPlaylistCreator)、兩張表的欄名(h.indexOf 找不到會安靜地回 -1:報 0 首、
+// 清單變成一排 undefined)。/api/commands 只回 provider ID、不回能力,所以兩邊一起釘(review #68):gate R-8 過了、
+// Apple 能寫了,這裡就紅並指向 move.js。
+func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/move.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	move := string(b)
+	provs := map[string]provider.Provider{
+		"spotify": spotify.New(http.DefaultClient, "http://127.0.0.1:1"),
+		"apple":   apple.New(http.DefaultClient, "http://127.0.0.1:1", "dev", "user", "tw"),
+		"local":   local.New(t.TempDir(), "dev1"),
+	}
+	var readOnly, canCreate []string
+	for _, id := range providerIDs {
+		p := provs[id]
+		if p == nil {
+			t.Fatalf("多了一個平台 %q:這個測試與 move.js 都要跟上", id)
+		}
+		if _, err := asPlaylistWriter(p); err != nil {
+			readOnly = append(readOnly, id)
+		}
+		if _, err := asPlaylistCreator(p); err == nil {
+			canCreate = append(canCreate, id)
+		}
+	}
+	for _, want := range []string{
+		"const READ_ONLY = ['" + strings.Join(readOnly, "', '") + "'];",
+		"const CAN_CREATE = ['" + strings.Join(canCreate, "', '") + "'];",
+	} {
+		if !strings.Contains(move, want) {
+			t.Errorf("平台的能力變了,move.js 要是:%s", want)
+		}
+	}
+	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON"} {
+		if !slices.Contains(syncHeader, col) || !strings.Contains(move, "'"+col+"'") {
+			t.Errorf("migrate 的表要有 %s 欄,move.js 的 tally() 也要認它", col)
+		}
+	}
+	pl, err := os.ReadFile("pl.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pl), `[]string{"ID", "名稱", "曲數", "擁有者"}`) || !strings.Contains(move, "[h.indexOf('ID'), h.indexOf('名稱'), h.indexOf('曲數')]") {
+		t.Error("pl list 的欄名與 move.js 的 loadLists() 要一致")
+	}
+}
+
 // TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩個中文字面認東西——「現在逐筆裁決?」(那一則確認
 // 旁邊要補白話)與 reason 開頭的「推到 」(這一首推得過去)。純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,
 // 所以兩邊一起釘(同 TestWebAccountPageKeysOnAuthStatusWording):CLI 改字,這裡就紅並指向 move.js。
@@ -1354,32 +1409,32 @@ func TestWebConsoleBehaviour(t *testing.T) {
 		}
 		t.Skip("沒有 node,跳過前端行為測試")
 	}
+	// 整棵 webui/js 複製過去、一律改成 .mjs(import 路徑跟著改):不靠 node 對 .js 的 ESM 自動偵測(各版本預設不同)。
 	dir := t.TempDir()
-	js := func(name string) string {
-		t.Helper()
-		b, err := webUI.ReadFile("webui/js/" + name)
-		if err != nil {
-			t.Fatal(err)
+	imports := regexp.MustCompile(`(from '\.{1,2}/[^']+)\.js'`)
+	err = fs.WalkDir(webUI, "webui/js", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
-		return string(b)
-	}
-	// 一律用 .mjs:不靠 node 對 .js 的 ESM 自動偵測(各版本預設不同),import 路徑跟著改。
-	console := js("console.js")
-	if !strings.Contains(console, "from './table.js'") {
-		t.Fatal("console.js 的 import 路徑變了,這個測試的改寫要跟著改")
+		b, err := webUI.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(dir, strings.TrimSuffix(strings.TrimPrefix(p, "webui/js/"), ".js")+".mjs")
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, imports.ReplaceAll(b, []byte("$1.mjs'")), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	harness, err := os.ReadFile(filepath.Join("testdata", "webui_console.mjs"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{
-		"console.mjs": strings.Replace(console, "from './table.js'", "from './table.mjs'", 1),
-		"table.mjs":   js("table.js"),
-		"harness.mjs": string(harness),
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "harness.mjs"), harness, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
