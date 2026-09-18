@@ -898,6 +898,10 @@ func TestWebPortFlagRefuses8888AndRequiresWeb(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.port) || !strings.Contains(err.Error(), tc.why) {
 			t.Errorf("--port %s 要在 listen 前拒絕並說明理由(%s):%v", tc.port, tc.why, err)
 		}
+		// --help 要跟實際擋的一致(review #63 第 3 點):同一張表同時驅動拒絕與說明。
+		if u := newRootCmd().Flags().Lookup("port").Usage; !strings.Contains(u, tc.port) {
+			t.Errorf("--port 的說明要列出不能用的 %s:%q", tc.port, u)
+		}
 	}
 }
 
@@ -914,6 +918,16 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		return string(b)
 	}
 	index, app, console, table, css := read("index.html"), read("js/app.js"), read("js/console.js"), read("js/table.js"), read("css/app.css")
+	// between:console.js 裡從 start 到其後第一個 end 的那一段(用來看某個方法的本體)。
+	between := func(start, end string) string {
+		t.Helper()
+		_, rest, ok := strings.Cut(console, start)
+		body, _, ok2 := strings.Cut(rest, end)
+		if !ok || !ok2 {
+			t.Fatalf("console.js 找不到 %q … %q", start, end)
+		}
+		return body
+	}
 
 	// 組字中的 Enter 是確認候選字:注音使用者按第一個 Enter 不該把半截命令送出去。
 	if !strings.Contains(app, "ev.isComposing") || !strings.Contains(app, "ev.keyCode === 229") {
@@ -971,8 +985,9 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// showIdle 會被叫兩次(route 一次、/api/commands 回來再一次)。第二次重畫會把 power-on 那一幀洗掉,
 	// 而簽名時刻一個 session 只有一次——所以它必須是冪等的:已經畫過就只更新招牌。
-	if !strings.Contains(console, "const shown = this.root.querySelector('.capy')") {
-		t.Error("showIdle 要冪等,否則 power-on 會被第二次呼叫洗掉")
+	// 只看「建新節點之前,先找過 .capy 並 return」,變數怎麼命名、怎麼排版都不管(review #62 第 12 點)。
+	if !regexp.MustCompile(`querySelector\('\.capy'\)[\s\S]*return`).MatchString(between("showIdle(", "createElement")) {
+		t.Error("showIdle 要冪等:畫新水豚之前先找已經畫好的那隻並 return,否則 power-on 會被第二次呼叫洗掉")
 	}
 	// 面板:stale 是「伺服器忙」不是「伺服器不在」——用連續次數會把「慢但一直有新資料」判成失聯,而且回不來。
 	player := read("js/player.js")
@@ -1017,6 +1032,29 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	search := read("js/pages/search.js")
 	if !strings.Contains(search, "quote(id)") {
 		t.Error("play --id 要 quote")
+	}
+	// 從別頁按鈕發出的命令,區塊在被 hidden 的主控台頁裡:提示與授權連結不切回主控台就看不到,命令卡到逾時,
+	// Apple 的揭露只剩伺服器端「送出過」(review #62 第 5 點)。
+	if !strings.Contains(between("prompt(ev, b) {", "async answer("), "this.reveal()") {
+		t.Error("prompt() 要 reveal():提示畫在 hidden 的主控台頁裡等於沒畫")
+	}
+	if !strings.Contains(between("openURL(ev, b) {", "exit(b,"), "this.reveal()") {
+		t.Error("openURL() 要 reveal():auth login spotify 的授權連結要看得到")
+	}
+	if r := between("reveal() {", "focusPrompt()"); !strings.Contains(r, ".page") || !strings.Contains(r, "'#/console'") {
+		t.Error("reveal() 要在主控台頁 hidden 時切到 #/console")
+	}
+	// 切頁的 hashchange 可能晚於 prompt() 的 setTimeout:route() 不可以再用 input.focus() 把焦點從提示搶走。
+	if !strings.Contains(app, "if (!con.focusPrompt()) input.focus();") {
+		t.Error("route() 到主控台時,有開著的提示要先把焦點給提示")
+	}
+	// 按鈕有焦點時空白鍵是「按下它」,單鍵層不可以搶(review #62 第 8 點)。
+	if !strings.Contains(app, "ev.key === ' ' && document.activeElement?.tagName === 'BUTTON'") {
+		t.Error("單鍵層要放過焦點在按鈕上的空白鍵")
+	}
+	// z-index 一律走 tokens.css 的 --z-*(設計規格 §8 / §13),字面數字會跟之後加的層打架(review #62 第 15 點)。
+	if m := regexp.MustCompile(`z-index:\s*-?\d`).FindString(css); m != "" {
+		t.Errorf("app.css 的 z-index 要用 var(--z-*):%q", m)
 	}
 }
 

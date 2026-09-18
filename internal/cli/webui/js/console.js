@@ -248,8 +248,25 @@ export class Console {
     row.appendChild(btn('✕ 關掉', 'btn--ghost', () => answer(true, null)));
     box.appendChild(row);
     b.appendChild(box);
+    if (focus) focus.dataset.autofocus = ''; // 切頁時 route() 靠它把焦點交回提示,見 reveal()
+    this.reveal();
     this.stick(b);
     if (focus) setTimeout(() => focus.focus({ preventScroll: true }), 0); // 不覆蓋 stick() 的捲動判斷
+  }
+
+  // 從別頁按鈕發出的命令,區塊一樣在主控台頁裡,而那一頁此刻是 hidden:提示與授權連結畫在那裡等於沒畫,
+  // 命令只會卡到提示逾時,Apple 的揭露也只剩伺服器端「送出過」(review #62 第 5 點)。所以要切回主控台。
+  // 切頁的 hashchange 可能晚於上面的 setTimeout(那時焦點落在 hidden 子樹裡是 no-op),由 route() 叫 focusPrompt() 補上。
+  reveal() {
+    const page = this.root.closest('.page');
+    if (page && page.hidden) location.hash = '#/console';
+  }
+
+  focusPrompt() {
+    const f = this.root.querySelector('.prompt:not(.is-closed) [data-autofocus]');
+    if (!f) return false;
+    f.focus(); // 不帶 preventScroll:剛從別頁切過來,要捲到提示那裡
+    return true;
   }
 
   async answer(id, cancel, value) {
@@ -291,6 +308,7 @@ export class Console {
     a.textContent = '在瀏覽器開啟授權頁:' + ev.url;
     p.appendChild(a);
     b.appendChild(p);
+    this.reveal();
     this.stick(b);
   }
 
