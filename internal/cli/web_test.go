@@ -1051,6 +1051,14 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		!strings.Contains(app, "if (!open && more.open && more.contains(document.activeElement))") {
 		t.Error("「進階」跟著路由開合:進去要打開(review #66 第 3 點),收起來之前把還在裡面的焦點搬到新的 active 項目(review #67)")
 	}
+	// 命令結束之後那一句也要說人話(review #67 第二輪):只看變更 + 有變更(exit 2)不可以貼出「加 --yes」;搜尋沒命中是
+	// exit 0 + 空表,要在 onTable 看列數。
+	if s := read("js/pages/sync.js"); !strings.Contains(s, "if (code === 2 && wasDry)") || !strings.Contains(s, "const wasDry = dry.checked;") {
+		t.Error("同步頁:只看變更的 exit 2 要說這一頁上的下一步,不是 CLI 的「加 --yes」")
+	}
+	if !strings.Contains(read("js/pages/search.js"), "onTable: (header, rows) => out.replaceChildren(rows.length") {
+		t.Error("搜尋頁:沒有命中(空表)要說一句話")
+	}
 	// 「去除重複」的說明要留著警告那一半:--provider 沒選到的平台這次不會檢查(review #67;會移除曲目的路徑不可以只說讓人安心的半句)。
 	if !strings.Contains(read("js/pages/sync.js"), "沒選到的平台這次不會檢查") {
 		t.Error("同步頁「去除重複」的說明要講明沒選到的平台這次不會檢查")

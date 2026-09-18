@@ -9,6 +9,7 @@ export function initDoctor(root, api, con, notice, providers) {
   const out = el('pre', 'doctor__out');
   const hint = el('span', 'page__note', '檢查時,這台電腦可能會跳出系統對話框(鑰匙圈 / Music.app)。');
 
+  const idle = emptyState('還沒檢查過。按「開始檢查」。'); // 宣告在 go() 之前:go() 會用到它,別靠「只在 click 時才呼叫」躲過 TDZ
   const go = () => {
     out.textContent = '';
     out.dataset.running = '';
@@ -23,7 +24,6 @@ export function initDoctor(root, api, con, notice, providers) {
     }, { label: '檢查設定、登入與連線' });
   };
   bar.append(btn('開始檢查', 'btn--primary', go));
-  const idle = emptyState('還沒檢查過。按「開始檢查」。');
   root.append(bar, hint, out);
   // 不在切到這一頁時自動跑:doctor 在 SYSTEM_DIALOG 名單裡,會彈 keychain / Music.app 對話框,
   // 由導覽動作觸發不對;而且它會佔住伺服器唯一的序列槽(review #62)。

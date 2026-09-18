@@ -20,7 +20,10 @@ export function initSearch(root, api, con, notice, providers) {
     out.replaceChildren();
     const n = Math.max(1, Number(limit.value) || 10); // 輸入框可以被清空,min 只在原生送出時驗
     con.run(`search ${quote(text)} --provider ${prov.value} --limit ${n}`, {
-      onTable: (header, rows) => out.replaceChildren(resultTable(header, rows, prov.value, con)),
+      // 沒有命中也是 exit 0,而且照樣送一張只有表頭的空表:要在這裡看列數,不然使用者只會看到一個空格子(review #67 第二輪)。
+      onTable: (header, rows) => out.replaceChildren(rows.length
+        ? resultTable(header, rows, prov.value, con)
+        : emptyState(`在 ${providerName(prov.value)} 找不到「${text}」。換個關鍵字,或換一個平台試試。`)),
       onExit: (code, msg) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState(msg || '沒有找到。換個關鍵字試試。')); },
     }, { label: `在 ${providerName(prov.value)} 找「${text}」` });
   };

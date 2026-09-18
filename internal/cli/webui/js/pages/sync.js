@@ -28,11 +28,15 @@ export function initSync(root, api, con, notice, providers) {
     ['dedup', '去除重複', '去除重複的歌'],
   ];
   const run = (verb, label) => {
+    const wasDry = dry.checked; // 按下去那一刻的值:命令跑到一半才改勾選,不該改變這一次的收尾
     out.replaceChildren();
     con.run(`pl ${verb}${target(verb)}${flags()}`, {
       onTable: (h, r) => out.replaceChildren(table(h, r)),
       onExit: (code, msg) => {
-        if (code !== 0 && msg) out.appendChild(el('p', 'page__warn', msg));
+        // 只看變更 + 有變更 = exit 2,這是最常見的一次操作,是正常結果不是警告;CLI 的原文會叫人「加 --yes」,
+        // 而那正是這一頁永遠不會做的事(決策 46)——說這一頁上的下一步(review #67 第二輪)。
+        if (code === 2 && wasDry) out.appendChild(el('p', 'page__note', '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。'));
+        else if (code !== 0 && msg) out.appendChild(el('p', 'page__warn', msg));
         else if (code === 0 && !out.firstChild) out.appendChild(emptyState('兩邊已經一致,沒有要改的東西。'));
       },
     }, { label });
