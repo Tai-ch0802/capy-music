@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -831,8 +832,13 @@ func TestWebCapybaraMatchesTUI(t *testing.T) {
 		if !strings.HasPrefix(ln, `"`) { // 雙引號字串:水豚的輪廓用到單引號與反引號,只有反斜線要跳脫
 			continue
 		}
-		ln = strings.TrimSuffix(strings.TrimSuffix(ln, ","), `"`)
-		got = append(got, strings.ReplaceAll(strings.TrimPrefix(ln, `"`), `\\`, `\`))
+		// 真的解跳脫,不是把 \\ 換成 \:JS 裡單獨一個反斜線配空白是合法的(node --check 會過),
+		// 但瀏覽器算出來反斜線就不見了——那一筆下巴的線會靜悄悄消失。Unquote 遇到這種跳脫會報錯。
+		line, err := strconv.Unquote(strings.TrimSuffix(ln, ","))
+		if err != nil {
+			t.Fatalf("CAPYBARA 的這一行不是合法的雙引號字串(反斜線要寫成 \\\\):%s:%v", ln, err)
+		}
+		got = append(got, line)
 	}
 	want := capybaraStill()
 	if len(got) != len(want) {
