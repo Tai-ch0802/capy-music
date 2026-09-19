@@ -7,25 +7,42 @@ package cli
 //     而 ansi.StringWidth 一律當 1,量不出這件事——所以測試改成強制純 ASCII(PR #41 review)。
 //   - 每一幀的行數與長度都一樣;身體固定,只有眼睛列與嘴／草列會變。
 //
-// 動作:平視前方(兩眼同高、置中 = 看著使用者),嘴角橫叼一根牧草,一邊嚼一邊偶爾眨眼。
+// 長相(2026-09-20 重畫;使用者:「水豚的形象和你認知的相差甚遠,先研究水豚是怎樣的動物」):
+// 舊版是正面的圓臉、頭頂兩隻耳朵、橢圓鼻配兩個鼻孔——那是豬。水豚最好認的是**側面**,照這幾點畫:
+//   - 頭像一塊圓角的磚:頭頂線是平的、跟背連成一條(沒有脖子),口鼻前端又鈍又方;
+//   - 眼睛、耳朵、鼻孔都長在頭的最上緣(泡在水裡只露這三樣):眼睛小、位置很後面,緊貼著小圓耳;
+//     鼻孔在口鼻的最前上角;
+//   - 身體是桶狀,屁股渾圓、沒有尾巴;腿短。
+//
+// 第一版(PR #71 的第一個 commit)背在第 0 列、頭頂在第 2 列,中間掉兩列下來、耳朵卡在凹口裡——讀起來是
+// 「有脖子的動物頂著一顆圈」,跟上面第一條自己打架(review #71)。現在從屁股到口鼻是同一條線,耳朵是線上唯一的凸起。
+//
+// 卡通版的慣例是同一個側面、麵包一樣的身體、一臉無所謂。嘴邊那根草留著:它是嚼草動畫的主角。
+//
+// 動作:側身朝右站著,嘴角叼一根牧草,一邊嚼一邊偶爾眨眼。
 const (
 	capyBlinkEvery = 12 // 幀:約 4 秒眨一次
 	capyChewEvery  = 3  // 幀:約 1 秒嚼一口
 )
 
 var (
-	capyHead = []string{
-		"    __            __      ",
-		"   /  \\__________/  \\     ",
-		"  |                  |    ",
+	capyBack = []string{
+		"                         _                ", // 耳朵的頂:頭頂線上唯一凸出來的東西
+		"        ________________( )_________.     ", // 屁股到口鼻一條平線(沒有脖子);( ) 是耳朵:小、圓、在頭的後上方
 	}
-	capyEyesOpen  = "  |   O          O   |    "
-	capyEyesShut  = "  |   -          -   |    "
-	capyMidriff   = "  |                  |    "
-	capyBrow      = "  |      ______      |    "
-	capyMouthOut  = "  |     (__..__)~~~~~~~~~ " // 草從嘴角伸出臉外
-	capyMouthChew = "  |     (__--__)~~~~~~    " // 嚼一口:鼻孔瞇起來,草短一截
-	capyChin      = "   \\________________/     "
+	capyEyesOpen = "     .-'                    o     . |     " // o 眼睛(頭頂線的下一行、緊貼著耳朵) . 鼻孔(最前上角,離前緣留一欄) | 又鈍又方的口鼻
+	capyEyesShut = "     .-'                    -     . |     "
+	capyCheek    = []string{
+		"   .'                               |     ",
+		"  /                                 |     ",
+	}
+	capyMouthOut  = " |                             _____|~~~~ " // 草從口鼻的外面才開始
+	capyMouthChew = " |                             _____|~~   " // 嚼一口:草短一截
+	capyBelly     = []string{
+		"  \\                       __.-'           ", // 下巴往後收到胸口:頭比身體淺
+		"   `.|  |`----------'|  |'                ",
+	}
+	capyFeet = "     |__|            |__|                 " // 每一幀都一樣的一行(測試拿它認「橫幅有沒有畫出來」)
 )
 
 // capybaraFrame:第 n 幀(n 單調遞增,由 tick 推)。
@@ -38,17 +55,21 @@ func capybaraFrame(n int) []string {
 	if (n/capyChewEvery)%2 == 1 {
 		mouth = capyMouthChew
 	}
-	out := make([]string, 0, len(capyHead)+5)
-	out = append(out, capyHead...)
-	return append(out, eyes, capyMidriff, capyBrow, mouth, capyChin)
+	return capybaraLines(eyes, mouth)
 }
 
-// capybaraStill:開場動畫結束後定格、印進捲動區的那一幀:睜眼看著使用者、草伸出臉外。
+// capybaraStill:開場動畫結束後定格、印進捲動區的那一幀:睜著眼、草伸出去。
 // 不可以拿 capybaraFrame(0) 當定格 —— 第 0 幀 0%capyBlinkEvery == 0,是閉著眼的。
-func capybaraStill() []string {
-	out := make([]string, 0, len(capyHead)+5)
-	out = append(out, capyHead...)
-	return append(out, capyEyesOpen, capyMidriff, capyBrow, capyMouthOut, capyChin)
+func capybaraStill() []string { return capybaraLines(capyEyesOpen, capyMouthOut) }
+
+func capybaraLines(eyes, mouth string) []string {
+	out := make([]string, 0, len(capyBack)+len(capyCheek)+len(capyBelly)+3)
+	out = append(out, capyBack...)
+	out = append(out, eyes)
+	out = append(out, capyCheek...)
+	out = append(out, mouth)
+	out = append(out, capyBelly...)
+	return append(out, capyFeet)
 }
 
 // capybaraWidth:橫幅要的欄數。全部是 ASCII,所以位元組數就是顯示寬度。
@@ -61,7 +82,7 @@ func capybaraWidth() int {
 }
 
 // capyOneLine:終端機窄到放不下橫幅時的替代品(同一隻水豚,壓成一行)。同樣只用 ASCII。
-const capyOneLine = "(O  O)~~ capy"
+const capyOneLine = "(_____o.]~~ capy" // 屁股、背、眼睛、鼻孔、又鈍又方的口鼻、草
 
 // capyTagline:招牌。還沒登入時 provider 是空的,不要印出孤零零的間隔點。
 func capyTagline(prov string) string {

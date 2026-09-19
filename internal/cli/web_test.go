@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -828,11 +829,16 @@ func TestWebCapybaraMatchesTUI(t *testing.T) {
 	var got []string
 	for _, ln := range strings.Split(src[start:start+end], "\n") {
 		ln = strings.TrimSpace(ln)
-		if !strings.HasPrefix(ln, "'") {
+		if !strings.HasPrefix(ln, `"`) { // 雙引號字串:水豚的輪廓用到單引號與反引號,只有反斜線要跳脫
 			continue
 		}
-		ln = strings.TrimSuffix(strings.TrimSuffix(ln, ","), "'")
-		got = append(got, strings.ReplaceAll(strings.TrimPrefix(ln, "'"), `\\`, `\`))
+		// 真的解跳脫,不是把 \\ 換成 \:JS 裡單獨一個反斜線配空白是合法的(node --check 會過),
+		// 但瀏覽器算出來反斜線就不見了——那一筆下巴的線會靜悄悄消失。Unquote 遇到這種跳脫會報錯。
+		line, err := strconv.Unquote(strings.TrimSuffix(ln, ","))
+		if err != nil {
+			t.Fatalf("CAPYBARA 的這一行不是合法的雙引號字串(反斜線要寫成 \\\\):%s:%v", ln, err)
+		}
+		got = append(got, line)
 	}
 	want := capybaraStill()
 	if len(got) != len(want) {
@@ -1120,12 +1126,43 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(move, "const stopped = r.msg === CANCELLED_MSG;") || strings.Contains(move, "'已中止'") {
 		t.Error("move.js 要用 console.js 的 CANCELLED_MSG")
 	}
+	// 搬家頁的水豚跟終端機那隻同一個構圖:側面(一隻眼睛),由後往前是耳朵 → 眼睛 → 鼻孔(2026-09-20 重畫;
+	// 舊版的正面圓臉 + 兩個鼻孔是豬。ASCII 那隻由 TestCapybaraIsASideProfile 守)。
+	if strings.Count(move, "class: 'capy-svg__eye'") != 1 {
+		t.Error("水豚是側面:只有一隻眼睛")
+	}
+	// 數字從每個元素自己的屬性讀出來比(review #71):由後往前是耳朵 → 眼睛 → 鼻孔;眼睛不可以比耳朵小——
+	// 第一版耳朵在螢幕上是眼睛的三倍大,頭頂那顆圈被讀成眼睛,而會眨的是另一顆。
+	num := func(re string) []float64 {
+		m := regexp.MustCompile(re).FindStringSubmatch(move)
+		if m == nil {
+			t.Fatalf("move.js 的水豚找不到 %s", re)
+		}
+		out := make([]float64, len(m)-1)
+		for i, v := range m[1:] {
+			out[i], _ = strconv.ParseFloat(v, 64)
+		}
+		return out
+	}
+	ear := num(`capy-svg__ear', cx: ([\d.]+), cy: [\d.]+, rx: ([\d.]+)`)
+	eye := num(`capy-svg__eye', cx: ([\d.]+), cy: [\d.]+, r: ([\d.]+)`)
+	nose := num(`capy-svg__dot', cx: ([\d.]+)`)
+	if !(ear[0] < eye[0] && eye[0] < nose[0]) {
+		t.Errorf("水豚由後往前要是耳朵 → 眼睛 → 鼻孔:cx = %v、%v、%v", ear[0], eye[0], nose[0])
+	}
+	if eye[1] < ear[1] {
+		t.Errorf("眼睛(r %v)不可以比耳朵(rx %v)小:耳朵會被讀成眼睛", eye[1], ear[1])
+	}
+	// 嘴與草是開放路徑:帶 fill 會被隱式閉合填色(草有兩個 subpath,會填出兩個小三角形)。
+	if strings.Count(move, "class: 'capy-svg__stroke'") != 2 || !strings.Contains(css, ".capy-svg__stroke { fill: none;") {
+		t.Error("水豚的嘴與草要用不帶 fill 的 capy-svg__stroke")
+	}
 	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
 	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
 		t.Error("命令在跑時路線示意要停住")
 	}
 	// 路線示意的小卡外層跟路線一樣寬、整個滑出去:路線不裁掉的話,400px 會多出橫向捲動(smoke 量到 main.scrollWidth 641)。
-	if !strings.Contains(css, ".route__lane { position: relative; height: 6.5rem; display: grid; place-items: center; overflow: hidden; }") {
+	if !strings.Contains(css, ".route__lane { position: relative; height: 7.5rem; display: grid; place-items: center; overflow: hidden; }") {
 		t.Error(".route__lane 要 overflow: hidden")
 	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".route__note { animation: none;") || !strings.Contains(reduced, ".beat__row") {

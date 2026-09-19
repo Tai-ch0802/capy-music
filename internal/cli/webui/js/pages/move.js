@@ -24,19 +24,24 @@ const svg = (tag, attrs) => {
   return x;
 };
 
-// 水豚:圓角矩形與圓組成的單色線條(Q40);跟終端機那隻 ASCII 水豚同一個構圖:方頭、兩耳、圓眼、鼻子、叼一根草。
+// 水豚(2026-09-20 重畫,跟終端機那隻 ASCII 水豚同一個構圖;長相的依據寫在 tui_capybara.go):
+// 側面、朝右(朝著目的地)。頭像一塊圓角的磚、頭頂線跟背是同一條線(沒有脖子)、口鼻前端又鈍又方;眼睛緊貼著長在
+// 頭後上方的小圓耳;鼻孔在最前上角;桶狀的身體、渾圓的屁股、沒有尾巴、腿短;嘴邊叼一根草。
+// 舊版是正面圓臉 + 頭頂兩耳 + 橢圓鼻配兩個鼻孔——那是豬。單色線條、幾個基本形狀,不是手刻的長路徑。
+// 尺寸是照螢幕上的大小訂的(review #71:10.5rem 寬、縮放 0.75):臉上的眼睛與鼻孔同一個量級、耳朵不可以比眼睛搶眼——
+// 不然頭頂那顆圈會被讀成眼睛,而會眨的是另一顆。耳朵先畫、身體後畫:身體的底色蓋掉耳朵的下半,只剩線上的一個小凸起。
 function capybara() {
-  const s = svg('svg', { viewBox: '0 0 128 88', class: 'capy-svg', role: 'img', 'aria-label': '水豚' });
+  const s = svg('svg', { viewBox: '0 0 224 124', class: 'capy-svg', role: 'img', 'aria-label': '水豚' });
   s.append(
-    svg('rect', { class: 'capy-svg__line', x: 16, y: 4, width: 20, height: 18, rx: 8 }),
-    svg('rect', { class: 'capy-svg__line', x: 84, y: 4, width: 20, height: 18, rx: 8 }),
-    svg('rect', { class: 'capy-svg__head', x: 8, y: 14, width: 104, height: 68, rx: 24 }),
-    svg('circle', { class: 'capy-svg__eye', cx: 38, cy: 42, r: 5 }),
-    svg('circle', { class: 'capy-svg__eye', cx: 82, cy: 42, r: 5 }),
-    svg('rect', { class: 'capy-svg__line', x: 40, y: 54, width: 40, height: 20, rx: 10 }),
-    svg('circle', { class: 'capy-svg__dot', cx: 53, cy: 64, r: 2 }),
-    svg('circle', { class: 'capy-svg__dot', cx: 67, cy: 64, r: 2 }),
-    svg('line', { class: 'capy-svg__line', x1: 80, y1: 68, x2: 124, y2: 60 }),
+    svg('rect', { class: 'capy-svg__line', x: 30, y: 88, width: 20, height: 28, rx: 7 }),  // 後腿
+    svg('rect', { class: 'capy-svg__line', x: 112, y: 88, width: 20, height: 28, rx: 7 }), // 前腿
+    svg('ellipse', { class: 'capy-svg__line capy-svg__ear', cx: 128, cy: 29, rx: 5, ry: 7 }), // 耳朵:小、圓、在頭的後上方
+    // 屁股 → 背與頭頂一條線平過去 → 又鈍又方的口鼻 → 下巴收回胸口(頭比身體淺)→ 肚子(Z 拉回屁股)
+    svg('path', { class: 'capy-svg__line', d: 'M32 100 C10 100 6 74 14 58 C22 38 44 30 74 30 C110 30 140 32 172 32 Q194 32 194 54 L194 68 Q194 84 178 84 L160 84 C148 84 140 92 132 100 Z' }),
+    svg('circle', { class: 'capy-svg__eye', cx: 150, cy: 48, r: 5 }),                      // 眼睛:高、貼著耳朵
+    svg('ellipse', { class: 'capy-svg__dot', cx: 184, cy: 43, rx: 3.4, ry: 2.6 }),         // 鼻孔:最前上角
+    svg('path', { class: 'capy-svg__stroke', d: 'M176 69 L187 68' }),                      // 嘴:貼在口鼻的內側,不碰輪廓
+    svg('path', { class: 'capy-svg__stroke', d: 'M200 67 L220 61 M210 64 L215 57' }),      // 叼著的草:從口鼻的外面才開始
   );
   return s;
 }
