@@ -89,8 +89,8 @@ func TestCapybaraIsASideProfile(t *testing.T) {
 	if !(earRow < eyeRow && ear < eye && eye < nostril && nostril < muzzle) {
 		t.Errorf("由後往前要是:耳朵(在眼睛的後上方)→ 眼睛 → 鼻孔 → 鈍的口鼻前端:ear=%d,%d eye=%d,%d nostril=%d muzzle=%d\n%s", earRow, ear, eyeRow, eye, nostril, muzzle, all)
 	}
-	if eyeRow != len(capyBack) {
-		t.Errorf("眼睛要在頭的最上緣(頭頂線的下一行),不是臉的正中央:第 %d 行", eyeRow)
+	if eyeRow != earRow+1 {
+		t.Errorf("眼睛要在頭的最上緣(耳朵的下一行),不是臉的正中央:耳朵第 %d 行、眼睛第 %d 行", earRow, eyeRow)
 	}
 	mouth := still[eyeRow+2]
 	if !strings.HasSuffix(strings.TrimRight(mouth, " "), "~") || strings.Index(mouth, "~") < muzzle {
