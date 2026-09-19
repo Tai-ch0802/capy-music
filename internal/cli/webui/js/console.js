@@ -3,15 +3,17 @@ import { renderTable } from './table.js';
 
 // CAPYBARA:與 tui_capybara.go 的 capybaraStill() 逐字元相同(TestWebCapybaraMatchesTUI 釘住)。
 // 全部純 ASCII:方框繪製字元在 CJK 終端機是兩欄,會讓橫幅垮掉——網頁沿用同一份是為了兩邊長得一樣。
+// 這幾行用雙引號:水豚身上有單引號與反引號(輪廓的轉角),雙引號字串裡只有反斜線要跳脫。
 export const CAPYBARA = [
-  '    __            __      ',
-  '   /  \\__________/  \\     ',
-  '  |                  |    ',
-  '  |   O          O   |    ',
-  '  |                  |    ',
-  '  |      ______      |    ',
-  '  |     (__..__)~~~~~~~~~ ',
-  '   \\________________/     ',
+  "        ____________                      ",
+  "     .-'            `--.   _              ",
+  "   .'                   `-( )------.      ",
+  "  /                            o   .|     ",
+  " |                                  |     ",
+  " |                             _____|~~~~ ",
+  "  \\                       __.-'           ",
+  "   `.|  |`----------'|  |'                ",
+  "     |__|            |__|                 ",
 ];
 
 const SYSTEM_DIALOG = ['auth logout', 'config set', 'history clear', 'doctor', 'auth login'];

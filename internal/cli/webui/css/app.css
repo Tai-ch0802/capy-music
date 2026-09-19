@@ -58,11 +58,11 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 
 /* 路線示意(裝飾,不是進度;決策 47):來源 → 水豚 → 目的地,音符小卡沿路線滑過去。
    小卡的外層跟路線一樣寬,translateX 的百分比才是「路線的寬度」;只動 transform / opacity。 */
-.route { display: grid; grid-template-columns: auto minmax(6rem, 1fr) auto; align-items: center; gap: .75rem; }
-.route__end { display: flex; flex-direction: column; gap: .1rem; padding: .9rem 1.1rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); min-width: 7.5rem; }
+.route { display: grid; grid-template-columns: auto minmax(11rem, 1fr) auto; align-items: center; gap: .75rem; }
+.route__end { display: flex; flex-direction: column; gap: .1rem; padding: .9rem 1.1rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); min-width: 6.5rem; }
 .route__role { font-size: var(--t-12); color: var(--muted); }
 .route__name { font-size: var(--t-16); color: var(--text-hi); font-weight: 600; }
-.route__lane { position: relative; height: 6.5rem; display: grid; place-items: center; overflow: hidden; } /* 小卡的外層會滑出去:不裁掉的話整頁會多出橫向捲動 */
+.route__lane { position: relative; height: 7.5rem; display: grid; place-items: center; overflow: hidden; } /* 小卡的外層會滑出去:不裁掉的話整頁會多出橫向捲動 */
 .route__lane::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 2px dashed var(--line); }
 .route__note { position: absolute; left: 0; right: 0; top: 50%; margin-top: -1rem; display: block; opacity: 0; animation: carry var(--dur-loop) linear infinite; }
 .route__note:nth-child(2) { animation-delay: calc(var(--dur-loop) / -3); }
@@ -75,9 +75,9 @@ code, pre, kbd, .mono { font-family: var(--mono); }
   90% { opacity: 1; }
   100% { transform: translateX(calc(100% - 2rem)); opacity: 0; }
 }
-.capy-svg { position: relative; width: 5.5rem; height: auto; }
-.capy-svg__head { fill: var(--surface); stroke: var(--accent); stroke-width: 3; }
-.capy-svg__line { fill: var(--surface); stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+.capy-svg { position: relative; width: 10.5rem; max-width: 100%; height: auto; } /* 吉祥物要看得清楚:路線中間最大的東西 */
+.capy-svg__line { fill: var(--ink); stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.capy-svg__soft { fill: none; stroke: var(--accent-dim); stroke-width: 3; stroke-linecap: round; }
 .capy-svg__dot { fill: var(--accent); }
 .capy-svg__eye { fill: var(--accent); transform-box: fill-box; transform-origin: center; animation: blink 4s ease-in-out infinite; }
 @keyframes blink { 0%, 92%, 100% { transform: none; } 96% { transform: scaleY(.1); } }

@@ -393,12 +393,12 @@ func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	m.frozen = false // 水豚只出現在開場
 	wide := m.View().Content
-	if !strings.Contains(wide, capyChin) { // 下巴那行每一幀都一樣,不受眨眼／嚼草影響
+	if !strings.Contains(wide, capyFeet) { // 腳那行每一幀都一樣,不受眨眼／嚼草影響
 		t.Error("寬螢幕要有水豚橫幅")
 	}
 	m.width = 30
 	narrow := m.View().Content
-	if strings.Contains(narrow, capyChin) {
+	if strings.Contains(narrow, capyFeet) {
 		t.Error("窄螢幕不該畫整隻水豚")
 	}
 	if !strings.Contains(narrow, capyOneLine) {

@@ -72,7 +72,7 @@ func TestTUIFreezesCapybaraIntoScrollback(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	m.frozen = false
 	got := recordPrintln(t)
-	if !strings.Contains(m.View().Content, capyChin) {
+	if !strings.Contains(m.View().Content, capyFeet) {
 		t.Fatal("開場要有水豚")
 	}
 	m = step(t, m, tuiFreezeMsg{}, true)
@@ -86,7 +86,7 @@ func TestTUIFreezesCapybaraIntoScrollback(t *testing.T) {
 	if !strings.Contains((*got)[0], capyMouthOut) {
 		t.Errorf("定格要叼著草:%q", (*got)[0])
 	}
-	if strings.Contains(m.View().Content, capyChin) {
+	if strings.Contains(m.View().Content, capyFeet) {
 		t.Error("定格後 View 不該再有水豚")
 	}
 	// 再收到一次 freeze 不該重印(tick 與按鍵都會觸發)
@@ -108,7 +108,7 @@ func TestTUIKeyDuringIntroFreezesFirst(t *testing.T) {
 	if !m.frozen {
 		t.Fatal("開場期間的按鍵要先定格")
 	}
-	if len(*got) != 1 || !strings.Contains((*got)[0], capyChin) {
+	if len(*got) != 1 || !strings.Contains((*got)[0], capyFeet) {
 		t.Fatalf("定格的水豚要進捲動區:%v", *got)
 	}
 	if cmd == nil {

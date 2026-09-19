@@ -42,12 +42,12 @@ func TestCapybaraFramesAreASCIIRectangles(t *testing.T) {
 
 // 眨眼與嚼草各自照週期走,而且身體(眼睛與嘴以外的行)每一幀都一樣。
 func TestCapybaraAnimates(t *testing.T) {
-	const eyeRow, mouthRow = 3, 6
+	const eyeRow, mouthRow = 3, 5
 	base := capybaraFrame(1) // 幀 1:張眼、草伸長
-	if !strings.Contains(base[eyeRow], "O") {
+	if !strings.Contains(base[eyeRow], "o") {
 		t.Fatalf("幀 1 應該張著眼:%q", base[eyeRow])
 	}
-	if strings.Contains(capybaraFrame(capyBlinkEvery)[eyeRow], "O") {
+	if strings.Contains(capybaraFrame(capyBlinkEvery)[eyeRow], "o") {
 		t.Error("第 capyBlinkEvery 幀應該眨眼")
 	}
 	if capybaraFrame(capyChewEvery)[mouthRow] == base[mouthRow] {
@@ -62,6 +62,43 @@ func TestCapybaraAnimates(t *testing.T) {
 			if f[i] != base[i] {
 				t.Fatalf("第 %d 幀第 %d 行不該變:%q vs %q", n, i, f[i], base[i])
 			}
+		}
+	}
+}
+
+// 水豚要畫成水豚(2026-09-20 重畫):舊版是正面圓臉、頭頂兩耳、橢圓鼻配兩個鼻孔——那是豬。水豚好認的是側面:
+// 一隻眼睛、又小又高、緊貼著長在頭後上方的小耳朵;鼻孔在口鼻的最前上角;口鼻前端是鈍的;草從嘴邊(最前面)伸出去;
+// 屁股那一側沒有尾巴。哪天有人把牠「修」回正面臉,這裡要紅。
+func TestCapybaraIsASideProfile(t *testing.T) {
+	still := capybaraStill()
+	all := strings.Join(still, "\n")
+	if strings.Count(all, "o") != 1 {
+		t.Fatalf("側面只有一隻眼睛:\n%s", all)
+	}
+	var earRow, eyeRow int
+	for i, l := range still {
+		if strings.Contains(l, "( )") {
+			earRow = i
+		}
+		if strings.Contains(l, "o") {
+			eyeRow = i
+		}
+	}
+	ear, eye := strings.Index(still[earRow], "( )"), strings.Index(still[eyeRow], "o")
+	nostril, muzzle := strings.LastIndex(still[eyeRow], "."), strings.LastIndex(still[eyeRow], "|")
+	if !(earRow < eyeRow && ear < eye && eye < nostril && nostril < muzzle) {
+		t.Errorf("由後往前要是:耳朵(在眼睛的後上方)→ 眼睛 → 鼻孔 → 鈍的口鼻前端:ear=%d,%d eye=%d,%d nostril=%d muzzle=%d\n%s", earRow, ear, eyeRow, eye, nostril, muzzle, all)
+	}
+	if eyeRow != len(capyBack) {
+		t.Errorf("眼睛要在頭的最上緣(頭頂線的下一行),不是臉的正中央:第 %d 行", eyeRow)
+	}
+	mouth := still[eyeRow+2]
+	if !strings.HasSuffix(strings.TrimRight(mouth, " "), "~") || strings.Index(mouth, "~") < muzzle {
+		t.Errorf("草要從口鼻的最前面伸出去:%q", mouth)
+	}
+	for _, l := range still { // 沒有尾巴:屁股那一側(左邊)只有身體的輪廓
+		if strings.ContainsAny(strings.TrimLeft(l, " ")[:1], "~=<") {
+			t.Errorf("水豚沒有尾巴:%q", l)
 		}
 	}
 }

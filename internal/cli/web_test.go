@@ -828,11 +828,11 @@ func TestWebCapybaraMatchesTUI(t *testing.T) {
 	var got []string
 	for _, ln := range strings.Split(src[start:start+end], "\n") {
 		ln = strings.TrimSpace(ln)
-		if !strings.HasPrefix(ln, "'") {
+		if !strings.HasPrefix(ln, `"`) { // 雙引號字串:水豚的輪廓用到單引號與反引號,只有反斜線要跳脫
 			continue
 		}
-		ln = strings.TrimSuffix(strings.TrimSuffix(ln, ","), "'")
-		got = append(got, strings.ReplaceAll(strings.TrimPrefix(ln, "'"), `\\`, `\`))
+		ln = strings.TrimSuffix(strings.TrimSuffix(ln, ","), `"`)
+		got = append(got, strings.ReplaceAll(strings.TrimPrefix(ln, `"`), `\\`, `\`))
 	}
 	want := capybaraStill()
 	if len(got) != len(want) {
@@ -1120,12 +1120,20 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(move, "const stopped = r.msg === CANCELLED_MSG;") || strings.Contains(move, "'已中止'") {
 		t.Error("move.js 要用 console.js 的 CANCELLED_MSG")
 	}
+	// 搬家頁的水豚跟終端機那隻同一個構圖:側面(一隻眼睛),由後往前是耳朵 → 眼睛 → 鼻孔(2026-09-20 重畫;
+	// 舊版的正面圓臉 + 兩個鼻孔是豬。ASCII 那隻由 TestCapybaraIsASideProfile 守)。
+	if strings.Count(move, "class: 'capy-svg__eye'") != 1 {
+		t.Error("水豚是側面:只有一隻眼睛")
+	}
+	if ear, eye, nose := strings.Index(move, "cx: 132"), strings.Index(move, "cx: 154"), strings.Index(move, "cx: 186"); ear < 0 || eye < 0 || nose < 0 {
+		t.Error("水豚的耳朵(cx 132)在眼睛(cx 154)後面、鼻孔(cx 186)在最前面")
+	}
 	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
 	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
 		t.Error("命令在跑時路線示意要停住")
 	}
 	// 路線示意的小卡外層跟路線一樣寬、整個滑出去:路線不裁掉的話,400px 會多出橫向捲動(smoke 量到 main.scrollWidth 641)。
-	if !strings.Contains(css, ".route__lane { position: relative; height: 6.5rem; display: grid; place-items: center; overflow: hidden; }") {
+	if !strings.Contains(css, ".route__lane { position: relative; height: 7.5rem; display: grid; place-items: center; overflow: hidden; }") {
 		t.Error(".route__lane 要 overflow: hidden")
 	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".route__note { animation: none;") || !strings.Contains(reduced, ".beat__row") {
