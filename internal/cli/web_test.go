@@ -1131,8 +1131,31 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Count(move, "class: 'capy-svg__eye'") != 1 {
 		t.Error("水豚是側面:只有一隻眼睛")
 	}
-	if ear, eye, nose := strings.Index(move, "cx: 132"), strings.Index(move, "cx: 154"), strings.Index(move, "cx: 186"); ear < 0 || eye < 0 || nose < 0 {
-		t.Error("水豚的耳朵(cx 132)在眼睛(cx 154)後面、鼻孔(cx 186)在最前面")
+	// 數字從每個元素自己的屬性讀出來比(review #71):由後往前是耳朵 → 眼睛 → 鼻孔;眼睛不可以比耳朵小——
+	// 第一版耳朵在螢幕上是眼睛的三倍大,頭頂那顆圈被讀成眼睛,而會眨的是另一顆。
+	num := func(re string) []float64 {
+		m := regexp.MustCompile(re).FindStringSubmatch(move)
+		if m == nil {
+			t.Fatalf("move.js 的水豚找不到 %s", re)
+		}
+		out := make([]float64, len(m)-1)
+		for i, v := range m[1:] {
+			out[i], _ = strconv.ParseFloat(v, 64)
+		}
+		return out
+	}
+	ear := num(`capy-svg__ear', cx: ([\d.]+), cy: [\d.]+, rx: ([\d.]+)`)
+	eye := num(`capy-svg__eye', cx: ([\d.]+), cy: [\d.]+, r: ([\d.]+)`)
+	nose := num(`capy-svg__dot', cx: ([\d.]+)`)
+	if !(ear[0] < eye[0] && eye[0] < nose[0]) {
+		t.Errorf("水豚由後往前要是耳朵 → 眼睛 → 鼻孔:cx = %v、%v、%v", ear[0], eye[0], nose[0])
+	}
+	if eye[1] < ear[1] {
+		t.Errorf("眼睛(r %v)不可以比耳朵(rx %v)小:耳朵會被讀成眼睛", eye[1], ear[1])
+	}
+	// 嘴與草是開放路徑:帶 fill 會被隱式閉合填色(草有兩個 subpath,會填出兩個小三角形)。
+	if strings.Count(move, "class: 'capy-svg__stroke'") != 2 || !strings.Contains(css, ".capy-svg__stroke { fill: none;") {
+		t.Error("水豚的嘴與草要用不帶 fill 的 capy-svg__stroke")
 	}
 	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
 	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {

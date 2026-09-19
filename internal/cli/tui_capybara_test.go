@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -42,7 +45,7 @@ func TestCapybaraFramesAreASCIIRectangles(t *testing.T) {
 
 // 眨眼與嚼草各自照週期走,而且身體(眼睛與嘴以外的行)每一幀都一樣。
 func TestCapybaraAnimates(t *testing.T) {
-	const eyeRow, mouthRow = 3, 5
+	const eyeRow, mouthRow = 2, 5
 	base := capybaraFrame(1) // 幀 1:張眼、草伸長
 	if !strings.Contains(base[eyeRow], "o") {
 		t.Fatalf("幀 1 應該張著眼:%q", base[eyeRow])
@@ -92,13 +95,62 @@ func TestCapybaraIsASideProfile(t *testing.T) {
 	if eyeRow != earRow+1 {
 		t.Errorf("眼睛要在頭的最上緣(耳朵的下一行),不是臉的正中央:耳朵第 %d 行、眼睛第 %d 行", earRow, eyeRow)
 	}
-	mouth := still[eyeRow+2]
-	if !strings.HasSuffix(strings.TrimRight(mouth, " "), "~") || strings.Index(mouth, "~") < muzzle {
-		t.Errorf("草要從口鼻的最前面伸出去:%q", mouth)
+	// 頭頂線是平的、跟背連成一條(沒有脖子):耳朵那一行就是從屁股到口鼻的整條上緣,只准有線、耳朵、口鼻的圓角;
+	// 它上面只准有耳朵的頂。第一版背在第 0 列、頭頂在第 2 列,中間用 `--. 掉下來——那個凹口讀起來就是脖子(review #71)。
+	if top := strings.TrimSpace(still[earRow]); !regexp.MustCompile(`^_+\( \)_+\.$`).MatchString(top) {
+		t.Errorf("上緣要是一條平線,線上只有耳朵,最前面收一個圓角:%q", top)
 	}
-	for _, l := range still { // 沒有尾巴:屁股那一側(左邊)只有身體的輪廓
-		if strings.ContainsAny(strings.TrimLeft(l, " ")[:1], "~=<") {
-			t.Errorf("水豚沒有尾巴:%q", l)
+	for _, l := range still[:earRow] {
+		if strings.TrimSpace(l) != "_" || strings.Index(l, "_") != ear+1 {
+			t.Errorf("頭頂線上面只准有耳朵的頂(在耳朵的正上方):%q", l)
+		}
+	}
+	var mouth string
+	for _, l := range still {
+		if strings.Contains(l, "~") {
+			mouth = l
+		}
+	}
+	if !strings.HasSuffix(strings.TrimRight(mouth, " "), "~") || strings.Index(mouth, "~") <= muzzle {
+		t.Errorf("草要從口鼻的外面才開始、伸到最前面:%q", mouth)
+	}
+	// 沒有尾巴:屁股是一道凸的弧,所以左緣的欄位由上到下先往左、再往右,而且變化量只增不減。
+	// 屁股上多出任何一筆(不管用哪個字元畫),那一行的左緣就會突然凸出去,差分就不單調了。
+	var left []int
+	for _, l := range still[earRow:] {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		left = append(left, len(l)-len(strings.TrimLeft(l, " ")))
+	}
+	for i := 2; i < len(left); i++ {
+		if left[i]-left[i-1] < left[i-1]-left[i-2] {
+			t.Errorf("水豚沒有尾巴:屁股那一側要是一道凸的弧,左緣欄位 %v 在第 %d 個凸出去了\n%s", left, i, all)
+			break
+		}
+	}
+}
+
+// 使用指南是水豚的第三份拷貝(開頭的 <pre>、TUI 示意、會動的那段 JS),沒有共用執行期,只能逐行比(review #71:
+// tui_capybara.go 與 console.js 由 TestWebCapybaraMatchesTUI 釘住,指南那份以前只靠人眼)。
+func TestGuideCapybaraMatchesTUI(t *testing.T) {
+	b, err := os.ReadFile("../../docs/guide.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide := strings.ReplaceAll(string(b), "\r\n", "\n")
+	var still []string
+	for _, l := range capybaraStill() {
+		still = append(still, strings.TrimRight(l, " "))
+	}
+	if n := strings.Count(guide, strings.Join(still, "\n")); n != 2 {
+		t.Errorf("指南裡靜態的水豚要有兩隻(開頭與 TUI 示意)、都跟終端機的定格幀一樣,找到 %d 隻", n)
+	}
+	for _, n := range []int{0, 1, capyChewEvery} { // 閉眼、睜眼、嚼一口:JS 那段的每一行
+		for _, l := range capybaraFrame(n) {
+			if !strings.Contains(guide, strconv.Quote(l)) {
+				t.Errorf("指南的 JS 幀少了這一行(或跟終端機不一樣):%q", l)
+			}
 		}
 	}
 }

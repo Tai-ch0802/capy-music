@@ -77,7 +77,8 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 }
 .capy-svg { position: relative; width: 10.5rem; max-width: 100%; height: auto; } /* 吉祥物要看得清楚:路線中間最大的東西 */
 .capy-svg__line { fill: var(--ink); stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-.capy-svg__soft { fill: none; stroke: var(--accent-dim); stroke-width: 3; stroke-linecap: round; }
+.capy-svg__ear { stroke-width: 3; } /* 耳朵不可以比眼睛搶眼 */
+.capy-svg__stroke { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; } /* 開放路徑:不可以帶 fill,會被隱式閉合填色 */
 .capy-svg__dot { fill: var(--accent); }
 .capy-svg__eye { fill: var(--accent); transform-box: fill-box; transform-origin: center; animation: blink 4s ease-in-out infinite; }
 @keyframes blink { 0%, 92%, 100% { transform: none; } 96% { transform: scaleY(.1); } }
@@ -396,5 +397,6 @@ body[data-stale] .dock__input { border-color: var(--warn); }
   .hero__title { font-size: var(--t-28); }
   .dock__busy-bar { display: none; } /* 窄畫面:狀態列只留「比對歌曲 37 / 120」的字,條讓給中止鈕 */
   .route { grid-template-columns: minmax(0, 1fr); }
-  .route__lane { height: 5rem; }
+  .route__lane { height: 6rem; }
+  .capy-svg { width: 8rem; } /* 8rem × 124/224 ≈ 71px,車道 96px:腳底留得下餘裕 */
 }

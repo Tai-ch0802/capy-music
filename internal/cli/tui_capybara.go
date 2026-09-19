@@ -12,7 +12,10 @@ package cli
 //   - 頭像一塊圓角的磚:頭頂線是平的、跟背連成一條(沒有脖子),口鼻前端又鈍又方;
 //   - 眼睛、耳朵、鼻孔都長在頭的最上緣(泡在水裡只露這三樣):眼睛小、位置很後面,緊貼著小圓耳;
 //     鼻孔在口鼻的最前上角;
-//   - 身體是桶狀、背微微隆起,屁股渾圓、沒有尾巴;腿短。
+//   - 身體是桶狀,屁股渾圓、沒有尾巴;腿短。
+//
+// 第一版(PR #71 的第一個 commit)背在第 0 列、頭頂在第 2 列,中間掉兩列下來、耳朵卡在凹口裡——讀起來是
+// 「有脖子的動物頂著一顆圈」,跟上面第一條自己打架(review #71)。現在從屁股到口鼻是同一條線,耳朵是線上唯一的凸起。
 //
 // 卡通版的慣例是同一個側面、麵包一樣的身體、一臉無所謂。嘴邊那根草留著:它是嚼草動畫的主角。
 //
@@ -24,14 +27,16 @@ const (
 
 var (
 	capyBack = []string{
-		"        ____________                      ",
-		"     .-'            `--.   _              ",
-		"   .'                   `-( )------.      ", // ( ) 是耳朵:小、圓、長在頭的後上方
+		"                         _                ", // 耳朵的頂:頭頂線上唯一凸出來的東西
+		"        ________________( )_________.     ", // 屁股到口鼻一條平線(沒有脖子);( ) 是耳朵:小、圓、在頭的後上方
 	}
-	capyEyesOpen  = "  /                            o   .|     " // o 眼睛(小、高、貼著耳朵) . 鼻孔(最前上角) | 又鈍又方的口鼻
-	capyEyesShut  = "  /                            -   .|     "
-	capyCheek     = " |                                  |     "
-	capyMouthOut  = " |                             _____|~~~~ " // 草從嘴角伸出去
+	capyEyesOpen = "     .-'                    o     . |     " // o 眼睛(頭頂線的下一行、緊貼著耳朵) . 鼻孔(最前上角,離前緣留一欄) | 又鈍又方的口鼻
+	capyEyesShut = "     .-'                    -     . |     "
+	capyCheek    = []string{
+		"   .'                               |     ",
+		"  /                                 |     ",
+	}
+	capyMouthOut  = " |                             _____|~~~~ " // 草從口鼻的外面才開始
 	capyMouthChew = " |                             _____|~~   " // 嚼一口:草短一截
 	capyBelly     = []string{
 		"  \\                       __.-'           ", // 下巴往後收到胸口:頭比身體淺
@@ -58,9 +63,11 @@ func capybaraFrame(n int) []string {
 func capybaraStill() []string { return capybaraLines(capyEyesOpen, capyMouthOut) }
 
 func capybaraLines(eyes, mouth string) []string {
-	out := make([]string, 0, len(capyBack)+len(capyBelly)+4)
+	out := make([]string, 0, len(capyBack)+len(capyCheek)+len(capyBelly)+3)
 	out = append(out, capyBack...)
-	out = append(out, eyes, capyCheek, mouth)
+	out = append(out, eyes)
+	out = append(out, capyCheek...)
+	out = append(out, mouth)
 	out = append(out, capyBelly...)
 	return append(out, capyFeet)
 }

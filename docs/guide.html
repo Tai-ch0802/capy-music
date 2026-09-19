@@ -283,11 +283,11 @@
 
 <div class="wrap">
   <header class="hero">
-    <pre id="capy" role="img" aria-label="水豚吉祥物的側面,嘴角叼著一根牧草">        ____________
-     .-'            `--.   _
-   .'                   `-( )------.
-  /                            o   .|
- |                                  |
+    <pre id="capy" role="img" aria-label="水豚吉祥物的側面,嘴角叼著一根牧草">                         _
+        ________________( )_________.
+     .-'                    o     . |
+   .'                               |
+  /                                 |
  |                             _____|~~~~
   \                       __.-'
    `.|  |`----------'|  |'
@@ -340,11 +340,11 @@
   <section>
     <h2>互動式介面</h2>
     <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。開場的水豚動兩秒後定格,之後畫面只有底部四行會變動,上面那一整片是終端機自己的捲動區——你打過的命令、它們的輸出、發生過的錯誤都留在那裡,可以往回捲、可以複製。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
-<pre><code>        ____________
-     .-'            `--.   _
-   .'                   `-( )------.
-  /                            o   .|
- |                                  |
+<pre><code>                         _
+        ________________( )_________.
+     .-'                    o     . |
+   .'                               |
+  /                                 |
  |                             _____|~~~~
   \                       __.-'
    `.|  |`----------'|  |'
@@ -604,13 +604,15 @@ p.JL68l7EhogEeXd  冬日暖調          -
   // 水豚:直接用 CLI 裡那幾幀(internal/cli/tui_capybara.go),連字元都一樣。
   // 全 ASCII 的原因在那個檔案裡:方框繪製字元在 CJK 語系的終端機寬度是 2,矩形會垮。
   const TOP = [
-    "        ____________                      ",
-    "     .-'            `--.   _              ",
-    "   .'                   `-( )------.      ",
+    "                         _                ",
+    "        ________________( )_________.     ",
   ];
-  const EYES_OPEN = "  /                            o   .|     ";
-  const EYES_SHUT = "  /                            -   .|     ";
-  const CHEEK = " |                                  |     ";
+  const EYES_OPEN = "     .-'                    o     . |     ";
+  const EYES_SHUT = "     .-'                    -     . |     ";
+  const CHEEK = [
+    "   .'                               |     ",
+    "  /                                 |     ",
+  ];
   const MOUTH_OUT = " |                             _____|~~~~ ";
   const MOUTH_CHEW = " |                             _____|~~   ";
   const BELLY = [
@@ -622,7 +624,7 @@ p.JL68l7EhogEeXd  冬日暖調          -
   function frame(n) {
     const eyes = n % 12 === 0 ? EYES_SHUT : EYES_OPEN;
     const mouth = Math.floor(n / 3) % 2 === 1 ? MOUTH_CHEW : MOUTH_OUT;
-    return [...TOP, eyes, CHEEK, mouth, ...BELLY].join("\n");
+    return [...TOP, eyes, ...CHEEK, mouth, ...BELLY].join("\n");
   }
 
   // 第一幀已經寫在 HTML 裡(JS 沒跑到也看得到水豚),這裡從第二幀接手。
