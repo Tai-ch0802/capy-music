@@ -183,7 +183,14 @@ func TestWranglerConfigIsAssetsOnly(t *testing.T) {
 			t.Errorf("wrangler.jsonc 的 assets 多了 %q:只准 directory / not_found_handling / html_handling", k)
 		}
 	}
-	if _, logs := raw["observability"]; logs {
+	var obs struct {
+		Enabled bool `json:"enabled"`
+		Logs    struct {
+			Enabled bool `json:"enabled"`
+		} `json:"logs"`
+	}
+	_ = json.Unmarshal(raw["observability"], &obs)
+	if obs.Enabled || obs.Logs.Enabled { // 真的開著才要求揭露;鍵在但關著不算
 		for _, page := range []string{"privacy.html", "en/privacy.html"} {
 			if html := read(t, page); !strings.Contains(html, "存取紀錄") && !strings.Contains(html, "access logs") {
 				t.Errorf("wrangler.jsonc 開了 observability(會留存取紀錄),%s §8 要照實寫", page)
