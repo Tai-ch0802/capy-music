@@ -92,6 +92,13 @@ func TestPagesLoadNothingFromThirdParties(t *testing.T) {
 			t.Errorf("%s 會載入外部資源或執行 script:%q", name, m)
 		}
 	}
+	// 代管商(Cloudflare 的 zone 設定)會自動往 HTML 注入分析用的 script,是 CSP 把它們擋下來的(上線後實測)。
+	// 政策 §8 把這件事講明了;這裡釘住兩邊:CSP 不開 script、政策有提到 CSP。
+	for _, page := range []string{"privacy.html", "en/privacy.html"} {
+		if !strings.Contains(read(t, page), "CSP") && !strings.Contains(read(t, page), "Content Security Policy") {
+			t.Errorf("%s §8 要說明頁面以 CSP 禁止執行任何 script", page)
+		}
+	}
 	if h := read(t, "_headers"); !strings.Contains(h, "default-src 'none'") || strings.Contains(h, "script-src") {
 		t.Errorf("_headers 的 CSP 要從 default-src 'none' 起跳、不開 script:\n%s", h)
 	}
