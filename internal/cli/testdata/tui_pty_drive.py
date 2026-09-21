@@ -7,25 +7,31 @@
 
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pyte
     /tmp/v/bin/python tui_pty_drive.py ./capy 100 40 wait:4 'keys:/config list\\r' wait:2 dump:after
+    /tmp/v/bin/python tui_pty_drive.py './capy now --watch' 100 40 wait:3 sigint:5    # 第一個參數可以帶子命令
 
 步驟:wait:<秒>  keys:<字串,\\r \\x1b 這類跳脫會解開>  resize:<欄>x<列>  dump:<標題>
       sigint:<秒>(對前景行程群組送 SIGINT,量多久結束,最多等這麼久)
 dump 會印捲動區 + 畫面,並數「水豚的腳」那一行出現幾次——應該恰好一次(執行子命令的當下是零次)。
 結束時送 SIGTERM;三秒內沒結束會講出來,設 STACKS=1 的話再送 SIGQUIT 把 goroutine 堆疊印出來。
+行程結束時印它的結束碼:q / 做完 = 0、SIGINT = 130、SIGTERM = 143(負數 = 被沒接住的訊號殺掉,例如 -9)。
+只量結束碼 / 訊號的話不用裝 pyte(系統的 python3 就能跑);dump 才需要它。
 """
-import fcntl, os, pty, re, select, signal, struct, sys, termios, time
+import fcntl, os, pty, re, select, shlex, signal, struct, sys, termios, time
 
-import pyte
+try:
+    import pyte
+except ImportError:
+    pyte = None
 
-exe, cols, rows, steps = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4:]
-screen = pyte.HistoryScreen(cols, rows, history=2000, ratio=1.0)
-stream = pyte.ByteStream(screen)
+argv, cols, rows, steps = shlex.split(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4:]
+screen = pyte.HistoryScreen(cols, rows, history=2000, ratio=1.0) if pyte else None
+stream = pyte.ByteStream(screen) if pyte else None
 
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["TERM"] = "xterm-256color"
     try:
-        os.execv(exe, [exe])
+        os.execv(argv[0], argv)
     finally:  # execv 失敗(路徑打錯、還沒 build)的話 child 不可以掉下去跑下面的迴圈:兩個行程搶同一個 fd,看起來像 capy 壞了
         os._exit(127)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -43,7 +49,9 @@ def pump(sec):
         if not data:
             return
         if b"\x1b[6n" in data:  # bubbletea 開場會問游標位置;不回答它會等到逾時
-            os.write(fd, b"\x1b[%d;1R" % (screen.cursor.y + 1))
+            os.write(fd, b"\x1b[%d;1R" % (screen.cursor.y + 1 if screen else 1))
+        if not screen:
+            continue
         # pyte 不認得 kitty 鍵盤協定的 CSI ... u,會把尾巴當文字印出來、游標跟著歪
         data = re.sub(rb"\x1b\[[>=<?][0-9;]*u", b"", data)
         # 也不認得 CBT(CSI n Z,往回跳 n 個 tab 停駐點),而 uv 的 renderer 會用它省位元組:自己補上
@@ -57,6 +65,9 @@ def pump(sec):
 
 
 def dump(label):
+    if not screen:
+        print(f"===== {label}:沒有 pyte,畫不出畫面(pip install pyte)=====")
+        return
     hist = ["".join(line[x].data for x in range(cols)).rstrip() for line in screen.history.top]
     lines = hist + [l.rstrip() for l in screen.display]
     feet = sum("|__|            |__|" in l for l in lines)
@@ -68,6 +79,17 @@ def dump(label):
 
 
 exited = False
+
+
+def reap(flags=os.WNOHANG):
+    global exited
+    got, status = os.waitpid(pid, flags)
+    if got:
+        exited = True
+        print(f"===== 結束碼 {os.waitstatus_to_exitcode(status)} =====")
+    return exited
+
+
 for st in steps:
     kind, _, arg = st.partition(":")
     if kind == "wait":
@@ -80,15 +102,15 @@ for st in steps:
             pump(0.08)
     elif kind == "resize":
         cols, rows = map(int, arg.split("x"))
-        screen.resize(rows, cols)
+        if screen:
+            screen.resize(rows, cols)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         os.kill(pid, signal.SIGWINCH)
         pump(0.5)
     elif kind == "sigint":  # 對整個前景行程群組送 SIGINT(子命令跑著的時候終端機在 cooked mode,Ctrl-C 就是這樣到的),再量多久結束
         os.killpg(os.getpgid(pid), signal.SIGINT)
         t0, limit = time.time(), float(arg or 5)
-        while not exited and time.time() - t0 < limit:
-            exited = os.waitpid(pid, os.WNOHANG)[0] != 0
+        while not reap() and time.time() - t0 < limit:
             pump(0.05)
         print("===== SIGINT 之後 " + (f"{time.time() - t0:.1f} 秒結束" if exited else f"{limit:g} 秒還沒結束") + " =====")
     elif kind == "dump":
@@ -98,7 +120,7 @@ if not exited:
     try:
         os.kill(pid, signal.SIGTERM)
         for _ in range(60):
-            if os.waitpid(pid, os.WNOHANG)[0]:
+            if reap():
                 break
             pump(0.05)
         else:
@@ -114,6 +136,6 @@ if not exited:
                             break
                 print(raw.decode("utf-8", "replace").replace("\r", ""))
             os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
+            reap(0)
     except (ProcessLookupError, ChildProcessError):
         pass

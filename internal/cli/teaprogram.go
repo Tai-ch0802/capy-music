@@ -9,7 +9,7 @@ import (
 
 // newProgram:帶著命令的 ctx 開 bubbletea 程式的唯一入口(互動式介面、now --watch)。
 //
-// 訊號只准有一個主人。Execute 的 signal.NotifyContext 已經把 SIGINT / SIGTERM 變成 ctx 取消,而 bubbletea 預設
+// 訊號只准有一個主人。Execute(executeSignalled)已經把 SIGINT / SIGTERM 變成 ctx 取消,而 bubbletea 預設
 // 還會自己再聽一次同樣的訊號——兩邊同時收到同一個 SIGTERM 就是一場賽跑:
 //
 //   - bubbletea 的 handler 先到:送 QuitMsg、事件迴圈收下、正常離開;

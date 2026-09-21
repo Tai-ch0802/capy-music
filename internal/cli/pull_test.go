@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"unicode"
@@ -391,6 +392,40 @@ func TestExitCodeTable(t *testing.T) {
 	}
 	if _, msg := ExitCode(&PendingError{N: 1}); !strings.Contains(msg, "--yes") {
 		t.Errorf("待套用要提示 --yes:%q", msg)
+	}
+}
+
+// 被訊號結束 → 130 / 143,但只在命令回 nil 或「被取消」的錯時;設計出來的結束碼與其他錯誤不被蓋掉,
+// stderr 印的也跟沒有訊號時一樣。真的送訊號的那一份在 root_unix_test.go,這份在 Windows 也跑。
+func TestSignalledExitCode(t *testing.T) {
+	cancelled := func(cause error) context.Context {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(cause)
+		return ctx
+	}
+	term, intr := cancelled(&SignalError{Sig: syscall.SIGTERM}), cancelled(&SignalError{Sig: os.Interrupt})
+	ctxErr := fmt.Errorf("讀取失敗:%w", context.Canceled)
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		err  error
+		code int
+		msg  string
+	}{
+		{"SIGTERM、命令回 nil(互動式介面 / now --watch / --web)", term, nil, 143, ""},
+		{"SIGINT、命令回 nil", intr, nil, 130, ""},
+		{"SIGTERM、命令回被取消的錯", term, ctxErr, 143, "Error: 讀取失敗:context canceled"},
+		{"SIGINT、命令回被取消的錯", intr, ctxErr, 130, "Error: 讀取失敗:context canceled"},
+		{"別的錯原樣(寫到一半那種 exit 1 有話要說)", term, errors.New("已寫 3 首"), 1, "Error: 已寫 3 首"},
+		{"exit 2 不被蓋掉", term, &PendingError{N: 1}, 2, (&PendingError{N: 1}).Error()},
+		{"exit 3 不被蓋掉", term, &BlockedError{Msg: "b"}, 3, "b"},
+		{"包著 Canceled 的 exit 3 也不被蓋掉", term, fmt.Errorf("%w:%w", &BlockedError{Msg: "b"}, context.Canceled), 3, "b:context canceled"},
+		{"沒有訊號:nil 還是 0(q / 正常做完)", context.Background(), nil, 0, ""},
+		{"沒有訊號:ctx 因別的理由取消還是 1", cancelled(nil), ctxErr, 1, "Error: 讀取失敗:context canceled"},
+	} {
+		if code, msg := ExitCode(signalled(tc.ctx, tc.err)); code != tc.code || msg != tc.msg {
+			t.Errorf("%s:(%d, %q),要 (%d, %q)", tc.name, code, msg, tc.code, tc.msg)
+		}
 	}
 }
 

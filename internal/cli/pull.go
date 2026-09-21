@@ -44,13 +44,21 @@ type BlockedError struct{ Msg string }
 func (e *BlockedError) Error() string { return e.Msg }
 
 // ExitCode 把 Execute 的錯誤對到 exit code 與要印到 stderr 的訊息:0 成功(含無變更、已套用)、1 錯誤、
-// 2 需要人介入(歧義、待套用變更)、3 安全閥擋下。「這次動了幾筆」由 stdout 的 TSV 行數判斷,不佔 exit code。
+// 2 需要人介入(歧義、待套用變更)、3 安全閥擋下、130 / 143 被 SIGINT / SIGTERM 結束(見 SignalError)。
+// 「這次動了幾筆」由 stdout 的 TSV 行數判斷,不佔 exit code。
 func ExitCode(err error) (int, string) {
 	var amb *AmbiguousError
 	var pend *PendingError
 	var rev *ReviewNeedsTTYError
 	var blk *BlockedError
+	var sig *SignalError
 	switch {
+	case errors.As(err, &sig): // 只改結束碼:stderr 印的跟沒有訊號時一模一樣(回 nil 的不印)
+		_, msg := ExitCode(sig.Err)
+		if sig.Sig == os.Interrupt {
+			return 130, msg
+		}
+		return 143, msg
 	case err == nil:
 		return 0, ""
 	case errors.As(err, &amb), errors.As(err, &pend), errors.As(err, &rev):
