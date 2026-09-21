@@ -15,13 +15,15 @@
 		"not_found_handling": "404-page",
 		"html_handling": "auto-trailing-slash"
 	},
-    "observability": {
-    	"logs": {
+	// Workers Logs(維護者 2026-09-21 開的):Cloudflare 帳號裡會保留一段時間的存取紀錄,只拿來排除網站故障。
+	// 隱私權政策 §8 有寫;site_test.go 釘住「開著這個鍵,政策就要提到存取紀錄」。
+	"observability": {
+		"logs": {
 			"enabled": true,
-      		"invocation_logs": true,
-      		"persist": true
+			"invocation_logs": true,
+			"persist": true
 		}
-  	},
+	},
 	"routes": [{ "pattern": "capy.taislife.work", "custom_domain": true }],
 	"workers_dev": false,
 	"preview_urls": false

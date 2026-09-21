@@ -1,0 +1,282 @@
+  /* 這一頁刻意只有一個深色主題:capy 活在終端機裡,配色直接取自 internal/ui/theme.go 的 GeekGreen,
+     不做淺色版。所有顏色都明確畫出來,不依賴宿主背景。 */
+  :root {
+    --ink: #0D1117;
+    --surface: #161B22;
+    --surface-2: #1C232B;
+    --line: #2A323C;
+    --accent: #3FB27F;
+    --accent-dim: #2A6E52;
+    --text: #C9D1D9;
+    --muted: #7D8794;
+    --warn: #D9A441;
+
+    /* 全部走系統字型:這一頁的賣點是「用瀏覽器開就好,不需要伺服器」,那就不該每次開都去 Google 抓字檔、
+       離線時又長得不一樣。系統等寬字型對一個住在終端機裡的工具來說也更貼題。 */
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+
+    --step--1: 0.8125rem;
+    --step-0: 0.9375rem;
+    --step-1: 1.125rem;
+    --step-2: 1.5rem;
+    --step-3: 2rem;
+    --step-4: 2.75rem;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: var(--step-0);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  /* ── 開場 ───────────────────────────────────────── */
+  .hero {
+    display: grid;
+    gap: 2.5rem;
+    padding: 3.5rem 0 3rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 60rem) {
+    .hero {
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 3.5rem;
+    }
+  }
+
+  /* 全域的 pre 有底色與外框,水豚不要那些:牠是圖不是程式碼區塊。line-height 壓到 1 讓上下行接得起來。 */
+  #capy {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    line-height: 1;
+    color: var(--accent);
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .hero h1 {
+    font-family: var(--mono);
+    font-size: var(--step-4);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin: 0 0 0.75rem;
+    color: #fff;
+    text-wrap: balance;
+  }
+  .hero h1 .dot { color: var(--accent); }
+
+  .lede {
+    font-size: var(--step-1);
+    color: var(--text);
+    margin: 0 0 1.5rem;
+    max-width: 44ch;
+  }
+
+  .install {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.65rem 0.9rem;
+    display: inline-block;
+    color: var(--text);
+  }
+  .install .p { color: var(--accent); user-select: none; }
+
+  .platforms {
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.25rem;
+    font-size: var(--step--1);
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  /* ── 通用區塊 ───────────────────────────────────── */
+  section { padding: 3rem 0; border-top: 1px solid var(--line); }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: var(--step-2);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.5rem;
+    color: #fff;
+  }
+  h3 {
+    font-family: var(--mono);
+    font-size: var(--step-1);
+    font-weight: 500;
+    margin: 0 0 0.5rem;
+    color: var(--accent);
+    letter-spacing: -0.01em;
+  }
+  .sub { color: var(--muted); margin: 0 0 2rem; max-width: 62ch; }
+  p { max-width: 66ch; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    color: var(--text);
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c-p { color: var(--accent); }
+  .c-m { color: var(--muted); }
+  .c-w { color: var(--warn); }
+
+  /* ── 開始使用:真的是一連串步驟,所以編號有意義 ── */
+  .steps { display: grid; gap: 1.75rem; counter-reset: s; }
+  .step { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 1rem; }
+  .step::before {
+    counter-increment: s;
+    content: counter(s);
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--accent);
+    border: 1px solid var(--accent-dim);
+    border-radius: 50%;
+    width: 1.75rem;
+    height: 1.75rem;
+    display: grid;
+    place-items: center;
+    align-self: start;
+  }
+  .step h3 { margin-top: 0.15rem; }
+  .step p { margin: 0 0 0.75rem; }
+
+  /* ── 互動式介面 ─────────────────────────────────── */
+  .keys {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.5rem 2rem;
+    margin: 1.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .keys li {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--step--1);
+  }
+  .keys kbd {
+    font-family: var(--mono);
+    color: var(--accent);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.05em 0.4em;
+    font-size: 0.85em;
+    white-space: nowrap;
+  }
+  .keys span { color: var(--muted); }
+
+  /* ── 命令參考:依主題分組,不是一張四十列的表 ── */
+  .groups { display: grid; gap: 2.5rem; }
+  @media (min-width: 48rem) {
+    .groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.5rem 3rem; }
+  }
+  .group h3 { margin-bottom: 0.85rem; }
+  .cmds { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.7rem; }
+  .cmds li { display: grid; gap: 0.15rem; }
+  .cmds b {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: var(--step--1);
+    color: var(--text);
+    word-break: break-word;
+  }
+  .cmds span { color: var(--muted); font-size: var(--step--1); line-height: 1.55; }
+
+  /* ── 平台能做什麼 ───────────────────────────────── */
+  .matrix-wrap { overflow-x: auto; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 34rem;
+    font-size: var(--step--1);
+  }
+  th, td { text-align: left; padding: 0.6rem 0.9rem 0.6rem 0; vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-weight: 500;
+    color: var(--accent);
+    border-bottom: 1px solid var(--accent-dim);
+    white-space: nowrap;
+  }
+  tbody th { font-weight: 500; color: var(--text); white-space: nowrap; }
+  tbody tr + tr th, tbody tr + tr td { border-top: 1px solid var(--line); }
+  td { color: var(--muted); }
+  .yes { color: var(--accent); }
+  .no { color: var(--muted); }
+  .part { color: var(--warn); }
+
+  /* ── 注意事項 ───────────────────────────────────── */
+  .notes { display: grid; gap: 1.25rem; }
+  .note {
+    border-left: 2px solid var(--accent-dim);
+    padding: 0.1rem 0 0.1rem 1.1rem;
+  }
+  .note.caution { border-left-color: var(--warn); }
+  .group > .note { margin-top: 1rem; color: var(--muted); }
+  .note h3 { color: var(--text); font-size: var(--step-0); margin-bottom: 0.25rem; }
+  .note p { margin: 0; color: var(--muted); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 2rem 0 3rem;
+    color: var(--muted);
+    font-size: var(--step--1);
+  }
+  footer a { color: var(--accent); }
+
+  a:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+/* 以下是掛上網站時加的(site/guide_test.go):回首頁的連結、行內 margin-top 換成的 class */
+.site-back { padding: 1.25rem 0 0; font-family: var(--mono); font-size: var(--step--1); }
+.site-back a { color: var(--muted); text-decoration: none; }
+.site-back a:hover { color: var(--accent); }
+.mt-125 { margin-top: 1.25rem; }
+.mt-15 { margin-top: 1.5rem; }

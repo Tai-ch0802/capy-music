@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>capy 使用指南</title>
+<meta name="description" content="capy 的完整使用說明:安裝、連接帳號、互動式介面、網頁介面、命令參考,以及 Spotify、Apple Music、本機曲庫的能力差異。">
+<link rel="canonical" href="https://capy.taislife.work/guide">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/guide.css">
+
+<div class="wrap">
+  <nav class="site-back" aria-label="網站"><a href="/">← capy.taislife.work</a></nav>
+  <header class="hero">
+    <pre id="capy" role="img" aria-label="水豚吉祥物的側面,嘴角叼著一根牧草">                         _
+        ________________( )_____
+     .-'                    o   `-.
+   .'                           .  \
+  /                                 |  ,-"
+ |                            ____.'--'
+  \                       __.-'
+   `.|  |`----------'|  |'
+     |__|            |__|</pre>
+    <div>
+      <h1>capy<span class="dot">.</span></h1>
+      <p class="lede">一支住在終端機裡的音樂 CLI。搜尋、遙控播放,把 Spotify 與 Apple Music 的播放清單同步到你自己的 Google Drive。</p>
+      <div class="install"><span class="p">$</span> go install github.com/Tai-ch0802/capy-music/cmd/capy@latest</div>
+      <ul class="platforms">
+        <li>macOS</li>
+        <li>Windows</li>
+        <li>憑證全部是你自己的</li>
+      </ul>
+    </div>
+  </header>
+
+  <section>
+    <h2>開始使用</h2>
+    <p class="sub">三個步驟,由下而上:先讓 capy 能碰到你的音樂平台,再決定要不要把清單同步到雲端。</p>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>建立你自己的 Spotify app</h3>
+          <p>capy 不代持任何人的憑證,所以 Spotify 那一半要用你自己的 app。到 Spotify Developer Dashboard 建一個,把 redirect URI 設成 <code>http://127.0.0.1:8888/callback</code>。這裡必須是 <code>127.0.0.1</code>,寫 <code>localhost</code> Spotify 會拒絕。</p>
+<pre><code><span class="c-p">$</span> capy auth login spotify
+<span class="c-m"># 精靈會問 client ID,然後開瀏覽器完成授權</span></code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>試第一個命令</h3>
+          <p>不需要其他設定就能開始用。搜尋會直接印出結果,在終端機裡是對齊的表格,在管線裡是乾淨的 TSV。</p>
+<pre><code><span class="c-p">$</span> capy search 派對動物
+<span class="c-p">$</span> capy play 五月天          <span class="c-m"># 藝人:播熱門歌曲</span>
+<span class="c-p">$</span> capy now                  <span class="c-m"># 現在在播什麼</span></code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>要同步清單才需要 Google</h3>
+          <p>播放清單的正本存在你自己 Google Drive 的應用程式資料夾裡(只有 capy 看得到,你隨時可以清空)。只有這一步需要登入 Google,而且權限只有三個:身分、電子郵件、應用程式資料夾。</p>
+<pre><code><span class="c-p">$</span> capy auth login google
+<span class="c-p">$</span> capy pl link 通勤 spotify:通勤   <span class="c-m"># 把平台清單連上來</span>
+<span class="c-p">$</span> capy pl sync 通勤                <span class="c-m"># 雙向同步</span></code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>互動式介面</h2>
+    <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。開場的水豚會轉轉耳朵、眨眨眼、把嘴邊的牧草吃短再叼一根。終端機夠大(至少 30 行高)的話牠就留在畫面底部繼續過日子——偶爾眨眼、撥耳朵,隔一陣子吃一根草;打 <code>/</code> 開選單時牠先讓位,執行命令時牠也先讓開。終端機比較小的話,牠大約三秒後定格(按任何鍵可以跳過),之後畫面只有底部四行會變動。不想要任何動畫的話設 <code>CAPY_MOTION=never</code>,牠直接定格、之後一格都不動。不管哪一種,上面那一整片都是終端機自己的捲動區——你打過的命令、它們的輸出、發生過的錯誤都留在那裡,可以往回捲、可以複製。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
+<pre><code>                         _
+        ________________( )_____
+     .-'                    o   `-.
+   .'                           .  \
+  /                                 |  ,-"
+ |                            ____.'--'
+  \                       __.-'
+   `.|  |`----------'|  |'
+     |__|            |__|
+
+<span class="c-m">capy · spotify</span>
+
+<span class="c-p">&gt;</span> pl list
+<span class="c-m">ID                名稱              曲數</span>
+p.b16G4rbSY0DzME  日本都會之聲      -
+p.JL68l7EhogEeXd  冬日暖調          -
+
+<span class="c-m">------------------------------------------------------</span>
+  <span class="c-p">▶</span> 派對動物 <span class="c-m">· 1:23 / 4:09 · MacBook Pro · 音量 50</span>
+<span class="c-p">&gt;</span> _
+  <span class="c-m">space 播放/暫停 · ←→ ±10 秒 · / 命令 · ? 按鍵 · q 離開</span></code></pre>
+    <ul class="keys">
+      <li><kbd>space</kbd><span>播放與暫停</span></li>
+      <li><kbd>n</kbd> <kbd>p</kbd><span>下一首、上一首</span></li>
+      <li><kbd>←</kbd> <kbd>→</kbd><span>前後各十秒</span></li>
+      <li><kbd>+</kbd> <kbd>-</kbd><span>音量升降五格</span></li>
+      <li><kbd>/</kbd><span>開命令選單,也可以直接接著打</span></li>
+      <li><kbd>Tab</kbd><span>選單開著時補齊選中的命令</span></li>
+      <li><kbd>↑</kbd> <kbd>↓</kbd><span>選單開著時選命令;沒開時翻這次打過的命令</span></li>
+      <li><kbd>?</kbd><span>把完整鍵位印進捲動區</span></li>
+      <li><kbd>r</kbd><span>讀不到播放狀態而停擺後,重新連上</span></li>
+      <li><kbd>q</kbd><span>離開</span></li>
+    </ul>
+<pre><code><span class="c-m">  pl list   列出我的播放清單</span>
+<span class="c-p">&gt; </span>pl show   <span class="c-m">顯示清單內容(不帶參數且在終端機裡會開挑選器)</span>
+<span class="c-m">  pl sync   先 pull 再 push 的一輪:一張表、一次確認</span>
+<span class="c-m">------------------------------------------------------</span>
+  <span class="c-p">▶</span> 派對動物 <span class="c-m">· 1:23 / 4:09 · MacBook Pro · 音量 50</span>
+<span class="c-p">&gt;</span> /pl s_
+  <span class="c-m">↑↓ 選 · Tab/⏎ 補齊 · Esc 收起</span></code></pre>
+    <p>按 <kbd>/</kbd> 開命令選單:打字即時過濾,<kbd>Tab</kbd> 或 <kbd>⏎</kbd> 把命令帶進輸入行讓你補參數。打到完整命令(例如 <code>/pl show 冬日暖調</code>)選單就收起,<kbd>⏎</kbd> 直接執行,開頭的 <code>/</code> 會自動拿掉。選單向上長、壓在捲動區前面,不會插進你的歷程。清單是直接從命令樹長出來的,不是另外維護的一份。</p>
+    <p class="mt-15">在那一行輸入的命令會重新執行 capy 自己,不是在同一個行程裡跑。所以每個子命令都保有它原本的樣子:該有表格的有表格,該問你確認的會問。清單名有空白時用雙引號,例如 <code>pl show "上班 通勤"</code>。</p>
+    <p>讀不到播放狀態時,完整的錯誤會印進捲動區留著,底下那行只留一句短的;連續五次讀不到就停止輪詢,按 <kbd>r</kbd> 重新連上。命令列在任何情況下都能用——連不上的時候,你最需要的正是它(<code>doctor</code>、<code>auth login</code>)。</p>
+  </section>
+
+  <section>
+    <h2>網頁介面</h2>
+    <p><code>capy --web</code> 在你這台電腦上起一個只綁 127.0.0.1 的網頁介面,啟動時印一行帶一次性 token 的網址,在終端機裡會順便替你開瀏覽器(放進管線或背景執行時只印網址)。</p>
+    <p><b>打開就是「搬家」</b>:把一個平台的播放清單搬到另一個平台,三步做完。選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度,搬不過去的歌會逐首列出來。不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。</p>
+    <p>先說限制:Apple Music 目前只能當來源;能在目的地建新清單的目前只有 Spotify,搬進本機曲庫只能加進既有的 M3U 檔;第一次連接帳號要花幾分鐘(Spotify 要用你自己建的 app、Apple 要自己複製權杖),換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify。</p>
+    <p>其他頁面:我的清單、同步、搜尋、帳號;「進階」裡是主控台(跟終端機一樣可以打任何子命令)、ISRC 查詢(一次問三個平台)與診斷。每一頁的底部一直有正在播放列(播放狀態面板):現在放什麼、進度、播放控制,<code>capy now</code> 的內容都在那裡。頁面上的每一個動作背後都是一條 capy 命令,主控台留著完整紀錄;要確認的事一律由命令自己問,頁面不會替你按。</p>
+    <p class="note">網頁只在你這台電腦上:只綁 127.0.0.1、不是區網服務,每次啟動產生一次性 token,行程結束網址就失效。憑證不會經過頁面 —— 精靈輸入的 secret 只從瀏覽器送進行程再進 keychain,命令回聲裡的 token 值一律遮成 ***。</p>
+    <p>一次跑一個命令(第二個會被擋),因為它跟終端機共用同一份 Drive 與本機資料。跑著的時候底部多一列執行狀態:現在在做什麼、跑了多久、它最新印的那一行(比對歌曲時是做到第幾首),旁邊的「中止」隨時可以停(在主控台的命令列按 <kbd>Ctrl-C</kbd> 也行);已經答應寫入的命令要按兩次,停在一半可能只寫了一部分。有幾個命令在網頁上不提供:<code>debug</code> 群組、<code>--auto</code>、三個 secret flag(請走精靈)、<code>now --watch</code>(看面板就好);<code>capy update</code> 可以跑,但更新完這個網頁行程還是舊版,會要你重啟。</p>
+    <p>終端機的互動式介面是重新執行 capy 自己,所以每個子命令都保有它原本的樣子;網頁介面則在同一個行程裡跑並由頁面回答提示。兩條路不同是因為終端機已經有 TTY 可以讓給子行程,瀏覽器沒有。</p>
+  </section>
+
+  <section>
+    <h2>它能做什麼</h2>
+    <p class="sub">下面按主題分組。每個命令在終端機裡是給人看的表格(放不下時儲存格換行、不截斷,ID 永遠完整;比終端機還寬時先開一個檢視窗格:每列一行,<kbd>←</kbd> <kbd>→</kbd> 橫向、<kbd>↑</kbd> <kbd>↓</kbd> 上下、<kbd>g</kbd> <kbd>G</kbd> 頭尾、<kbd>q</kbd> 離開,<kbd>Ctrl-C</kbd> 則是中止整個命令;離開後表格以換行的形式留在捲動區。帶 <code>--yes</code> 的命令不開窗格,<code>CAPY_PAGER=never</code> 一律不開),在管線裡是 TSV,可以直接餵給 cut 與 awk。</p>
+    <div class="groups">
+      <div class="group">
+        <h3>搜尋與播放</h3>
+        <ul class="cmds">
+          <li><b>capy search &lt;關鍵字&gt;</b><span>搜尋曲目。加 <code>--provider apple</code> 換平台,<code>--limit</code> 控制筆數。</span></li>
+          <li><b>capy play &lt;關鍵字&gt;</b><span>一個入口涵蓋曲目、藝人熱門歌曲、你自己的清單。同名時在終端機開挑選器,在腳本裡則回結束碼 2 並印出候選,不會隨便挑一個播。</span></li>
+          <li><b>capy play artist:五月天</b><span>前綴可以指定類型,<code>artist:</code> <code>pl:</code> <code>track:</code> 三種,等同 <code>--type</code>。</span></li>
+          <li><b>capy pause / next / prev</b><span>基本遙控。</span></li>
+          <li><b>capy seek 1:23</b><span>跳到曲目內的位置。長一點的內容用 <code>1:05:30</code>,腳本裡用純秒數 <code>83</code> 也可以。</span></li>
+          <li><b>capy vol 40</b><span>音量 0 到 100。手機與部分喇叭不允許遠端調整,這時候會明講是裝置擋的。</span></li>
+          <li><b>capy now</b><span>現在在播什麼。加 <code>--watch</code> 會持續更新並顯示進度條。</span></li>
+          <li><b>capy devices</b><span>列出可以播放的裝置,配合 <code>play --device</code> 指定。</span></li>
+        </ul>
+      </div>
+
+      <div class="group">
+        <h3>播放清單</h3>
+        <ul class="cmds">
+          <li><b>capy pl list</b><span>列出平台上的清單。</span></li>
+          <li><b>capy pl show &lt;名稱&gt;</b><span>看某個清單的曲目。</span></li>
+          <li><b>capy pl link &lt;名稱&gt; &lt;平台&gt;:&lt;清單&gt;</b><span>把平台上的清單連到 capy 的正本。只認你明確指定的,不會自動猜同名清單。</span></li>
+          <li><b>capy pl link &lt;名稱&gt; spotify --create</b><span>在 Spotify 建一個跟正本同名的私人空清單,直接連上。把清單從別的平台複製過來時用它,不必先去 app 裡建。Spotify 上已經有你自己的同名清單時會擋下,改成告訴你怎麼連它。</span></li>
+          <li><b>capy pl pull</b><span>平台的變更拉進正本。先列出要改什麼,你確認後才寫。</span></li>
+          <li><b>capy pl push</b><span>反方向:正本推回平台。前提是這台裝置先前 pull 過,而且平台上沒有還沒拉下來的變更。</span></li>
+          <li><b>capy pl sync</b><span>先 pull 再 push,一張表、一次確認。日常用這個就好。</span></li>
+          <li><b>capy pl dedup &lt;名稱&gt;</b><span>去掉正本裡重複的曲目:同平台 id 或同 ISRC 算同一首,保留第一份、其餘順序不動,再推到可寫的平台;沒有重複就什麼都不寫。<code>capy pl dedup apple:冬日暖調</code> 則直接讀平台清單、只印報告(不碰 Drive、不需要連結),Apple 只讀,照表在 app 裡手動刪。</span></li>
+          <li><b>capy pl unlink &lt;名稱&gt; &lt;平台&gt;</b><span>解除連結,正本內容不動。</span></li>
+        </ul>
+        <p class="note">這一組命令<b>不帶清單名字直接打</b>,在終端機裡會開挑選器讓你選:<code>pl link</code> 問三次(平台 → 那個平台上的哪個清單,在 Spotify 也可以選「建一個新的空清單」 → 連到哪個正本,這一步也可以當場建一個新的),<code>pl unlink</code> 問兩次。接在管線後面或放進 cron 時不會問,照舊要求你把參數寫齊。</p>
+      </div>
+
+      <div class="group">
+        <h3>跨平台對應</h3>
+        <ul class="cmds">
+          <li><b>capy resolve</b><span>把正本裡的曲目對應到各平台的 id。先用 ISRC 精準比對,比不到才用模糊比對,分數夠高才自動寫入。</span></li>
+          <li><b>capy resolve --review</b><span>分數不夠的排成佇列,在終端機裡一筆一筆由你裁決。</span></li>
+          <li><b>capy resolve pin &lt;cid&gt; &lt;平台&gt;:&lt;id&gt;</b><span>手動釘死某個對應,給腳本用。釘成 <code>none</code> 表示這首在那個平台沒有。</span></li>
+        </ul>
+      </div>
+
+      <div class="group">
+        <h3>設定與維護</h3>
+        <ul class="cmds">
+          <li><b>capy auth login / status / logout</b><span>三個平台各自的授權。憑證只進作業系統的鑰匙圈,不會寫進設定檔或 Drive。</span></li>
+          <li><b>capy doctor</b><span>一站式診斷:設定、憑證、連線各自哪裡有問題,每項都給可以照做的下一步。</span></li>
+          <li><b>capy config get / set / list</b><span>非機密設定,例如預設平台與本機曲庫目錄。</span></li>
+          <li><b>capy export</b><span>把本機快取的正本原樣印到標準輸出。不碰網路、不碰鑰匙圈。</span></li>
+          <li><b>capy update</b><span>更新 capy 自己。</span></li>
+          <li><b>capy completion &lt;shell&gt;</b><span>產生 shell 補全。</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>三個平台各自能做什麼</h2>
+    <p class="sub">能力差異來自平台本身,不是 capy 偷懶。差在哪裡,命令會直接告訴你,而不是靜靜跳過。</p>
+    <div class="matrix-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">能力</th>
+            <th scope="col">Spotify</th>
+            <th scope="col">Apple Music</th>
+            <th scope="col">本機曲庫</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">搜尋</th>
+            <td class="yes">可以</td>
+            <td class="yes">可以</td>
+            <td class="yes">曲庫內比對</td>
+          </tr>
+          <tr>
+            <th scope="row">播放遙控</th>
+            <td class="yes">Connect</td>
+            <td class="part">只有 macOS</td>
+            <td class="no">不支援</td>
+          </tr>
+          <tr>
+            <th scope="row">讀取清單</th>
+            <td class="yes">可以</td>
+            <td class="yes">可以</td>
+            <td class="yes">M3U 檔案</td>
+          </tr>
+          <tr>
+            <th scope="row">寫回清單</th>
+            <td class="yes">可以</td>
+            <td class="part">尚未開放</td>
+            <td class="yes">可以</td>
+          </tr>
+          <tr>
+            <th scope="row">建立清單</th>
+            <td class="yes">可以</td>
+            <td class="part">尚未開放</td>
+            <td class="part">自己建檔</td>
+          </tr>
+          <tr>
+            <th scope="row">憑證來源</th>
+            <td>你自建的 app</td>
+            <td>你從網頁播放器複製的權杖</td>
+            <td>不需要</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>把清單複製到另一個平台</h2>
+    <p class="sub">一個命令就好。以 Apple Music 的「公路旅行」複製到 Spotify 為例;Spotify、Apple Music、Google 三個都要先登入。</p>
+<pre><code><span class="c-p">$</span> capy migrate 公路旅行 --from apple --to spotify              <span class="c-m"># 在 Spotify 建一個同名的私人清單,把曲目搬過去</span>
+<span class="c-p">$</span> capy migrate 公路旅行 --from apple --to spotify:開車歌單      <span class="c-m"># 或加進既有的清單:接在它原本的曲目後面</span>
+<span class="c-p">$</span> capy migrate                                                <span class="c-m"># 不帶參數:逐段挑選來源、清單、目標</span></code></pre>
+    <p class="mt-125">它先列出要搬什麼,你確認後才動手;需要新清單時也是確認之後才建。目標原本的順序是前綴,來源的曲目依來源的順序接在後面;來源裡目標已經有的(同一首歌,或同一個 ISRC)略過。永遠不動來源,對目標也只新增:目標有還沒同步的移除或換序時會先擋下來,請你先 <code>capy pl sync</code>。沒在目標平台找到的歌這次不推,終端機裡可以當場一首一首裁決,否則結尾會給你補上的命令。完成後只有目標連著正本(來源不連結,一次性複製);想之後跟著來源的變動,結尾也會給 <code>pl link</code> 加 <code>pl sync</code> 的命令。例外:正本本來就連著來源(手動流程做到一半)時,來源那半也一起拉進正本、以正本為準,結尾會說兩邊都連著。目標不能是 Apple(目前只讀)。</p>
+    <p class="mt-15"><b>背後在做什麼</b>:讓兩個平台連到同一個正本,再推過去。想讓兩邊持續同步的話,照下面手動做一次,之後就 <code>capy pl sync</code>。</p>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>兩邊連到同一個正本</h3>
+          <p>先連 Apple 的清單,正本不存在會自動建立。再用 <code>--create</code> 在 Spotify 建一個同名的私人空清單,連到同一個正本。</p>
+<pre><code><span class="c-p">$</span> capy pl link 公路旅行 apple:公路旅行
+<span class="c-p">$</span> capy pl link 公路旅行 spotify --create</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>兩邊一起拉一次</h3>
+          <p>不要帶 <code>--provider</code>:Apple 那邊把曲目拉進正本;Spotify 那邊是空的,只記下這台裝置看過它的樣子。少了這一步,後面的 push 會被擋下來。</p>
+<pre><code><span class="c-p">$</span> capy pl pull 公路旅行</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>替每一首找 Spotify 上的同一首歌</h3>
+          <p>有 ISRC 的曲目直接精準比對;沒有的靠標題、藝人、時長模糊比對,分數不夠的排進佇列等你裁決。</p>
+<pre><code><span class="c-p">$</span> capy resolve 公路旅行 --provider spotify
+<span class="c-p">$</span> capy resolve --review        <span class="c-m"># 上一步有列出佇列才需要</span></code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>先看,再推</h3>
+          <p>表裡的 <code>skip</code> 列是這次複製不過去的曲目:還沒對應到 Spotify 的歌,通常是你自己上傳到 Apple 的,或 Spotify 上根本沒有的。</p>
+<pre><code><span class="c-p">$</span> capy pl push 公路旅行 --provider spotify --dry-run
+<span class="c-p">$</span> capy pl push 公路旅行 --provider spotify</code></pre>
+        </div>
+      </div>
+    </div>
+    <p class="mt-15">整個過程不會刪到任何東西:Spotify 那邊是第一次拉,推過去的全是新增。之後兩邊保持連結,Apple 清單有變動時跑 <code>capy pl sync 公路旅行</code> 就會帶過去;只想複製一次的話,用上面的 <code>capy migrate</code>,或完成後 <code>capy pl unlink 公路旅行 apple</code> 解開。反方向(Spotify 到 Apple)目前還做不到:Apple 那一側只讀不寫。</p>
+    <div class="note caution mt-15">
+      <h3>Spotify 的寫入還沒在真帳號上驗證過</h3>
+      <p>建清單與推曲目是照 Spotify 2026 年 2 月的官方文件實作的,還沒有在真的帳號上跑過。遇到 404,或建出來的清單在 app 裡是公開的,請回報。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>本機曲庫</h2>
+    <p class="sub">硬碟裡的 M3U 檔案也可以當成一個平台,跟 Spotify 雙向同步。它綁在這台機器上:換一台電腦,那邊的 capy 會跳過這個連結,不會把它當成清單被刪掉了。</p>
+<pre><code><span class="c-p">$</span> capy config set local_root ~/Music/playlists
+<span class="c-p">$</span> capy pl link 通勤 local:通勤.m3u8
+<span class="c-p">$</span> capy pl sync 通勤</code></pre>
+    <p class="mt-125">曲目的中繼資料放在同一個目錄的 <code>library.json</code> 裡,由你自己維護。有填 ISRC 的曲目才能跟串流平台上的同一首歌自動對上,沒填的就是各自獨立的一首。寫回時是整檔重寫,別的工具寫在 M3U 裡的註解與 <code>#EXTINF</code> 會被蓋掉。</p>
+  </section>
+
+  <section>
+    <h2>幾件先知道比較好的事</h2>
+    <div class="notes">
+      <div class="note">
+        <h3>你的清單正本在你自己的 Drive</h3>
+        <p>不是在我們的伺服器上,因為沒有伺服器。本機的 SQLite 只是快取:刪掉它,下一次執行會從 Drive 完整重建。</p>
+      </div>
+      <div class="note caution">
+        <h3>刪除永遠要先看過</h3>
+        <p>任何會刪掉清單曲目的操作都會先列出來讓你確認,而且超過門檻時會直接擋下來,要加 <code>--force</code> 才放行。<code>--dry-run</code> 可以只看不做。</p>
+      </div>
+      <div class="note">
+        <h3>清單順序是你的記憶</h3>
+        <p>capy 沒有任何路徑會排序或打亂清單:同步只在平台自己重排時才跟著動,去重只拿掉後出現的那份,沒動到的曲目相對順序永遠不變。</p>
+      </div>
+      <div class="note">
+        <h3>Apple Music 的權杖是你從網頁複製的</h3>
+        <p>那不是 Apple 官方支援的用法,會過期,風險由你自己承擔。capy 只會指導你怎麼複製,不會去讀你的瀏覽器 cookie,也不會注入任何指令碼。</p>
+      </div>
+      <div class="note caution">
+        <h3>Apple Music 目前只讀不寫</h3>
+        <p>寫回 Apple 的清單還沒開放,要先驗證過那組 API 真的能移除與重排曲目。在那之前,<code>pl push --provider apple</code> 會明講不支援,<code>--all</code> 則會跳過它並說明原因。</p>
+      </div>
+      <div class="note">
+        <h3>每個命令都能放進管線</h3>
+        <p>不在終端機的時候一律輸出純文字 TSV,沒有顏色也沒有互動提示。結束碼有意義:0 成功,1 錯誤,2 需要你介入,3 是安全閥擋下來了。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>capy 是開源的,原始碼在 <a href="https://github.com/Tai-ch0802/capy-music">github.com/Tai-ch0802/capy-music</a>。憑證全部是你自己的:本專案不代持任何權杖,也沒有任何需要註冊的服務。</p>
+  </footer>
+</div>
+
+</html>

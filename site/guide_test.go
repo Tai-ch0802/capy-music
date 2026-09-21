@@ -1,0 +1,126 @@
+package site
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+)
+
+var update = flag.Bool("update", false, "用 docs/guide.html 重新產生 site/public/guide.html 與 guide.css")
+
+// guideForSite:把 repo 裡那份單檔的使用指南(docs/guide.html)變成能掛在品牌網站上的樣子。
+// 網站的 CSP 是 default-src 'none'; style-src 'self'——不准 inline style、不准任何 script(隱私權政策 §8 與每一頁的頁尾
+// 都這樣承諾)。所以:<style> 搬成 /guide.css;<script>(只是讓開頭的水豚動起來)整段拿掉,第一幀本來就寫在 HTML 裡;
+// 再補上回首頁的連結、favicon 與 canonical。docs/guide.html 本身不動:它仍然是離線打得開的單一檔案,Artifact 也用它。
+func guideForSite(src string) (html, css string, err error) {
+	style := regexp.MustCompile(`(?s)<style>\n?(.*?)</style>\n?`)
+	// 只認得「剛好一個 <style> 區塊」:兩個的話第二塊的 CSS 會掉、head 那組標籤反而被插兩次(review #78)。
+	if n := strings.Count(src, "<style>"); n != 1 {
+		return "", "", fmt.Errorf("docs/guide.html 要剛好一個 <style> 區塊,現在有 %d 個:在 guideForSite 補上對應的處理", n)
+	}
+	css = style.FindStringSubmatch(src)[1] + `
+/* 以下是掛上網站時加的(site/guide_test.go):回首頁的連結、行內 margin-top 換成的 class */
+.site-back { padding: 1.25rem 0 0; font-family: var(--mono); font-size: var(--step--1); }
+.site-back a { color: var(--muted); text-decoration: none; }
+.site-back a:hover { color: var(--accent); }
+`
+	html = style.ReplaceAllString(src, `<meta name="description" content="capy 的完整使用說明:安裝、連接帳號、互動式介面、網頁介面、命令參考,以及 Spotify、Apple Music、本機曲庫的能力差異。">
+<link rel="canonical" href="https://capy.taislife.work/guide">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/guide.css">
+`)
+	html = regexp.MustCompile(`(?s)<script>.*?</script>\n?`).ReplaceAllString(html, "")
+	// style="margin-top:1.5rem" 這種行內樣式也會被 CSP 擋掉:換成 class(mt-15 = 1.5rem),規則從**實際產生的 class** 收集,
+	// 不寫死有哪幾個值——不然指南哪天用了 2rem,class 產生了、規則沒產生,線上就安靜地少一段間距(review #78)。
+	rules := map[string]string{}
+	mt := func(rem string) string {
+		cls := "mt-" + strings.ReplaceAll(rem, ".", "")
+		rules[cls] = rem
+		return cls
+	}
+	withClass := regexp.MustCompile(`class="([^"]*)" style="margin-top:([\d.]+)rem"`)
+	html = withClass.ReplaceAllStringFunc(html, func(m string) string {
+		g := withClass.FindStringSubmatch(m)
+		return `class="` + g[1] + " " + mt(g[2]) + `"`
+	})
+	bare := regexp.MustCompile(` style="margin-top:([\d.]+)rem"`)
+	html = bare.ReplaceAllStringFunc(html, func(m string) string {
+		return ` class="` + mt(bare.FindStringSubmatch(m)[1]) + `"`
+	})
+	for _, cls := range slices.Sorted(maps.Keys(rules)) {
+		css += "." + cls + " { margin-top: " + rules[cls] + "rem; }\n"
+	}
+	html = strings.Replace(html, `<div class="wrap">`+"\n", `<div class="wrap">`+"\n"+`  <nav class="site-back" aria-label="網站"><a href="/">← capy.taislife.work</a></nav>`+"\n", 1)
+
+	// 不認得的輸入要紅,不可以安靜地產生錯的東西:網站的 CSP 會把下面每一種都擋掉或弄壞,而且不會有任何人發現。
+	for what, re := range map[string]string{
+		"<style> 區塊": `<style`,
+		"style= 屬性(只認得 margin-top:<數字>rem)": `style="`,
+		"script":               `<script`,
+		"行內事件處理器(onclick= 之類)": `(?i)<[^>]+\son[a-z]+\s*=`,
+		"同一個標籤兩個 class=(style 寫在 class 前面)": `<[^>]*\bclass="[^"]*"[^>]*\bclass=`,
+	} {
+		if m := regexp.MustCompile(re).FindString(html); m != "" {
+			return "", "", fmt.Errorf("轉換之後還有%s:%q——網站的 CSP 會擋掉它。在 guideForSite 補上對應的轉換", what, m)
+		}
+	}
+	if !strings.Contains(html, `href="/guide.css"`) || !strings.Contains(html, `class="site-back"`) {
+		return "", "", errors.New("轉換沒有做完:要連到 /guide.css、要有回首頁的連結(docs/guide.html 的 <div class=\"wrap\"> 還在嗎?)")
+	}
+	return html, css, nil
+}
+
+// 網站上的指南必須就是 docs/guide.html 的轉換結果:改了指南忘了重新產生,這裡會紅,訊息告訴你跑哪個命令。
+// (之後還要重新部署:cd site && wrangler deploy。)
+func TestGuideOnSiteIsCurrent(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "docs", "guide.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, css, err := guideForSite(strings.ReplaceAll(string(src), "\r\n", "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"guide.html": html, "guide.css": css} {
+		path := filepath.Join("public", name)
+		if *update {
+			if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		got, _ := os.ReadFile(path)
+		if strings.ReplaceAll(string(got), "\r\n", "\n") != want {
+			t.Errorf("site/public/%s 不是 docs/guide.html 目前的轉換結果。重新產生:go test ./site/ -run TestGuideOnSiteIsCurrent -update(然後重新部署網站)", name)
+		}
+	}
+}
+
+// guideForSite 不認得的寫法要回錯誤,不可以安靜地產生壞掉的頁面(review #78 實跑出來的三種,加上行內事件處理器)。
+func TestGuideForSiteRejectsWhatItCannotConvert(t *testing.T) {
+	page := func(body string) string {
+		return "<!doctype html>\n<style>\nbody{}\n</style>\n<div class=\"wrap\">\n" + body + "\n</div>\n"
+	}
+	html, css, err := guideForSite(page(`<p class="card" style="margin-top:2rem">x</p>`))
+	if err != nil || !strings.Contains(html, `class="card mt-2"`) || !strings.Contains(css, ".mt-2 { margin-top: 2rem; }") {
+		t.Errorf("沒看過的 margin-top 值:class 與規則要一起產生:%v\n%s", err, html)
+	}
+	for name, src := range map[string]string{
+		"style 寫在 class 前面": page(`<p style="margin-top:1.5rem" class="card">x</p>`),
+		"別種行內樣式":            page(`<p style="color:red">x</p>`),
+		"行內事件處理器":           page(`<p onclick="x()">x</p>`),
+		"第二個 style 區塊":      page("<style>\np{}\n</style>"),
+		"沒有 style 區塊":       "<div class=\"wrap\">\n</div>",
+	} {
+		if _, _, err := guideForSite(src); err == nil {
+			t.Errorf("%s:要回錯誤", name)
+		}
+	}
+}
