@@ -58,7 +58,7 @@
     <ul>
       <li><strong>Your Google Drive</strong> (application data folder): the sync data listed in section 3. It counts against your Drive storage, is not visible in the Drive interface, and cannot be shared with anyone.</li>
       <li><strong>Your computer</strong>: a local cache of the same data (an SQLite file); a settings file (which includes the email address above); and access tokens for Google, Spotify and Apple Music, which are stored only in the operating system keychain (macOS Keychain or Windows Credential Manager), never in settings files, the database, or Drive.</li>
-      <li><strong>On our side</strong>: nothing. capy has no backend server, no account system, and no telemetry or crash reporting. The program connects only to the services you use (Google, Spotify, Apple), and to GitHub when you run <code>capy update</code> to check for a new version.</li>
+      <li><strong>On our side</strong>: nothing. capy has no backend server, no account system, and no telemetry or crash reporting. The program connects only to the services you use (Google, Spotify, Apple); when a <code>capy --web</code> page shows album art or plays a preview, your browser loads those images and audio files directly from Spotify's or Apple's content servers. Apart from that, capy contacts GitHub only when you run <code>capy update</code>, to check for and download a new version (<code>capy update --dev</code> instead has the Go toolchain on your computer download the source code from GitHub and the Go module proxy).</li>
     </ul>
 
     <h2 id="sharing">5. Sharing and transfer</h2>

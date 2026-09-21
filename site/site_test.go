@@ -85,7 +85,8 @@ func TestBothLanguagesHaveTheSameSections(t *testing.T) {
 // 零外部資源、沒有 script:隱私權政策寫了「不設 cookie、沒有分析工具、不載入任何第三方資源」,要名實相符。
 // (連到別的網站的 <a> 不算;canonical / hreflang 指向自己的網域。)
 func TestPagesLoadNothingFromThirdParties(t *testing.T) {
-	loads := regexp.MustCompile(`(?i)<(script|iframe|img|video|audio|source|embed|object)\b|<link[^>]+rel="(?:stylesheet|icon|preload|preconnect|dns-prefetch)"[^>]+href="(?:https?:)?//|@import|url\(\s*['"]?(?:https?:)?//`)
+	// script / iframe / embed / object 一律不准;圖片與媒體只擋外部來源(之後放一張自己的截圖不該讓這裡變紅)。
+	loads := regexp.MustCompile(`(?i)<(?:script|iframe|embed|object)\b|<(?:img|video|audio|source)\b[^>]*\bsrc="(?:https?:)?//|<link[^>]+rel="(?:stylesheet|icon|preload|preconnect|dns-prefetch)"[^>]+href="(?:https?:)?//|@import|url\(\s*['"]?(?:https?:)?//`)
 	for _, name := range append(slices.Clone(pages), "style.css") {
 		if m := loads.FindString(read(t, name)); m != "" {
 			t.Errorf("%s 會載入外部資源或執行 script:%q", name, m)

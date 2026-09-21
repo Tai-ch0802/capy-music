@@ -58,7 +58,7 @@
     <ul>
       <li><strong>你的 Google 雲端硬碟</strong>(應用程式專屬資料夾):第 3 節所列的同步資料。它佔用你的雲端硬碟空間,在雲端硬碟的介面裡看不到內容,也不能分享給別人。</li>
       <li><strong>你的電腦</strong>:同一份資料的本機快取(SQLite 檔);設定檔(含上述電子郵件地址);Google、Spotify、Apple Music 的存取權杖只存在作業系統的鑰匙圈(macOS Keychain 或 Windows 認證管理員),不寫進設定檔、資料庫或雲端硬碟。</li>
-      <li><strong>我們這邊</strong>:什麼都沒有。capy 沒有後端伺服器、沒有帳號系統、沒有遙測或當機回報;程式只會連到你所使用的服務(Google、Spotify、Apple),以及在你執行 <code>capy update</code> 時連到 GitHub 檢查新版本。</li>
+      <li><strong>我們這邊</strong>:什麼都沒有。capy 沒有後端伺服器、沒有帳號系統、沒有遙測或當機回報;程式只會連到你所使用的服務(Google、Spotify、Apple);<code>capy --web</code> 的頁面顯示專輯封面或試聽時,你的瀏覽器會直接向 Spotify 或 Apple 的內容伺服器載入圖片與音檔。另外只有在你執行 <code>capy update</code> 時才會連到 GitHub 檢查與下載新版本(<code>capy update --dev</code> 則由你電腦上的 Go 工具鏈從 GitHub 與 Go 模組代理下載原始碼)。</li>
     </ul>
 
     <h2 id="sharing">5. 分享與移轉</h2>
