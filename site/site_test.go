@@ -87,7 +87,7 @@ func TestBothLanguagesHaveTheSameSections(t *testing.T) {
 func TestPagesLoadNothingFromThirdParties(t *testing.T) {
 	// script / iframe / embed / object 一律不准;圖片與媒體只擋外部來源(之後放一張自己的截圖不該讓這裡變紅)。
 	loads := regexp.MustCompile(`(?i)<(?:script|iframe|embed|object)\b|<(?:img|video|audio|source)\b[^>]*\bsrc="(?:https?:)?//|<link[^>]+rel="(?:stylesheet|icon|preload|preconnect|dns-prefetch)"[^>]+href="(?:https?:)?//|@import|url\(\s*['"]?(?:https?:)?//`)
-	for _, name := range append(slices.Clone(pages), "style.css") {
+	for _, name := range append(slices.Clone(pages), "style.css", "guide.html", "guide.css") {
 		if m := loads.FindString(read(t, name)); m != "" {
 			t.Errorf("%s 會載入外部資源或執行 script:%q", name, m)
 		}
@@ -127,7 +127,7 @@ func TestNotFoundPageIsNotCanonical(t *testing.T) {
 
 func TestInternalLinksResolve(t *testing.T) {
 	href := regexp.MustCompile(`href="(/[^"#]*)`)
-	for _, name := range pages {
+	for _, name := range append(slices.Clone(pages), "guide.html") {
 		for _, m := range href.FindAllStringSubmatch(read(t, name), -1) {
 			p := strings.TrimPrefix(m[1], "/")
 			candidates := []string{p, p + ".html", filepath.ToSlash(filepath.Join(p, "index.html"))}
@@ -168,7 +168,9 @@ func TestWranglerConfigIsAssetsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = json.Unmarshal([]byte(strings.Join(lines, "\n")), &cfg)
-	allowed := []string{"$schema", "name", "compatibility_date", "assets", "routes", "workers_dev", "preview_urls"}
+	// observability(維護者 2026-09-21 加的 Workers Logs)只是紀錄的設定,不是程式也不是 binding,所以放行;
+	// 但它代表 Cloudflare 帳號裡會留存取紀錄——隱私權政策 §8 有照實寫,下面一起釘。
+	allowed := []string{"$schema", "name", "compatibility_date", "assets", "routes", "workers_dev", "preview_urls", "observability"}
 	for k := range raw {
 		if !slices.Contains(allowed, k) {
 			t.Errorf("wrangler.jsonc 多了 %q:這個網站只准有靜態檔(沒有 main、沒有 binding、沒有 vars)", k)
@@ -179,6 +181,13 @@ func TestWranglerConfigIsAssetsOnly(t *testing.T) {
 	for k := range assets { // binding / run_worker_first 只有配 main 才有意義:出現就代表有人開始往這裡放程式了
 		if !slices.Contains([]string{"directory", "not_found_handling", "html_handling"}, k) {
 			t.Errorf("wrangler.jsonc 的 assets 多了 %q:只准 directory / not_found_handling / html_handling", k)
+		}
+	}
+	if _, logs := raw["observability"]; logs {
+		for _, page := range []string{"privacy.html", "en/privacy.html"} {
+			if html := read(t, page); !strings.Contains(html, "存取紀錄") && !strings.Contains(html, "access logs") {
+				t.Errorf("wrangler.jsonc 開了 observability(會留存取紀錄),%s §8 要照實寫", page)
+			}
 		}
 	}
 	if cfg.Assets.Directory != "./public" || len(cfg.Routes) != 1 || cfg.Routes[0].Pattern != "capy.taislife.work" || !cfg.Routes[0].CustomDomain {

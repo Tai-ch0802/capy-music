@@ -57,7 +57,9 @@ code, kbd { font-family: var(--mono); font-size: .92em; background: var(--surfac
 @media (min-width: 56rem) { .hero { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 3.5rem; padding-top: 4.5rem; } }
 .eyebrow { font-size: .85rem; color: var(--accent-hi); letter-spacing: .04em; margin: 0 0 1rem; }
 h1 { font-size: clamp(2.1rem, 5.2vw, 3.6rem); line-height: 1.12; letter-spacing: -.02em; color: var(--text-hi); margin: 0 0 1.25rem; text-wrap: balance; }
-.lede { font-size: 1.1rem; max-width: 36rem; margin: 0 0 2rem; }
+.lede { font-size: 1.1rem; max-width: 36rem; margin: 0 0 1rem; }
+.lede--why { font-size: .95rem; color: var(--muted); border-left: 2px solid var(--accent-dim); padding-left: 1rem; margin-bottom: 2rem; }
+.lede--why strong { color: var(--text); }
 .cta { display: flex; flex-wrap: wrap; gap: .75rem 1rem; align-items: center; }
 .btn { display: inline-block; text-decoration: none; font-weight: 600; border-radius: var(--r-pill); padding: .7rem 1.5rem; white-space: nowrap; transition: background 200ms var(--ease), transform 120ms var(--ease); }
 .btn:active { transform: translateY(1px); }
