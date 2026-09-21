@@ -95,10 +95,34 @@ var (
 	capyFeet = "     |__|            |__|                 " // 每一幀都一樣的一行(測試拿它認「橫幅有沒有畫出來」)
 )
 
-// capybaraFrame:開場的第 n 幀(n 單調遞增,由 tick 推)。劇本演完就停在最後一幀——幀的 ticker 與定格的計時器
-// 是兩個各走各的 timer,多跳一幀不可以從頭再演。
+// 常駐的水豚(終端機夠大時;見 tui.go 的 alive)演完劇本之後的日子:大部分時間站著不動,偶爾眨眼、撥耳朵,
+// 隔一陣子吃一根草。節奏跟網頁那隻一樣(眨眼 4 秒、耳朵 5.5 秒,兩個週期錯開);每 250 毫秒都在動的水豚很吵。
+const (
+	capyBlinkEvery = 16 // 幀:4 秒眨一次
+	capyEarEvery   = 22 // 幀:5.5 秒往後撥兩下
+	capyEatEvery   = 96 // 幀:24 秒吃一根草
+	capyBlockRows  = 11 // 常駐那一塊的高度:水豚 9 行 + 空行 + 招牌
+)
+
+var capyEating = [...]int{3, 3, 2, 2, 1, 1, 0, 0} // 吃一根草:每口停兩幀,吃完空著嘴一下,下一幀叼起新的
+
+func capyIdle(n int) capyPose {
+	p := capyPose{straw: capyStrawFull}
+	p.shut = n%capyBlinkEvery == capyBlinkEvery-1
+	p.ear = n%capyEarEvery == 9 || n%capyEarEvery == 11
+	if k := n%capyEatEvery - (capyEatEvery - len(capyEating)); k >= 0 {
+		p.straw = capyEating[k]
+	}
+	return p
+}
+
+// capybaraFrame:第 n 幀(n 單調遞增,由 tick 推)。先照劇本演一遍,演完接 capyIdle。
+// 不常駐的時候幀的 ticker 與定格的計時器是兩個各走各的 timer,可能多跳一兩幀——capyIdle 的頭幾幀就是定格幀,不會跳。
 func capybaraFrame(n int) []string {
-	return capybaraLines(capyStory[min(max(n, 0), len(capyStory)-1)])
+	if n = max(n, 0); n < len(capyStory) {
+		return capybaraLines(capyStory[n])
+	}
+	return capybaraLines(capyIdle(n - len(capyStory)))
 }
 
 // capybaraStill:開場動畫結束後定格、印進捲動區的那一幀:睜著眼、叼著整根草。
