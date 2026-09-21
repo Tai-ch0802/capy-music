@@ -2,6 +2,8 @@
 
 跨平台音樂 CLI:搜尋、播放遙控、播放清單同步(Spotify、Apple Music;播放清單同步到你自己的 Google Drive)。開源、免費,**所有憑證都是你自己的(BYO)** —— 本專案不代持任何 token、不架任何服務。
 
+網站:<https://capy.taislife.work>(給一般使用者的介紹、[隱私權政策](https://capy.taislife.work/privacy)、[服務條款](https://capy.taislife.work/terms);原始檔在 [`site/`](site/))。
+
 完整的使用說明(含互動式介面、網頁介面、命令參考與三個平台的能力差異)在 `docs/guide.html`。GitHub 對 repo 裡的 `.html` 只顯示原始碼,所以要看那一頁請 clone 或下載後用瀏覽器打開——它是單一檔案,不需要伺服器,也不連任何外部資源。
 
 ## 安裝
@@ -74,7 +76,7 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 
 ## Google Drive 同步(選用):登入 Google
 
-`capy auth login google` 之後,播放清單會同步到你 Google Drive 的應用程式資料夾(其他 app 與你自己都看不到內容,只佔你的 Drive 空間)。只索取三個權限:`openid`、`userinfo.email`、`drive.appdata`。
+`capy auth login google` 之後,播放清單會同步到你 Google Drive 的應用程式資料夾(其他 app 與你自己都看不到內容,只佔你的 Drive 空間)。只索取三個權限:`openid`、`userinfo.email`、`drive.appdata`。每個權限用來做什麼、資料存在哪裡、怎麼撤銷與刪除,寫在[隱私權政策](https://capy.taislife.work/privacy)——也就是 Google 授權畫面上連過去的那一頁。
 
 - **從 GitHub Releases 下載的 binary**:內建專案自己的 Google client,直接執行 `capy auth login google` 就好。
 - **`go install` 或自己 build 的**:沒有內建 client,`auth login google` 的精靈會引導你建自己的(免費,約 5 分鐘):
