@@ -284,11 +284,11 @@
 <div class="wrap">
   <header class="hero">
     <pre id="capy" role="img" aria-label="水豚吉祥物的側面,嘴角叼著一根牧草">                         _
-        ________________( )_________.
-     .-'                    o     . |
-   .'                               |
-  /                                 |
- |                             _____|~~~~
+        ________________( )_____
+     .-'                    o   `-.
+   .'                           .  \
+  /                                 |  ,-"
+ |                            ____.'--'
   \                       __.-'
    `.|  |`----------'|  |'
      |__|            |__|</pre>
@@ -339,13 +339,13 @@
 
   <section>
     <h2>互動式介面</h2>
-    <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。開場的水豚動兩秒後定格,之後畫面只有底部四行會變動,上面那一整片是終端機自己的捲動區——你打過的命令、它們的輸出、發生過的錯誤都留在那裡,可以往回捲、可以複製。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
+    <p class="sub">在終端機裡直接輸入 <code>capy</code>,不帶任何參數。開場的水豚會轉轉耳朵、眨眨眼、把嘴邊的牧草吃短再叼一根,大約三秒後定格(按任何鍵可以跳過),之後畫面只有底部四行會變動,上面那一整片是終端機自己的捲動區——你打過的命令、它們的輸出、發生過的錯誤都留在那裡,可以往回捲、可以複製。放進管線或 cron 時它仍然只印說明,不會變成一個等你按鍵的程式。</p>
 <pre><code>                         _
-        ________________( )_________.
-     .-'                    o     . |
-   .'                               |
-  /                                 |
- |                             _____|~~~~
+        ________________( )_____
+     .-'                    o   `-.
+   .'                           .  \
+  /                                 |  ,-"
+ |                            ____.'--'
   \                       __.-'
    `.|  |`----------'|  |'
      |__|            |__|
@@ -603,35 +603,63 @@ p.JL68l7EhogEeXd  冬日暖調          -
 <script>
   // 水豚:直接用 CLI 裡那幾幀(internal/cli/tui_capybara.go),連字元都一樣。
   // 全 ASCII 的原因在那個檔案裡:方框繪製字元在 CJK 語系的終端機寬度是 2,矩形會垮。
-  const TOP = [
-    "                         _                ",
-    "        ________________( )_________.     ",
+  // 跟終端機同一份劇本(internal/cli/tui_capybara.go 的 capyStory;TestGuideCapybaraMatchesTUI 逐行比):
+  // 轉耳朵 → 眨眼 → 一口一口把草吃短 → 叼起新的一根。終端機只在開場演一遍,這裡一直輪。
+  const EAR = [
+    [
+      "                         _                ",
+      "        ________________( )_____          ",
+    ],
+    [
+      "                        _                 ",
+      "        ________________\\ \\_____          ",
+    ],
   ];
-  const EYES_OPEN = "     .-'                    o     . |     ";
-  const EYES_SHUT = "     .-'                    -     . |     ";
-  const CHEEK = [
-    "   .'                               |     ",
-    "  /                                 |     ",
+  const EYES = [
+    "     .-'                    o   `-.       ",
+    "     .-'                    -   `-.       ",
   ];
-  const MOUTH_OUT = " |                             _____|~~~~ ";
-  const MOUTH_CHEW = " |                             _____|~~   ";
+  const NOSE = "   .'                           .  \\      ";
+  const STRAW = [
+    [
+      "  /                                 |     ",
+      " |                            ____.'      ",
+    ],
+    [
+      "  /                                 |     ",
+      " |                            ____.'-\"    ",
+    ],
+    [
+      "  /                                 | ,\"  ",
+      " |                            ____.'-'    ",
+    ],
+    [
+      "  /                                 |  ,\" ",
+      " |                            ____.'--'   ",
+    ],
+    [
+      "  /                                 |  ,-\"",
+      " |                            ____.'--'   ",
+    ],
+  ];
   const BELLY = [
     "  \\                       __.-'           ",
     "   `.|  |`----------'|  |'                ",
     "     |__|            |__|                 ",
   ];
+  // 每一幀:[轉耳朵, 閉眼, 草的長度]
+  const STORY = [[0, 0, 4], [1, 0, 4], [0, 0, 4], [0, 1, 4], [0, 0, 3], [0, 0, 3], [0, 0, 2], [1, 0, 2], [0, 0, 1], [0, 1, 1], [0, 0, 0], [0, 0, 4]];
 
   function frame(n) {
-    const eyes = n % 12 === 0 ? EYES_SHUT : EYES_OPEN;
-    const mouth = Math.floor(n / 3) % 2 === 1 ? MOUTH_CHEW : MOUTH_OUT;
-    return [...TOP, eyes, ...CHEEK, mouth, ...BELLY].join("\n");
+    const [ear, shut, straw] = STORY[n % STORY.length];
+    return [...EAR[ear], EYES[shut], NOSE, ...STRAW[straw], ...BELLY].join("\n");
   }
 
   // 第一幀已經寫在 HTML 裡(JS 沒跑到也看得到水豚),這裡從第二幀接手。
   const el = document.getElementById("capy");
   if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    let n = 1;
-    setInterval(() => { el.textContent = frame(++n); }, 350);
+    let n = 0;
+    setInterval(() => { el.textContent = frame(++n); }, 250);
   }
 </script>
 </html>

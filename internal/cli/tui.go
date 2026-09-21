@@ -22,7 +22,7 @@ import (
 // capy(無參數、在終端機裡)= 互動式介面。形態是**訊息流 + 固定底部區**(Claude Code 那種),
 // 不是全螢幕接管:
 //
-//   - 開場水豚動兩秒,然後定格印進捲動區,之後永不重繪。
+//   - 開場水豚照劇本演一遍(約三秒),然後定格印進捲動區,之後永不重繪。
 //   - TUI 只管底部四行(分隔線 / 狀態 / 輸入 / 提示),其餘全部是終端機自己的捲動區。
 //   - 命令的回音、錯誤、結束碼都用 tea.Println 推進捲動區:永久、可往回捲、可複製。
 //
@@ -38,12 +38,13 @@ import (
 // Update 是純函式(tea.Msg 進、model 出),測試不需要 TTY。
 
 const (
-	tuiFrameInterval = 350 * time.Millisecond // 水豚的動作
-	tuiIntro         = 2 * time.Second        // 動這麼久就定格。不是「動到第一個命令」:那會讓重繪延續到不確定的時間點
-	tuiSeekStep      = 10000                  // ←/→ 一次 10 秒
-	tuiVolStep       = 5                      // +/- 一次 5
-	tuiMaxFails      = 5
-	tuiMinWidth      = 46 // 窄於此:橫幅換成一行
+	tuiFrameInterval = 250 * time.Millisecond // 水豚的動作
+	// 劇本(capyStory)演完一遍就定格,約三秒;任何按鍵都會提早定格。不是「動到第一個命令」:那會讓重繪延續到不確定的時間點
+	tuiIntro    = time.Duration(len(capyStory)) * tuiFrameInterval
+	tuiSeekStep = 10000 // ←/→ 一次 10 秒
+	tuiVolStep  = 5     // +/- 一次 5
+	tuiMaxFails = 5
+	tuiMinWidth = 46 // 窄於此:橫幅換成一行
 )
 
 type (
@@ -166,8 +167,8 @@ func (m tuiModel) newChain() tuiModel {
 }
 
 // freeze:開場結束。水豚定格印進捲動區,之後 View 只剩底部四行、frame ticker 停掉。
-// 兩秒到會呼叫,任何一個按鍵也會——不然「開場期間按 Enter」會在水豚還在 View 裡時 Exec,
-// 子命令的輸出印在它下面,兩秒到再定格印一次,就又變成使用者回報的「水豚頭重複」。
+// 開場演完會呼叫,任何一個按鍵也會——不然「開場期間按 Enter」會在水豚還在 View 裡時 Exec,
+// 子命令的輸出印在它下面,開場演完再定格印一次,就又變成使用者回報的「水豚頭重複」。
 func (m tuiModel) freeze() (tuiModel, tea.Cmd) {
 	if m.frozen {
 		return m, nil
@@ -397,7 +398,7 @@ func (m tuiModel) recall(d int) tuiModel {
 
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
-	// 兩秒到再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
+	// 開場演完再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
 	if !m.frozen {
 		var freeze tea.Cmd
 		m, freeze = m.freeze()
@@ -608,7 +609,7 @@ func splitArgs(line string) []string {
 	return out
 }
 
-// View 只回兩種畫面:開場的水豚(兩秒),之後永遠是底部四行。
+// View 只回兩種畫面:開場的水豚(約三秒),之後永遠是底部四行。
 // 四行 = 分隔線 / 狀態 / 輸入 / 提示。每一行都夾在 w-1 欄:寫滿最後一欄時某些終端機會多換一行,
 // 底部就多佔一行、上緣被頂掉(前一版 19 行畫面崩掉的成因之一)。
 func (m tuiModel) View() tea.View {
@@ -654,7 +655,7 @@ func (m tuiModel) View() tea.View {
 	return v
 }
 
-// intro:開場的兩秒。只有水豚與招牌,底部四行還沒出現(定格之後它才是常駐的畫面)。
+// intro:開場的那約三秒。只有水豚與招牌,底部四行還沒出現(定格之後它才是常駐的畫面)。
 func (m tuiModel) intro(w int) string {
 	var lines []string
 	if w >= tuiMinWidth && w >= capybaraWidth() {

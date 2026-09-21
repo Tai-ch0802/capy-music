@@ -21,7 +21,7 @@ func newTestTUI(t *testing.T, f *watchFake) tuiModel {
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", f, nil, watchPollSpotify)
 	m.width = 100
 	m.st = f.st     // 正式路徑是第一次 poll 帶進來的;測試直接給,免得每個案例都要先跑一次輪詢
-	m.frozen = true // 開場只有前兩秒;要驗開場的案例自己把它關掉
+	m.frozen = true // 開場只有前三秒左右;要驗開場的案例自己把它關掉
 	return m
 }
 
@@ -100,7 +100,7 @@ func TestTUIFrameAdvancesAndBodyStaysPut(t *testing.T) {
 			t.Fatalf("幀 = %d,要 %d", m.frame, i)
 		}
 	}
-	// 定格之後動畫停掉:底部四行只在狀態變動與按鍵時重畫,不再每 350 毫秒重繪。
+	// 定格之後動畫停掉:底部四行只在狀態變動與按鍵時重畫,不再每一幀重繪。
 	m.frozen = true
 	if _, cmd := m.Update(tuiFrameMsg{}); cmd != nil {
 		t.Error("定格後不該再排下一幀")

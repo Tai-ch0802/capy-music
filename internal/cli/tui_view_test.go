@@ -67,7 +67,7 @@ func TestTUIViewIsFourLines(t *testing.T) {
 	}
 }
 
-// 開場動畫兩秒後定格進捲動區:之後 View 裡不再有水豚,也不再有動畫。
+// 開場動畫演完(約三秒)後定格進捲動區:之後 View 裡不再有水豚,也不再有動畫。
 func TestTUIFreezesCapybaraIntoScrollback(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	m.frozen = false
@@ -79,12 +79,12 @@ func TestTUIFreezesCapybaraIntoScrollback(t *testing.T) {
 	if len(*got) != 1 {
 		t.Fatalf("定格要正好推一次進捲動區:%d 次", len(*got))
 	}
-	// 定格姿勢是睜眼的。capybaraFrame(0) 是閉眼的(0 %% capyBlinkEvery == 0),不能拿來當定格。
+	// 定格姿勢是睜眼、叼著整根草的:劇本的最後一幀。
 	if !strings.Contains((*got)[0], capyEyesOpen) || strings.Contains((*got)[0], capyEyesShut) {
 		t.Errorf("定格要睜著眼看使用者:%q", (*got)[0])
 	}
-	if !strings.Contains((*got)[0], capyMouthOut) {
-		t.Errorf("定格要叼著草:%q", (*got)[0])
+	if full := capyStraw[capyStrawFull]; !strings.Contains((*got)[0], full[0]) || !strings.Contains((*got)[0], full[1]) {
+		t.Errorf("定格要叼著整根草:%q", (*got)[0])
 	}
 	if strings.Contains(m.View().Content, capyFeet) {
 		t.Error("定格後 View 不該再有水豚")
@@ -97,7 +97,7 @@ func TestTUIFreezesCapybaraIntoScrollback(t *testing.T) {
 }
 
 // 開場期間按鍵先定格再處理:不然 Enter 會在水豚還在 View 裡時 Exec,子命令的輸出印在它下面,
-// 兩秒到再定格印一次 —— 就是使用者回報的「水豚頭重複」。
+// 開場演完再定格印一次 —— 就是使用者回報的「水豚頭重複」。
 func TestTUIKeyDuringIntroFreezesFirst(t *testing.T) {
 	f := &watchFake{st: playingState()}
 	m := newTestTUI(t, f)

@@ -1158,7 +1158,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("水豚的嘴與草要用不帶 fill 的 capy-svg__stroke")
 	}
 	// 裝飾動畫不冒充進度(決策 47):有命令在跑時示意停住;reduced-motion 下是靜態構圖。
-	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }") {
+	if !strings.Contains(css, "body[data-busy] .route__note, body[data-busy] .capy-svg__eye, body[data-busy] .capy-svg__ear { animation-play-state: paused; }") {
 		t.Error("命令在跑時路線示意要停住")
 	}
 	// 路線示意的小卡外層跟路線一樣寬、整個滑出去:路線不裁掉的話,400px 會多出橫向捲動(smoke 量到 main.scrollWidth 641)。
@@ -1167,6 +1167,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".route__note { animation: none;") || !strings.Contains(reduced, ".beat__row") {
 		t.Error("prefers-reduced-motion 下示意動畫要是靜態構圖")
+	}
+	// 轉耳朵(2026-09-21):繞著藏在身體裡的耳根撥(接縫不會露出來);跟眨眼一樣,忙碌時停住、reduced-motion 下不動。
+	if !strings.Contains(css, ".capy-svg__ear { stroke-width: 3; transform-box: fill-box; transform-origin: 50% 100%; animation: ear-flick") || !strings.Contains(css, "@keyframes ear-flick") {
+		t.Error("水豚的耳朵要會撥(ear-flick),而且繞著耳根轉")
+	}
+	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".capy-svg__eye, .capy-svg__ear,") {
+		t.Error("prefers-reduced-motion 下耳朵也不可以動")
 	}
 	if strings.Contains(index, "is-disabled") {
 		t.Error("rail 不該還有停用的佔位項")
