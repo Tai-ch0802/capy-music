@@ -14,7 +14,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 )
 
-var pages = []string{"index.html", "privacy.html", "terms.html", "en/index.html", "en/privacy.html", "en/terms.html", "404.html"}
+var pages = []string{"index.html", "privacy.html", "terms.html", "en/index.html", "en/privacy.html", "en/terms.html", "404.html", "en/404.html"}
 
 func read(t *testing.T, name string) string {
 	t.Helper()
@@ -92,6 +92,23 @@ func TestPagesLoadNothingFromThirdParties(t *testing.T) {
 			t.Errorf("%s 會載入外部資源或執行 script:%q", name, m)
 		}
 	}
+	// 代管商(Cloudflare 的 zone 設定)會自動往 HTML 注入分析用的 script,是 CSP 把它們擋下來的(上線後實測)。
+	// 政策 §8 把這件事講明了;這裡釘住兩邊:CSP 不開 script、政策有提到 CSP。
+	for _, page := range []string{"privacy.html", "en/privacy.html"} {
+		if !strings.Contains(read(t, page), "<code>default-src 'none'</code>") {
+			t.Errorf("%s §8 要說明頁面以 CSP(default-src 'none')禁止執行或載入任何 script", page)
+		}
+	}
+	// 每一頁的頁尾都講同一句(頁尾是複製八份的,最容易被順手改歪);它能成立靠的就是上面那條 CSP。
+	for _, name := range pages {
+		want := "不執行任何 script"
+		if strings.HasPrefix(name, "en/") {
+			want = "runs no scripts"
+		}
+		if !strings.Contains(read(t, name), want) {
+			t.Errorf("%s 的頁尾要跟政策 §8 一致:%q", name, want)
+		}
+	}
 	if h := read(t, "_headers"); !strings.Contains(h, "default-src 'none'") || strings.Contains(h, "script-src") {
 		t.Errorf("_headers 的 CSP 要從 default-src 'none' 起跳、不開 script:\n%s", h)
 	}
@@ -100,9 +117,11 @@ func TestPagesLoadNothingFromThirdParties(t *testing.T) {
 // 每一個站內連結都要有檔案接(Workers 靜態資產的 auto-trailing-slash:/privacy → privacy.html、/en/ → en/index.html)。
 // 404 頁會被每一個不存在的網址拿去回應:不給 canonical / hreflang(不然所有壞連結都被正規化到同一個位址),並請搜尋引擎不要收錄。
 func TestNotFoundPageIsNotCanonical(t *testing.T) {
-	html := read(t, "404.html")
-	if strings.Contains(html, `rel="canonical"`) || strings.Contains(html, "hreflang=\"x-default\"") || !strings.Contains(html, `<meta name="robots" content="noindex">`) {
-		t.Error("404.html 不可以有 canonical / x-default,而且要 noindex")
+	for _, name := range []string{"404.html", "en/404.html"} { // Workers 會往上找最近的一份:/en/ 底下打錯網址的人要拿到英文的
+		html := read(t, name)
+		if strings.Contains(html, `rel="canonical"`) || strings.Contains(html, "hreflang=\"x-default\"") || !strings.Contains(html, `<meta name="robots" content="noindex">`) {
+			t.Errorf("%s 不可以有 canonical / x-default,而且要 noindex", name)
+		}
 	}
 }
 
