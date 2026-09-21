@@ -21,7 +21,7 @@ func newTestTUI(t *testing.T, f *watchFake) tuiModel {
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", f, nil, watchPollSpotify)
 	m.width = 100
 	m.st = f.st     // 正式路徑是第一次 poll 帶進來的;測試直接給,免得每個案例都要先跑一次輪詢
-	m.frozen = true // 開場只有前兩秒;要驗開場的案例自己把它關掉
+	m.frozen = true // 開場只有前三秒左右;要驗開場的案例自己把它關掉
 	return m
 }
 
@@ -100,7 +100,7 @@ func TestTUIFrameAdvancesAndBodyStaysPut(t *testing.T) {
 			t.Fatalf("幀 = %d,要 %d", m.frame, i)
 		}
 	}
-	// 定格之後動畫停掉:底部四行只在狀態變動與按鍵時重畫,不再每 350 毫秒重繪。
+	// 定格之後動畫停掉:底部四行只在狀態變動與按鍵時重畫,不再每一幀重繪。
 	m.frozen = true
 	if _, cmd := m.Update(tuiFrameMsg{}); cmd != nil {
 		t.Error("定格後不該再排下一幀")
@@ -411,6 +411,23 @@ func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 		if w := ansi.StringWidth(l); w > 30 { // 量顯示寬度:顏色碼不算,中文算 2
 			t.Errorf("窄螢幕的行不該超過寬度(%d):%q", w, l)
 		}
+	}
+}
+
+// 窄畫面看到的是靜止的一行版,沒有劇本可演:不該陪著等完整個開場(劇本拉長到三秒之後,這等於白等;review #72)。
+// 第一個 frame tick 就定格——那時候 WindowSizeMsg 已經到了。
+func TestTUINarrowSkipsTheIntro(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.frozen = false
+	m.width = 30
+	got := recordPrintln(t)
+	next, cmd := m.Update(tuiFrameMsg{})
+	m = next.(tuiModel)
+	if !m.frozen || len(*got) != 1 || !strings.Contains((*got)[0], capyOneLine) {
+		t.Fatalf("窄畫面第一個 tick 就要定格、把一行版印進捲動區:frozen=%v %v", m.frozen, *got)
+	}
+	if cmd != nil { // recordPrintln 的替身回 nil:這裡不是 nil 就代表又排了下一幀
+		t.Error("定格的那一個 tick 不該再排下一幀")
 	}
 }
 

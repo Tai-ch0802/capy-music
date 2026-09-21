@@ -77,13 +77,14 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 }
 .capy-svg { position: relative; width: 10.5rem; max-width: 100%; height: auto; } /* 吉祥物要看得清楚:路線中間最大的東西 */
 .capy-svg__line { fill: var(--ink); stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-.capy-svg__ear { stroke-width: 3; } /* 耳朵不可以比眼睛搶眼 */
+.capy-svg__ear { stroke-width: 3; transform-box: fill-box; transform-origin: 50% 100%; animation: ear-flick 5.5s ease-in-out infinite; } /* 耳朵不可以比眼睛搶眼;繞著藏在身體裡的耳根撥,接縫不會露出來 */
 .capy-svg__stroke { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; } /* 開放路徑:不可以帶 fill,會被隱式閉合填色 */
 .capy-svg__dot { fill: var(--accent); }
 .capy-svg__eye { fill: var(--accent); transform-box: fill-box; transform-origin: center; animation: blink 4s ease-in-out infinite; }
 @keyframes blink { 0%, 92%, 100% { transform: none; } 96% { transform: scaleY(.1); } }
+@keyframes ear-flick { 0%, 78%, 100% { transform: none; } 82% { transform: rotate(-16deg); } 86% { transform: rotate(5deg); } 90% { transform: rotate(-11deg); } 94% { transform: none; } } /* 往後撥兩下;週期跟眨眼(4s)錯開,兩個動作不會同步 */
 /* 有命令在跑時示意停住:裝飾動畫不冒充進度 */
-body[data-busy] .route__note, body[data-busy] .capy-svg__eye { animation-play-state: paused; }
+body[data-busy] .route__note, body[data-busy] .capy-svg__eye, body[data-busy] .capy-svg__ear { animation-play-state: paused; }
 
 /* 三步:這真的是有順序的流程,所以有編號 */
 .wiz__steps { display: flex; gap: .5rem 1.5rem; flex-wrap: wrap; list-style: none; margin: 0 0 1.5rem; padding: 0 0 1rem; border-bottom: 1px solid var(--line); counter-reset: wiz; font-size: var(--t-14); font-weight: 500; }
@@ -379,7 +380,7 @@ body[data-stale] .dock__input { border-color: var(--warn); }
   /* 示意圖停在靜態構圖:一張小卡在路線中間、三拍都是最終幀 */
   .route__note { animation: none; opacity: 0; }
   .route__note:nth-child(2) { opacity: 1; transform: translateX(22%); }
-  .capy-svg__eye, .beat__row, .beat__card, .beat__ok, .skeleton__bar { animation: none; }
+  .capy-svg__eye, .capy-svg__ear, .beat__row, .beat__card, .beat__ok, .skeleton__bar { animation: none; }
   .pcard { transition: none; }
   .dock__busy-dot, [data-run][data-pending]::before { animation: none; opacity: .8; } /* 脈衝改靜態 */
   .dock::after, .btn, .in, .rail__item, .pl__item, .dock { transition: none; } /* 靜態 glow 保留:它是狀態不是動效 */

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +19,7 @@ func TestCapybaraFramesAreASCIIRectangles(t *testing.T) {
 	if want == 0 {
 		t.Fatal("第一行是空的")
 	}
-	for n := 0; n < capyBlinkEvery*capyChewEvery*2; n++ {
+	for n := 0; n < len(capyStory)+3; n++ { // 劇本的每一幀,加上演完之後停住的那幾幀
 		f := capybaraFrame(n)
 		if len(f) != len(first) {
 			t.Fatalf("第 %d 幀 %d 行,第 0 幀 %d 行", n, len(f), len(first))
@@ -43,28 +45,51 @@ func TestCapybaraFramesAreASCIIRectangles(t *testing.T) {
 	}
 }
 
-// 眨眼與嚼草各自照週期走,而且身體(眼睛與嘴以外的行)每一幀都一樣。
-func TestCapybaraAnimates(t *testing.T) {
-	const eyeRow, mouthRow = 2, 5
-	base := capybaraFrame(1) // 幀 1:張眼、草伸長
-	if !strings.Contains(base[eyeRow], "o") {
-		t.Fatalf("幀 1 應該張著眼:%q", base[eyeRow])
-	}
-	if strings.Contains(capybaraFrame(capyBlinkEvery)[eyeRow], "o") {
-		t.Error("第 capyBlinkEvery 幀應該眨眼")
-	}
-	if capybaraFrame(capyChewEvery)[mouthRow] == base[mouthRow] {
-		t.Error("嚼草的那一幀嘴／草應該不一樣")
-	}
-	for n := 0; n < capyBlinkEvery*2; n++ {
+// 開場的動畫要真的看得到(2026-09-21;使用者要眨眼、轉耳朵、把牧草吃短)。舊版用取餘數排動作,而開場只有 6 幀:
+// 第 0 幀閉著眼開場、之後再也不眨,草只短一次,耳朵不動——等於沒有動畫。所以這裡只看開場**實際會播**的那幾幀,
+// 而且只用 capybaraFrame / capybaraStill / tuiIntro / tuiFrameInterval 來量:換回舊的實作,這個測試要紅。
+func TestCapybaraIntroShowsBlinkEarAndEating(t *testing.T) {
+	frames := int(tuiIntro / tuiFrameInterval)
+	still := capybaraStill()
+	ink := func(f []string) int { return len(strings.ReplaceAll(f[4]+f[5], " ", "")) } // 只量草的那兩列:眼睛與耳朵怎麼畫都不會干擾(review #72)
+	var opened, blinked, eared bool
+	bites, run, prev := 0, 0, ink(capybaraFrame(0))
+	for n := 0; n < frames; n++ {
 		f := capybaraFrame(n)
-		for i := range f {
-			if i == eyeRow || i == mouthRow {
-				continue
+		if strings.Contains(strings.Join(f, ""), "o") {
+			opened = true
+		} else if opened {
+			blinked = true // 先睜著、後來閉上:看得到的那種眨眼(閉著眼開場不算)
+		}
+		if f[0] != still[0] || f[1] != still[1] {
+			eared = true
+		}
+		switch now := ink(f); {
+		case now < prev:
+			run++
+			bites = max(bites, run)
+			prev = now
+		case now > prev:
+			run, prev = 0, now
+		}
+		for _, i := range []int{3, 6, 7, 8} { // 鼻孔那一行、下巴、肚子、腳:身體不動,不然整隻會抖
+			if f[i] != still[i] {
+				t.Fatalf("第 %d 幀第 %d 行不該變:%q vs %q", n, i, f[i], still[i])
 			}
-			if f[i] != base[i] {
-				t.Fatalf("第 %d 幀第 %d 行不該變:%q vs %q", n, i, f[i], base[i])
-			}
+		}
+	}
+	if !blinked {
+		t.Error("開場要看得到眨眼:先睜著、再閉一下")
+	}
+	if !eared {
+		t.Error("開場要看得到轉耳朵")
+	}
+	if bites < 3 {
+		t.Errorf("開場要看得到牧草越吃越短:至少連續短三次,只短了 %d 次", bites)
+	}
+	for n := frames - 1; n < frames+3; n++ { // 最後一幀就是定格幀,多跳幾幀也停在那裡:定格的那一下不可以跳
+		if got := strings.Join(capybaraFrame(n), "\n"); got != strings.Join(still, "\n") {
+			t.Errorf("第 %d 幀要跟定格幀一樣(叼著新的一根草、睜著眼、耳朵回正):\n%s", n, got)
 		}
 	}
 }
@@ -88,31 +113,58 @@ func TestCapybaraIsASideProfile(t *testing.T) {
 		}
 	}
 	ear, eye := strings.Index(still[earRow], "( )"), strings.Index(still[eyeRow], "o")
-	nostril, muzzle := strings.LastIndex(still[eyeRow], "."), strings.LastIndex(still[eyeRow], "|")
-	if !(earRow < eyeRow && ear < eye && eye < nostril && nostril < muzzle) {
-		t.Errorf("由後往前要是:耳朵(在眼睛的後上方)→ 眼睛 → 鼻孔 → 鈍的口鼻前端:ear=%d,%d eye=%d,%d nostril=%d muzzle=%d\n%s", earRow, ear, eyeRow, eye, nostril, muzzle, all)
+	// 口鼻的輪廓用「嘴裡沒有草」的姿勢量:草在口鼻的外面,會蓋掉右緣。
+	bare := capybaraLines(capyPose{})
+	right := func(l string) int { return len(strings.TrimRight(l, " ")) }
+	var head []int // 從頭頂線往下、直到下巴往後收之前:每一行的右緣
+	for _, l := range bare[earRow:] {
+		if len(head) > 0 && right(l) < head[0] {
+			break
+		}
+		head = append(head, right(l))
+	}
+	front := slices.Max(head)
+	nostril := strings.LastIndex(still[eyeRow+1], ".")
+	if !(earRow < eyeRow && ear < eye && eye < nostril && nostril < front-1) {
+		t.Errorf("由後往前要是:耳朵(在眼睛的後上方)→ 眼睛 → 鼻孔 → 口鼻前端:ear=%d,%d eye=%d,%d nostril=%d front=%d\n%s", earRow, ear, eyeRow, eye, nostril, front, all)
+	}
+	// 口鼻是圓的(2026-09-21;使用者:「鼻子有點太方形了,應該要比照屁股的地方稍微圓滑一點」):上角與下角都往後收,
+	// 而且跟屁股一樣是一道凸的弧(右緣的變化量只減不增)。整排 | 疊成的方臉,第一個條件就會紅。
+	if len(head) < 3 || head[0] >= front || head[len(head)-1] >= front {
+		t.Errorf("口鼻的上角與下角都要往後收,不可以是方的:右緣 %v", head)
+	}
+	for i := 2; i < len(head); i++ {
+		if head[i]-head[i-1] > head[i-1]-head[i-2] {
+			t.Errorf("口鼻要是一道凸的弧:右緣 %v 在第 %d 個凹進去了", head, i)
+			break
+		}
 	}
 	if eyeRow != earRow+1 {
 		t.Errorf("眼睛要在頭的最上緣(耳朵的下一行),不是臉的正中央:耳朵第 %d 行、眼睛第 %d 行", earRow, eyeRow)
 	}
-	// 頭頂線是平的、跟背連成一條(沒有脖子):耳朵那一行就是從屁股到口鼻的整條上緣,只准有線、耳朵、口鼻的圓角;
+	// 頭頂線是平的、跟背連成一條(沒有脖子):耳朵那一行就是從屁股到口鼻的整條上緣,只准有線與耳朵;
 	// 它上面只准有耳朵的頂。第一版背在第 0 列、頭頂在第 2 列,中間用 `--. 掉下來——那個凹口讀起來就是脖子(review #71)。
-	if top := strings.TrimSpace(still[earRow]); !regexp.MustCompile(`^_+\( \)_+\.$`).MatchString(top) {
-		t.Errorf("上緣要是一條平線,線上只有耳朵,最前面收一個圓角:%q", top)
+	if top := strings.TrimSpace(still[earRow]); !regexp.MustCompile(`^_+\( \)_+$`).MatchString(top) {
+		t.Errorf("上緣要是一條平線,線上只有耳朵:%q", top)
 	}
 	for _, l := range still[:earRow] {
 		if strings.TrimSpace(l) != "_" || strings.Index(l, "_") != ear+1 {
 			t.Errorf("頭頂線上面只准有耳朵的頂(在耳朵的正上方):%q", l)
 		}
 	}
-	var mouth string
-	for _, l := range still {
-		if strings.Contains(l, "~") {
-			mouth = l
+	// 牧草不是一條直線(使用者:「太直了,看不出來是牧草」):它從口鼻的外面開始、跨兩行往上彎、頂端有穗。
+	var straw []int
+	for i := range still {
+		if still[i] != bare[i] {
+			straw = append(straw, i)
+			if strings.TrimRight(still[i][:right(bare[i])], " ") != strings.TrimRight(bare[i], " ") {
+				t.Errorf("草要在口鼻的外面,不可以畫進臉裡:%q", still[i])
+			}
 		}
 	}
-	if !strings.HasSuffix(strings.TrimRight(mouth, " "), "~") || strings.Index(mouth, "~") <= muzzle {
-		t.Errorf("草要從口鼻的外面才開始、伸到最前面:%q", mouth)
+	if len(straw) != 2 || straw[1] != straw[0]+1 || !strings.HasSuffix(strings.TrimRight(still[straw[0]], " "), `"`) ||
+		right(still[straw[0]]) <= right(still[straw[1]]) {
+		t.Errorf("草要跨相鄰的兩行往前上方彎、頂端是穗:第 %v 行\n%s", straw, all)
 	}
 	// 沒有尾巴:屁股是一道凸的弧,所以左緣的欄位由上到下先往左、再往右,而且變化量只增不減。
 	// 屁股上多出任何一筆(不管用哪個字元畫),那一行的左緣就會突然凸出去,差分就不單調了。
@@ -146,13 +198,25 @@ func TestGuideCapybaraMatchesTUI(t *testing.T) {
 	if n := strings.Count(guide, strings.Join(still, "\n")); n != 2 {
 		t.Errorf("指南裡靜態的水豚要有兩隻(開頭與 TUI 示意)、都跟終端機的定格幀一樣,找到 %d 隻", n)
 	}
-	for _, n := range []int{0, 1, capyChewEvery} { // 閉眼、睜眼、嚼一口:JS 那段的每一行
+	var story []string
+	for n, p := range capyStory { // 劇本的每一幀的每一行,JS 那段都要有
 		for _, l := range capybaraFrame(n) {
 			if !strings.Contains(guide, strconv.Quote(l)) {
 				t.Errorf("指南的 JS 幀少了這一行(或跟終端機不一樣):%q", l)
 			}
 		}
+		story = append(story, fmt.Sprintf("[%d, %d, %d]", b2i(p.ear), b2i(p.shut), p.straw))
 	}
+	if want := "const STORY = [" + strings.Join(story, ", ") + "];"; !strings.Contains(guide, want) {
+		t.Errorf("指南的劇本要跟終端機同一份([轉耳朵, 閉眼, 草的長度]):\n%s", want)
+	}
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func TestCapyTagline(t *testing.T) {
