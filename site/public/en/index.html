@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>capy: move your playlists, don't rebuild them</title>
+<meta name="description" content="capy is a free, open-source music tool that runs on your own computer: move playlists from Apple Music to Spotify, keep Spotify and a local music folder in sync, search, and control playback.">
+<link rel="canonical" href="https://capy.taislife.work/en/">
+<link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/">
+<link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/">
+<link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/">
+<meta property="og:url" content="https://capy.taislife.work/en/">
+<meta property="og:title" content="capy: move your playlists, don't rebuild them">
+<meta property="og:description" content="capy is a free, open-source music tool that runs on your own computer: move playlists from Apple Music to Spotify, keep Spotify and a local music folder in sync, search, and control playback.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/en/">capy<span>.</span></a>
+    <nav aria-label="Site">
+      <a href="/en/#what">What it does</a>
+      <a href="/en/#google">Why Google sign-in</a>
+      <a href="/en/privacy">Privacy Policy</a>
+      <a href="/en/terms">Terms of Service</a>
+      <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a>
+      <a class="lang" href="/" lang="zh-Hant" hreflang="zh-Hant">中文</a>
+    </nav>
+  </header>
+  <main id="main">
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Open source · Free · Runs on your own computer</p>
+        <h1>Move your playlists.<br>Don't rebuild them.</h1>
+        <p class="lede">capy reads a playlist from one music service, finds the same songs on another, and puts them there in the original order. It is a small tool installed on your computer, with a terminal version and a web interface. Your accounts never pass through anyone's server.</p>
+        <div class="cta">
+          <a class="btn btn--go" href="https://github.com/Tai-ch0802/capy-music/releases">Download capy</a>
+          <a class="btn btn--quiet" href="https://github.com/Tai-ch0802/capy-music">View source</a>
+        </div>
+        <p class="fine">macOS and Windows. Playlists can currently be read from Apple Music, Spotify or a music folder on your computer, and written to Spotify or the music folder. Apple Music is read-only.</p>
+      </div>
+      <div class="route" aria-hidden="true">
+        <div class="route__ends">
+          <span class="route__end"><small>From</small>Apple Music</span>
+          <span class="route__end"><small>To</small>Spotify</span>
+        </div>
+        <div class="route__lane">
+          <svg class="capy" viewBox="0 0 224 124" role="img" aria-label="">
+          <rect class="capy__line" x="30" y="88" width="20" height="28" rx="7"/>
+          <rect class="capy__line" x="112" y="88" width="20" height="28" rx="7"/>
+          <ellipse class="capy__line capy__ear" cx="128" cy="29" rx="5" ry="7"/>
+          <path class="capy__line" d="M32 100 C10 100 6 74 14 58 C22 38 44 30 74 30 C110 30 140 32 172 32 Q194 32 194 54 L194 68 Q194 84 178 84 L160 84 C148 84 140 92 132 100 Z"/>
+          <circle class="capy__eye" cx="150" cy="48" r="5"/>
+          <ellipse class="capy__dot" cx="184" cy="43" rx="3.4" ry="2.6"/>
+          <path class="capy__stroke" d="M176 69 L187 68"/>
+          <path class="capy__stroke" d="M200 67 L220 61 M210 64 L215 57"/>
+        </svg>
+          <div class="route__songs">
+            <span class="route__song">♪ Track 1</span>
+            <span class="route__song">♪ Track 2</span>
+            <span class="route__song">♪ Track 3</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section id="what">
+      <div class="split">
+        <div>
+          <h2>What it does</h2>
+          <p class="muted">capy is a cross-platform music tool: search, playback remote control, and playlist sync and transfer. Most playlist-transfer services charge a fee and need you to hand your accounts to their servers. capy is free, and everything happens between your computer and the music services directly.</p>
+        </div>
+        <ul class="does">
+          <li><h3>Transfer</h3><p>Move a playlist from one service to another. Songs are matched by ISRC (the international code of each recording) first, and by title, artist and duration only when that fails. Uncertain matches are listed for you to decide. The source playlist is never modified.</p></li>
+          <li><h3>Sync</h3><p>One playlist can be linked to several services. When songs are added on either side, capy shows the differences as a table and writes only after you confirm. Playlist order is your memory: capy never sorts or shuffles it.</p></li>
+          <li><h3>Search and remote control</h3><p>Search, play, pause, seek, change the volume and see what is playing, from the terminal. This part does not need Google sign-in.</p></li>
+          <li><h3>Web interface</h3><p>Prefer clicking? Run <code>capy --web</code>. It opens a page on your own computer that only you can reach (127.0.0.1) and walks you through a transfer.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="split">
+        <div>
+          <h2>How a transfer works</h2>
+          <p class="muted">Three steps. Before every write, capy lists what it is about to do and waits for your confirmation.</p>
+        </div>
+        <ol class="steps">
+          <li><div><h3>Connect your accounts</h3><p>Sign in to the source and destination music services, then to Google. Credentials are stored only in your computer's keychain (macOS Keychain or Windows Credential Manager).</p></div></li>
+          <li><div><h3>Pick a playlist</h3><p>capy reads every song in it, looks each one up on the destination service, and tells you how many were found and which were not.</p></div></li>
+          <li><div><h3>Confirm, then move</h3><p>Only after you review the list and confirm does capy add the songs to the destination. Songs that were not found stay in the report; capy does not substitute a different version.</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="google">
+      <h2>Why capy asks you to sign in with Google</h2>
+      <p>Syncing and transferring playlists needs a place to keep your master copy of each playlist: which songs, in what order, and which track they map to on each service. That is what lets a second computer, or the next sync, pick up where you left off. capy runs no server, so this data lives in <strong>your own Google Drive</strong>, in an application data folder that only the capy application can read.</p>
+      <p>Google sign-in is optional: search and playback control work without it. When you do sign in, capy requests exactly these three permissions and nothing else:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Permission</th><th>What it is used for</th><th>What it cannot do</th></tr></thead>
+          <tbody>
+            <tr><th>openid</th><td>Confirms which Google account signed in.</td><td>Cannot read your profile, contacts or any content.</td></tr>
+            <tr><th>userinfo.email</th><td>Shows the signed-in email address in <code>capy auth status</code> so you can notice a wrong account. The address is written only to a settings file on your computer.</td><td>capy never emails you, cannot read your Gmail, and never sends the address to anyone.</td></tr>
+            <tr><th>drive.appdata</th><td>Reads and writes a few JSON files that capy itself creates in your Drive's application data folder (playlists, track mappings, device list; if you connect a music folder on your computer, also the relative paths of those music files and the playlist file names).</td><td>Cannot see or change any other file in your Drive: no documents, no photos, no shared folders.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine">Full details are in the <a href="/en/privacy">Privacy Policy</a>. You can revoke access at any time under <a href="https://myaccount.google.com/permissions">third-party access in your Google Account</a>.</p>
+    </section>
+
+    <section id="where">
+      <div class="split">
+        <div>
+          <h2>Where your data lives</h2>
+          <p class="muted">capy has no backend. This table is the whole picture.</p>
+        </div>
+        <dl class="where">
+          <div><dt>Playlist master copy</dt><dd>Your own Google Drive (application data folder), plus a cache on your computer.</dd></div>
+          <div><dt>Sign-in credentials</dt><dd>Your computer's keychain. Never written to settings files, never uploaded anywhere.</dd></div>
+          <div><dt>What you play or search</dt><dd>Stays between your computer and that music service. capy keeps no log and has nowhere to report to.</dd></div>
+          <div><dt>Our servers</dt><dd>There are none. This website is a few static pages.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="split">
+        <div>
+          <h2>Get started</h2>
+          <p class="muted">Download the file for your computer from <a href="https://github.com/Tai-ch0802/capy-music/releases">GitHub Releases</a>, unpack it, and put <code>capy</code> on your PATH. Full installation and usage notes are in the <a href="https://github.com/Tai-ch0802/capy-music#readme">README</a> (in Traditional Chinese).</p>
+        </div>
+        <div>
+<pre><span class="c"># connect your accounts</span>
+<span class="p">$ </span>capy auth login spotify
+<span class="p">$ </span>capy auth login google
+
+<span class="c"># transfer with the web interface</span>
+<span class="p">$ </span>capy --web
+
+<span class="c"># or straight from the terminal</span>
+<span class="p">$ </span>capy migrate "Commute" --from apple --to spotify</pre>
+          <p class="fine">Spotify requires you to create your own free developer app (capy walks you through it). Apple Music is currently read-only and relies on a method Apple does not officially support. Writing to Spotify playlists follows the official documentation and is still being verified on real accounts; please report problems. See the README for details.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <nav aria-label="Footer">
+      <a href="/en/privacy">Privacy Policy</a>
+      <a href="/en/terms">Terms of Service</a>
+      <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a>
+      <a href="https://github.com/Tai-ch0802/capy-music/issues">Report an issue</a>
+      <a href="https://github.com/Tai-ch0802/capy-music/blob/main/LICENSE">MIT License</a>
+    </nav>
+    <p>capy is an open-source project maintained by Tai (GitHub: Tai-ch0802) as an individual, released under the MIT License.</p>
+    <p>capy is not affiliated with, sponsored by, or endorsed by Spotify, Apple, or Google. Those names are trademarks of their respective owners and are used here only to describe which services capy can connect to.</p>
+    <p>This website sets no cookies, runs no analytics, and loads no third-party resources.</p>
+  </footer>
+</div>
+</body>
+</html>

@@ -3,3 +3,5 @@
 # 已不再使用 .p8(v0.5 改 web token),保留純為防止舊工作目錄誤 commit 私鑰
 *.p8
 .DS_Store
+# wrangler 的本機狀態(site/ 的預覽與部署)
+.wrangler/

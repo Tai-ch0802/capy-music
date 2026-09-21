@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>capy:把歌單搬過去,一首都不用重找</title>
+<meta name="description" content="capy 是開源、免費、在你自己電腦上執行的音樂工具:把播放清單從 Apple Music 搬到 Spotify、在 Spotify 與電腦裡的音樂資料夾之間同步,也能搜尋與遙控播放。">
+<link rel="canonical" href="https://capy.taislife.work/">
+<link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/">
+<link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/">
+<link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/">
+<meta property="og:url" content="https://capy.taislife.work/">
+<meta property="og:title" content="capy:把歌單搬過去,一首都不用重找">
+<meta property="og:description" content="capy 是開源、免費、在你自己電腦上執行的音樂工具:把播放清單從 Apple Music 搬到 Spotify、在 Spotify 與電腦裡的音樂資料夾之間同步,也能搜尋與遙控播放。">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#main">跳到內容</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">capy<span>.</span></a>
+    <nav aria-label="網站">
+      <a href="/#what">功能</a>
+      <a href="/#google">為什麼要登入 Google</a>
+      <a href="/privacy">隱私權政策</a>
+      <a href="/terms">服務條款</a>
+      <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a>
+      <a class="lang" href="/en/" lang="en" hreflang="en">English</a>
+    </nav>
+  </header>
+  <main id="main">
+    <div class="hero">
+      <div>
+        <p class="eyebrow">開源 · 免費 · 在你自己的電腦上執行</p>
+        <h1>把歌單搬過去,<br>一首都不用重找。</h1>
+        <p class="lede">capy 讀出你在一個音樂平台的播放清單,在另一個平台找到同樣的歌,照原本的順序放好。它是裝在你電腦上的小工具,有終端機版,也有網頁介面;你的帳號不經過任何人的伺服器。</p>
+        <div class="cta">
+          <a class="btn btn--go" href="https://github.com/Tai-ch0802/capy-music/releases">下載 capy</a>
+          <a class="btn btn--quiet" href="https://github.com/Tai-ch0802/capy-music">看原始碼</a>
+        </div>
+        <p class="fine">macOS 與 Windows。目前可以從 Apple Music、Spotify 或電腦裡的音樂資料夾讀出清單,寫進 Spotify 或音樂資料夾;Apple Music 只能讀取。</p>
+      </div>
+      <div class="route" aria-hidden="true">
+        <div class="route__ends">
+          <span class="route__end"><small>來源</small>Apple Music</span>
+          <span class="route__end"><small>搬到</small>Spotify</span>
+        </div>
+        <div class="route__lane">
+          <svg class="capy" viewBox="0 0 224 124" role="img" aria-label="">
+          <rect class="capy__line" x="30" y="88" width="20" height="28" rx="7"/>
+          <rect class="capy__line" x="112" y="88" width="20" height="28" rx="7"/>
+          <ellipse class="capy__line capy__ear" cx="128" cy="29" rx="5" ry="7"/>
+          <path class="capy__line" d="M32 100 C10 100 6 74 14 58 C22 38 44 30 74 30 C110 30 140 32 172 32 Q194 32 194 54 L194 68 Q194 84 178 84 L160 84 C148 84 140 92 132 100 Z"/>
+          <circle class="capy__eye" cx="150" cy="48" r="5"/>
+          <ellipse class="capy__dot" cx="184" cy="43" rx="3.4" ry="2.6"/>
+          <path class="capy__stroke" d="M176 69 L187 68"/>
+          <path class="capy__stroke" d="M200 67 L220 61 M210 64 L215 57"/>
+        </svg>
+          <div class="route__songs">
+            <span class="route__song">♪ 第 1 首</span>
+            <span class="route__song">♪ 第 2 首</span>
+            <span class="route__song">♪ 第 3 首</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section id="what">
+      <div class="split">
+        <div>
+          <h2>它做什麼</h2>
+          <p class="muted">capy 是一個跨平台的音樂工具:搜尋、遙控播放、同步與搬移播放清單。其他搬歌單的服務多半要付費、也要你把帳號交給它們的伺服器;capy 不收費,而且整個過程只發生在你的電腦與各平台之間。</p>
+        </div>
+        <ul class="does">
+          <li><h3>搬家</h3><p>把一個平台的清單搬到另一個平台。先用 ISRC(每一段錄音的國際編碼)對歌,對不到才比歌名、歌手與長度;沒把握的會列出來讓你決定。來源清單一首都不會被動到。</p></li>
+          <li><h3>同步</h3><p>同一份清單可以連到好幾個平台。之後哪一邊加了歌,capy 把差異列成一張表,你確認了才寫入。清單的順序是你的記憶,它不會排序、也不會打亂。</p></li>
+          <li><h3>搜尋與遙控</h3><p>在終端機裡搜尋、播放、暫停、跳秒、調音量,看現在正在播什麼。這一部分不需要登入 Google。</p></li>
+          <li><h3>網頁介面</h3><p>不想打字就執行 <code>capy --web</code>:它在你的電腦上開一個只有你自己連得到的頁面(127.0.0.1),用按的就能搬歌單。</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="split">
+        <div>
+          <h2>怎麼搬</h2>
+          <p class="muted">三個步驟。每一次寫入之前,capy 都會先把要做的事列出來、等你確認。</p>
+        </div>
+        <ol class="steps">
+          <li><div><h3>連接帳號</h3><p>登入來源與目的地的音樂平台,再登入 Google。憑證只存在你電腦的鑰匙圈(macOS Keychain 或 Windows 認證管理員)。</p></div></li>
+          <li><div><h3>選一個清單</h3><p>capy 讀出清單裡的每一首歌,到目的地平台逐首尋找對應的曲目,並告訴你找到幾首、哪幾首沒找到。</p></div></li>
+          <li><div><h3>確認,然後搬</h3><p>你看過清單、按下確認,capy 才把歌加進目的地。沒找到的歌會留在報告裡,不會用別的版本硬湊。</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="google">
+      <h2>為什麼要登入 Google</h2>
+      <p>同步與搬歌單需要一個地方存放「你的播放清單正本」——哪些歌、什麼順序、各平台上對應到哪一首——這樣換一台電腦、或下次再同步時才接得上。capy 不架伺服器,所以這份資料放在<strong>你自己的 Google 雲端硬碟</strong>裡,一個只有 capy 這個應用程式讀得到的專屬資料夾。</p>
+      <p>登入 Google 是選用的:只用搜尋與播放遙控的話不需要。需要時,capy 只要求下面三個權限,沒有別的:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>權限</th><th>用來做什麼</th><th>做不到什麼</th></tr></thead>
+          <tbody>
+            <tr><th>openid</th><td>確認登入的是哪一個 Google 帳號。</td><td>讀不到你的個人資料、聯絡人或任何內容。</td></tr>
+            <tr><th>userinfo.email</th><td>在 <code>capy auth status</code> 顯示目前登入的電子郵件地址,讓你發現「登錯帳號」。地址只寫在你電腦上的設定檔。</td><td>不會寄信給你,讀不到你的 Gmail,也不會把地址傳給任何人。</td></tr>
+            <tr><th>drive.appdata</th><td>在你雲端硬碟的「應用程式專屬資料夾」裡讀寫 capy 自己建立的幾個 JSON 檔(播放清單、曲目對照、裝置清單;連接電腦裡的音樂資料夾時,也包含那些音樂檔的相對路徑與清單檔名)。</td><td>看不到、也動不了你雲端硬碟裡的其他任何檔案——文件、照片、共用資料夾都不行。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine">完整的說明在<a href="/privacy">隱私權政策</a>。你隨時可以在 <a href="https://myaccount.google.com/permissions">Google 帳戶的第三方存取權</a>撤銷授權。</p>
+    </section>
+
+    <section id="where">
+      <div class="split">
+        <div>
+          <h2>你的資料在哪裡</h2>
+          <p class="muted">capy 沒有後端。這張表就是全部。</p>
+        </div>
+        <dl class="where">
+          <div><dt>播放清單正本</dt><dd>你自己的 Google 雲端硬碟(應用程式專屬資料夾),以及你電腦上的一份快取。</dd></div>
+          <div><dt>各平台的登入憑證</dt><dd>你電腦的鑰匙圈。不寫進設定檔,不上傳到任何地方。</dd></div>
+          <div><dt>你聽了什麼、搜尋了什麼</dt><dd>只在你的電腦與該音樂平台之間。capy 不記錄,也沒有地方可以回報。</dd></div>
+          <div><dt>我們的伺服器</dt><dd>沒有。這個網站只是幾頁靜態的說明。</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="split">
+        <div>
+          <h2>開始使用</h2>
+          <p class="muted">到 <a href="https://github.com/Tai-ch0802/capy-music/releases">GitHub Releases</a> 下載對應你電腦的檔案,解開後把 <code>capy</code> 放進 PATH。完整的安裝與使用說明在 <a href="https://github.com/Tai-ch0802/capy-music#readme">README</a>。</p>
+        </div>
+        <div>
+<pre><span class="c"># 連接帳號</span>
+<span class="p">$ </span>capy auth login spotify
+<span class="p">$ </span>capy auth login google
+
+<span class="c"># 用網頁介面搬歌單</span>
+<span class="p">$ </span>capy --web
+
+<span class="c"># 或直接在終端機</span>
+<span class="p">$ </span>capy migrate "通勤" --from apple --to spotify</pre>
+          <p class="fine">Spotify 需要你自己建立一個免費的開發者 app(capy 會一步一步帶你做);Apple Music 目前只能讀取,做法非 Apple 官方支援;寫入 Spotify 清單的部分依官方文件實作、仍在實測驗收中,遇到問題請回報。細節見 README。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <nav aria-label="頁尾">
+      <a href="/privacy">隱私權政策</a>
+      <a href="/terms">服務條款</a>
+      <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a>
+      <a href="https://github.com/Tai-ch0802/capy-music/issues">回報問題</a>
+      <a href="https://github.com/Tai-ch0802/capy-music/blob/main/LICENSE">MIT License</a>
+    </nav>
+    <p>capy 是 Tai(GitHub:Tai-ch0802)以個人名義維護的開源專案,以 MIT 授權釋出。</p>
+    <p>capy 與 Spotify、Apple、Google 沒有隸屬、贊助或背書關係;這些名稱是各自所有者的商標,這裡只用來說明 capy 能連接哪些服務。</p>
+    <p>這個網站沒有 cookie、沒有分析工具、不載入任何第三方資源。</p>
+  </footer>
+</div>
+</body>
+</html>

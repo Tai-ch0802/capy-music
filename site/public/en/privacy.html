@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · capy</title>
+<meta name="description" content="How capy accesses, uses, stores and shares data, including Google user data. capy has no backend server; your data never passes through us.">
+<link rel="canonical" href="https://capy.taislife.work/en/privacy">
+<link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/privacy">
+<link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/privacy">
+<link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/privacy">
+<meta property="og:url" content="https://capy.taislife.work/en/privacy">
+<meta property="og:title" content="Privacy Policy · capy">
+<meta property="og:description" content="How capy accesses, uses, stores and shares data, including Google user data. capy has no backend server; your data never passes through us.">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/en/">capy<span>.</span></a>
+    <nav aria-label="Site">
+      <a href="/en/#what">What it does</a>
+      <a href="/en/#google">Why Google sign-in</a>
+      <a href="/en/privacy" aria-current="page">Privacy Policy</a>
+      <a href="/en/terms">Terms of Service</a>
+      <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a>
+      <a class="lang" href="/privacy" lang="zh-Hant" hreflang="zh-Hant">中文</a>
+    </nav>
+  </header>
+  <main id="main" class="doc">
+    <h1>Privacy Policy</h1>
+    <p class="meta">Effective date: 21 September 2026</p>
+    <div class="short">
+      <p><strong>The short version:</strong> capy is an open-source program that runs on your own computer. It has no backend server. Your data stays on your computer, in your own Google Drive, and on the music services you connect. No user data or credentials ever pass through us, and we have no means to collect them.</p>
+    </div>
+
+    <h2 id="who">1. What this policy covers</h2>
+    <p>This policy applies to the capy application (the command-line tool and its built-in local web interface, <code>capy --web</code>) and to this website, capy.taislife.work. capy is maintained by Tai (GitHub: <a href="https://github.com/Tai-ch0802">Tai-ch0802</a>) as an individual. The source code is public on <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a> under the MIT License, so every statement below can be verified in the code.</p>
+
+    <h2 id="google-data">2. Google user data capy accesses</h2>
+    <p>Signing in with Google is optional. When you run <code>capy auth login google</code> and grant consent, capy requests exactly the following three scopes and no others:</p>
+    <ul>
+      <li><strong><code>openid</code></strong>: identifies which Google account signed in.</li>
+      <li><strong><code>https://www.googleapis.com/auth/userinfo.email</code></strong>: the email address of that account.</li>
+      <li><strong><code>https://www.googleapis.com/auth/drive.appdata</code></strong>: read and write files that capy itself creates in the application data folder (appDataFolder) of your Google Drive. This scope <strong>cannot</strong> read, list or modify any other file in your Drive.</li>
+    </ul>
+
+    <h2 id="use">3. How that data is used</h2>
+    <ul>
+      <li><strong>Your email address</strong> is used only to show which account is signed in (<code>capy auth status</code>), so that you can notice if you signed in to the wrong account. capy never emails you and does not use the address for anything else.</li>
+      <li><strong>The application data folder</strong> stores what is needed to keep playlists in sync across your devices: playlists (name, description, tracks and their order, and which service playlists they are linked to), track data (title, artist, album, duration, ISRC, and the track's ID on each music service; if you connect a music folder on your computer, that "ID" is the file's path relative to that folder, and a local playlist's ID is "device ID/playlist file name", so paths and file names you chose yourself may be included), a device list (a random ID capy generates for each computer, the computer's name, and the last sync time), and a per-device snapshot of what each playlist looked like at the last sync.</li>
+      <li>capy does not use Google user data for advertising, does not use it to train any AI or machine-learning model, does not build user profiles, and does not use it for any purpose other than those described in this section.</li>
+    </ul>
+
+    <h2 id="storage">4. Where data is stored</h2>
+    <ul>
+      <li><strong>Your Google Drive</strong> (application data folder): the sync data listed in section 3. It counts against your Drive storage, is not visible in the Drive interface, and cannot be shared with anyone.</li>
+      <li><strong>Your computer</strong>: a local cache of the same data (an SQLite file); a settings file (which includes the email address above); and access tokens for Google, Spotify and Apple Music, which are stored only in the operating system keychain (macOS Keychain or Windows Credential Manager), never in settings files, the database, or Drive.</li>
+      <li><strong>On our side</strong>: nothing. capy has no backend server, no account system, and no telemetry or crash reporting. The program connects only to the services you use (Google, Spotify, Apple); when a <code>capy --web</code> page shows album art or plays a preview, your browser loads those images and audio files directly from Spotify's or Apple's content servers. Apart from that, capy contacts GitHub only when you run <code>capy update</code>, to check for and download a new version (<code>capy update --dev</code> instead has the Go toolchain on your computer download the source code from GitHub and the Go module proxy).</li>
+    </ul>
+
+    <h2 id="sharing">5. Sharing and transfer</h2>
+    <p>capy does not share, transfer, sell or disclose your Google user data to any third party, including us: the data never leaves your computer and your own Google account. When you sync or transfer a playlist, capy sends public identifiers of the tracks (such as ISRC, title and artist) to the music services you are signed in to, at your direction, to look songs up or add them to a playlist. That is data about the music, not your Google user data.</p>
+    <p>capy's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+    <h2 id="retention">6. Retention and deletion</h2>
+    <p>Because the data is in your hands, you decide how long it is kept. To remove everything:</p>
+    <ul>
+      <li>Revoke access: remove capy under <a href="https://myaccount.google.com/permissions">Google Account → Third-party apps and services</a>.</li>
+      <li>Delete the data in Drive: Google Drive → Settings → Manage apps → capy → "Delete hidden app data".</li>
+      <li>Delete the data on your computer: run <code>capy auth logout google</code> to clear the tokens from the keychain, then delete capy's settings folder (macOS: <code>~/Library/Application Support/capy-music</code>; Windows: <code>%AppData%\capy-music</code>).</li>
+    </ul>
+
+    <h2 id="security">7. Security</h2>
+    <p>All connections between capy and Google, Spotify and Apple use HTTPS. Tokens are stored only in the operating system keychain. The <code>capy --web</code> interface binds only to 127.0.0.1 (reachable only from your own computer), uses a one-time access code on every start, and never shows any token or secret on the page.</p>
+
+    <h2 id="site">8. This website</h2>
+    <p>capy.taislife.work is a static website: it sets no cookies, runs no analytics or tracking, loads no third-party resources, and has no forms. It is hosted by Cloudflare. As with any website, Cloudflare processes the technical information needed to serve a request (such as IP addresses) under its own privacy policy; we do not use those records to identify visitors.</p>
+
+    <h2 id="children">9. Children</h2>
+    <p>capy is not directed to children under 13, and we do not (and cannot) collect personal data from anyone.</p>
+
+    <h2 id="changes">10. Changes to this policy</h2>
+    <p>If the way capy accesses data changes (for example, a new permission), we will update this page and the effective date above before releasing the new version. Every revision is kept in <a href="https://github.com/Tai-ch0802/capy-music/commits/main/site/public/en/privacy.html">this file's version history</a>.</p>
+
+    <h2 id="contact">11. Contact</h2>
+    <p>Questions about this policy or your data: please open an issue on <a href="https://github.com/Tai-ch0802/capy-music/issues">GitHub Issues</a> (do not paste tokens or personal data into a public issue).</p>
+  </main>
+
+  <footer>
+    <nav aria-label="Footer">
+      <a href="/en/privacy">Privacy Policy</a>
+      <a href="/en/terms">Terms of Service</a>
+      <a href="https://github.com/Tai-ch0802/capy-music">GitHub</a>
+      <a href="https://github.com/Tai-ch0802/capy-music/issues">Report an issue</a>
+      <a href="https://github.com/Tai-ch0802/capy-music/blob/main/LICENSE">MIT License</a>
+    </nav>
+    <p>capy is an open-source project maintained by Tai (GitHub: Tai-ch0802) as an individual, released under the MIT License.</p>
+    <p>capy is not affiliated with, sponsored by, or endorsed by Spotify, Apple, or Google. Those names are trademarks of their respective owners and are used here only to describe which services capy can connect to.</p>
+    <p>This website sets no cookies, runs no analytics, and loads no third-party resources.</p>
+  </footer>
+</div>
+</body>
+</html>

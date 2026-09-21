@@ -15,6 +15,7 @@
 - **Apple 憑證是使用者自己從 Apple 網頁播放器複製的 web token(非 Apple 官方支援)。`auth login apple` 的預設路徑只指導、絕不自動擷取 —— 不開瀏覽器抓 cookie、不讀瀏覽器 cookie 資料庫、不注入 JS。揭露(非官方、會失效、風險自負)必須在指令內且不可跳過,不只在 README。** 唯一例外是隱藏的 `--auto` flag:未文件化、`--help` 不列、opt-in、開發者自負,允許自動擷取;它的存在不改變預設路徑的上述鐵則。
 - Spotify redirect URI 必須用 `127.0.0.1`,不可用 `localhost`。
 - Google 只准用 `openid` / `userinfo.email` / `drive.appdata` 三個 scope。任何人提議加 Gmail scope 都要擋下來(會觸發 restricted scope 資安評估)。
+- **隱私權政策要跟程式說的一樣(2026-09-21)。** `site/public/`(https://capy.taislife.work,中英各一份)是 Google OAuth 同意畫面連過去的首頁 / 隱私權政策 / 服務條款。Google scope、存進 Drive 的內容、程式會連的外部服務,任何一項變了,政策必須在**同一個 PR** 更新(`site/site_test.go` 只釘得住 scope);網站維持純靜態——不加 script、分析、cookie、第三方資源,`wrangler.jsonc` 不加 `main` 或 binding。
 - 憑證只進 OS keychain,絕不寫入 Drive、SQLite 或設定檔。**唯一放寬(決策 9)**:專案自己的 Google client secret 經 `-ldflags` 注入後會編進 release binary(`strings capy` 讀得到)—— 這只涵蓋 app 自身識別,不涵蓋任何使用者憑證;BYO 使用者輸入的 client secret 仍只進 keychain(`google.client_secret`),不進 config。
 - Spotify PKCE 的 refresh token 會輪替,每次 refresh 必須覆寫儲存。
 - 任何會刪除使用者播放清單曲目的程式路徑,都必須先過 dry-run 與閾值檢查。
