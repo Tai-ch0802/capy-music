@@ -10,6 +10,7 @@
 
 步驟:wait:<秒>  keys:<字串,\\r \\x1b 這類跳脫會解開>  resize:<欄>x<列>  dump:<標題>
 dump 會印捲動區 + 畫面,並數「水豚的腳」那一行出現幾次——應該恰好一次(執行子命令的當下是零次)。
+結束時送 SIGTERM;三秒內沒結束會講出來,設 STACKS=1 的話再送 SIGQUIT 把 goroutine 堆疊印出來。
 """
 import fcntl, os, pty, re, select, signal, struct, sys, termios, time
 
@@ -90,6 +91,16 @@ try:
         pump(0.05)
     else:
         print("!!!!! capy 收到 SIGTERM 三秒還沒結束(卡住了),改用 SIGKILL")
+        if os.environ.get("STACKS"):  # SIGQUIT:Go runtime 把每個 goroutine 的堆疊印到 stderr(就是這個 pty)再結束
+            os.kill(pid, signal.SIGQUIT)
+            end, raw = time.time() + 2, b""
+            while time.time() < end:
+                if select.select([fd], [], [], 0.1)[0]:
+                    try:
+                        raw += os.read(fd, 65536)
+                    except OSError:
+                        break
+            print(raw.decode("utf-8", "replace").replace("\r", ""))
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
 except (ProcessLookupError, ChildProcessError):
