@@ -65,7 +65,7 @@ func ExitCode(err error) (int, string) {
 		return 2, err.Error()
 	case errors.As(err, &blk):
 		return 3, err.Error()
-	case errors.Is(err, ui.ErrInterrupted): // 檢視窗格裡按了 Ctrl-C:同 SIGINT 的 130,不印東西
+	case errors.Is(err, ui.ErrInterrupted): // 檢視窗格 / 互動式介面 / now --watch 裡按了 Ctrl-C:同 SIGINT 的 130,不印東西
 		return 130, ""
 	}
 	return 1, "Error: " + err.Error()
