@@ -67,8 +67,11 @@ renderer 的行為單元測試量不到,所以用 **pty + 終端機模擬器(pyt
 印出來;也不認得 CBT(`CSI n Z`,往回跳 tab 停駐點),而 uv 的 renderer 會用它省位元組——不補的話耳朵那兩行
 會畫歪、草的穗會多一顆。兩個都是模擬器的問題,真終端機沒有。
 
-**順帶看到、這次不動的(二)**:收到 SIGTERM 之後偶爾三秒內不結束(驅動腳本現在會講出來、改用 SIGKILL)。新舊 binary 各跑六次
-都是各一次,跟這次的改動無關;按 `q` 離開一直正常。還沒查成因(懷疑是結束時在等正在跑的輪詢命令)。
+**順帶看到、這次不動的(二)**:收到 SIGTERM 之後偶爾三秒內不結束(驅動腳本會講出來、改用 SIGKILL;設 `STACKS=1` 會先送
+SIGQUIT 把 goroutine 堆疊印出來)。新舊 binary 各跑六次都是各一次,跟這次的改動無關;按 `q` 離開一直正常。
+→ **已查明並修掉(`fix/tui-sigterm`)**:不是輪詢命令,是訊號有兩個主人——`Execute` 的 `signal.NotifyContext` 與 bubbletea
+自己的 signal handler 搶同一個 SIGTERM;ctx 取消先到的話事件迴圈已經不收訊息,handler 卻還在做沒有 select 的
+`p.msgs <- QuitMsg{}`,`Run` 收尾又在等這個 handler——死結。修法與完整說明在 `internal/cli/teaprogram.go`。
 
 **順帶看到、這次不動的(一)**:不常駐的那條路(矮終端機)在畫面貼著螢幕頂端時,定格那一下 renderer 先用換行把螢幕往上
 捲、再插入橫幅,開場畫面的頭一兩行會被捲進捲動區。main 上的 binary 也一樣,跟這次的改動無關。

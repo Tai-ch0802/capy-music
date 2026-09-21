@@ -185,7 +185,7 @@ var runWatch = func(cmd *cobra.Command, p provider.Provider, pc provider.Playbac
 	origStderr := provider.BackoffStderr // 429 退避的提示不能印進 TUI 畫面
 	provider.BackoffStderr = io.Discard
 	defer func() { provider.BackoffStderr = origStderr }()
-	final, err := tea.NewProgram(m, tea.WithContext(cmd.Context()), tea.WithOutput(cmd.OutOrStdout())).Run()
+	final, err := newProgram(cmd.Context(), m, cmd.OutOrStdout()).Run() // 訊號只走 ctx:見 newProgram
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
 		return err
 	}

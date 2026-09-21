@@ -843,9 +843,10 @@ var runTUI = func(cmd *cobra.Command) error {
 	defer func() { provider.BackoffStderr = origStderr }()
 	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
 	// 離開一律是使用者按 q / Ctrl-C。
-	// 三種「使用者要離開」都不是錯誤:ctx 取消、程式被砍、SIGINT 從 raw mode 以外的地方進來。
-	if _, err := tea.NewProgram(m, tea.WithContext(ctx), tea.WithOutput(cmd.OutOrStdout())).Run(); err != nil &&
-		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
+	// 「使用者要離開」不是錯誤:SIGINT / SIGTERM 一律走 ctx(bubbletea 自己的 signal handler 關掉了,原因見 newProgram),
+	// 所以從外面來的結束只會是 ctx 取消 / 程式被砍這兩種樣子。
+	if _, err := newProgram(ctx, m, cmd.OutOrStdout()).Run(); err != nil &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
 		return err
 	}
 	return nil

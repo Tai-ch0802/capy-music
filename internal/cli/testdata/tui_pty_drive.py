@@ -9,7 +9,9 @@
     /tmp/v/bin/python tui_pty_drive.py ./capy 100 40 wait:4 'keys:/config list\\r' wait:2 dump:after
 
 步驟:wait:<秒>  keys:<字串,\\r \\x1b 這類跳脫會解開>  resize:<欄>x<列>  dump:<標題>
+      sigint:<秒>(對前景行程群組送 SIGINT,量多久結束,最多等這麼久)
 dump 會印捲動區 + 畫面,並數「水豚的腳」那一行出現幾次——應該恰好一次(執行子命令的當下是零次)。
+結束時送 SIGTERM;三秒內沒結束會講出來,設 STACKS=1 的話再送 SIGQUIT 把 goroutine 堆疊印出來。
 """
 import fcntl, os, pty, re, select, signal, struct, sys, termios, time
 
@@ -65,10 +67,13 @@ def dump(label):
         print("  |" + l)
 
 
+exited = False
 for st in steps:
     kind, _, arg = st.partition(":")
     if kind == "wait":
         pump(float(arg))
+    elif exited and kind in ("keys", "resize", "sigint"):  # 行程已經收掉了:再送東西只會丟 ProcessLookupError / OSError
+        print(f"===== capy 已經結束,跳過 {st} =====")
     elif kind == "keys":
         for ch in arg.encode().decode("unicode_escape"):
             os.write(fd, ch.encode())
@@ -79,18 +84,36 @@ for st in steps:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         os.kill(pid, signal.SIGWINCH)
         pump(0.5)
+    elif kind == "sigint":  # 對整個前景行程群組送 SIGINT(子命令跑著的時候終端機在 cooked mode,Ctrl-C 就是這樣到的),再量多久結束
+        os.killpg(os.getpgid(pid), signal.SIGINT)
+        t0, limit = time.time(), float(arg or 5)
+        while not exited and time.time() - t0 < limit:
+            exited = os.waitpid(pid, os.WNOHANG)[0] != 0
+            pump(0.05)
+        print("===== SIGINT 之後 " + (f"{time.time() - t0:.1f} 秒結束" if exited else f"{limit:g} 秒還沒結束") + " =====")
     elif kind == "dump":
         dump(arg)
 # 收屍(不收的話連跑幾個情境會留一串 zombie)。等不到就是 capy 卡住了——這本身就是要抓的症狀,所以講出來、不要陪它卡。
-try:
-    os.kill(pid, signal.SIGTERM)
-    for _ in range(60):
-        if os.waitpid(pid, os.WNOHANG)[0]:
-            break
-        pump(0.05)
-    else:
-        print("!!!!! capy 收到 SIGTERM 三秒還沒結束(卡住了),改用 SIGKILL")
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
-except (ProcessLookupError, ChildProcessError):
-    pass
+if not exited:
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(60):
+            if os.waitpid(pid, os.WNOHANG)[0]:
+                break
+            pump(0.05)
+        else:
+            print("!!!!! capy 收到 SIGTERM 三秒還沒結束(卡住了),改用 SIGKILL")
+            if os.environ.get("STACKS"):  # SIGQUIT:Go runtime 把每個 goroutine 的堆疊印到 stderr(就是這個 pty)再結束
+                os.kill(pid, signal.SIGQUIT)
+                end, raw = time.time() + 2, b""
+                while time.time() < end:
+                    if select.select([fd], [], [], 0.1)[0]:
+                        try:
+                            raw += os.read(fd, 65536)
+                        except OSError:
+                            break
+                print(raw.decode("utf-8", "replace").replace("\r", ""))
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+    except (ProcessLookupError, ChildProcessError):
+        pass
