@@ -275,6 +275,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.frozen { // 定格後不再有動畫,frame ticker 就此停掉:底部四行只在狀態變動與按鍵時重畫
 			return m, nil
 		}
+		// 窄畫面沒有劇本可演(一行版是靜止的):不必陪著等三秒,第一個 tick 就定格(review #72)。
+		// 放在這裡而不是 Init:那時候還沒收到 WindowSizeMsg,寬度是預設的 80。
+		if m.viewWidth() < max(tuiMinWidth, capybaraWidth()) {
+			return m.freeze()
+		}
 		m.frame++
 		return m, m.frameTick()
 	case tuiFreezeMsg:

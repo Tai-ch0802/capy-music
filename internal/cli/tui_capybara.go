@@ -33,10 +33,10 @@ type capyPose struct {
 const capyStrawFull = 4
 
 var capyStory = [...]capyPose{
-	{straw: 4},
-	{straw: 4, ear: true},
-	{straw: 4},
-	{straw: 4, shut: true},
+	{straw: capyStrawFull},
+	{straw: capyStrawFull, ear: true},
+	{straw: capyStrawFull},
+	{straw: capyStrawFull, shut: true},
 	{straw: 3},
 	{straw: 3},
 	{straw: 2},
@@ -44,7 +44,7 @@ var capyStory = [...]capyPose{
 	{straw: 1},
 	{straw: 1, shut: true},
 	{straw: 0},
-	{straw: 4}, // 叼起新的一根:跟定格幀一模一樣
+	{straw: capyStrawFull}, // 叼起新的一根:跟定格幀一模一樣
 }
 
 var (

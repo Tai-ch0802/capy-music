@@ -414,6 +414,23 @@ func TestTUIViewNarrowFallsBackToOneLine(t *testing.T) {
 	}
 }
 
+// 窄畫面看到的是靜止的一行版,沒有劇本可演:不該陪著等完整個開場(劇本拉長到三秒之後,這等於白等;review #72)。
+// 第一個 frame tick 就定格——那時候 WindowSizeMsg 已經到了。
+func TestTUINarrowSkipsTheIntro(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.frozen = false
+	m.width = 30
+	got := recordPrintln(t)
+	next, cmd := m.Update(tuiFrameMsg{})
+	m = next.(tuiModel)
+	if !m.frozen || len(*got) != 1 || !strings.Contains((*got)[0], capyOneLine) {
+		t.Fatalf("窄畫面第一個 tick 就要定格、把一行版印進捲動區:frozen=%v %v", m.frozen, *got)
+	}
+	if cmd != nil { // recordPrintln 的替身回 nil:這裡不是 nil 就代表又排了下一幀
+		t.Error("定格的那一個 tick 不該再排下一幀")
+	}
+}
+
 // 沒有播放遙控(沒登入、平台不支援)不該讓介面開不起來:狀態區說明原因,命令列照樣可用。
 func TestTUIWithoutPlaybackStillUsable(t *testing.T) {
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "local", "", nil, provider.ErrNotSupported, watchPollSpotify)

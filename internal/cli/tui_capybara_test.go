@@ -51,7 +51,7 @@ func TestCapybaraFramesAreASCIIRectangles(t *testing.T) {
 func TestCapybaraIntroShowsBlinkEarAndEating(t *testing.T) {
 	frames := int(tuiIntro / tuiFrameInterval)
 	still := capybaraStill()
-	ink := func(f []string) int { return len(strings.ReplaceAll(strings.Join(f, ""), " ", "")) } // 眨眼與轉耳朵不改筆畫數,只有草會
+	ink := func(f []string) int { return len(strings.ReplaceAll(f[4]+f[5], " ", "")) } // 只量草的那兩列:眼睛與耳朵怎麼畫都不會干擾(review #72)
 	var opened, blinked, eared bool
 	bites, run, prev := 0, 0, ink(capybaraFrame(0))
 	for n := 0; n < frames; n++ {

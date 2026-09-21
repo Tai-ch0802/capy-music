@@ -651,7 +651,8 @@ p.JL68l7EhogEeXd  冬日暖調          -
   const STORY = [[0, 0, 4], [1, 0, 4], [0, 0, 4], [0, 1, 4], [0, 0, 3], [0, 0, 3], [0, 0, 2], [1, 0, 2], [0, 0, 1], [0, 1, 1], [0, 0, 0], [0, 0, 4]];
 
   function frame(n) {
-    const [ear, shut, straw] = STORY[n % STORY.length];
+    // 最後一幀跟第 0 幀一模一樣(終端機拿它當定格幀);一直輪的時候不重播它,不然每一圈會愣住半秒。
+    const [ear, shut, straw] = STORY[n % (STORY.length - 1)];
     return [...EAR[ear], EYES[shut], NOSE, ...STRAW[straw], ...BELLY].join("\n");
   }
 
