@@ -180,7 +180,7 @@ func (m tuiModel) freeze() (tuiModel, tea.Cmd) {
 	if m.frozen {
 		return m, nil
 	}
-	m.frozen = true
+	m.frozen, m.menuHigh = true, 0 // 下面就推東西進捲動區了:歸零的規矩同其他幾處(見 View);常駐時開過選單的話這裡還記著八列
 	lines := capybaraStill()
 	if m.viewWidth() < max(tuiMinWidth, capybaraWidth()) {
 		lines = []string{capyOneLine}

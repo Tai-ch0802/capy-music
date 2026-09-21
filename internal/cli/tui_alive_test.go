@@ -108,6 +108,11 @@ func TestTUIAliveFreezesOnceWhenTheTerminalGetsTooSmall(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, got := newAliveTUI(t)
+			// 常駐時開過選單:menuHigh 記著八列。常駐時用不到它,但定格之後的四行畫面會照它補空行——
+			// 定格本身就推了東西進捲動區,所以要照「推進去之後歸零」的規矩歸零,不然底部區上面多出八行空白。
+			m = typeKeys(t, m, "/pl")
+			m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
+			m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
 			m = step(t, m, size, true)
 			if !m.frozen || len(*got) != 1 {
 				t.Fatalf("放不下就定格、正好印一次:frozen=%v %v", m.frozen, *got)
