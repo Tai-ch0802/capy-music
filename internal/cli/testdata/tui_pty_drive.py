@@ -22,7 +22,10 @@ stream = pyte.ByteStream(screen)
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["TERM"] = "xterm-256color"
-    os.execv(exe, [exe])
+    try:
+        os.execv(exe, [exe])
+    finally:  # execv 失敗(路徑打錯、還沒 build)的話 child 不可以掉下去跑下面的迴圈:兩個行程搶同一個 fd,看起來像 capy 壞了
+        os._exit(127)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
@@ -78,7 +81,16 @@ for st in steps:
         pump(0.5)
     elif kind == "dump":
         dump(arg)
+# 收屍(不收的話連跑幾個情境會留一串 zombie)。等不到就是 capy 卡住了——這本身就是要抓的症狀,所以講出來、不要陪它卡。
 try:
     os.kill(pid, signal.SIGTERM)
-except ProcessLookupError:
+    for _ in range(60):
+        if os.waitpid(pid, os.WNOHANG)[0]:
+            break
+        pump(0.05)
+    else:
+        print("!!!!! capy 收到 SIGTERM 三秒還沒結束(卡住了),改用 SIGKILL")
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+except (ProcessLookupError, ChildProcessError):
     pass

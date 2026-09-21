@@ -21,6 +21,23 @@ func newAliveTUI(t *testing.T) (tuiModel, *[]string) {
 	return step(t, m, tea.WindowSizeMsg{Width: 100, Height: tuiAliveMinHeight}, true), got
 }
 
+// drainBatch:把一個 cmd(可能是 tea.Batch)跑完,收集它送出來的訊息。只給「裡面沒有 tea.Tick」的 cmd 用——Tick 會真的等。
+func drainBatch(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var out []tea.Msg
+	for _, c := range batch {
+		out = append(out, drainBatch(c)...)
+	}
+	return out
+}
+
 func viewLines(m tuiModel) []string { return strings.Split(m.View().Content, "\n") }
 
 func TestTUICapybaraStaysAliveOnATallTerminal(t *testing.T) {
@@ -114,15 +131,21 @@ func TestTUIAliveFreezesOnceWhenTheTerminalGetsTooSmall(t *testing.T) {
 			m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
 			m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEscape}, false)
 			m = step(t, m, size, true)
-			if !m.frozen || len(*got) != 1 {
-				t.Fatalf("放不下就定格、正好印一次:frozen=%v %v", m.frozen, *got)
+			if !m.frozen || strings.Count(joined(got), capyOneLine)+strings.Count(joined(got), capyFeet) != 1 {
+				t.Fatalf("放不下就定格、水豚正好印一次:frozen=%v %v", m.frozen, *got)
 			}
+			// 定格是單向的:要交代為什麼牠不動了、怎麼讓牠回來。而且必須跟橫幅同一次推進捲動區——分兩次推的話
+			// renderer 拿舊的畫面高度算位置,那句話會蓋掉橫幅的下半截、行程還會卡住(pty 實跑重現過)。
+			if len(*got) != 1 || !strings.Contains((*got)[0], "重開 capy") {
+				t.Errorf("縮小視窗造成的定格要交代一句,而且跟橫幅同一次推:%d 次 %v", len(*got), *got)
+			}
+			printed := len(*got)
 			if n := len(viewLines(m)); n != 4 || strings.Contains(m.View().Content, capyFeet) {
 				t.Errorf("定格之後畫面只剩底部四行:%d 行", n)
 			}
 			m = step(t, m, tea.WindowSizeMsg{Width: 100, Height: tuiAliveMinHeight + 20}, true)
-			if m.alive() || len(*got) != 1 || strings.Contains(m.View().Content, capyFeet) {
-				t.Errorf("印過就不再常駐(不然捲動區一隻、畫面一隻):alive=%v 印了 %d 次", m.alive(), len(*got))
+			if m.alive() || len(*got) != printed || strings.Contains(m.View().Content, capyFeet) {
+				t.Errorf("印過就不再常駐(不然捲動區一隻、畫面一隻):alive=%v 又印了 %d 次", m.alive(), len(*got)-printed)
 			}
 			if _, cmd := m.Update(tuiFrameMsg{}); cmd != nil {
 				t.Error("定格後不該再排下一幀")
@@ -186,5 +209,69 @@ func TestCapybaraIdleIsCalmButAlive(t *testing.T) {
 	}
 	if blinks < 10 || ears < 10 || emptied == 0 || refilled == 0 {
 		t.Errorf("一分鐘裡要看得到眨眼(%d)、撥耳朵(%d)、吃完一根草(空嘴 %d 幀)再叼一根(第 %d 幀)", blinks, ears, emptied, refilled)
+	}
+}
+
+// capyBlockRows 是手抄的常數(tuiAliveMinHeight 要拿它當常數算):跟畫對不上的話,「水豚在」與「選單開著」兩種畫面
+// 會差一行——就是畫面變矮留殘留的那個成因(review #73)。
+func TestCapyBlockRowsMatchesTheArt(t *testing.T) {
+	if want := len(capybaraStill()) + 2; capyBlockRows != want { // 水豚 + 空行 + 招牌
+		t.Errorf("capyBlockRows = %d,畫出來是 %d 行", capyBlockRows, want)
+	}
+	if tuiAliveMinHeight != 2*(capyBlockRows+4) {
+		t.Errorf("常駐的畫面最多佔半個終端機:tuiAliveMinHeight = %d", tuiAliveMinHeight)
+	}
+}
+
+// 夠寬但很矮的終端機(編輯器底部的面板、tmux 上下分割):整隻水豚比終端機還高——畫面比終端機高正是 PR #45 的成因。
+// 以前 model 不知道高度、沒辦法守;現在知道了:用一行版,而且一行版沒有劇本可演,第一個 tick 就定格(review #73)。
+func TestTUIVeryShortTerminalUsesTheOneLiner(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.frozen = false
+	got := recordPrintln(t)
+	m = step(t, m, tea.WindowSizeMsg{Width: 100, Height: capyBlockRows}, true)
+	if v := m.View().Content; strings.Contains(v, capyFeet) || !strings.Contains(v, capyOneLine) || len(viewLines(m)) > 3 {
+		t.Fatalf("%d 行的終端機畫不下整隻(%d 行):開場要用一行版\n%s", capyBlockRows, capyBlockRows, v)
+	}
+	m = step(t, m, tuiFrameMsg{}, true)
+	if !m.frozen || len(*got) != 1 || strings.Contains((*got)[0], capyFeet) || !strings.Contains((*got)[0], capyOneLine) {
+		t.Errorf("一行版第一個 tick 就定格、印進捲動區的也是一行版:frozen=%v %v", m.frozen, *got)
+	}
+	// 高一行就畫得下:照舊。
+	m2 := newTestTUI(t, &watchFake{st: playingState()})
+	m2.frozen = false
+	m2 = step(t, m2, tea.WindowSizeMsg{Width: 100, Height: capyBlockRows + 1}, true)
+	if !strings.Contains(m2.View().Content, capyFeet) {
+		t.Error("畫得下就要畫整隻")
+	}
+}
+
+// CAPY_MOTION=never:不演開場、不常駐,水豚直接定格印進捲動區。終端機沒有 prefers-reduced-motion,
+// 一個每 250 毫秒可能變動的區塊對前庭敏感或用螢幕閱讀器的人是實打實的干擾;SSH 上它也是持續的往返(review #73)。
+func TestTUIMotionNeverFreezesImmediately(t *testing.T) {
+	t.Setenv("CAPY_MOTION", "never")
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.frozen = false
+	got := recordPrintln(t)
+	m = step(t, m, tea.WindowSizeMsg{Width: 100, Height: tuiAliveMinHeight + 10}, true)
+	if m.alive() {
+		t.Fatal("關掉動畫就不常駐,終端機再大也一樣")
+	}
+	// Init 不排 frame tick、馬上送定格:跑一遍它回傳的 cmd,裡面要有 tuiFreezeMsg、不可以有 tuiFrameMsg。
+	var sawFreeze bool
+	for _, msg := range drainBatch(m.Init()) {
+		switch msg.(type) {
+		case tuiFreezeMsg:
+			sawFreeze = true
+		case tuiFrameMsg:
+			t.Error("關掉動畫不該排 frame tick")
+		}
+	}
+	if !sawFreeze {
+		t.Fatal("關掉動畫:Init 要馬上送定格")
+	}
+	m = step(t, m, tuiFreezeMsg{}, true)
+	if !m.frozen || len(*got) != 1 || !strings.Contains((*got)[0], capyFeet) || len(viewLines(m)) != 4 {
+		t.Errorf("定格幀印進捲動區一次、畫面剩底部四行:frozen=%v 印了 %d 次、%d 行", m.frozen, len(*got), len(viewLines(m)))
 	}
 }
