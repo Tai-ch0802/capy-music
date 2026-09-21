@@ -78,7 +78,8 @@
     <p>All connections between capy and Google, Spotify and Apple use HTTPS. Tokens are stored only in the operating system keychain. The <code>capy --web</code> interface binds only to 127.0.0.1 (reachable only from your own computer), uses a one-time access code on every start, and never shows any token or secret on the page.</p>
 
     <h2 id="site">8. This website</h2>
-    <p>capy.taislife.work is a static website: it sets no cookies, runs no analytics or tracking, loads no third-party resources, and has no forms. Its Content Security Policy forbids the pages from running any script at all, including analytics code that the hosting provider might add to pages automatically. It is hosted by Cloudflare. As with any website, Cloudflare processes the technical information needed to serve a request (such as IP addresses) under its own privacy policy; we do not use those records to identify visitors. Note also that this site shares its parent domain with taislife.work: if you have visited other pages on taislife.work, your browser may send cookies set by those pages to this subdomain as well. Nothing on this website reads or uses them.</p>
+    <p>capy.taislife.work is a static website: it sets no cookies, loads no third-party resources, has no forms, and contains no analytics or tracking code of our own. It is hosted by Cloudflare, and the hosting provider may automatically add analytics code to pages at the domain level. This site's Content Security Policy (<code>default-src 'none'</code>) forbids pages from running or loading any script; in our tests that code is blocked by your browser and is neither executed nor loaded.</p>
+    <p>As with any website, Cloudflare processes the technical information needed to serve a request (such as IP addresses and the headers your browser sends with the request) under its own privacy policy; we do not use those records to identify visitors. This site shares its parent domain with taislife.work: if you have visited other pages on taislife.work, your browser may include cookies set by those pages in the request headers it sends to this subdomain. Like any other header they reach the hosting provider and are covered by the previous sentence; nothing on this website reads or uses them, and we never look at them.</p>
 
     <h2 id="children">9. Children</h2>
     <p>capy is not directed to children under 13, and we do not (and cannot) collect personal data from anyone.</p>
@@ -100,7 +101,7 @@
     </nav>
     <p>capy is an open-source project maintained by Tai (GitHub: Tai-ch0802) as an individual, released under the MIT License.</p>
     <p>capy is not affiliated with, sponsored by, or endorsed by Spotify, Apple, or Google. Those names are trademarks of their respective owners and are used here only to describe which services capy can connect to.</p>
-    <p>This website sets no cookies, runs no scripts or analytics, and loads no third-party resources.</p>
+    <p>This website sets no cookies, runs no scripts, and loads no third-party resources.</p>
   </footer>
 </div>
 </body>
