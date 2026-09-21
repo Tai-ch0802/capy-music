@@ -22,8 +22,11 @@ import (
 // capy(無參數、在終端機裡)= 互動式介面。形態是**訊息流 + 固定底部區**(Claude Code 那種),
 // 不是全螢幕接管:
 //
-//   - 開場水豚照劇本演一遍(約三秒),然後定格印進捲動區,之後永不重繪。
-//   - TUI 只管底部四行(分隔線 / 狀態 / 輸入 / 提示),其餘全部是終端機自己的捲動區。
+//   - 終端機夠高(tuiAliveMinHeight)時水豚常駐在底部區的上方、一直動(2026-09-21;使用者:「希望 CLI 的水豚
+//     也能像 web 一樣一直動」;計畫 docs/superpowers/plans/2026-09-21-capybara-alive.md)。牠**只活在 View 裡、
+//     永遠不印進捲動區**,而且那一塊的高度是固定的(選單打開時借牠的位置)——下面講的災難全是「畫面變矮」造成的。
+//   - 終端機不夠高或不夠寬:照舊,開場水豚照劇本演一遍(約三秒)就定格印進捲動區,之後永不重繪。
+//   - 除此之外 TUI 只管底部四行(分隔線 / 狀態 / 輸入 / 提示),其餘全部是終端機自己的捲動區。
 //   - 命令的回音、錯誤、結束碼都用 tea.Println 推進捲動區:永久、可往回捲、可複製。
 //
 // 前一版把 19 行(其中 8 行是水豚)每 350 毫秒整塊重繪,視窗放不下時游標上移被頂端截斷,
@@ -45,6 +48,9 @@ const (
 	tuiVolStep  = 5     // +/- 一次 5
 	tuiMaxFails = 5
 	tuiMinWidth = 46 // 窄於此:橫幅換成一行
+	// 水豚常駐需要的終端機高度。常駐的畫面是 capyBlockRows + 4 = 15 行;View 比終端機高的話 inline renderer 的
+	// 游標上移會被頂端截斷、舊畫面留在上面(PR #45 修掉的「水豚頭重複三次」)。牠最多佔半個畫面,所以是兩倍。
+	tuiAliveMinHeight = 2 * (capyBlockRows + 4)
 )
 
 type (
@@ -77,6 +83,8 @@ type tuiModel struct {
 	pcErr     error // 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
 	interval  time.Duration
 	width     int
+	height    int  // 0 = 還沒收到 WindowSizeMsg:當作不夠高(不常駐),等知道了再說
+	motion    bool // CAPY_MOTION=never 時是 false:不演開場、不常駐,水豚直接定格印進捲動區(終端機沒有 prefers-reduced-motion,只能給開關)
 	frame     int
 	input     textinput.Model
 	typing    bool
@@ -86,7 +94,7 @@ type tuiModel struct {
 	fails     int
 	gen       int  // 目前的輪詢世代
 	stalled   bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
-	frozen    bool // 開場結束:水豚已進捲動區,View 只剩底部四行
+	frozen    bool // 水豚已定格印進捲動區,View 只剩底部四行。單向:印過就不再常駐,不然捲動區一隻、View 一隻
 	running   bool // 子命令執行中:底部區縮成一行空白(原因見 View)
 	menuHigh  int  // 上次推東西進捲動區之後選單佔過的最多列數;View 補空行撐到這個高度(原因見 View)
 	cmds      []tuiCmdItem
@@ -113,11 +121,14 @@ func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag stri
 	in.SetStyles(st)
 	return tuiModel{
 		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, pc: pc, pcErr: pcErr,
-		interval: interval, width: 80, input: in,
+		interval: interval, width: 80, input: in, motion: os.Getenv("CAPY_MOTION") != "never",
 	}
 }
 
 func (m tuiModel) Init() tea.Cmd {
+	if !m.motion { // 不要動畫:不排 frame tick,馬上定格
+		return tea.Batch(func() tea.Msg { return tuiFreezeMsg{} }, m.poll())
+	}
 	return tea.Batch(m.frameTick(), tea.Tick(tuiIntro, func(time.Time) tea.Msg { return tuiFreezeMsg{} }), m.poll())
 }
 
@@ -169,16 +180,24 @@ func (m tuiModel) newChain() tuiModel {
 // freeze:開場結束。水豚定格印進捲動區,之後 View 只剩底部四行、frame ticker 停掉。
 // 開場演完會呼叫,任何一個按鍵也會——不然「開場期間按 Enter」會在水豚還在 View 裡時 Exec,
 // 子命令的輸出印在它下面,開場演完再定格印一次,就又變成使用者回報的「水豚頭重複」。
-func (m tuiModel) freeze() (tuiModel, tea.Cmd) {
+func (m tuiModel) freeze() (tuiModel, tea.Cmd) { return m.freezeNoting("") }
+
+// freezeNoting:定格,並在招牌下面多交代一句。那一句跟橫幅必須是**同一次** tuiPrintln:分兩次推(tea.Sequence)的話,
+// 第二次推的時候 renderer 還拿著 15 行的舊高度算位置——那句話蓋掉橫幅的下半截,而且行程卡住、連 SIGTERM 都不理
+// (pty 實跑重現的;review #73 之後的第一版就是這樣寫的)。
+func (m tuiModel) freezeNoting(note string) (tuiModel, tea.Cmd) {
 	if m.frozen {
 		return m, nil
 	}
-	m.frozen = true
+	m.frozen, m.menuHigh = true, 0 // 下面就推東西進捲動區了:歸零的規矩同其他幾處(見 View);常駐時開過選單的話這裡還記著八列
 	lines := capybaraStill()
-	if m.viewWidth() < max(tuiMinWidth, capybaraWidth()) {
+	if !m.bannerFits() {
 		lines = []string{capyOneLine}
 	}
 	banner := m.theme.Accented(strings.Join(lines, "\n")) + "\n\n  " + m.theme.Mutedly(capyTagline(m.provID))
+	if note != "" {
+		banner += "\n  " + m.theme.Mutedly(note)
+	}
 	return m, tuiPrintln(banner)
 }
 
@@ -266,23 +285,32 @@ func (m tuiModel) runArgs(args []string) tea.Cmd {
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		wasAlive := m.alive()
+		m.width, m.height = msg.Width, msg.Height
 		// 下限不能寫死:比終端機還寬的輸入行會換行,底部就從四行變五行 —— 正是這次要修掉的症狀。
 		m.input.SetWidth(max(8, msg.Width-4))
 		m.input.Placeholder = tuiPlaceholder(msg.Width)
+		if wasAlive && !m.alive() {
+			// 視窗縮到放不下常駐的水豚:定格。freeze 先把牠印進捲動區、畫面才變矮——推東西進捲動區之後縮才清得乾淨(見 View)。
+			// 定格是單向的,所以交代一句:不然使用者只是手滑縮了一下視窗,牠就再也不動了,也不知道為什麼(review #73)。
+			return m.freezeNoting("視窗放不下常駐的水豚,牠先定格了;重開 capy 牠就回來。")
+		}
 		return m, nil
 	case tuiFrameMsg:
 		if m.frozen { // 定格後不再有動畫,frame ticker 就此停掉:底部四行只在狀態變動與按鍵時重畫
 			return m, nil
 		}
-		// 窄畫面沒有劇本可演(一行版是靜止的):不必陪著等三秒,第一個 tick 就定格(review #72)。
+		// 放不下整隻的畫面沒有劇本可演(一行版是靜止的):不必陪著等三秒,第一個 tick 就定格(review #72)。
 		// 放在這裡而不是 Init:那時候還沒收到 WindowSizeMsg,寬度是預設的 80。
-		if m.viewWidth() < max(tuiMinWidth, capybaraWidth()) {
+		if !m.bannerFits() {
 			return m.freeze()
 		}
-		m.frame++
+		m.frame++ // 常駐時這條鏈一直走下去:劇本演完接 capyIdle(偶爾眨眼、撥耳朵、吃一根草)
 		return m, m.frameTick()
 	case tuiFreezeMsg:
+		if m.alive() { // 常駐的水豚不定格:開場演完就接著過日子
+			return m, nil
+		}
 		return m.freeze()
 	case tuiPollMsg:
 		if msg.gen != m.gen || m.stalled { // 舊鏈:停在這裡,不要再排下一個 tick
@@ -404,7 +432,8 @@ func (m tuiModel) recall(d int) tuiModel {
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
 	// 開場演完再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
-	if !m.frozen {
+	// 常駐的水豚不必:牠永遠不印進捲動區,執行命令時整塊畫面先縮成一行(見 View),不會留下第二隻。
+	if !m.frozen && !m.alive() {
 		var freeze tea.Cmd
 		m, freeze = m.freeze()
 		next, cmd := m.onKey(msg)
@@ -614,13 +643,26 @@ func splitArgs(line string) []string {
 	return out
 }
 
-// View 只回兩種畫面:開場的水豚(約三秒),之後永遠是底部四行。
+// bannerFits:整隻水豚(capyBlockRows 行)畫得下,不然用一行版。寬度照舊;高度是這次才知道的(review #73):
+// 夠寬但很矮的終端機(編輯器底部的面板、tmux 上下分割)以前照樣畫 11 行的開場——畫面比終端機高,正是 PR #45 的成因。
+// 還不知道高度(0)時當作畫得下:跟以前一樣,而且第一個 WindowSizeMsg 幾乎馬上就到。
+func (m tuiModel) bannerFits() bool {
+	return m.viewWidth() >= max(tuiMinWidth, capybaraWidth()) && (m.height == 0 || m.height > capyBlockRows)
+}
+
+// alive:水豚常駐在 View 裡、一直動。要終端機夠高也夠寬、沒有關掉動畫,而且還沒定格過(frozen 是單向的)。
+func (m tuiModel) alive() bool {
+	return !m.frozen && m.motion && m.height >= tuiAliveMinHeight && m.bannerFits()
+}
+
+// View 回三種畫面:常駐的水豚 + 底部四行(終端機夠大)、開場的水豚(約三秒,終端機不夠大)、定格之後的底部四行。
 // 四行 = 分隔線 / 狀態 / 輸入 / 提示。每一行都夾在 w-1 欄:寫滿最後一欄時某些終端機會多換一行,
 // 底部就多佔一行、上緣被頂掉(前一版 19 行畫面崩掉的成因之一)。
 func (m tuiModel) View() tea.View {
 	w := m.viewWidth()
-	if !m.frozen {
-		return tea.NewView(m.intro(w))
+	alive := m.alive()
+	if !m.frozen && !alive {
+		return tea.NewView(m.intro())
 	}
 	if m.running {
 		// 子命令執行中只留一行空白,原因是 bubbletea 交出 / 收回終端機的方式:交出前它把游標移到畫面的
@@ -638,8 +680,17 @@ func (m tuiModel) View() tea.View {
 	// 就疊在選單上方、再疊在下一個回音上方(現行版本就有)。推東西進捲動區(insertAbove)會把 renderer
 	// 的位置重設到畫面頂端,之後縮才清得乾淨,所以撐到下一次推為止:命令回音、? 鍵位表、printErr
 	// 都把 menuHigh 歸零(execResult 印結束碼時已經是 0)。
-	if pad := m.menuHigh - len(lines); pad > 0 {
+	if pad := m.menuHigh - len(lines); pad > 0 && !alive {
 		lines = append(make([]string, pad), lines...)
+	}
+	if alive {
+		// 常駐的那一塊永遠是 capyBlockRows 行:水豚在的時候是水豚,選單打開時選單借牠的位置(貼著分隔線、上面補空行)。
+		// 高度固定 = 永遠不會踩到上面講的「畫面變矮留殘留」;選單最多 tuiMenuRows 列,放得下。
+		block := strings.Split(m.intro(), "\n")
+		if len(lines) > 0 {
+			block = append(make([]string, max(0, capyBlockRows-len(lines))), lines...)
+		}
+		lines = block
 	}
 	lines = append(lines,
 		// 分隔線刻意用 ASCII:U+2500 那排方框繪製字元是 East Asian Ambiguous,
@@ -661,9 +712,9 @@ func (m tuiModel) View() tea.View {
 }
 
 // intro:開場的那約三秒。只有水豚與招牌,底部四行還沒出現(定格之後它才是常駐的畫面)。
-func (m tuiModel) intro(w int) string {
+func (m tuiModel) intro() string {
 	var lines []string
-	if w >= tuiMinWidth && w >= capybaraWidth() {
+	if m.bannerFits() {
 		for _, l := range capybaraFrame(m.frame) {
 			lines = append(lines, m.theme.Accented(l))
 		}

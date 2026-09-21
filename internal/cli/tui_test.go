@@ -101,6 +101,7 @@ func TestTUIFrameAdvancesAndBodyStaysPut(t *testing.T) {
 		}
 	}
 	// 定格之後動畫停掉:底部四行只在狀態變動與按鍵時重畫,不再每一幀重繪。
+	// (這是不常駐的那條路;終端機夠大時水豚常駐、ticker 一直走,見 tui_alive_test.go。)
 	m.frozen = true
 	if _, cmd := m.Update(tuiFrameMsg{}); cmd != nil {
 		t.Error("定格後不該再排下一幀")
