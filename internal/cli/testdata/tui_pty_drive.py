@@ -72,6 +72,8 @@ for st in steps:
     kind, _, arg = st.partition(":")
     if kind == "wait":
         pump(float(arg))
+    elif exited and kind in ("keys", "resize", "sigint"):  # 行程已經收掉了:再送東西只會丟 ProcessLookupError / OSError
+        print(f"===== capy 已經結束,跳過 {st} =====")
     elif kind == "keys":
         for ch in arg.encode().decode("unicode_escape"):
             os.write(fd, ch.encode())
@@ -88,31 +90,30 @@ for st in steps:
         while not exited and time.time() - t0 < limit:
             exited = os.waitpid(pid, os.WNOHANG)[0] != 0
             pump(0.05)
-        print(f"===== SIGINT 之後 " + (f"{time.time() - t0:.1f} 秒結束" if exited else f"{limit:g} 秒還沒結束") + " =====")
+        print("===== SIGINT 之後 " + (f"{time.time() - t0:.1f} 秒結束" if exited else f"{limit:g} 秒還沒結束") + " =====")
     elif kind == "dump":
         dump(arg)
 # 收屍(不收的話連跑幾個情境會留一串 zombie)。等不到就是 capy 卡住了——這本身就是要抓的症狀,所以講出來、不要陪它卡。
-try:
-    if exited:
-        raise ProcessLookupError
-    os.kill(pid, signal.SIGTERM)
-    for _ in range(60):
-        if os.waitpid(pid, os.WNOHANG)[0]:
-            break
-        pump(0.05)
-    else:
-        print("!!!!! capy 收到 SIGTERM 三秒還沒結束(卡住了),改用 SIGKILL")
-        if os.environ.get("STACKS"):  # SIGQUIT:Go runtime 把每個 goroutine 的堆疊印到 stderr(就是這個 pty)再結束
-            os.kill(pid, signal.SIGQUIT)
-            end, raw = time.time() + 2, b""
-            while time.time() < end:
-                if select.select([fd], [], [], 0.1)[0]:
-                    try:
-                        raw += os.read(fd, 65536)
-                    except OSError:
-                        break
-            print(raw.decode("utf-8", "replace").replace("\r", ""))
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
-except (ProcessLookupError, ChildProcessError):
-    pass
+if not exited:
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(60):
+            if os.waitpid(pid, os.WNOHANG)[0]:
+                break
+            pump(0.05)
+        else:
+            print("!!!!! capy 收到 SIGTERM 三秒還沒結束(卡住了),改用 SIGKILL")
+            if os.environ.get("STACKS"):  # SIGQUIT:Go runtime 把每個 goroutine 的堆疊印到 stderr(就是這個 pty)再結束
+                os.kill(pid, signal.SIGQUIT)
+                end, raw = time.time() + 2, b""
+                while time.time() < end:
+                    if select.select([fd], [], [], 0.1)[0]:
+                        try:
+                            raw += os.read(fd, 65536)
+                        except OSError:
+                            break
+                print(raw.decode("utf-8", "replace").replace("\r", ""))
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+    except (ProcessLookupError, ChildProcessError):
+        pass
