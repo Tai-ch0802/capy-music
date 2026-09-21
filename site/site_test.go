@@ -98,6 +98,14 @@ func TestPagesLoadNothingFromThirdParties(t *testing.T) {
 }
 
 // 每一個站內連結都要有檔案接(Workers 靜態資產的 auto-trailing-slash:/privacy → privacy.html、/en/ → en/index.html)。
+// 404 頁會被每一個不存在的網址拿去回應:不給 canonical / hreflang(不然所有壞連結都被正規化到同一個位址),並請搜尋引擎不要收錄。
+func TestNotFoundPageIsNotCanonical(t *testing.T) {
+	html := read(t, "404.html")
+	if strings.Contains(html, `rel="canonical"`) || strings.Contains(html, "hreflang=\"x-default\"") || !strings.Contains(html, `<meta name="robots" content="noindex">`) {
+		t.Error("404.html 不可以有 canonical / x-default,而且要 noindex")
+	}
+}
+
 func TestInternalLinksResolve(t *testing.T) {
 	href := regexp.MustCompile(`href="(/[^"#]*)`)
 	for _, name := range pages {
@@ -145,6 +153,13 @@ func TestWranglerConfigIsAssetsOnly(t *testing.T) {
 	for k := range raw {
 		if !slices.Contains(allowed, k) {
 			t.Errorf("wrangler.jsonc 多了 %q:這個網站只准有靜態檔(沒有 main、沒有 binding、沒有 vars)", k)
+		}
+	}
+	var assets map[string]json.RawMessage
+	_ = json.Unmarshal(raw["assets"], &assets)
+	for k := range assets { // binding / run_worker_first 只有配 main 才有意義:出現就代表有人開始往這裡放程式了
+		if !slices.Contains([]string{"directory", "not_found_handling", "html_handling"}, k) {
+			t.Errorf("wrangler.jsonc 的 assets 多了 %q:只准 directory / not_found_handling / html_handling", k)
 		}
 	}
 	if cfg.Assets.Directory != "./public" || len(cfg.Routes) != 1 || cfg.Routes[0].Pattern != "capy.taislife.work" || !cfg.Routes[0].CustomDomain {

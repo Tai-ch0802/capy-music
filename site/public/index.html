@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>capy:把歌單搬過去,一首都不用重找</title>
-<meta name="description" content="capy 是開源、免費、在你自己電腦上執行的音樂工具:在 Spotify、Apple Music 之間搬移與同步播放清單,搜尋與遙控播放。">
+<meta name="description" content="capy 是開源、免費、在你自己電腦上執行的音樂工具:把播放清單從 Apple Music 搬到 Spotify、在 Spotify 與電腦裡的音樂資料夾之間同步,也能搜尋與遙控播放。">
 <link rel="canonical" href="https://capy.taislife.work/">
 <link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/">
 <link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/">
-<meta property="og:title" content="capy:把歌單搬過去,一首都不用重找">
-<meta property="og:description" content="capy 是開源、免費、在你自己電腦上執行的音樂工具:在 Spotify、Apple Music 之間搬移與同步播放清單,搜尋與遙控播放。">
-<meta property="og:type" content="website">
+<link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/">
 <meta property="og:url" content="https://capy.taislife.work/">
+<meta property="og:title" content="capy:把歌單搬過去,一首都不用重找">
+<meta property="og:description" content="capy 是開源、免費、在你自己電腦上執行的音樂工具:把播放清單從 Apple Music 搬到 Spotify、在 Spotify 與電腦裡的音樂資料夾之間同步,也能搜尋與遙控播放。">
+<meta property="og:type" content="website">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -39,7 +40,7 @@
           <a class="btn btn--go" href="https://github.com/Tai-ch0802/capy-music/releases">下載 capy</a>
           <a class="btn btn--quiet" href="https://github.com/Tai-ch0802/capy-music">看原始碼</a>
         </div>
-        <p class="fine">macOS 與 Windows。支援 Spotify、Apple Music 與電腦裡的音樂資料夾。</p>
+        <p class="fine">macOS 與 Windows。目前可以從 Apple Music、Spotify 或電腦裡的音樂資料夾讀出清單,寫進 Spotify 或音樂資料夾;Apple Music 只能讀取。</p>
       </div>
       <div class="route" aria-hidden="true">
         <div class="route__ends">
@@ -105,7 +106,7 @@
           <tbody>
             <tr><th>openid</th><td>確認登入的是哪一個 Google 帳號。</td><td>讀不到你的個人資料、聯絡人或任何內容。</td></tr>
             <tr><th>userinfo.email</th><td>在 <code>capy auth status</code> 顯示目前登入的電子郵件地址,讓你發現「登錯帳號」。地址只寫在你電腦上的設定檔。</td><td>不會寄信給你,讀不到你的 Gmail,也不會把地址傳給任何人。</td></tr>
-            <tr><th>drive.appdata</th><td>在你雲端硬碟的「應用程式專屬資料夾」裡讀寫 capy 自己建立的幾個 JSON 檔(播放清單、曲目對照、裝置清單)。</td><td>看不到、也動不了你雲端硬碟裡的其他任何檔案——文件、照片、共用資料夾都不行。</td></tr>
+            <tr><th>drive.appdata</th><td>在你雲端硬碟的「應用程式專屬資料夾」裡讀寫 capy 自己建立的幾個 JSON 檔(播放清單、曲目對照、裝置清單;連接電腦裡的音樂資料夾時,也包含那些音樂檔的相對路徑與清單檔名)。</td><td>看不到、也動不了你雲端硬碟裡的其他任何檔案——文件、照片、共用資料夾都不行。</td></tr>
           </tbody>
         </table>
       </div>
@@ -143,7 +144,7 @@
 
 <span class="c"># 或直接在終端機</span>
 <span class="p">$ </span>capy migrate "通勤" --from apple --to spotify</pre>
-          <p class="fine">Spotify 需要你自己建立一個免費的開發者 app(capy 會一步一步帶你做);Apple Music 目前只能讀取,做法非 Apple 官方支援,細節見 README。</p>
+          <p class="fine">Spotify 需要你自己建立一個免費的開發者 app(capy 會一步一步帶你做);Apple Music 目前只能讀取,做法非 Apple 官方支援;寫入 Spotify 清單的部分依官方文件實作、仍在實測驗收中,遇到問題請回報。細節見 README。</p>
         </div>
       </div>
     </section>

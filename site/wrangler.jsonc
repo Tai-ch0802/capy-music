@@ -1,6 +1,7 @@
 // capy 的品牌網站:https://capy.taislife.work(Google OAuth 同意畫面要的首頁、隱私權政策、服務條款)。
 // **只有靜態檔,沒有 Worker 程式**——沒有 main、沒有 binding。本專案不架任何會碰到使用者資料的伺服器端元件
 // (docs/ARCHITECTURE.md §11),這個網站也一樣:它只是幾頁 HTML。
+// 註解只准寫整行的(site_test.go 是這樣剝的;行尾註解會讓那個測試以「JSON 壞掉」失敗)。
 // 部署:cd site && wrangler deploy(要先 wrangler login;taislife.work 這個 zone 要在同一個 Cloudflare 帳號裡)。
 {
 	"$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
