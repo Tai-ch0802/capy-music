@@ -35,7 +35,8 @@ type fakeAmp struct {
 type ampList struct {
 	Name         string
 	CanEdit      bool
-	VisibleAfter int // 第幾次列表之後才看得到
+	Collab       bool // hasCollaboration
+	VisibleAfter int  // 第幾次列表之後才看得到
 	Entries      []ampEntry
 }
 
@@ -135,7 +136,7 @@ func (f *fakeAmp) handler() http.HandlerFunc {
 			var items []string
 			for _, id := range f.order {
 				if l := f.lists[id]; f.listCalls > l.VisibleAfter {
-					items = append(items, fmt.Sprintf(`{"id":%q,"attributes":{"name":%q,"canEdit":%v}}`, id, l.Name, l.CanEdit))
+					items = append(items, fmt.Sprintf(`{"id":%q,"attributes":{"name":%q,"canEdit":%v,"hasCollaboration":%v}}`, id, l.Name, l.CanEdit, l.Collab))
 				}
 			}
 			fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(items, ","))
@@ -166,7 +167,7 @@ func (f *fakeAmp) handler() http.HandlerFunc {
 			}
 			switch {
 			case len(rest) == 1 && r.Method == http.MethodGet:
-				fmt.Fprintf(w, `{"data":[{"id":%q,"attributes":{"name":%q,"canEdit":%v}}]}`, rest[0], l.Name, l.CanEdit)
+				fmt.Fprintf(w, `{"data":[{"id":%q,"attributes":{"name":%q,"canEdit":%v,"hasCollaboration":%v}}]}`, rest[0], l.Name, l.CanEdit, l.Collab)
 			case len(rest) == 1 && r.Method == http.MethodPatch:
 				var req struct {
 					Attributes map[string]string `json:"attributes"`
@@ -293,7 +294,7 @@ func TestMigrateSpotifyToAppleThenReorderIsOnePut(t *testing.T) {
 	}
 }
 
-// Apple 精選(canEdit:false)不能當 migrate 的目標:確認之後才會發現,但一個寫入請求都不送、exit 1、訊息講明只有自建清單能寫。
+// Apple 精選(canEdit:false)不能當 migrate 的目標:清單列表就標出 Unwritable,plan 階段以 exit 3 擋下(確認之前、零寫入),訊息講明只有自建清單能寫。
 func TestMigrateToAppleCuratedPlaylistWritesNothing(t *testing.T) {
 	fs, _, _ := pullWorld(t)
 	fs.set("p1", "公路旅行", "a")
@@ -305,10 +306,39 @@ func TestMigrateToAppleCuratedPlaylistWritesNothing(t *testing.T) {
 	amp.catalog["TW9009"] = "9009"
 	swapAmp(t, amp)
 	_, _, err := runPull(t, "migrate", "公路旅行", "--from", "spotify", "--to", "apple:冬日暖調", "--yes")
-	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "自己建的清單") {
-		t.Fatalf("要 exit 1 並講明只有自建清單能寫:%v", err)
+	if exitOf(t, err) != 3 || !strings.Contains(err.Error(), "自己建的清單") {
+		t.Fatalf("要 exit 3(plan 階段擋下)並講明只有自建清單能寫:%v", err)
 	}
 	if len(amp.writes) != 0 || strings.Join(amp.catalogs("p.apple"), ",") != "9009" {
 		t.Fatalf("零寫入:%+v %v", amp.writes, amp.catalogs("p.apple"))
+	}
+}
+
+// 協作清單(hasCollaboration:true)連著正本時(PR #81 review 第 5 點):sync 只跳過 apple 那一格的 push 半邊、exit 0、零寫入,cron 不會每輪紅;
+// 明說 --provider apple 要推它是 exit 3;dry-run 也看得到原因。
+func TestPlSyncSkipsCollaborativeApplePlaylist(t *testing.T) {
+	fs, _, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	amp := newFakeAmp(t)
+	amp.catalog[fakeISRC("a")] = "1001"
+	amp.names["1001"] = "song-a"
+	amp.order = append(amp.order, "p.collab")
+	amp.lists["p.collab"] = &ampList{Name: "通勤", CanEdit: true, Collab: true, Entries: []ampEntry{{ID: "a.1", Catalog: "1001"}}}
+	swapAmp(t, amp)
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "link", "通勤", "apple:p.collab")
+	mustPull(t, "pl", "sync", "通勤", "--yes") // bootstrap:兩邊拉進正本
+	out, errs := mustPull(t, "pl", "sync", "通勤", "--yes")
+	if !strings.Contains(errs, "跳過 通勤 的 apple 的 push 半邊") || !strings.Contains(errs, "協作清單") || strings.Contains(out, "push\tadd\tapple") {
+		t.Fatalf("協作清單那一格要跳過並講明,exit 0:\n%s%s", out, errs)
+	}
+	if len(amp.writes) != 0 {
+		t.Fatalf("零寫入:%+v", amp.writes)
+	}
+	if _, _, err := runPull(t, "pl", "push", "通勤", "--provider", "apple", "--yes"); exitOf(t, err) != 3 || !strings.Contains(err.Error(), "協作清單") {
+		t.Fatalf("明說要推協作清單是 exit 3:%v", err)
+	}
+	if _, errs, err := runPull(t, "pl", "sync", "通勤", "--dry-run"); err == nil && !strings.Contains(errs, "協作清單") || err != nil && exitOf(t, err) != 2 {
+		t.Fatalf("dry-run 也要看得到原因:%v\n%s", err, errs)
 	}
 }
