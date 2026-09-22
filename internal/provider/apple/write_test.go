@@ -19,21 +19,22 @@ import (
 // fakeLibrary:假 amp-api 的 library 寫入端點(計畫 2026-09-22-apple-write.md §1 表格的形狀)。記錄每個寫入請求;
 // DELETE 一律 t.Errorf——這個套件不該送任何 DELETE …/tracks(不帶 ids 會清空整份、mode=all 會連刪兩列)。
 type fakeLibrary struct {
-	t       *testing.T
-	mu      sync.Mutex
-	canEdit bool
-	name    string
-	entries []fakeEntry
-	seq     int
-	created bool
-	listLag int // 建清單後前幾次列表不含新清單(iCloud 傳播延遲)
-	lists   int
-	infos   int // GET 清單本體的次數
-	reads   int // GET /tracks 的次數
-	posts   int
-	failAt  int    // 第 n 個 POST(從 1 起)回 500;0 = 不失敗
-	failMsg string // 500 的 title
-	writes  []fakeReq
+	t        *testing.T
+	mu       sync.Mutex
+	canEdit  bool
+	name     string
+	entries  []fakeEntry
+	seq      int
+	created  bool
+	listLag  int  // 建清單後前幾次列表不含新清單(iCloud 傳播延遲)
+	listFail bool // 建清單後列表回 500
+	lists    int
+	infos    int // GET 清單本體的次數
+	reads    int // GET /tracks 的次數
+	posts    int
+	failAt   int    // 第 n 個 POST(從 1 起)回 500;0 = 不失敗
+	failMsg  string // 500 的 title
+	writes   []fakeReq
 }
 
 type fakeEntry struct{ ID, Catalog string }
@@ -146,6 +147,11 @@ func (f *fakeLibrary) handler() http.HandlerFunc {
 			fmt.Fprintf(w, `{"data":[{"id":"p.new","type":"library-playlists","attributes":{"name":%q,"canEdit":true}}]}`, req.Attributes.Name)
 		case r.Method == http.MethodGet && p == "/me/library/playlists":
 			f.lists++
+			if f.created && f.listFail {
+				w.WriteHeader(500)
+				w.Write([]byte(`{"errors":[{"status":"500","title":"Upstream Service Error"}]}`))
+				return
+			}
 			items := `{"id":"p.1","attributes":{"name":"通勤","canEdit":true}}`
 			if f.created && f.lists > f.listLag {
 				items += `,{"id":"p.new","attributes":{"name":"新清單","canEdit":true}}`
@@ -338,20 +344,22 @@ func TestApplyOpsRefusesNotEditable(t *testing.T) {
 	}
 }
 
-// remove / move / 插到中間:重讀 /tracks 對齊 current,一次 PUT——既有列用列 id + library-songs、新曲用 catalog id + songs;沒有 POST、沒有 DELETE。
+// remove / move / 插到中間(+ rename):重讀 /tracks 對齊 current,PATCH 再一次 PUT——既有列用列 id + library-songs、新曲用 catalog id + songs;
+// 沒有 POST、沒有 DELETE。重讀在 PATCH 之前(所有會放棄的檢查都在第一個寫入之前)。
 func TestApplyOpsRemoveMoveInsertIsOnePut(t *testing.T) {
 	f, p := writeWorld(t, true, "c1", "c2", "c3") // 列 i.1 i.2 i.3
 	ops := []provider.PlaylistOp{
 		{Kind: provider.OpRemove, Pos: 0, ProviderID: "c1"}, // [c2 c3]
 		add("c9", 0),                             // [c9 c2 c3]
 		{Kind: provider.OpMove, From: 2, Pos: 1}, // [c9 c3 c2]
+		{Kind: provider.OpRename, Name: "新名"},
 	}
 	if _, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2", "c3"}, ops); err != nil {
 		t.Fatal(err)
 	}
 	puts := f.writesOf(http.MethodPut)
-	if len(puts) != 1 || len(f.writesOf(http.MethodPost)) != 0 || f.reads != 1 {
-		t.Fatalf("一次 PUT、零 POST、重讀一次:%+v reads=%d", f.writes, f.reads)
+	if len(f.writes) != 2 || f.writes[0].Method != http.MethodPatch || f.writes[1].Method != http.MethodPut || f.reads != 1 || f.name != "新名" {
+		t.Fatalf("PATCH 再一次 PUT、零 POST、重讀一次:%+v reads=%d name=%s", f.writes, f.reads, f.name)
 	}
 	refs := refsOf(t, puts[0].Body)
 	if got := fmt.Sprint(refs); got != fmt.Sprint([]trackRef{{"c9", "songs"}, {"i.3", "library-songs"}, {"i.2", "library-songs"}}) {
@@ -362,15 +370,16 @@ func TestApplyOpsRemoveMoveInsertIsOnePut(t *testing.T) {
 	}
 }
 
-// 重讀對不上 current(確認期間平台被動過)→ 零寫入。
+// 重讀對不上 current(確認期間平台被動過)→ 零寫入——連同一輪的 rename 也不送(不然「這次不寫」不準;PR #80 review)。
 func TestApplyOpsReReadMismatchWritesNothing(t *testing.T) {
 	f, p := writeWorld(t, true, "c1", "c2", "c3")
-	_, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 0, ProviderID: "c1"}})
+	ops := []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 0, ProviderID: "c1"}, {Kind: provider.OpRename, Name: "新名"}}
+	_, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, ops)
 	if err == nil || !strings.Contains(err.Error(), "已經變了") {
 		t.Fatalf("要回「平台已變」:%v", err)
 	}
-	if len(f.writes) != 0 || strings.Join(f.catalogs(), ",") != "c1,c2,c3" {
-		t.Fatalf("零寫入:%+v %v", f.writes, f.catalogs())
+	if len(f.writes) != 0 || strings.Join(f.catalogs(), ",") != "c1,c2,c3" || f.name != "通勤" {
+		t.Fatalf("零寫入(連 PATCH 也不送):%+v %v name=%s", f.writes, f.catalogs(), f.name)
 	}
 }
 
@@ -440,12 +449,12 @@ func TestApplyOpsPartialAppendReportsWritten(t *testing.T) {
 
 // 建清單:POST isPublic:false,然後輪詢列表直到出現才回傳(pull 的 gone 判準看列表);超過上限回錯並帶 id 與接回的命令。
 func TestCreatePlaylistWaitsUntilListed(t *testing.T) {
-	orig, origMax, origErr := provider.Wait, createPollMax, provider.BackoffStderr
-	waits := 0
+	orig, origDelays, origErr := provider.Wait, createPollDelays, provider.BackoffStderr
+	var waited []time.Duration
 	var said strings.Builder
-	provider.Wait = func(context.Context, time.Duration) error { waits++; return nil }
+	provider.Wait = func(_ context.Context, d time.Duration) error { waited = append(waited, d); return nil }
 	provider.BackoffStderr = &said
-	t.Cleanup(func() { provider.Wait, createPollMax, provider.BackoffStderr = orig, origMax, origErr })
+	t.Cleanup(func() { provider.Wait, createPollDelays, provider.BackoffStderr = orig, origDelays, origErr })
 
 	f, p := writeWorld(t, true)
 	f.listLag = 2
@@ -453,8 +462,8 @@ func TestCreatePlaylistWaitsUntilListed(t *testing.T) {
 	if err != nil || ref.ID != "p.new" || ref.Name != "公路旅行" || ref.Total != -1 {
 		t.Fatalf("(%+v, %v)", ref, err)
 	}
-	if f.lists != 3 || waits != 2 {
-		t.Fatalf("前兩次列表沒有、第三次有:lists=%d waits=%d", f.lists, waits)
+	if f.lists != 3 || fmt.Sprint(waited) != fmt.Sprint(createPollDelays[:2]) { // 前兩次列表沒有、第三次有;間隔是退避 1 s、2 s(不是 1 Hz)
+		t.Fatalf("lists=%d waited=%v", f.lists, waited)
 	}
 	if strings.Count(said.String(), "等待 Apple") != 1 { // 等待有一句話、只說一次
 		t.Fatalf("等待要說一次:%q", said.String())
@@ -463,12 +472,34 @@ func TestCreatePlaylistWaitsUntilListed(t *testing.T) {
 		t.Fatalf("建清單不帶 tracks / description:%s", body)
 	}
 
-	createPollMax = 2
+	createPollDelays = createPollDelays[:1] // 只剩一次退避 → 第二次列表還沒有就逾時
 	f2, p2 := writeWorld(t, true)
 	f2.listLag = 99
 	_, err = p2.CreatePlaylist(context.Background(), "x")
 	if err == nil || !strings.Contains(err.Error(), "p.new") || !strings.Contains(err.Error(), "capy pl link") || f2.lists != 2 {
-		t.Fatalf("超過上限要回錯、帶 id 與接回命令、只查 %d 次:%v lists=%d", createPollMax, err, f2.lists)
+		t.Fatalf("超過上限要回錯、帶 id 與接回命令、只查 2 次:%v lists=%d", err, f2.lists)
+	}
+}
+
+// POST 之後的每條失敗都要帶著新清單的 id 與接回命令(PR #80 review):列表查不到、被中斷——不然使用者的曲庫留下一個連不回來的孤兒清單。
+func TestCreatePlaylistFailuresKeepTheID(t *testing.T) {
+	orig := provider.Wait
+	t.Cleanup(func() { provider.Wait = orig })
+
+	provider.Wait = func(context.Context, time.Duration) error { return nil }
+	f, p := writeWorld(t, true)
+	f.listFail = true
+	_, err := p.CreatePlaylist(context.Background(), "x")
+	if err == nil || !strings.Contains(err.Error(), "p.new") || !strings.Contains(err.Error(), "capy pl link") || !strings.Contains(err.Error(), "500") {
+		t.Fatalf("列表查不到也要帶 id、接回命令與原因:%v", err)
+	}
+
+	provider.Wait = func(context.Context, time.Duration) error { return context.Canceled }
+	f2, p2 := writeWorld(t, true)
+	f2.listLag = 99
+	_, err = p2.CreatePlaylist(context.Background(), "x")
+	if err == nil || !strings.Contains(err.Error(), "p.new") || !strings.Contains(err.Error(), "capy pl link") || !errors.Is(err, context.Canceled) {
+		t.Fatalf("被中斷也要帶 id 與接回命令,且仍是 context.Canceled(結束碼要算得對):%v", err)
 	}
 }
 

@@ -120,12 +120,45 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 			}
 		}
 	}
+	// 所有會讓整輪放棄的檢查(canEdit、重讀對齊)都在第一個寫入之前:不然 rename 已落地、再回「這次不寫」就不準,
+	// push.go 會把它當「第一個請求就失敗,平台沒動」(PR #80 review)。
 	info, err := p.c.Playlist(ctx, id)
 	if err != nil {
 		return nil, writeErr(id, err)
 	}
 	if !info.CanEdit {
 		return nil, fmt.Errorf("Apple 只讓你編輯自己建的清單;「%s」(%s)不是——Apple 精選、喜好歌曲、已購買的音樂都不能寫", info.Name, id)
+	}
+	n := len(current)
+	appendOnly := itemsChanged && len(want) > n && slices.Equal(want[:n], current)
+	var refs []trackRef
+	if itemsChanged && !appendOnly {
+		entries, err := p.c.libraryPlaylistEntries(ctx, id)
+		if errors.Is(err, provider.ErrNotFound) { // 空清單的 /tracks 回 404
+			entries, err = nil, nil
+		}
+		if err != nil {
+			return nil, writeErr(id, err)
+		}
+		live := make([]string, len(entries))
+		byID := make(map[string]string, len(entries)) // ProviderID → 列 id(同一首多列共用同一個列 id,取第一個即可)
+		for i, e := range entries {
+			live[i] = e.Track.ProviderID
+			if _, ok := byID[live[i]]; !ok {
+				byID[live[i]] = e.ID
+			}
+		}
+		if !slices.Equal(live, current) {
+			return nil, fmt.Errorf("Apple 清單 %s 在讀取之後已經變了,這次不寫(先 capy pl pull 再推)", id)
+		}
+		refs = make([]trackRef, len(want))
+		for i, tid := range want {
+			if eid, ok := byID[tid]; ok {
+				refs[i] = trackRef{ID: eid, Type: "library-songs"} // 剛從 /tracks 讀回的列 id,型別確定,不猜(猜錯是靜默掉歌)
+			} else {
+				refs[i] = refOf(tid) // 來自正本 mapping 的 id:catalog 數字 id 或 library 列 id,看形狀
+			}
+		}
 	}
 	renamed := false
 	if name != "" {
@@ -134,10 +167,12 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		}
 		renamed = true
 	}
-	if !itemsChanged {
+	switch {
+	case !itemsChanged:
 		return nil, nil
-	}
-	if n := len(current); len(want) > n && slices.Equal(want[:n], current) { // 純尾端 append:官方端點,不重讀
+	case appendOnly:
+		// 純尾端 append 走官方端點,不重讀:§6.5.2 規則 6 的併發比對由 push.go 的 apply 進場那次重讀承擔(就在 ApplyOps 之前);
+		// append 是純加法、不會刪到東西,最差是手機同時加了同一首而多一份重複(下一次 pull 看得到);多讀一次只會放大讀取量(429 不重試)。
 		written, err := p.c.AddTracks(ctx, id, want[n:])
 		if err != nil {
 			if written > 0 {
@@ -146,35 +181,10 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 			return nil, writeErr(id, err)
 		}
 		return nil, nil
-	}
-	entries, err := p.c.libraryPlaylistEntries(ctx, id)
-	if errors.Is(err, provider.ErrNotFound) { // 空清單的 /tracks 回 404
-		entries, err = nil, nil
-	}
-	if err != nil {
-		return nil, writeErr(id, err)
-	}
-	live := make([]string, len(entries))
-	byID := make(map[string]string, len(entries)) // ProviderID → 列 id(同一首多列共用同一個列 id,取第一個即可)
-	for i, e := range entries {
-		live[i] = e.Track.ProviderID
-		if _, ok := byID[live[i]]; !ok {
-			byID[live[i]] = e.ID
+	default:
+		if err := p.c.ReplaceTracks(ctx, id, refs); err != nil {
+			return nil, writeErr(id, err)
 		}
+		return nil, nil
 	}
-	if !slices.Equal(live, current) {
-		return nil, fmt.Errorf("Apple 清單 %s 在讀取之後已經變了,這次不寫(先 capy pl pull 再推)", id)
-	}
-	refs := make([]trackRef, len(want))
-	for i, tid := range want {
-		if eid, ok := byID[tid]; ok {
-			refs[i] = refOf(eid)
-		} else {
-			refs[i] = refOf(tid)
-		}
-	}
-	if err := p.c.ReplaceTracks(ctx, id, refs); err != nil {
-		return nil, writeErr(id, err)
-	}
-	return nil, nil
 }

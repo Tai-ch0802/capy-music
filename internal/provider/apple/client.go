@@ -521,14 +521,15 @@ func (c *Client) Rename(ctx context.Context, id, name string) error {
 	return err
 }
 
-// createPollMax / createPollInterval:建清單後輪詢列表的上限與間隔(R-8 第 3 項:按 id 2 s 可讀、列表 9 s 才出現)。測試替換點。
-var (
-	createPollMax      = 30
-	createPollInterval = time.Second
-)
+// createPollDelays:建清單後輪詢列表的間隔——退避 1 → 2 → 4 → 8 → 15 s(共 30 s、最多 6 次列表 GET;R-8 第 3 項量到 9 s)。
+// 不用 1 Hz × 30 次去撞所有網頁播放器共用的配額(PR #79 review)。測試替換點。
+var createPollDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}
 
 // CreatePlaylist:POST /me/library/playlists(官方端點;isPublic:false、不帶 tracks、不帶 description),再輪詢列表直到出現才回傳——
 // pull 的 gone 判準是「不在 ListPlaylists 裡」,不等的話 migrate / pl link --create 剛建的清單會被當成已刪。
+// POST 之後任何一條失敗(列表查不到、逾時、被中斷)都要帶著新清單的 id 與接回命令回錯:兩個 CLI 呼叫端只取 err,不然使用者的曲庫會留下一個
+// 連不回來的孤兒清單,而且下次重跑會被 sameNamePlaylists 擋住(PR #80 review)。逾時不能默默回傳成功:migrate 接著 observe 會把不在
+// 列表的清單當 gone 並取消連結,pl link --create 會連上一個 pull 視為已刪的 id。
 func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.PlaylistRef, error) {
 	var resp struct {
 		Data []struct {
@@ -549,23 +550,27 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.Play
 	if ref.Name == "" {
 		ref.Name = name
 	}
+	recover := fmt.Sprintf("稍後用 capy pl link <名稱> apple:%s 接上", ref.ID)
+	var total time.Duration
+	for _, d := range createPollDelays {
+		total += d
+	}
 	for attempt := 0; ; attempt++ {
 		pls, err := c.LibraryPlaylists(ctx)
 		if err != nil {
-			return ref, err
+			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但查清單列表失敗(%w);%s", ref.Name, ref.ID, err, recover)
 		}
 		if slices.ContainsFunc(pls, func(p provider.PlaylistRef) bool { return p.ID == ref.ID }) {
 			return ref, nil
 		}
-		if attempt+1 >= createPollMax {
-			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但 %v 內還沒出現在清單列表(iCloud 傳播延遲);稍後用 capy pl link <名稱> apple:%s 接上",
-				ref.Name, ref.ID, time.Duration(createPollMax)*createPollInterval, ref.ID)
+		if attempt >= len(createPollDelays) {
+			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但 %v 內還沒出現在清單列表(iCloud 傳播延遲);%s", ref.Name, ref.ID, total, recover)
 		}
 		if attempt == 0 { // 最長 30 秒的安靜等待要有一句話;走 BackoffStderr 接縫,web 模式也看得到(stderr 不污染 TSV)
 			fmt.Fprintf(provider.BackoffStderr, "等待 Apple 把新清單 %s 放進清單列表(通常幾秒)…\n", ref.ID)
 		}
-		if err := provider.Wait(ctx, createPollInterval); err != nil {
-			return ref, err
+		if err := provider.Wait(ctx, createPollDelays[attempt]); err != nil {
+			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),等待它出現在列表時被中斷(%w);%s", ref.Name, ref.ID, err, recover)
 		}
 	}
 }
