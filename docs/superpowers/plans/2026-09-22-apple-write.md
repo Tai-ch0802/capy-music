@@ -92,8 +92,8 @@ ApplyOps(ctx, id, current, ops):
   pure append(want[:len(current)] == current)→ POST 尾端多出來的,每批 100        // migrate 走這條;T1
   否則 → 重讀 /tracks 取列 id;ProviderID 序列 != current → 錯「平台已變」零寫入   // 這次重讀就是 §6.5.2 規則 6 的併發比對
         // 對齊用的 ProviderID 必須是 LibraryPlaylistTracks 同一套規則(有 catalog 取 catalog id、否則列 id),library-only 曲目才不會被誤判成「平台已變」
-        → 依 R-8 結果:一次 PUT(混型可過)或 POST 新曲 → 重讀 → PUT 排序(兩段式);T2
-  失敗語意:PUT 是伺服器端整批、沒有半截;兩段式的「POST 成功、PUT 失敗」回 *PartialWriteError(Written = 已 append 的數,平台是「加了但沒排」)
+        → 一次 PUT:既有列用列 id + `library-songs`、新曲用 catalog id + `songs`(R-8 第 1 項已證明混型可過);T2
+  失敗語意:PUT 是伺服器端整批、沒有半截 → Apple 不會回 *PartialWriteError;pure append 分批 POST 才會(第 2 批起失敗,Written = 已 append 的數)
 Pushable(id): id != ""(catalog 數字 id 與 i./a. 列 id 都推得動——官方 type 允許 library-songs;跟 Spotify local file 不同)
 CreatePlaylist(name): POST → 輪詢 GET 本體與列表直到出現(上限由 R-8 第 3 項量到的秒數決定,預設 30 s)才回傳 → CLI 一行不改也不會把新清單當 gone
 Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder|Rename
@@ -120,11 +120,12 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 |---|---|---|---|
 | **T0** | 本計畫 + 重寫 `scripts/p0/p0-2-playlist-ops.sh`(§5)+ ARCHITECTURE 決策 49 草稿 | 使用者拍板 §6 | `bash -n`(CI 已有) |
 | **T1** | 搬家可用:`do()` body、`CreatePlaylist`(含等待出現)、pure-append `ApplyOps`、`canEdit` 閘、`Pushable`、`Caps` Create/Append、429 快速失敗;文字與文件(README / 指南 / 網站首頁 / ARCHITECTURE)同 PR | **不等 R-8**(官方端點) | fake amp-api 加 POST 建清單 / POST tracks / GET 本體;斷言:分批邊界 0 / 1 / 100 / 101 / 250、body 的 `type`、`canEdit:false` 零寫入、非 pure-append 回 skipped、建清單後列表未出現時會輪詢、**從未收到 `DELETE …/tracks`**;CLI e2e:`migrate --from spotify --to apple` 走完(建清單 → 推 → 再 pull 零變更)、`pl sync` 兩個假伺服器對調角色 |
-| **T2** | remove / move / rename:PATCH、重讀對齊、PUT(一次或兩段式)、`Caps` Remove/Reorder/Rename、`PartialWriteError` | **R-8 第 1、2 項** | fake 加 PUT / PATCH;斷言 PUT body 的列 id 順序 = want、重讀不一致零寫入、PUT 空序列只在 want 為空時發生、兩段式失敗的 Written;`pl dedup` 在 Apple 上真的拿掉後面那份;`TestSyncModel*` 讓 apple 角色的假伺服器也接 PUT |
+| **T2** | remove / move / rename:PATCH、重讀對齊、一次 PUT(混型)、`Caps` Remove/Reorder/Rename | **R-8 已過(§5 結果)**,可與 T1 同 PR 或緊接 | fake 加 PUT / PATCH;斷言 PUT body 的列 id 順序 = want、重讀不一致零寫入、PUT 空序列只在 want 為空時發生、兩段式失敗的 Written;`pl dedup` 在 Apple 上真的拿掉後面那份;`TestSyncModel*` 讓 apple 角色的假伺服器也接 PUT |
 | T3(可選) | Apple 批次 ISRC 反查(`filter[isrc]=a,b,…` 25 個一次):resolver 對大清單 25× 省請求 | — | SPI 加選用介面 `BatchISRCLookup`;resolver 有就用 |
 | T4 | 真帳號驗收:P5 計畫 R-1、R-2、R-8、R-9 + P8 R-14(Spotify → Apple 真搬一次) | T1 / T2 合併 | 維護者跑;完成才在 P5 標題打 ✅ |
 
 順序:T0 → (使用者授權後跑 §5 探測) → T1 立刻開工(不等探測結果) → T2 依探測結果 → T4。T3 看使用者要不要。
+**2026-09-22 探測已跑完(§5 結果),T1 / T2 都沒有 gate 了。**
 
 ## 5. R-8 寫入探測(step 0;需要使用者授權,會在你的音樂庫建一個拋棄式清單並在結尾刪掉)
 
@@ -142,9 +143,26 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 | 7 | 兩批各 3 首 append 後尾端順序 | migrate 的順序保證 |
 | 8 | 每個請求的 HTTP 狀態(建 / POST / PATCH / PUT / 刪) | `Caps()` 宣告哪幾個 |
 
-結果貼回本文件 §5 下方與 ARCHITECTURE §1.2 表。
+### 結果(2026-09-22 真帳號,使用者授權;測試清單 `p.eoGxB3EFQWGXR2` 結尾已 DELETE,HTTP 204)
+
+| # | 觀察 | 結果 | 決定 |
+|---|---|---|---|
+| 1 | PUT 混型 | **204**;`{"id":"<catalog>","type":"songs"}` 放位置 0 + 既有列 `library-songs` → 讀回第一列就是新曲 | **T2 一次 PUT**,不必兩段式 |
+| 2 | 重複曲目 | 同一首 POST 兩次 → `/tracks` 回**同一個列 id 兩列**(`i.qQd0L4euRmMdxr` ×2);PUT 含該 id 兩次 → 留 2 列;PUT 只含一次 → 留 1 列(7 → 6) | Apple 端能表達重複;PUT 依出現次數精準取代,`pl dedup` 可用;`DELETE …&mode=all` 果然會兩列一起消失(Cider #1915),不用它是對的 |
+| 3 | 傳播延遲 | 建清單後 `GET …/playlists/{id}` **2 s** 200;列表 **9 s** 出現;`/tracks` 在 POST 後**立刻**反映(6 列) | `CreatePlaylist` 輪詢列表,上限 30 s;`finishPush` 重讀 L′ 不受影響 |
+| 4 | 列 id 前綴 | POST 加入的 6 首全是 **`i.`**(曲庫 id)→ 曲目同時進了資料庫;`?representation=resources` 回 200 含新列 id,但**順序與請求不同** | Q46 = **要加揭露**;resources 回應不能拿來定位置(反正一次 PUT 不需要) |
+| 5 | PATCH 只帶 name | 204;name 改了、description **保留** | `Rename` 只送 name |
+| 6 | versionHash | 新清單本體沒有這個欄位(`-`),add 前後都沒有(舊清單才有) | **不用它**;併發比對維持 `ApplyOps` 內重讀對齊 |
+| 7 | 跨批 append 順序 | 兩批各 3 首 → 尾端順序 = A 後 B ✅ | migrate 順序保證成立 |
+| 8 | HTTP 狀態 | 建 201 / POST 200(resources)與 204 / PATCH 204 / PUT 反序 204、去重 204、混型 204、移除 204 / 刪清單 204 | `Caps()` 宣告 Create、Append、Remove、Reorder、Rename 全部 |
+
+未量到的:POST 每批 100 的上限(只測 3 首;沿用社群值)、PUT 大清單(只測 7 列;網頁播放器自己就用它重排整個清單)。
+
+⚠️ 副作用:這次探測把 7 首五月天加進了使用者的 Apple Music 資料庫(刪清單不會連帶移除)。
 
 ## 6. 要請使用者拍板的問題
+
+**使用者 2026-09-22 定案:Q41–Q46 全部採建議**;Q46 依探測第 4 項 = 要加揭露;Q43 探測已跑(§5)。
 
 | # | 問題 | 建議 |
 |---|---|---|
@@ -155,11 +173,12 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 | Q45 | 兩個預設:建清單 `isPublic:false`(與 Spotify `public:false` 對齊)、PATCH 只改名不碰描述 | 兩個都採;R-8 第 5 項若證明 PATCH 只帶 name 會清掉描述,改成先 GET 再連 description 一起送 |
 | Q46 | 揭露文字要不要加「加進清單的曲目可能同時進你的 Apple Music 資料庫」 | 依 R-8 第 4 項;成立就加在 README 揭露段與 `auth login apple` 的揭露頁 |
 
-### 決策 49 草稿(取代決策 30 的「預期 append-only」,保留「不採 rebuild」)
+### 決策 49(2026-09-22 定案;取代決策 30 的「預期 append-only」,保留「不採 rebuild」;已寫進 ARCHITECTURE 附錄 C)
 
-> Apple 寫入走網頁播放器自己的端點:建清單 / append 是官方文件化的;remove / move 用 `PUT …/tracks` 整批取代(列 id、`library-songs`)、rename 用 `PATCH`,
+> Apple 寫入走網頁播放器自己的端點:建清單 / append 是官方文件化的;remove / move 用一次 `PUT …/tracks` 整批取代(既有列用列 id + `library-songs`、新曲用 catalog id + `songs`,R-8 驗過混型)、rename 用 `PATCH`(只送 name,描述保留),
 > 是 amp-api 私有端點(多個開源客戶端同形,Apple 未承諾)。只寫 `canEdit:true` 的清單(= 使用者自建;Apple 精選與喜好歌曲一律拒絕,這是 §8「只同步自建清單」的機器判準)。
-> 不用 `DELETE …/tracks`(`mode=all` 對重複曲目不精準、不帶 ids 會清空)。不採 rebuild。風險類別同決策 8:同一 host、同一組 token,Apple 改了端點就壞,只有真帳號驗收看得到。
+> 不用 `DELETE …/tracks`(`mode=all` 會把同一首的兩列一起刪、不帶 ids 會清空)。不採 rebuild。加進清單的曲目會同時進使用者的資料庫,揭露要寫。
+> 風險類別同決策 8:同一 host、同一組 token,Apple 改了端點就壞,只有真帳號驗收看得到。
 
 ## 7. 產出
 
