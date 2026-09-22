@@ -78,7 +78,7 @@
 | 資料來源 | `local_root` 下的 `*.m3u8` / `*.m3u` 是清單,`library.json` 是曲庫(title / artists / album / duration_ms / isrc);不讀音訊 tag、不加相依 | 幾乎沒有 ISRC → 跟其他平台的對應靠 resolver Layer 2,`Search` 必做 |
 | **綁裝置** | 曲庫只在一台機器上,但 `pl__.Links` 是共享檔(一個 provider 一格) | 決策 33:playlist id 帶 device id(track id 不帶,cid 才撐得過重灌)、SPI 加 `CapDeviceBound` + `DeviceScoped.Foreign`;別台裝置的 pull / push / sync 對它只跳過,不算 gone、不 unlink;**一個 canonical 清單同時只連一台裝置的 M3U**,`pl link` 撞到別台的 link 就接管(重灌後 device_id 變了也靠這條接回來) |
 | id | 正規化相對路徑(forward slash、NFC);改名 / 搬家 = remove + add | 升級路徑 = 內容 hash(`capy local scan`) |
-| 寫入 | 整檔改寫 + 原子 rename,`#EXTINF` 與註解會被丟掉;全部 ops 都支援 | 與 Apple 的 append-only 成對照 |
+| 寫入 | 整檔改寫 + 原子 rename,`#EXTINF` 與註解會被丟掉;全部 ops 都支援 | Apple 自決策 49 起也全部支援(PUT 整批取代) |
 | 錯誤族 | 只有 NotFound / 權限 / IO / JSON 壞;沒有 auth、rate limit、restricted | 每個 n/a 都是 SPI 假設的發現(計畫 §2) |
 
 ## 2. 系統分層
@@ -209,7 +209,7 @@ type PlaylistWriter interface {
     // Kind 不支援的 op 跳過、支援的照做,回傳跳過的那些(呼叫端列成 manual);平台真的失敗才回 err。
     // P5 不做 rebuild fallback(決策 30)。push 只寫已連結的清單;建清單是另一個介面 PlaylistCreator(下面)。
     ApplyOps(ctx context.Context, playlistID string, current []string, ops []PlaylistOp) (skipped []PlaylistOp, err error)
-    // Pushable:這個 id 能不能被 add 進清單(Spotify local file 的 spotify:local:… uri、Apple library-only 的 id 不能)。純函式。
+    // Pushable:這個 id 能不能被 add 進清單(Spotify local file 的 spotify:local:… uri 不能;Apple 的 library 列 id 可以——官方 type 收 library-songs,決策 49)。純函式。
     // push 算變更集時用它:有 mapping 但推不出去的 item 列 skip,而不是送出去被整批拒收(T4;PR #33 review)。
     Pushable(id string) bool
 }
@@ -251,7 +251,7 @@ type Track struct {
 }
 ```
 
-**`ApplyOps` 而非細顆粒方法**是刻意的:讓 provider 自己決定「逐條 API 呼叫」還是「整批 replace」。Spotify 有 `PUT /playlists/{id}/items` 可整批取代(P5 決策 28:任何 add / remove / move 都走整批取代,前 100 首 `PUT`(空序列 = 清空)、其後每批 100 `POST`,`rename` 走 `PUT /playlists/{id}` 且在 items 之前;T1 已實作,**寫入端點沿用讀取的 `/items` 路徑,真帳號尚未驗證**——若 404 改成 `/tracks` 是一個常數的事);Apple 預期只能 append(決策 30:remove / move / rename 回 `ErrCapability`,不重建)。這個抽象讓兩者都塞得下。
+**`ApplyOps` 而非細顆粒方法**是刻意的:讓 provider 自己決定「逐條 API 呼叫」還是「整批 replace」。Spotify 有 `PUT /playlists/{id}/items` 可整批取代(P5 決策 28:任何 add / remove / move 都走整批取代,前 100 首 `PUT`(空序列 = 清空)、其後每批 100 `POST`,`rename` 走 `PUT /playlists/{id}` 且在 items 之前;T1 已實作,**寫入端點沿用讀取的 `/items` 路徑,真帳號尚未驗證**——若 404 改成 `/tracks` 是一個常數的事);Apple(決策 49,2026-09-22 真帳號驗過):純尾端 append 走官方 `POST …/tracks`(每批 100),其他任何形狀走一次 `PUT …/tracks` 整批取代(既有列用列 id + `library-songs`、新曲用 catalog id + `songs`),`rename` 走 `PATCH`(只送 name);寫之前先 GET 本體查 `canEdit`,false(Apple 精選、喜好歌曲)零寫入;`ApplyOps` 自己重讀一次 `/tracks` 拿列 id 並對齊 `current`(對不上零寫入)。這個抽象讓兩者都塞得下。
 
 ---
 
@@ -609,7 +609,7 @@ capy pl sync 的一輪(pl pull 只有 1–3 + 6;pl push 只有 1–2 + 4–6—�
    ├─ 前提:base 存在,且 L 的快照 = base 的快照(平台沒有未 pull 的變更;比快照,不是比 Derive)——否則 exit 3
    ├─ ops = diff(L 的 cid 序列, C' 的 cid 序列)(對齊鍵是 cid;LCS 配對;remove / add / move / rename;add 缺 mapping 的 item 列 skip)
    ├─ 刪除閾值(決策 18)、--dry-run、確認
-   └─ provider.ApplyOps(ops);provider 不支援的 op 回 ErrCapability → 列成 manual(Apple 的 remove / move,決策 30)
+   └─ provider.ApplyOps(ops);provider 不支援的 op 回 skipped → 列成 manual(目前三個平台全部 Kind 都支援;決策 49)
 
 5. VERIFY(ApplyOps 成功或失敗都做)
    └─ 重讀 L′,與 want 不同只警告;base[pid][provider] := L′ 的快照(Observe 同一條路;base = 上次看到的平台狀態,不是上次成功同步的狀態)
@@ -642,9 +642,9 @@ capy pl sync 的一輪(pl pull 只有 1–3 + 6;pl push 只有 1–2 + 4–6—�
 1. **前提一:base 存在。** 本裝置對這個 (清單, 平台) 沒 pull 過 → exit 3、零寫入,訊息「先 `capy pl pull`」。不然 diff(L, project(C)) 會把平台上所有不在 C 的曲目刪光——「首次 pull 永不移除」的 push 版。
 2. **前提二:平台沒有未 pull 的變更。** L 的快照(清單 id、名稱、依平台順序的 provider id)與 base 的快照直接比對,不同 → exit 3,訊息指向 `pl pull` 或 `pl sync`。**只比 provider id 序列、不比 cid**(T4 定):釘選與合併墓碑會讓同一個平台 id 的觀測 cid 變,那不是平台變更——`push`(列 skip)→ `resolve pin` → `push` 是正常流程,比 cid 會每次都被擋。**不能用 Derive(base, L) 是否為空判**:Derive 是 L 對 C 的差,push 前 C 通常剛被另一個平台改過(那正是要 push 的東西),會把正常的 push 擋掉。push 蓋掉使用者剛在平台改的東西不可接受;`pl sync` 先 pull 後 push,兩個前提由建構保證。
 3. **對齊鍵是 cid,不是 provider id**(同規則 1):want = C 的 items 依 rank 的 cid 序列,live = L 經 §5.1 身分規則算出的 cid 序列(OBSERVE 已算)。LCS 配對(重複照算,與規則 2 同一套);**配對上的 item 不動**——「pinned 成不可得、但曲目此刻就在平台上」與「Apple 沒有 catalog 對應的 library-only 曲目(`i.` id)」都會配上、不會被當成 remove(以 provider id 序列 diff 投影會把被 skip 的 item 排進 remove,PR #30 review)。
-4. **變更集**:配不到的 L 出現 → `remove`(provider id 取 L 原文);配不到的 C item 要 `tracks[cid].mappings[provider].id` 才能 `add`,沒有(無 mapping、pinned 不可得、Apple 只有 library id)→ 列成 `skip`(reason 指向 `capy resolve`)並從 want 拿掉,不阻擋其他曲目——純 `skip` 只剩「C 有、平台沒有、又推不出去」;配對上但順序不同 → `move`;`rename`(C.name ≠ L.name 且 provider 支援);位置語意是**依序套用、每個位置指的是前面 ops 套完後的狀態**。TSV 欄位同 pull(`action pos cid provider_id title artists reason`)再加 `skip` / `manual`。不可推的項目(Spotify local file、library-only)在 L 裡幾乎一定也在 C(只能經這個平台進 C),配對後不動;Spotify 的整批取代加不回 local file:**含 local file 的 Spotify 清單在最小操作完成前拒絕 push**(exit 3,訊息列出那幾首;計畫 Q19 / Q22)。
+4. **變更集**:配不到的 L 出現 → `remove`(provider id 取 L 原文);配不到的 C item 要 `tracks[cid].mappings[provider].id` 才能 `add`,沒有(無 mapping、pinned 不可得)→ 列成 `skip`(reason 指向 `capy resolve`)並從 want 拿掉,不阻擋其他曲目——純 `skip` 只剩「C 有、平台沒有、又推不出去」;配對上但順序不同 → `move`;`rename`(C.name ≠ L.name 且 provider 支援);位置語意是**依序套用、每個位置指的是前面 ops 套完後的狀態**。TSV 欄位同 pull(`action pos cid provider_id title artists reason`)再加 `skip` / `manual`。不可推的項目(Spotify local file、library-only)在 L 裡幾乎一定也在 C(只能經這個平台進 C),配對後不動;Spotify 的整批取代加不回 local file:**含 local file 的 Spotify 清單在最小操作完成前拒絕 push**(exit 3,訊息列出那幾首;計畫 Q19 / Q22)。
 5. **安全網**:`remove` 數過決策 18 的閾值(分母 = L 的長度)→ exit 3、`--force` 才越過且只能配單一清單;`--dry-run` 只印、有變更 exit 2、不碰平台不碰 Drive;非 TTY 沒 `--yes` → exit 2;TTY 確認。
-6. **套用**:`provider.ApplyOps(ctx, id, current, ops)`(`current` = 剛觀測到的 L);provider 不支援的 op 回在 `skipped` → 那些列標成 `manual`(Apple 的 remove / move / rename,決策 30),其餘照做。**平台端沒有 CAS,整批取代等於放棄偵測**:讀到 L 之後、寫入之前別台裝置(或手機)在同一清單加的歌會被直接覆蓋——跟 Drive 那側的版本守衛不對稱(PR #31 review)。縮小窗口的做法(T4 做):確認之後、**每個目標自己的 `ApplyOps` 之前**再讀一次 L 與 `current` 比對(不是全部先讀再全部寫——那會把第 2 個目標的窗口再撐開前面目標的寫入時間),不一致就**跳過那一份**(零寫入、stderr 說明,`--all` / `sync` 的其他清單照推),收尾以 exit 3 結束、訊息指向 pull;TTY 確認畫面等人按鍵的那段時間正是最大的窗口。殘餘窗口 = 讀與 PUT 之間。exit code 的優先序:任一份 `ApplyOps` 失敗(exit 1)蓋過「確認期間變了」(exit 3)。這次重讀只比 provider id 序列:確認畫面期間在手機上改的**名稱**不會被偵測,push 若帶 rename 會蓋掉它(下一次 pull 也看不出來,因為 base 已記成新名字)。分批寫到一半失敗回 `*provider.PartialWriteError`(已寫 / 目標首數、是否已改名),push 要把它印成「清單現在是半截的、重跑補回」,不是一般錯誤。Spotify:任何 add / remove / move → 整批取代(`PUT /playlists/{id}/items` 前 100 首 + `POST …?position=` 其後每批 100),`rename` → `PUT /playlists/{id}`;只有自己或協作的清單可寫,403 → 友善訊息。
+6. **套用**:`provider.ApplyOps(ctx, id, current, ops)`(`current` = 剛觀測到的 L);provider 不支援的 op 回在 `skipped` → 那些列標成 `manual`(目前沒有平台會回;決策 49 後 Apple 全部支援),其餘照做。**平台端沒有 CAS,整批取代等於放棄偵測**:讀到 L 之後、寫入之前別台裝置(或手機)在同一清單加的歌會被直接覆蓋——跟 Drive 那側的版本守衛不對稱(PR #31 review)。縮小窗口的做法(T4 做):確認之後、**每個目標自己的 `ApplyOps` 之前**再讀一次 L 與 `current` 比對(不是全部先讀再全部寫——那會把第 2 個目標的窗口再撐開前面目標的寫入時間),不一致就**跳過那一份**(零寫入、stderr 說明,`--all` / `sync` 的其他清單照推),收尾以 exit 3 結束、訊息指向 pull;TTY 確認畫面等人按鍵的那段時間正是最大的窗口。殘餘窗口 = 讀與 PUT 之間。exit code 的優先序:任一份 `ApplyOps` 失敗(exit 1)蓋過「確認期間變了」(exit 3)。這次重讀只比 provider id 序列:確認畫面期間在手機上改的**名稱**不會被偵測,push 若帶 rename 會蓋掉它(下一次 pull 也看不出來,因為 base 已記成新名字)。分批寫到一半失敗回 `*provider.PartialWriteError`(已寫 / 目標首數、是否已改名),push 要把它印成「清單現在是半截的、重跑補回」,不是一般錯誤。Spotify:任何 add / remove / move → 整批取代(`PUT /playlists/{id}/items` 前 100 首 + `POST …?position=` 其後每批 100),`rename` → `PUT /playlists/{id}`;只有自己或協作的清單可寫,403 → 友善訊息。
 7. **驗證與前進 base——ApplyOps 成功或失敗都做**:重讀 L′,L′ ≠ want(平台拒收、順序被正規化、分批做到一半斷網)→ stderr 警告;base[pid][provider] := L′ 的快照(與 pull 同一條 Observe 路)。base 是「本裝置上次看到的平台狀態」,不是「上次成功同步的狀態」:分批做到一半死掉而 base 不動,下一次 pull 會把我們自己的殘局讀成使用者刪了 150 首(PR #30 review)。**`pl__<pid>.json` 不變**(items / rank / name 都不動);`tracks.json` 可能因 Observe 補 mapping / conflicts 而變。L′ 快照的名稱是**預期**的(改了就是 C 的名字,沒改就是 L 的),不再 list 一次平台;平台若正規化了名稱,下一次 push 的前提二會擋下並指向 pull,pull 之後自然校正。**重讀 L′ 本身也失敗時**(斷網往往一起把 POST 與接下來的 GET 都弄掉):base := want 的前 `written` 首(成功 = 全部、`PartialWriteError.Written`、第一個請求就失敗 = 平台沒動所以 base 不變)——不然 PUT 已落地、base 還停在 L,下一次 pull 會把自己的半截寫入讀成使用者刪了歌。
 8. **COMMIT** 走 `withCanonical`;ApplyOps 失敗時**仍然 COMMIT**(base 要落地),COMMIT 完再以 exit 1 結束並講明平台改了幾批,下一次 push 自然補上沒送出去的。全部套用成功、Drive 上傳失敗 → base 沒前進,下次 pull 把剛 push 的東西當平台變更再 derive:LCS 對同 cid 配上、零變更,不會重複。§6.3 的版本守衛在 push 的 COMMIT 擋下時,「零寫入」只對 Drive 成立——push 改口為「平台已寫入 N 筆、Drive 沒動,先 pull 再 push」;半截寫入再遇 COMMIT 失敗兩件事都講,並要使用者先 `pl pull --dry-run`——那正是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。stdout 的 `skip` 列不是變更,「動了幾筆看行數」要扣掉它。
 
@@ -830,7 +830,7 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 > **排程註記(2026-09-08):** 前半(canonical model → `pl pull`)已隨 P3 完成(附錄 C 決策 10);後半(resolver + review queue)依 [docs/superpowers/plans/2026-09-08-p4-resolver.md](superpowers/plans/2026-09-08-p4-resolver.md) 執行(決策 19–25;真帳號 ISRC 覆蓋 Spotify 160/160、Apple 2525/2553)。
 
 ### P5 — 雙向同步(2026-09-08 計畫:docs/superpowers/plans/2026-09-08-p5-sync.md)
-**不建 op log / HLC**(決策 26):`PlaylistWriter` SPI + Spotify 寫入 → 共享檔版本守衛 → 投影 / push 變更集 / DERIVE 規則 4′ → `pl push` → `pl sync` → Apple 寫入(gate P0-2,預期 append-only)→ 真帳號驗收
+**不建 op log / HLC**(決策 26):`PlaylistWriter` SPI + Spotify 寫入 → 共享檔版本守衛 → 投影 / push 變更集 / DERIVE 規則 4′ → `pl push` → `pl sync` → Apple 寫入(決策 49;2026-09-22 R-8 驗過,全部 ops 都支援)→ 真帳號驗收
 
 ### P6 — 抽象驗證 ✅(2026-09-08 計畫與結論:docs/superpowers/plans/2026-09-08-p6-local.md)
 接入 `local` provider(讀 M3U/JSON)驗證 SPI 是否夠通用。**這比直接接第三個真實平台好** —— 沒有 ToS 風險、可完全掌控測試資料。SPI 撐得住 local provider 才去接 YouTube Music / Tidal。產出是計畫 §2 的「SPI 偷渡了哪些網路平台假設」清單(A1–A12)與對應修正;第一條就是 provider id / link 被當成全域有意義(決策 33)。**結論(T3):SPI 撐得住**——local 全走原本的能力介面、沒有特例分支,唯一的新語意是 `CapDeviceBound` + `DeviceScoped`。接下一個真實平台前先補:rename 會改 id 的平台要能回新 id(A12)、`Pushable` 要能回「推不出去」的原因而不是 CLI 猜(A10)、`friendlyErr` 第四個平台時改成 provider 自己回訊息(A2)、`Search` 正規化下沉到 `provider`(A6)。

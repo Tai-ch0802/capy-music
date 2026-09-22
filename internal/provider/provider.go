@@ -21,8 +21,8 @@ const (
 	CapPlaylistRead
 	CapPlaylistCreate
 	CapPlaylistAppend
-	CapPlaylistRemove  // ⚠️ Apple 待驗證(P0-2)
-	CapPlaylistReorder // ⚠️ Apple 待驗證(P0-2)
+	CapPlaylistRemove  // Apple 自決策 49 起也宣告(PUT 整批取代,2026-09-22 真帳號驗過)
+	CapPlaylistReorder // 同上
 	CapLibraryRead
 	CapLibraryWrite
 	CapPlaybackControl

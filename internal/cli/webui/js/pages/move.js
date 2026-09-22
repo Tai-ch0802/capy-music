@@ -9,8 +9,8 @@ import { STAGES, CANCELLED_MSG } from '../console.js';
 
 // 首頁的每一句主張都要查得到出處(決策 48):MIT LICENSE、憑證只進鑰匙圈、migrate 只新增不刪來源、順序不動(決策 38)。
 const FACTS = ['免費', '開源(MIT)', '在你自己的電腦上執行', '不刪來源,只新增'];
-const READ_ONLY = ['apple'];    // 目前只讀,不能當目的地(gate R-8)
-const CAN_CREATE = ['spotify']; // 只有它能新建清單;其餘只能加進既有的
+const READ_ONLY = [];                    // 不能當目的地的平台(目前沒有;Apple 自決策 49 起可寫)
+const CAN_CREATE = ['spotify', 'apple']; // 能新建清單的平台;其餘(local)只能加進既有的
 const NO_LOGIN = ['local'];
 // 下面兩個字面是 migrate.go 的原文,精靈靠它們認出「逐筆裁決」那一則與「這一首推得過去」;
 // TestWebMoveWizardKeysOnMigrateWording 兩邊一起釘,CLI 改字測試就紅。
@@ -498,7 +498,7 @@ function truths() {
   for (const [k, v] of [
     ['不會刪你的東西', '來源的清單不會被更動;對目的地只新增,不移除、不重排。'],
     ['順序不會變', '你排的順序是你的記憶,capy 沒有任何路徑會打亂它。'],
-    ['Apple Music 目前只能當來源', '可以從 Apple Music 搬出來,還不能搬進去。'],
+    ['搬進 Apple Music 的歌會同時進資料庫', '加進 Apple Music 清單的曲目會一起加進你的 Apple Music 資料庫,這是 Apple 的行為;capy 只寫你自己建的清單。'],
     ['連接帳號要花幾分鐘', 'capy 用的是你自己的帳號憑證,存在這台電腦的鑰匙圈裡。沒有人替你代管,所以也沒有人能跟你收費。'],
     ['清單的正本在你的 Google Drive', 'capy 沒有伺服器。你隨時可以把那份資料清掉。'],
     ['硬碟裡的歌單也可以搬', '本機的 M3U 播放清單可以搬到 Spotify,不另外收費——因為本來就沒有收費。'],

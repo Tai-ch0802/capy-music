@@ -618,7 +618,7 @@ func newPlLinkCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&createFlag, "create", false, "在平台上建一個跟 canonical 清單同名的空清單再連結;此時第二個參數只給平台、不帶「:」(例如 spotify);目前只有 Spotify 支援")
+	cmd.Flags().BoolVar(&createFlag, "create", false, "在平台上建一個跟 canonical 清單同名的空清單再連結;此時第二個參數只給平台、不帶「:」(例如 spotify);Spotify 與 Apple Music 支援,local 不行")
 	return cmd
 }
 

@@ -131,7 +131,7 @@ type pushPlan struct {
 // planPush:對每個目標 (清單, provider) 做 OBSERVE、兩個前提、PushPlan、閾值,產出計畫與 TSV 列。
 // refused 是 --force 也不放行的(前提、local file、清單消失);blocked 是刪除閾值(--force 越過)。
 // lives 非 nil 時該 (清單, provider) 的 L 直接用它(pl sync 的 push 半邊重用 pull 半邊剛讀的 L,決策 31)。
-// strict:明說 --provider 卻寫不了(Apple)是錯(push);sync 不是——「sync Apple」在 T6 前就是只 pull,stderr 說明後照常。
+// strict:明說 --provider 卻寫不了的平台是錯(push);sync 不是——「sync 一個寫不了的平台」就是只 pull,stderr 說明後照常。
 // 同理 refused(前提、local file、清單消失)在 strict 時擋整輪(exit 3),不 strict 時只跳過那一格的 push 半邊(PR #36 review:
 // cron 的 sync --all 不能被一個含 local file 的清單永久綁死;pull 半邊照常落地)。
 func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]*canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
@@ -157,7 +157,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			}
 			w, err := asPlaylistWriter(p)
 			if err != nil {
-				if strict && only == prov { // 明說要推這個平台才算錯;--all / 沒指定時只跳過(Apple 在 T6 前寫不了)
+				if strict && only == prov { // 明說要推這個平台才算錯;--all / 沒指定時只跳過(三個平台現在都能寫,這條留給沒有寫入能力的 provider)
 					return nil, nil, nil, nil, err
 				}
 				fmt.Fprintf(stderr, "跳過 %s 的 %s:%v\n", pl.Name, prov, err)
@@ -328,7 +328,7 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 		written, renamed = -1, false // 第一個請求就失敗,平台沒動
 		werr = friendlyErr(p.prov, werr)
 	}
-	for _, op := range skipped { // ponytail: 平台不支援的 op 先印 stderr;Apple append-only(T6)時再決定 manual 列怎麼進表
+	for _, op := range skipped { // ponytail: 平台不支援的 op 先印 stderr;Spotify / Apple / local 全部 Kind 都支援,第一個真的會 skip 的平台出現時再決定 manual 列怎麼進表
 		if op.Kind == provider.OpRename { // 平台沒改名就不能把 base 記成新名字(A13 的第二道防線:planPush 已不排 rename 給不支援的平台)
 			renamed = false
 		}
