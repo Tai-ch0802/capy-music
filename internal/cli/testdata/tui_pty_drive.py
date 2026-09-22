@@ -81,8 +81,10 @@ def dump(label):
 exited = False
 
 
-def reap(flags=os.WNOHANG):
+def reap(flags=os.WNOHANG):  # 回「行程結束了沒」;結束後再叫不會再 waitpid(兩個 sigint: 步驟會 ChildProcessError)
     global exited
+    if exited:
+        return True
     got, status = os.waitpid(pid, flags)
     if got:
         exited = True

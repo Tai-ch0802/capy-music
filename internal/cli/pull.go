@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"charm.land/huh/v2"
@@ -55,10 +56,10 @@ func ExitCode(err error) (int, string) {
 	switch {
 	case errors.As(err, &sig): // 只改結束碼:stderr 印的跟沒有訊號時一模一樣(回 nil 的不印)
 		_, msg := ExitCode(sig.Err)
-		if sig.Sig == os.Interrupt {
-			return 130, msg
+		if s, ok := sig.Sig.(syscall.Signal); ok { // 128+n 就是規則(SIGINT 130、SIGTERM 143),executeSignalled 多掛一個訊號也不用回來改
+			return 128 + int(s), msg
 		}
-		return 143, msg
+		return 130, msg // 到不了:signal.Notify 送來的在兩個平台上都是 syscall.Signal
 	case err == nil:
 		return 0, ""
 	case errors.As(err, &amb), errors.As(err, &pend), errors.As(err, &rev):

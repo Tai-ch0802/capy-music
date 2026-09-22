@@ -422,10 +422,14 @@ func TestSignalledExitCode(t *testing.T) {
 		{"包著 Canceled 的 exit 3 也不被蓋掉", term, fmt.Errorf("%w:%w", &BlockedError{Msg: "b"}, context.Canceled), 3, "b:context canceled"},
 		{"沒有訊號:nil 還是 0(q / 正常做完)", context.Background(), nil, 0, ""},
 		{"沒有訊號:ctx 因別的理由取消還是 1", cancelled(nil), ctxErr, 1, "Error: 讀取失敗:context canceled"},
+		{"別的訊號照 128+n 算,不是一律 143(review #76)", cancelled(&SignalError{Sig: syscall.SIGHUP}), nil, 129, ""},
 	} {
 		if code, msg := ExitCode(signalled(tc.ctx, tc.err)); code != tc.code || msg != tc.msg {
 			t.Errorf("%s:(%d, %q),要 (%d, %q)", tc.name, code, msg, tc.code, tc.msg)
 		}
+	}
+	if err := signalled(term, ctxErr); !errors.Is(err, context.Canceled) { // SignalError 要 Unwrap,鏈不能在 Execute 的呼叫端斷掉(review #76)
+		t.Errorf("errors.Is(err, context.Canceled) 要成立:%v", err)
 	}
 }
 
