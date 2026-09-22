@@ -8,7 +8,8 @@ set -euo pipefail
 
 CAPY="${CAPY:-capy}"
 BASE="${CAPY_APPLE_API_BASE:-https://amp-api.music.apple.com/v1}"
-SF="$(${CAPY} config get apple_storefront 2>/dev/null || echo tw)"
+SF="$(${CAPY} config get apple_storefront 2>/dev/null || true)"
+SF="${SF:-tw}" # config get 未設時 exit 0 印空行,|| 擋不住
 TERM_QUERY="${TERM_QUERY:-五月天}"
 DT="$(${CAPY} debug apple-token)"
 MUT="$(${CAPY} debug apple-token --user)"
@@ -27,13 +28,20 @@ req() {
   fi
 }
 need() { [ -n "${2:-}" ] && [ "${2}" != "null" ] || { echo "${1} 為空,中止(回應:$(cat "${BODY}" | head -c 300))" >&2; cleanup; exit 1; }; }
-entries() { # 讀回 /tracks:每行「列id<TAB>catalogId<TAB>名稱」
+entries() { # 讀回 /tracks:每行「列id<TAB>catalogId<TAB>名稱<TAB>type」
   req GET "/me/library/playlists/${PL}/tracks?limit=100" >/dev/null
-  jq -r '.data[] | [.id, (.attributes.playParams.catalogId // "-"), .attributes.name] | @tsv' "${BODY}"
+  jq -r '.data[] | [.id, (.attributes.playParams.catalogId // "-"), .attributes.name, .type] | @tsv' "${BODY}"
+}
+# tolist <逐行列 id> <期望筆數>:組 PUT body。空、或筆數不符就中止——PUT 是全量取代,送出空陣列 = 清空整份,跟 DELETE 不帶 ids 一樣危險。
+tolist() {
+  local n; n="$(printf '%s' "$1" | grep -c . || true)"
+  [ "${n}" -gt 0 ] && [ "${n}" -eq "$2" ] || { echo "要 PUT 的列數 ${n} 不是期望的 $2,不送(前一步沒生效?)" >&2; exit 1; }
+  printf '%s\n' $1 | jq -R . | jq -sc 'map({id: ., type: "library-songs"})'
 }
 vhash() { req GET "/me/library/playlists/${PL}" >/dev/null; jq -r '.data[0].attributes.playParams.versionHash // "-"' "${BODY}"; }
 PL=""
 cleanup() {
+  if [ "${KEEP:-0}" = "1" ]; then echo "KEEP=1:保留測試清單 ${PL},之後請手動刪"; return; fi
   if [ -n "${PL}" ] && [[ "${PL}" =~ ^p\. ]]; then
     echo "🧹 DELETE /me/library/playlists/${PL} → HTTP $(req DELETE "/me/library/playlists/${PL}")"
   fi
@@ -77,7 +85,7 @@ sleep 2
 echo "   讀回(列id / catalogId / 名稱):"; entries | sed 's/^/     /'
 got="$(entries | cut -f2 | tr '\n' ' ')"
 [ "${got}" = "${ids[0]} ${ids[1]} ${ids[2]} ${ids[3]} ${ids[4]} ${ids[5]} " ] && echo "   順序 = A 後 B ✅" || echo "   順序不符 ⚠️  得到:${got}"
-echo "   列 id 前綴分佈:$(entries | cut -f1 | cut -d. -f1 | sort | uniq -c | tr '\n' ' ')(a. = 只在清單、i. = 進了曲庫)"
+echo "   列 id 前綴分佈:$(entries | cut -f1 | cut -d. -f1 | sort | uniq -c | tr '\n' ' ')(a. = 只在清單、i. = 進了曲庫);type:$(entries | cut -f4 | sort | uniq -c | tr '\n' ' ')"
 V1="$(vhash)"; echo "   versionHash(判定項 6):add 前 ${V0} → add 後 ${V1} $([ "${V0}" != "${V1}" ] && echo '(有變)' || echo '(沒變)')"
 
 echo "⑤ 重複曲目(判定項 2):再 POST 一次 ids[0]"
@@ -91,8 +99,9 @@ req GET "/me/library/playlists/${PL}" >/dev/null
 echo "   HTTP ${code};name=$(jq -r '.data[0].attributes.name' "${BODY}")  description=$(jq -r '.data[0].attributes.description.standard // "(空)"' "${BODY}")"
 
 echo "⑦ PUT 整批取代:反序、含重複那兩列(判定項 2、8)"
+n7="$(entries | wc -l | tr -d ' ')"
 rev="$(entries | cut -f1 | tail -r 2>/dev/null || entries | cut -f1 | sed '1!G;h;$!d')"
-data="$(printf '%s\n' ${rev} | jq -R . | jq -sc 'map({id: ., type: "library-songs"})')"
+data="$(tolist "${rev}" "${n7}")"
 code="$(req PUT "/me/library/playlists/${PL}/tracks" "{\"data\":${data}}")"
 sleep 2
 echo "   HTTP ${code};讀回順序(catalogId):$(entries | cut -f2 | tr '\n' ' ')  共 $(entries | wc -l | tr -d ' ') 列"
@@ -100,7 +109,7 @@ echo "   HTTP ${code};讀回順序(catalogId):$(entries | cut -f2 | tr '\n' ' ')
 echo "⑧ PUT 去掉一份重複(判定項 2):按位置拿掉 catalog ${ids[0]} 的最後一列,其餘照原序(兩種列 id 形狀都能判定)"
 before="$(entries | wc -l | tr -d ' ')"
 uniq_ids="$(entries | awk -F'\t' -v c="${ids[0]}" 'BEGIN{last=0} {rows[NR]=$1; if($2==c) last=NR} END{for(i=1;i<=NR;i++) if(i!=last) print rows[i]}')"
-data="$(printf '%s\n' ${uniq_ids} | jq -R . | jq -sc 'map({id: ., type: "library-songs"})')"
+data="$(tolist "${uniq_ids}" "$(( before - 1 ))")"
 code="$(req PUT "/me/library/playlists/${PL}/tracks" "{\"data\":${data}}")"
 sleep 2
 after="$(entries | wc -l | tr -d ' ')"
@@ -109,15 +118,16 @@ echo "   catalog ${ids[0]} 還剩 $(entries | awk -F'\t' -v c="${ids[0]}" '$2==c
 
 echo "⑨ PUT 混型(判定項 1):新曲 ids[6](type songs)插到位置 0,其餘既有列跟在後面"
 uniq_ids="$(entries | cut -f1)"
-data="$(printf '%s\n' ${uniq_ids} | jq -R . | jq -sc --arg n "${ids[6]}" '[{id: $n, type: "songs"}] + map({id: ., type: "library-songs"})')"
+data="$(tolist "${uniq_ids}" "${after}" | jq -c --arg n "${ids[6]}" '[{id: $n, type: "songs"}] + .')"
 code="$(req PUT "/me/library/playlists/${PL}/tracks" "{\"data\":${data}}")"
 sleep 2
 first="$(entries | head -n 1 | cut -f2)"
 echo "   HTTP ${code};第一列 catalogId=${first} $([ "${first}" = "${ids[6]}" ] && echo '= 新曲 ✅ 一次 PUT 可行' || echo '≠ 新曲 ⚠️  走兩段式')  共 $(entries | wc -l | tr -d ' ') 列"
 
 echo "⑩ PUT 移除一列(尾端那列拿掉)"
+n9="$(entries | wc -l | tr -d ' ')"
 keep="$(entries | cut -f1 | sed '$d')"
-data="$(printf '%s\n' ${keep} | jq -R . | jq -sc 'map({id: ., type: "library-songs"})')"
+data="$(tolist "${keep}" "$(( n9 - 1 ))")"
 code="$(req PUT "/me/library/playlists/${PL}/tracks" "{\"data\":${data}}")"
 sleep 2
 echo "   HTTP ${code};共 $(entries | wc -l | tr -d ' ') 列"
@@ -126,5 +136,5 @@ echo
 echo "把 ②–⑩ 的 HTTP 狀態與觀察貼回計畫 §5、ARCHITECTURE §1.2「Library playlist 寫入」列。"
 # bash 收到 SIGINT 結束時仍會跑 EXIT trap,所以 Ctrl-C 要先解除 EXIT trap 才留得住清單。
 trap 'trap - EXIT; rm -f "${BODY}"; echo; echo "保留測試清單 ${NAME}-renamed(要看 Music.app 資料庫有沒有多出歌),之後請手動刪"; exit 130' INT
-read -r -t 15 -p "15 秒內按 Enter 刪除測試清單 ${NAME}-renamed,Ctrl-C 保留:" _ || true
+read -r -t 15 -p "15 秒內按 Ctrl-C 可保留測試清單 ${NAME}-renamed(要去 Music.app 看曲目有沒有進資料庫就按);按 Enter、逾時、非互動都會刪掉(非互動要留請設 KEEP=1):" _ || true
 trap - INT
