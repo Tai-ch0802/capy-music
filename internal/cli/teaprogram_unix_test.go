@@ -25,7 +25,7 @@ func (m startedModel) View() tea.View                      { return tea.NewView(
 
 // 訊號一定要讓程式結束(使用者回報後查到的:互動式介面大約六次有一次收到 SIGTERM 不結束,之後只剩 SIGKILL)。
 // 成因是一場賽跑(見 newProgram),所以跑很多輪:沒修之前幾乎每一輪都卡死,修好之後沒有 handler 可以卡、每一輪都是
-// 毫秒級結束。ctx 的接法跟 Execute 一模一樣。兩個訊號都要測:bubbletea 那個阻塞送出有兩個分支
+// 毫秒級結束。ctx 跟 Execute 一樣是被訊號取消的(結束碼那一半在 root_unix_test.go)。兩個訊號都要測:bubbletea 那個阻塞送出有兩個分支
 // (SIGINT → InterruptMsg、其餘 → QuitMsg),而 pty 實跑裡 SIGINT 那一支其實更容易中(review #74)。
 func TestProgramAlwaysExitsOnSignal(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT} {

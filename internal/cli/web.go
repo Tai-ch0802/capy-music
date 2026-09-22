@@ -51,7 +51,7 @@ const webCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-sr
 	"connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 type webServer struct {
-	ctx      context.Context // 伺服器 ctx:SIGINT / SIGTERM(Execute 的 signal.NotifyContext)
+	ctx      context.Context // 伺服器 ctx:SIGINT / SIGTERM(Execute 的 executeSignalled;serve 回 nil,結束碼 130 / 143 由 Execute 補)
 	token    string          // 每次啟動一次性;URL fragment → sessionStorage → X-Capy-Token
 	hostport string          // r.Host 必須逐字等於它(127.0.0.1:<port>;不收 localhost,同 Spotify redirect 措辭)
 	allow    map[string]bool // CommandPath 允許清單,Serve 前算一次

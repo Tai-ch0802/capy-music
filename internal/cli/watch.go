@@ -50,6 +50,7 @@ type watchModel struct {
 	err      error // 最近一次輪詢錯誤(顯示在底部,繼續輪詢)
 	fails    int
 	fatal    error // 連續失敗達上限:離開並回錯
+	ctrlC    bool  // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
 }
 
 func newWatchModel(ctx context.Context, pc provider.PlaybackController, interval time.Duration) watchModel {
@@ -57,6 +58,8 @@ func newWatchModel(ctx context.Context, pc provider.PlaybackController, interval
 }
 
 func (m watchModel) Init() tea.Cmd { return m.poll() }
+
+func (m watchModel) interruptedByKey() bool { return m.ctrlC }
 
 func (m watchModel) poll() tea.Cmd {
 	ctx, pc, interval := m.ctx, m.pc, m.interval
@@ -116,7 +119,10 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.poll()
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "esc":
+			return m, tea.Quit
+		case "ctrl+c":
+			m.ctrlC = true
 			return m, tea.Quit
 		case "space":
 			if m.st != nil && m.st.Playing {
@@ -185,8 +191,8 @@ var runWatch = func(cmd *cobra.Command, p provider.Provider, pc provider.Playbac
 	origStderr := provider.BackoffStderr // 429 退避的提示不能印進 TUI 畫面
 	provider.BackoffStderr = io.Discard
 	defer func() { provider.BackoffStderr = origStderr }()
-	final, err := newProgram(cmd.Context(), m, cmd.OutOrStdout()).Run() // 訊號只走 ctx:見 newProgram
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
+	final, err := runProgram(cmd.Context(), m, cmd.OutOrStdout())
+	if err != nil {
 		return err
 	}
 	if fm, ok := final.(watchModel); ok && fm.fatal != nil {

@@ -67,8 +67,46 @@ func newRootCmd() *cobra.Command {
 
 // Execute 是 CLI 進入點。SIGINT/SIGTERM 取消 ctx,讓 429 退避等待中的請求可被中斷
 // (spec 硬約束:可腳本化/可被 cron 終止是核心價值)。
-func Execute() error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return newRootCmd().ExecuteContext(ctx)
+func Execute() error { return executeSignalled(newRootCmd()) }
+
+// SignalError:行程是被 SIGINT / SIGTERM 結束的 → exit 130 / 143(shell 慣例 128+n),腳本才分得出「被砍」跟「做完」。
+// Err 是命令自己回的錯(互動式介面 / now --watch / --web 把 ctx 取消當「使用者要離開」,回的是 nil),訊息照舊印。
+type SignalError struct {
+	Sig os.Signal
+	Err error
+}
+
+func (e *SignalError) Error() string { return "收到訊號 " + e.Sig.String() }
+func (e *SignalError) Unwrap() error { return e.Err } // 錯誤鏈不斷:errors.Is(err, context.Canceled) 在 Execute 的呼叫端照樣成立
+
+// executeSignalled:不用 signal.NotifyContext——它的 ctx.Err() 只有 context.Canceled,分不出是哪個訊號;
+// 自己聽,把訊號記成 ctx 的 cause。測試替換點(Execute 讀 os.Args,測試裡跑不了)。
+func executeSignalled(root *cobra.Command) error {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	// 第一個訊號之後 goroutine 就結束,但刻意不在這裡 signal.Stop:收尾期間(pl push 寫到一半、--web 的 Shutdown 最多 5 秒)
+	// 第二個 Ctrl-C 只會被 runtime 接走丟掉,寧可讓寫入收完也不要半截;真的卡住還有 SIGKILL。跟以前 NotifyContext 的行為相同。
+	go func() {
+		select {
+		case s := <-sigc:
+			cancel(&SignalError{Sig: s})
+		case <-ctx.Done():
+		}
+	}()
+	return signalled(ctx, root.ExecuteContext(ctx))
+}
+
+// signalled:ctx 是被訊號取消的,而命令回 nil 或「被取消」的錯 → 換成 SignalError。其餘的錯原樣回:
+// 設計出來的結束碼(2 / 3 / 窗格的 130)與「寫到一半、已寫 N 首」那種 exit 1 都比「被砍」更有話要說。
+func signalled(ctx context.Context, err error) error {
+	var se *SignalError
+	if errors.As(context.Cause(ctx), &se) && (err == nil || errors.Is(err, context.Canceled)) {
+		if code, _ := ExitCode(err); code <= 1 {
+			return &SignalError{Sig: se.Sig, Err: err}
+		}
+	}
+	return err
 }

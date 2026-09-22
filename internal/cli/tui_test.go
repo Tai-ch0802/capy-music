@@ -381,12 +381,15 @@ func TestTUICtrlCQuitsWhileTyping(t *testing.T) {
 	m := newTestTUI(t, &watchFake{st: playingState()})
 	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
 	m.input.SetValue("search x")
-	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("輸入模式下 ctrl+c 要能離開")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Error("ctrl+c 應該是 Quit")
+		t.Error("ctrl+c 應該是 Quit(不是 tea.Interrupt:那條路不畫最後一幀,見 runProgram)")
+	}
+	if !next.(tuiModel).interruptedByKey() {
+		t.Error("ctrl+c 離開要記一筆:結束碼 130(見 runProgram)")
 	}
 }
 

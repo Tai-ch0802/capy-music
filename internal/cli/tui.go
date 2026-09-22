@@ -94,6 +94,7 @@ type tuiModel struct {
 	fails     int
 	gen       int  // 目前的輪詢世代
 	stalled   bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
+	ctrlC     bool // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
 	frozen    bool // 水豚已定格印進捲動區,View 只剩底部四行。單向:印過就不再常駐,不然捲動區一隻、View 一隻
 	running   bool // 子命令執行中:底部區縮成一行空白(原因見 View)
 	menuHigh  int  // 上次推東西進捲動區之後選單佔過的最多列數;View 補空行撐到這個高度(原因見 View)
@@ -213,7 +214,7 @@ func (m tuiModel) execResult(msg tuiExecMsg) tea.Cmd {
 		return m.println(tuiSeg{"✗ " + head + ":" + msg.err.Error(), m.theme.Mutedly})
 	}
 	mark := "✗ "
-	if c := ee.ExitCode(); c == 2 || c == 3 || c == 130 { // 130 = 在檢視窗格裡按 Ctrl-C 中止,也不是壞掉
+	if c := ee.ExitCode(); c == 2 || c == 3 || c == 130 { // 130 = 在檢視窗格 / now --watch 裡按 Ctrl-C 離開,也不是壞掉
 		mark = "· "
 	}
 	return m.println(tuiSeg{fmt.Sprintf("%s%s 結束碼 %d", mark, head, ee.ExitCode()), m.theme.Mutedly})
@@ -429,6 +430,8 @@ func (m tuiModel) recall(d int) tuiModel {
 	return m
 }
 
+func (m tuiModel) interruptedByKey() bool { return m.ctrlC }
+
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
 	// 開場演完再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
@@ -455,6 +458,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			}
 			return m.recall(d), nil // 否則翻歷史
 		case "ctrl+c": // raw mode 下 ctrl+c 不是 SIGINT 而是一個按鍵;不攔的話打字打到一半按它毫無反應
+			m.ctrlC = true
 			return m, tea.Quit
 		case "esc": // 有字先清空(選單也跟著收起來,它就是輸入行的投影),空的再離開輸入
 			if m.input.Value() != "" {
@@ -512,7 +516,10 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg.String() {
-	case "q", "ctrl+c", "esc":
+	case "q", "esc":
+		return m, tea.Quit
+	case "ctrl+c":
+		m.ctrlC = true
 		return m, tea.Quit
 	case "/": // 帶著 / 進輸入行:選單就是「輸入行以 / 開頭」的投影,和 Claude Code 的斜線命令一致
 		m.typing, m.menuSel = true, 0
@@ -842,12 +849,7 @@ var runTUI = func(cmd *cobra.Command) error {
 	provider.BackoffStderr = io.Discard
 	defer func() { provider.BackoffStderr = origStderr }()
 	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
-	// 離開一律是使用者按 q / Ctrl-C。
-	// 「使用者要離開」不是錯誤:SIGINT / SIGTERM 一律走 ctx(bubbletea 自己的 signal handler 關掉了,原因見 newProgram),
-	// 所以從外面來的結束只會是 ctx 取消 / 程式被砍這兩種樣子。
-	if _, err := newProgram(ctx, m, cmd.OutOrStdout()).Run(); err != nil &&
-		!errors.Is(err, context.Canceled) && !errors.Is(err, tea.ErrProgramKilled) {
-		return err
-	}
-	return nil
+	// 離開一律是使用者按 q / Esc(exit 0)、按 Ctrl-C 或從外面來的訊號(exit 130 / 143)——收尾在 runProgram。
+	_, err = runProgram(ctx, m, cmd.OutOrStdout())
+	return err
 }
