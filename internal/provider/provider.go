@@ -116,6 +116,9 @@ type PlaylistRef struct {
 	Name  string
 	Owner string
 	Total int
+	// Unwritable:非空 = 光看列表就知道這份清單在平台上寫不了的原因(Apple 的 canEdit:false、協作清單;決策 49)。
+	// push 在 plan 階段把它列成 refused——sync 只跳過那一格,cron 不會每輪 exit 1,dry-run 也看得到;ApplyOps 是第二道防線。
+	Unwritable string
 }
 
 type Provider interface {

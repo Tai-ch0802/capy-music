@@ -179,6 +179,10 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				refuse(fmt.Sprintf("%s 端找不到清單 %s(%s),先 capy pl pull %s(會取消連結)", prov, link, pl.Name, pl.Name))
 				continue
 			}
+			if ref.Unwritable != "" { // 光看列表就知道寫不了(Apple 精選、協作清單):plan 階段列 refused——sync 只跳過那一格,cron 不會每輪 exit 1(PR #81 review)
+				refuse(fmt.Sprintf("%s 的 %s(%s)寫不了:%s", pl.Name, prov, link, ref.Unwritable))
+				continue
+			}
 			b, ok := merged[pl.PID][prov]
 			if !ok || b.Snapshot.ID != link { // 前提一
 				refuse(fmt.Sprintf("%s 的 %s 還沒 pull 過(沒有 base),先 capy pl pull %s", pl.Name, prov, pl.Name))

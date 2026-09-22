@@ -343,7 +343,9 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 			Data []struct {
 				ID         string `json:"id"`
 				Attributes struct {
-					Name string `json:"name"`
+					Name             string `json:"name"`
+					CanEdit          *bool  `json:"canEdit"` // 指標:假伺服器沒給就是「不知道」,不能當 false
+					HasCollaboration bool   `json:"hasCollaboration"`
 				} `json:"attributes"`
 			} `json:"data"`
 			Next string `json:"next"` // 分頁看這個,不是「回傳數 < limit」——Apple 可能單頁回不滿 limit 仍有下一頁
@@ -352,7 +354,8 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 			return nil, err
 		}
 		for _, p := range resp.Data {
-			out = append(out, provider.PlaylistRef{ID: p.ID, Name: p.Attributes.Name, Total: -1}) // library 物件不含曲數
+			out = append(out, provider.PlaylistRef{ID: p.ID, Name: p.Attributes.Name, Total: -1, // library 物件不含曲數
+				Unwritable: unwritableReason(p.Attributes.CanEdit, p.Attributes.HasCollaboration)})
 		}
 		if len(resp.Data) == 0 { // 防呆:有 next 但無資料也視為結束,不重打同一 offset
 			return out, nil
@@ -447,8 +450,9 @@ func (c *Client) libraryPlaylistEntries(ctx context.Context, id string) ([]libra
 // playlistInfo:清單本體。CanEdit 是「使用者自建」的機器判準(真帳號:25 個清單裡恰好 7 個自建為 true,Apple 精選、喜好歌曲、
 // 已購買的音樂為 false);false 的清單寫入會回 500「Unable to update tracks」,所以寫之前先查。
 type playlistInfo struct {
-	ID, Name string
-	CanEdit  bool
+	ID, Name         string
+	CanEdit          bool
+	HasCollaboration bool
 }
 
 func (c *Client) Playlist(ctx context.Context, id string) (playlistInfo, error) {
@@ -456,8 +460,9 @@ func (c *Client) Playlist(ctx context.Context, id string) (playlistInfo, error) 
 		Data []struct {
 			ID         string `json:"id"`
 			Attributes struct {
-				Name    string `json:"name"`
-				CanEdit bool   `json:"canEdit"`
+				Name             string `json:"name"`
+				CanEdit          bool   `json:"canEdit"`
+				HasCollaboration bool   `json:"hasCollaboration"`
 			} `json:"attributes"`
 		} `json:"data"`
 	}
@@ -468,7 +473,22 @@ func (c *Client) Playlist(ctx context.Context, id string) (playlistInfo, error) 
 	if err != nil {
 		return playlistInfo{}, err
 	}
-	return playlistInfo{ID: resp.Data[0].ID, Name: resp.Data[0].Attributes.Name, CanEdit: resp.Data[0].Attributes.CanEdit}, nil
+	a := resp.Data[0].Attributes
+	return playlistInfo{ID: resp.Data[0].ID, Name: a.Name, CanEdit: a.CanEdit, HasCollaboration: a.HasCollaboration}, nil
+}
+
+// unwritableReason:光看清單屬性就知道寫不了的原因(PlaylistRef.Unwritable 與 ApplyOps 第二道防線共用同一句):
+//   - canEdit:false = Apple 精選、喜好歌曲、已購買的音樂(寫入會 500);canEdit 不明(nil)不算。
+//   - hasCollaboration:true = 協作清單。2026-09-22 對它原序全量 PUT 222 列回 500「Unable to update tracks」、零變動(計畫 §5 補測);
+//     分不出是它的 a. 列 id、協作本身、還是列數(R-8 只送過 7 列),所以先整份不寫。
+func unwritableReason(canEdit *bool, collab bool) string {
+	switch {
+	case canEdit != nil && !*canEdit:
+		return "不是你自己建的清單(Apple 精選、喜好歌曲、已購買的音樂),Apple 不讓寫"
+	case collab:
+		return "協作清單:Apple 對它的整批取代回 500(2026-09-22 實測),capy 目前不寫;請在 Apple Music app 裡手動,或先複製成一般清單再連結(未實測,通常可以)"
+	}
+	return ""
 }
 
 // trackRef:寫入 body 的一筆。type 依 id 形狀:catalog id 是純數字 → songs;帶「.」的是 library 列 id(i.… / a.…)→ library-songs。

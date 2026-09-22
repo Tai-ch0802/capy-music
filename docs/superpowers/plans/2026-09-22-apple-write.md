@@ -47,7 +47,7 @@
   → 對 web token 來說 `canEdit` 就是「是不是你自己的清單」,**正是 §8 ToS 保守做法「只寫自建 library 清單」的機器判準**。
   (epheterson 說「canEdit 只看建立者、Music.app 建的寫不了」是**自簽 developer token** 的情況;web token 是網頁播放器本人,不受此限。)
 - 清單本體 attributes 有 `canEdit`、`canDelete`、`hasCollaboration`、`playParams.versionHash`(每次內容變動可能會變——R-8 觀察項)。
-- `/tracks` 的列 id 全是 `a.<catalogId>`(100/100),`relationships.catalog` 有 catalog id;`meta.total` 有值(現在 `PlaylistRef.Total` 填 -1,可順手補)。
+- 「耳妊辰養護保養」的 `/tracks` 列 id 全是 `a.<catalogId>`(100/100;**§5 補測證實只有這份協作清單如此,其他自建清單全是 `i.`**),`relationships.catalog` 有 catalog id;`meta.total` 有值(現在 `PlaylistRef.Total` 填 -1,可順手補)。
   這代表**同一首加兩次,列 id 可能相同**——與 kopuz 註解「兩列兩個 id(`i.…`)」矛盾,Cider #1915 又報「刪一份會全刪」。→ R-8 判定項(§5 第 2 項)。
 
 ### 1.2 會咬人的事(全部有來源)
@@ -126,7 +126,7 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 |---|---|---|---|
 | **T0** | 本計畫 + 重寫 `scripts/p0/p0-2-playlist-ops.sh`(§5)+ ARCHITECTURE 決策 49 草稿 | 使用者拍板 §6 | `bash -n`(CI 已有) |
 | **T1** | 搬家可用:`do()` body、`CreatePlaylist`(含等待出現)、pure-append `ApplyOps`、`canEdit` 閘、`Pushable`、`Caps` Create/Append、429 快速失敗;文字與文件(README / 指南 / 網站首頁 / ARCHITECTURE)同 PR | **不等 R-8**(官方端點) | fake amp-api 加 POST 建清單 / POST tracks / GET 本體;斷言:分批邊界 0 / 1 / 100 / 101 / 250、body 的 `type`、`canEdit:false` 零寫入、非 pure-append 回 skipped、建清單後列表未出現時會輪詢、**從未收到 `DELETE …/tracks`**;CLI e2e:`migrate --from spotify --to apple` 走完(建清單 → 推 → 再 pull 零變更)、`pl sync` 兩個假伺服器對調角色 |
-| **T2** | remove / move / rename:PATCH、重讀對齊、一次 PUT(混型)、`Caps` Remove/Reorder/Rename | **R-8 已過(§5 結果)**,可與 T1 同 PR 或緊接;`a.` 列的 PUT 未自驗,R-9 補(備案見 §5) | fake 加 PUT / PATCH;斷言 PUT body 的列 id 順序 = want、重讀不一致零寫入、PUT 空序列只在 want 為空時發生、兩段式失敗的 Written;`pl dedup` 在 Apple 上真的拿掉後面那份;`TestSyncModel*` 讓 apple 角色的假伺服器也接 PUT |
+| **T2** | remove / move / rename:PATCH、重讀對齊、一次 PUT(混型)、`Caps` Remove/Reorder/Rename | **R-8 已過(§5 結果)**,可與 T1 同 PR 或緊接;`a.` 列(= 協作清單)的 PUT 補測回 500 → 協作清單 plan 階段就跳過(§5 補測) | fake 加 PUT / PATCH;斷言 PUT body 的列 id 順序 = want、重讀不一致零寫入、PUT 空序列只在 want 為空時發生、兩段式失敗的 Written;`pl dedup` 在 Apple 上真的拿掉後面那份;`TestSyncModel*` 讓 apple 角色的假伺服器也接 PUT |
 | T3(可選) | Apple 批次 ISRC 反查(`filter[isrc]=a,b,…` 25 個一次):resolver 對大清單 25× 省請求 | — | SPI 加選用介面 `BatchISRCLookup`;resolver 有就用 |
 | T4 | 真帳號驗收:P5 計畫 R-1、R-2、R-8、R-9 + P8 R-14(Spotify → Apple 真搬一次) | T1 / T2 合併 | 維護者跑;完成才在 P5 標題打 ✅ |
 
@@ -163,8 +163,7 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 | 8 | HTTP 狀態 | 建 201 / POST 200(resources)與 204 / PATCH 204 / PUT 反序 204、去重 204、混型 204、移除 204 / 刪清單 204 | `Caps()` 宣告 Create、Append、Remove、Reorder、Rename 全部 |
 
 未量到的:POST 每批 100 的上限(只測 3 首;沿用社群值)、PUT 大清單(只測 7 列;網頁播放器自己就用它重排整個清單)、
-**列 id 是 `a.<catalogId>` 的既有清單**(使用者 Music.app 建的清單全是這種;R-8 的拋棄式清單是 API 加的、列 id 全是 `i.`,所以 PUT / POST 帶 `a.` + `library-songs` 沒在真帳號打過——
-這正是對既有清單 `pl sync` 換序或 `pl dedup` 會送的 body;維護者驗收 R-9 要挑一個 `a.` 列的清單。若 Apple 回 4xx,備案是 `refOf` 把 `a.<catalogId>` 換成 `{"id":"<catalogId>","type":"songs"}`——它本來就是 catalog id 的包裝,一個分支的事)。
+**列 id 是 `a.<catalogId>` 的清單**(唯讀探測時以為是既有清單的通則;下面的補測證實只有協作清單是 `a.`、對它 PUT 回 500,程式改成 plan 階段就跳過協作清單。原本想的備案「`refOf` 把 `a.` 換成 catalog id + `songs`」**沒有採用**——分不出真因,換型別送出去仍可能 500)。
 
 ⚠️ 副作用:這次探測把 7 首五月天加進了使用者的 Apple Music 資料庫(刪清單不會連帶移除)。
 
@@ -173,7 +172,8 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 先唯讀掃過 7 個自建清單:**只有「耳妊辰養護保養」(222 列,`hasCollaboration:true`)是 `a.` 列,其他 6 個(25–543 列,非協作)全是 `i.` 列**——`a.` 是協作清單的列,不是「Music.app 建的清單」的列。
 對它原序全量 PUT 222 列(`a.` id + `library-songs`,先備份):**HTTP 500 `Upstream Service Error / Unable to update tracks`(code 50001),讀回 222 列與備份逐列相同——零變動**。
 分不出是 `a.` id 不被接受、還是協作清單本來就不能經這個端點改(兩者在這個帳號完全重疊);要分,得對同一份清單送 catalog id + `songs`(會把列變成 `i.`、曲目進資料庫,是有副作用的寫入)或找一個非協作的 `a.` 清單。
-**決定**:`ApplyOps` 重讀到任何 `a.` 列就零寫入、明講原因(協作清單目前不能由 capy 移除 / 換序,請在 app 裡手動或複製成一般清單);500 的翻譯補上這個原因。非協作、`i.` 列的既有清單仍是 R-9 的驗收對象(這次沒動它們)。
+**第三個沒排除的原因:列數**——R-8 的 PUT 只送過 7 列,補測一次送 222 列;500 也可能是 body 大小。無損的分辨法:對非協作、`i.` 列的大清單(「太好聽」543 列)原序全量 PUT 一次,待使用者授權。
+**決定(PR #81)**:清單列表就帶 `PlaylistRef.Unwritable`(`canEdit:false`、`hasCollaboration:true`),push 在 plan 階段列 refused——sync 只跳過那一格、cron 不會每輪 exit 1、dry-run 看得到、migrate 在確認之前就擋(exit 3);`ApplyOps` 留第二道防線(協作 → 整份不寫,連只改名與純尾端 append 也不寫,協作清單上的 PATCH / POST 沒驗過;非協作卻是 `a.` 列 → 沒看過的情況、請回報,先於「已經變了」報);500 的翻譯補上協作清單這個原因。非協作、`i.` 列的既有清單仍是 R-9 的驗收對象。
 
 ## 6. 要請使用者拍板的問題
 

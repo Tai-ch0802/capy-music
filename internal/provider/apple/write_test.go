@@ -22,6 +22,7 @@ type fakeLibrary struct {
 	t        *testing.T
 	mu       sync.Mutex
 	canEdit  bool
+	collab   bool // hasCollaboration
 	name     string
 	entries  []fakeEntry
 	seq      int
@@ -152,14 +153,14 @@ func (f *fakeLibrary) handler() http.HandlerFunc {
 				w.Write([]byte(`{"errors":[{"status":"500","title":"Upstream Service Error"}]}`))
 				return
 			}
-			items := `{"id":"p.1","attributes":{"name":"通勤","canEdit":true}}`
+			items := fmt.Sprintf(`{"id":"p.1","attributes":{"name":"通勤","canEdit":%v,"hasCollaboration":%v}}`, f.canEdit, f.collab)
 			if f.created && f.lists > f.listLag {
 				items += `,{"id":"p.new","attributes":{"name":"新清單","canEdit":true}}`
 			}
 			fmt.Fprintf(w, `{"data":[%s]}`, items)
 		case r.Method == http.MethodGet && p == "/me/library/playlists/p.1":
 			f.infos++
-			fmt.Fprintf(w, `{"data":[{"id":"p.1","attributes":{"name":%q,"canEdit":%v,"canDelete":true}}]}`, f.name, f.canEdit)
+			fmt.Fprintf(w, `{"data":[{"id":"p.1","attributes":{"name":%q,"canEdit":%v,"canDelete":true,"hasCollaboration":%v}}]}`, f.name, f.canEdit, f.collab)
 		case r.Method == http.MethodPatch && p == "/me/library/playlists/p.1":
 			var req struct {
 				Attributes map[string]string `json:"attributes"`
@@ -383,24 +384,57 @@ func TestApplyOpsReReadMismatchWritesNothing(t *testing.T) {
 	}
 }
 
-// 協作清單(列 id 是 a.)的整批取代在真帳號回 500(計畫 §5 補測):重讀到 a. 列就零寫入、講明原因,連同一輪的 rename 也不送;
-// 純尾端 append 走 POST、不重讀,不受影響。
-func TestApplyOpsRefusesCollaborativeARows(t *testing.T) {
+// 協作清單的整批取代在真帳號回 500(計畫 §5 補測):清單本體的 hasCollaboration 就擋——在重讀 /tracks 之前(不多花分頁讀取)、
+// 對任何 op 都一樣(連只改名、純尾端 append 也不寫,協作清單上的 PATCH / POST 沒驗過),零寫入、講明原因。
+func TestApplyOpsRefusesCollaborativePlaylist(t *testing.T) {
+	for _, ops := range [][]provider.PlaylistOp{
+		{{Kind: provider.OpMove, From: 1, Pos: 0}, {Kind: provider.OpRename, Name: "x"}},
+		{{Kind: provider.OpRename, Name: "x"}},
+		{add("c3", 2)},
+	} {
+		f, p := writeWorld(t, true, "c1", "c2")
+		f.collab = true
+		_, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, ops)
+		if err == nil || !strings.Contains(err.Error(), "協作清單") || !strings.Contains(err.Error(), "手動") {
+			t.Fatalf("%v:要講明是協作清單、不寫:%v", ops, err)
+		}
+		if len(f.writes) != 0 || f.name != "通勤" || f.reads != 0 {
+			t.Fatalf("%v:零寫入、不重讀 /tracks:%+v reads=%d", ops, f.writes, f.reads)
+		}
+	}
+}
+
+// 非協作清單卻讀到 a. 列(2026-09-22 沒看過的情況):重讀後零寫入、請使用者回報;永久狀態先於併發不一致報。
+func TestApplyOpsRefusesUnexpectedARows(t *testing.T) {
 	f, p := writeWorld(t, true)
 	f.entries = []fakeEntry{{ID: "a.1", Catalog: "c1"}, {ID: "a.2", Catalog: "c2"}}
-	ops := []provider.PlaylistOp{{Kind: provider.OpMove, From: 1, Pos: 0}, {Kind: provider.OpRename, Name: "x"}}
-	_, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, ops)
-	if err == nil || !strings.Contains(err.Error(), "協作清單") || !strings.Contains(err.Error(), "a.1") || !strings.Contains(err.Error(), "手動") {
-		t.Fatalf("要講明是協作清單、不寫:%v", err)
+	_, err := p.ApplyOps(context.Background(), "p.1", []string{"c1"}, []provider.PlaylistOp{{Kind: provider.OpMove, From: 0, Pos: 0}, add("c9", 0)}) // current 也對不上
+	if err == nil || !strings.Contains(err.Error(), "a.1") || !strings.Contains(err.Error(), "回報") || strings.Contains(err.Error(), "已經變了") {
+		t.Fatalf("要講 a. 列與請回報,且先於「已經變了」:%v", err)
 	}
-	if len(f.writes) != 0 || f.name != "通勤" {
-		t.Fatalf("零寫入(連 PATCH 也不送):%+v", f.writes)
+	if len(f.writes) != 0 {
+		t.Fatalf("零寫入:%+v", f.writes)
 	}
-	if _, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, []provider.PlaylistOp{add("c3", 2)}); err != nil {
-		t.Fatalf("純尾端 append 走 POST,不受 a. 列影響:%v", err)
+}
+
+// 清單列表就標出寫不了的原因(PlaylistRef.Unwritable):canEdit:false、協作清單;canEdit 沒給(假伺服器)不算。
+func TestLibraryPlaylistsMarkUnwritable(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[
+{"id":"p.mine","attributes":{"name":"自建","canEdit":true,"hasCollaboration":false}},
+{"id":"p.apple","attributes":{"name":"精選","canEdit":false,"hasCollaboration":false}},
+{"id":"p.collab","attributes":{"name":"協作","canEdit":true,"hasCollaboration":true}},
+{"id":"p.old","attributes":{"name":"沒給 canEdit"}}]}`))
+	})
+	pls, err := c.LibraryPlaylists(context.Background())
+	if err != nil || len(pls) != 4 {
+		t.Fatalf("(%d, %v)", len(pls), err)
 	}
-	if len(f.writesOf(http.MethodPost)) != 1 || f.reads != 1 {
-		t.Fatalf("append 一個 POST、沒有再重讀:%+v reads=%d", f.writes, f.reads)
+	if pls[0].Unwritable != "" || pls[3].Unwritable != "" {
+		t.Errorf("自建與 canEdit 不明的清單不該標:%q %q", pls[0].Unwritable, pls[3].Unwritable)
+	}
+	if !strings.Contains(pls[1].Unwritable, "自己建的清單") || !strings.Contains(pls[2].Unwritable, "協作清單") {
+		t.Errorf("精選與協作要標原因:%q %q", pls[1].Unwritable, pls[2].Unwritable)
 	}
 }
 

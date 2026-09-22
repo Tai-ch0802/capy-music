@@ -127,8 +127,8 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	if err != nil {
 		return nil, writeErr(id, err)
 	}
-	if !info.CanEdit {
-		return nil, fmt.Errorf("Apple 只讓你編輯自己建的清單;「%s」(%s)不是——Apple 精選、喜好歌曲、已購買的音樂都不能寫", info.Name, id)
+	if reason := unwritableReason(&info.CanEdit, info.HasCollaboration); reason != "" { // 第二道防線:plan 階段的 PlaylistRef.Unwritable 已擋過一次
+		return nil, fmt.Errorf("Apple 清單「%s」(%s)寫不了:%s", info.Name, id, reason)
 	}
 	n := len(current)
 	appendOnly := itemsChanged && len(want) > n && slices.Equal(want[:n], current)
@@ -149,13 +149,13 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 				byID[live[i]] = e.ID
 			}
 		}
+		// a. 列 2026-09-22 只在協作清單看過(其他自建清單全是 i. 列),而協作清單上面已經擋掉;非協作卻是 a. 列是沒看過的情況——
+		// 永久狀態先於暫時狀態(併發不一致)報,不然使用者白跑一輪 pull 才看到真正擋住他的原因(PR #81 review)。
+		if i := slices.IndexFunc(entries, func(e libraryEntry) bool { return strings.HasPrefix(e.ID, "a.") }); i >= 0 {
+			return nil, fmt.Errorf("Apple 清單「%s」(%s)不是協作清單,列 id 卻是 a.(例如 %s):這種列 2026-09-22 只在協作清單看過、整批取代對它回 500,capy 這次不寫;請回報這個情況", info.Name, id, entries[i].ID)
+		}
 		if !slices.Equal(live, current) {
 			return nil, fmt.Errorf("Apple 清單 %s 在讀取之後已經變了,這次不寫(先 capy pl pull 再推)", id)
-		}
-		// a. 列只出現在協作清單(hasCollaboration:true;其他自建清單全是 i. 列)。2026-09-22 對它原序全量 PUT 222 列回 500「Unable to update tracks」、
-		// 零變動(計畫 §5 補測)——分不出是 a. id 不被接受還是協作清單不能經這個端點改,先零寫入、講明原因,不讓使用者從 500 猜。
-		if i := slices.IndexFunc(entries, func(e libraryEntry) bool { return strings.HasPrefix(e.ID, "a.") }); i >= 0 {
-			return nil, fmt.Errorf("Apple 清單「%s」(%s)是協作清單(列 id 是 a.,例如 %s):Apple 對它的整批取代回 500(2026-09-22 實測),capy 目前無法替它移除 / 換序,這次不寫;請在 Apple Music app 裡手動,或把它複製成一般清單再連結", info.Name, id, entries[i].ID)
 		}
 		refs = make([]trackRef, len(want))
 		for i, tid := range want {
