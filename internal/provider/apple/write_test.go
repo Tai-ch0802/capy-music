@@ -440,10 +440,12 @@ func TestApplyOpsPartialAppendReportsWritten(t *testing.T) {
 
 // 建清單:POST isPublic:false,然後輪詢列表直到出現才回傳(pull 的 gone 判準看列表);超過上限回錯並帶 id 與接回的命令。
 func TestCreatePlaylistWaitsUntilListed(t *testing.T) {
-	orig, origMax := provider.Wait, createPollMax
+	orig, origMax, origErr := provider.Wait, createPollMax, provider.BackoffStderr
 	waits := 0
+	var said strings.Builder
 	provider.Wait = func(context.Context, time.Duration) error { waits++; return nil }
-	t.Cleanup(func() { provider.Wait, createPollMax = orig, origMax })
+	provider.BackoffStderr = &said
+	t.Cleanup(func() { provider.Wait, createPollMax, provider.BackoffStderr = orig, origMax, origErr })
 
 	f, p := writeWorld(t, true)
 	f.listLag = 2
@@ -453,6 +455,9 @@ func TestCreatePlaylistWaitsUntilListed(t *testing.T) {
 	}
 	if f.lists != 3 || waits != 2 {
 		t.Fatalf("前兩次列表沒有、第三次有:lists=%d waits=%d", f.lists, waits)
+	}
+	if strings.Count(said.String(), "等待 Apple") != 1 { // 等待有一句話、只說一次
+		t.Fatalf("等待要說一次:%q", said.String())
 	}
 	if body := f.writesOf(http.MethodPost)[0].Body; strings.Contains(body, "tracks") || strings.Contains(body, "description") {
 		t.Fatalf("建清單不帶 tracks / description:%s", body)

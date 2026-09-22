@@ -561,6 +561,9 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.Play
 			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但 %v 內還沒出現在清單列表(iCloud 傳播延遲);稍後用 capy pl link <名稱> apple:%s 接上",
 				ref.Name, ref.ID, time.Duration(createPollMax)*createPollInterval, ref.ID)
 		}
+		if attempt == 0 { // 最長 30 秒的安靜等待要有一句話;走 BackoffStderr 接縫,web 模式也看得到(stderr 不污染 TSV)
+			fmt.Fprintf(provider.BackoffStderr, "等待 Apple 把新清單 %s 放進清單列表(通常幾秒)…\n", ref.ID)
+		}
 		if err := provider.Wait(ctx, createPollInterval); err != nil {
 			return ref, err
 		}
