@@ -383,6 +383,27 @@ func TestApplyOpsReReadMismatchWritesNothing(t *testing.T) {
 	}
 }
 
+// 協作清單(列 id 是 a.)的整批取代在真帳號回 500(計畫 §5 補測):重讀到 a. 列就零寫入、講明原因,連同一輪的 rename 也不送;
+// 純尾端 append 走 POST、不重讀,不受影響。
+func TestApplyOpsRefusesCollaborativeARows(t *testing.T) {
+	f, p := writeWorld(t, true)
+	f.entries = []fakeEntry{{ID: "a.1", Catalog: "c1"}, {ID: "a.2", Catalog: "c2"}}
+	ops := []provider.PlaylistOp{{Kind: provider.OpMove, From: 1, Pos: 0}, {Kind: provider.OpRename, Name: "x"}}
+	_, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, ops)
+	if err == nil || !strings.Contains(err.Error(), "協作清單") || !strings.Contains(err.Error(), "a.1") || !strings.Contains(err.Error(), "手動") {
+		t.Fatalf("要講明是協作清單、不寫:%v", err)
+	}
+	if len(f.writes) != 0 || f.name != "通勤" {
+		t.Fatalf("零寫入(連 PATCH 也不送):%+v", f.writes)
+	}
+	if _, err := p.ApplyOps(context.Background(), "p.1", []string{"c1", "c2"}, []provider.PlaylistOp{add("c3", 2)}); err != nil {
+		t.Fatalf("純尾端 append 走 POST,不受 a. 列影響:%v", err)
+	}
+	if len(f.writesOf(http.MethodPost)) != 1 || f.reads != 1 {
+		t.Fatalf("append 一個 POST、沒有再重讀:%+v reads=%d", f.writes, f.reads)
+	}
+}
+
 // want 為空 = 清空整份:PUT {"data":[]}(不是 null、不是 DELETE);閘在 CLI 端。
 func TestApplyOpsEmptyWantPutsEmptyArray(t *testing.T) {
 	f, p := writeWorld(t, true, "c1")

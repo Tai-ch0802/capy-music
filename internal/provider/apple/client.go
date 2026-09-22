@@ -580,7 +580,7 @@ func writeErr(id string, err error) error {
 	var ae *apiError
 	switch {
 	case errors.As(err, &ae) && ae.Status == http.StatusInternalServerError && strings.Contains(ae.Title+" "+ae.Detail, "Unable to update"):
-		return fmt.Errorf("Apple 拒絕修改清單 %s——只有你自己建的清單能寫(Apple 精選、喜好歌曲、已購買的音樂不行):%w", id, err)
+		return fmt.Errorf("Apple 拒絕修改清單 %s(500 Unable to update tracks):不是你自己建的清單(Apple 精選、喜好歌曲、已購買的音樂),或是協作清單(列 id 是 a.;2026-09-22 實測):%w", id, err)
 	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
 		return fmt.Errorf("%w:Apple 找不到清單 %s(%v)", provider.ErrNotFound, id, err)
 	}

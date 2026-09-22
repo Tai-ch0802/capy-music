@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
@@ -150,6 +151,11 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		}
 		if !slices.Equal(live, current) {
 			return nil, fmt.Errorf("Apple 清單 %s 在讀取之後已經變了,這次不寫(先 capy pl pull 再推)", id)
+		}
+		// a. 列只出現在協作清單(hasCollaboration:true;其他自建清單全是 i. 列)。2026-09-22 對它原序全量 PUT 222 列回 500「Unable to update tracks」、
+		// 零變動(計畫 §5 補測)——分不出是 a. id 不被接受還是協作清單不能經這個端點改,先零寫入、講明原因,不讓使用者從 500 猜。
+		if i := slices.IndexFunc(entries, func(e libraryEntry) bool { return strings.HasPrefix(e.ID, "a.") }); i >= 0 {
+			return nil, fmt.Errorf("Apple 清單「%s」(%s)是協作清單(列 id 是 a.,例如 %s):Apple 對它的整批取代回 500(2026-09-22 實測),capy 目前無法替它移除 / 換序,這次不寫;請在 Apple Music app 裡手動,或把它複製成一般清單再連結", info.Name, id, entries[i].ID)
 		}
 		refs = make([]trackRef, len(want))
 		for i, tid := range want {
