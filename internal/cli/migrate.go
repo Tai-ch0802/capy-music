@@ -43,7 +43,7 @@ func newMigrateCmd() *cobra.Command {
 		Use:   "migrate [來源清單 ID 或名稱] --from <平台> --to <平台>[:<既有清單 ID 或名稱>]",
 		Short: "把一個平台的清單搬到另一個平台(新建或加進既有清單);順序不動、不刪來源、只新增",
 		Long: `把 --from 平台的清單複製到 --to 平台,不用自己串 pl link / pull / resolve / push。--to 只給平台 = 在那裡建一個跟來源同名的私人清單
-(Spotify 才能建);--to <平台>:<清單> = 加進既有清單。不帶參數且在終端機裡會逐段挑選(來源平台 → 清單 → 目標平台 → 既有清單或建新的);
+(Spotify、Apple Music 都能建,local 不能);--to <平台>:<清單> = 加進既有清單。不帶參數且在終端機裡會逐段挑選(來源平台 → 清單 → 目標平台 → 既有清單或建新的);
 非 TTY 要給清單與 --from / --to。
 
 順序:目標原本的順序是前綴,來源的曲目依來源的順序接在後面;來源裡目標已經有的(同平台 id 或同 ISRC)略過,來源自己的重複也只留一份。
@@ -52,12 +52,12 @@ func newMigrateCmd() *cobra.Command {
 一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason;dir ∈ pull / migrate / push)、一次確認;
 --dry-run 只列(有東西時 exit 2、不建清單);非 TTY 沒 --yes 也是 exit 2。確認之後才在目標平台建清單。
 完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要持續同步,結尾會給 pl link + pl sync 的命令。
-目標不能是 Apple(目前只讀);local 只能加進既有檔(--to local:<檔名>)。`,
+local 只能加進既有檔(--to local:<檔名>)。搬進 Apple Music 的曲目會同時加進你的 Apple Music 資料庫(Apple 的行為);Apple 只寫你自己建的清單。`,
 		Args: argsOrPicker(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runMigrate(cmd, args, from, to, dryRun, yes) },
 	}
 	cmd.Flags().StringVar(&from, "from", "", "來源平台("+strings.Join(providerIDs, "|")+");終端機裡不給會挑選")
-	cmd.Flags().StringVar(&to, "to", "", "目標平台,或 <平台>:<既有清單 ID 或名稱>;只給平台 = 建一個跟來源同名的新清單(Spotify);終端機裡不給會挑選")
+	cmd.Flags().StringVar(&to, "to", "", "目標平台,或 <平台>:<既有清單 ID 或名稱>;只給平台 = 建一個跟來源同名的新清單(Spotify / Apple Music);終端機裡不給會挑選")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出要搬什麼,不建清單、不碰平台也不碰 Drive(有東西時 exit 2)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用);不當場裁決沒對到的曲目")
 	return cmd

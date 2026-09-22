@@ -18,8 +18,8 @@ func TestProviderIdentityAndCaps(t *testing.T) {
 	if p.ID() != "apple" || p.DisplayName() != "Apple Music" {
 		t.Errorf("identity:(%s, %s)", p.ID(), p.DisplayName())
 	}
-	base := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead
-	if !p.Caps().Has(base) || p.Caps().Has(provider.CapPlaylistRemove) {
+	base := provider.CapSearch | provider.CapISRCExpose | provider.CapPlaylistRead | provider.CapPlaylistRemove // 寫入自決策 49 起宣告
+	if !p.Caps().Has(base) {
 		t.Errorf("Caps = %b", p.Caps())
 	}
 	if p.Caps().Has(provider.CapPlaybackControl) != (runtime.GOOS == "darwin") {

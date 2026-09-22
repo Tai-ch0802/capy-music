@@ -112,7 +112,7 @@ func asPlaylistReader(p provider.Provider) (provider.PlaylistReader, error) {
 func asPlaylistWriter(p provider.Provider) (provider.PlaylistWriter, error) {
 	w, ok := p.(provider.PlaylistWriter)
 	if !ok || p.Caps()&(provider.CapPlaylistAppend|provider.CapPlaylistRemove|provider.CapPlaylistReorder|provider.CapPlaylistRename) == 0 {
-		return nil, notSupported(p, "寫入播放清單(P0-2 待驗證)")
+		return nil, notSupported(p, "寫入播放清單")
 	}
 	return w, nil
 }

@@ -1087,8 +1087,8 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
 		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
 	}
-	if !strings.Contains(move, "const READ_ONLY = ['apple'];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? '目前只能當來源' : ''") {
-		t.Error("Apple Music 當目的地要是不可選並說明原因,不是直接消失")
+	if !strings.Contains(move, "const READ_ONLY = [];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? '目前只能當來源' : ''") {
+		t.Error("只讀平台當目的地要是不可選並說明原因,不是直接消失(目前沒有只讀平台:Apple 自決策 49 起可寫)")
 	}
 	// 精靈的命令走 args 陣列(決策 46;review #66 第 2 點):splitArgs 沒有跳脫,local 的清單 ID 含空白 / 雙引號會組不出來。
 	if !strings.Contains(move, "args: ['migrate', state.src.id, '--from', state.from, '--to', target],") || strings.Contains(move, "quote(") {
@@ -1391,9 +1391,15 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 			canCreate = append(canCreate, id)
 		}
 	}
+	jsList := func(xs []string) string {
+		if len(xs) == 0 {
+			return "[]"
+		}
+		return "['" + strings.Join(xs, "', '") + "']"
+	}
 	for _, want := range []string{
-		"const READ_ONLY = ['" + strings.Join(readOnly, "', '") + "'];",
-		"const CAN_CREATE = ['" + strings.Join(canCreate, "', '") + "'];",
+		"const READ_ONLY = " + jsList(readOnly) + ";",
+		"const CAN_CREATE = " + jsList(canCreate) + ";",
 	} {
 		if !strings.Contains(move, want) {
 			t.Errorf("平台的能力變了,move.js 要是:%s", want)

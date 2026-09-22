@@ -25,7 +25,7 @@ func newPlSyncCmd() *cobra.Command {
 變更集一次印完(非 TTY 是無標題 TSV:dir action provider playlist pos cid provider_id title artists reason;dir ∈ pull / push),確認一次;
 --dry-run 的 push 半邊是用 pull 套用後的 canonical 投影的,看得到完整一輪。閾值對每個 (清單, 平台) 各算,exit code 同 pl pull / pl push。
 push 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完平台才寫 Drive,Drive 那邊沒寫成時訊息會講明平台已經改了。
---provider 指到還寫不了的平台(Apple,P0-2 前)時只 pull 不 push,stderr 會說;某個清單的某個平台推不了(含 local file)也一樣只跳過那一格的 push 半邊,
+--provider 指到寫不了的平台(例如別台裝置的本機清單)時只 pull 不 push,stderr 會說;某個清單的某個平台推不了(含 local file)也一樣只跳過那一格的 push 半邊,
 不擋整輪(cron 的 sync --all 不會被一個清單綁死)。刪除閾值仍擋整輪;--force 放行時,pull 半邊吸收進來的刪除會在同一個指令裡
 推到這個清單連結的每一個平台——先 --dry-run 看清楚。`,
 		Args: cobra.MaximumNArgs(1),

@@ -3,7 +3,7 @@
 使用者:「是時候要來研究 apple music 的 api 了,我們需要把 spotify 歌單搬移至 apple music 的這段也開發時做出來才行。
 先徹底研究一下做法和可行性,整理出一份 plan 之後我們再來討論,確定做法以後才進行實作。」
 
-這份文件是研究結論 + 計畫,**尚未定案、尚未實作**。§6 是要請使用者拍板的問題。
+這份文件是研究結論 + 計畫。2026-09-22 使用者拍板 §6 全部建議、R-8 探測跑完(§5 結果)、T1 + T2 同一個 PR 實作完成(§4 表下方)。
 
 ---
 
@@ -131,7 +131,7 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 | T4 | 真帳號驗收:P5 計畫 R-1、R-2、R-8、R-9 + P8 R-14(Spotify → Apple 真搬一次) | T1 / T2 合併 | 維護者跑;完成才在 P5 標題打 ✅ |
 
 順序:T0 → (使用者授權後跑 §5 探測) → T1 立刻開工(不等探測結果) → T2 依探測結果 → T4。T3 看使用者要不要。
-**2026-09-22 探測已跑完(§5 結果),T1 / T2 都沒有 gate 了。**
+**2026-09-22 探測已跑完(§5 結果),T1 / T2 都沒有 gate 了。T1 + T2 同一個 PR 實作完成(feat/apple-write):`internal/provider/apple/{client,apple}.go` 加 `do()` body、`Playlist` / `AddTracks` / `ReplaceTracks` / `Rename` / `CreatePlaylist`(輪詢列表,上限 30 × 1 s)、`ApplyOps` / `Pushable`、五個寫入能力;429 無 Retry-After 快速失敗;CLI 一個命令都沒新增,只改文字與文件;web 搬家精靈 `READ_ONLY = []`、`CAN_CREATE` 加 apple;測試:apple 套件 12 個(fake amp-api 斷言從未收到 DELETE)、CLI e2e `TestMigrateSpotifyToAppleThenReorderIsOnePut` / `TestMigrateToAppleCuratedPlaylistWritesNothing`。**
 
 ## 5. R-8 寫入探測(step 0;需要使用者授權,會在你的音樂庫建一個拋棄式清單並在結尾刪掉)
 

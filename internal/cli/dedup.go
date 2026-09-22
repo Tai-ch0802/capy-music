@@ -19,11 +19,11 @@ import (
 // 單曲版 / 專輯版同一個 ISRC 也算)。保留第一次出現的那份、其餘拿掉,剩下的相對順序與 rank 一個都不動:清單順序是
 // 使用者的記憶(CLAUDE.md 硬約束),去重永遠不是重排。
 // 兩條路徑:
-//   - <provider>:<清單>:直接讀平台清單、只報告。不碰 Drive、不需要連結;Apple 只讀,今天只能到這裡(在 app 裡手動刪)。
+//   - <provider>:<清單>:直接讀平台清單、只報告。不碰 Drive、不需要連結;要由 capy 移除,連到正本再走下一種寫法。
 //   - canonical 清單(name|pid):pl sync 的一輪中間多一步——pull 半邊先把平台現況吸進 C(push 的兩個前提靠它)→ C 去重
 //     → push 半邊把多出來的份從可寫的平台拿掉。一張表(dir 多一種 dedup)、一次確認、閾值(去重與 push 各算)、
 //     exit code 同 pl sync。C 沒有重複、平台也沒有 → 「沒有重複」、零寫入,不會退化成一次普通的 sync。
-//     C 早已去重、只讀的平台(Apple)還留著多的份時,DERIVE 規則 4′ 不會把它加回來;那幾份列在 stderr 請使用者手動刪。
+//     C 早已去重、寫不了的平台還留著多的份時,DERIVE 規則 4′ 不會把它加回來;那幾份列在 stderr 請使用者手動刪。
 // 同 ISRC 不同 id 時 C 記的是第一份(mapping 是第一次觀測到的 id),平台上留下哪個 id 由 push 的 LCS 配對決定——
 // 相鄰兩份時留後面那個 id(lcsPairs 對同一個 C item 取 L 順序最後的候選)。曲目一樣、順序一樣,只差 id;測試釘住這個行為。
 
@@ -41,13 +41,13 @@ func newPlDedupCmd() *cobra.Command {
 		Long: `重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首)。保留第一次出現的那份、拿掉後面的,剩下的相對順序一個都不動。
 
 <provider>:<清單 ID 或名稱>:直接讀平台清單、只報告(非 TTY 是無標題 TSV:pos id title artists reason;pos 從 0 起);不碰 Drive、
-不需要連結;有沒有重複 exit code 都是 0。Apple 目前只讀,只能到這裡——照表在 app 裡手動刪。--yes / --force / --dry-run / --provider 配這種寫法是錯誤。
+不需要連結;有沒有重複 exit code 都是 0。要由 capy 移除,把清單連到正本再用下面那種寫法。--yes / --force / --dry-run / --provider 配這種寫法是錯誤。
 
 canonical 清單(name|pid;不帶參數且在終端機裡會開挑選器):pl sync 的一輪中間多一步——先 pull(平台現況吸進正本)、
 正本去重、再 push 把多出來的份從可寫的平台拿掉。一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason,
 dir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確認;exit code 同 pl sync(0 無變更或已套用、1 錯誤、2 待套用、3 安全閥)。
 正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 pl sync;--provider 沒選到或讀不到的平台這次沒檢查,stderr 會說)。
-刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),--force 越過;寫不了的平台(Apple)還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。`,
+刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),--force 越過;寫不了的平台還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。`,
 		Args: argsOrPicker(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if prov != "" && !isProviderID(prov) {

@@ -3,14 +3,18 @@
 package apple
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
@@ -49,15 +53,27 @@ func (e *apiError) Error() string {
 }
 
 // do:401 = developer token 無效、403 = MUT 無效——兩者對使用者都是「重跑 auth login apple」(spec §4.3)。
-func (c *Client) do(ctx context.Context, method, path string, q url.Values, out any) (int, error) {
+// body 非 nil 時序列化成 JSON 並帶 Content-Type(寫入端點;決策 49)。
+func (c *Client) do(ctx context.Context, method, path string, q url.Values, body, out any) (int, error) {
 	for attempt := 0; ; attempt++ {
 		u := c.base + path
 		if len(q) > 0 {
 			u += "?" + q.Encode()
 		}
-		req, err := http.NewRequestWithContext(ctx, method, u, nil)
+		var rd io.Reader
+		if body != nil {
+			b, err := json.Marshal(body)
+			if err != nil {
+				return 0, err
+			}
+			rd = bytes.NewReader(b)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, u, rd)
 		if err != nil {
 			return 0, err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
 		}
 		req.Header.Set("Authorization", "Bearer "+c.dev)
 		// ponytail: web token 綁 origin,缺這行 amp-api 會拒(gamdl 同);MUT 用網頁播放器的標頭名。
@@ -72,6 +88,11 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
+			if resp.Header.Get("Retry-After") == "" {
+				// amp-api 的 429 不帶 Retry-After,而且窗口是滾動約一小時、配額是所有網頁播放器共用的(計畫 2026-09-22 §1.2 第 3 點):
+				// 1 / 2 / 4 秒重試等於白等,還會延長被限流的時間——直接失敗、把原因講清楚。有 Retry-After 才照它等。
+				return resp.StatusCode, &apiError{Status: resp.StatusCode, Title: "rate limited", Detail: "Apple 網頁 token 的配額是所有網頁播放器共用的,約一小時後再試"}
+			}
 			if err := provider.Backoff(ctx, resp, attempt); err != nil {
 				var rl *provider.RateLimitError
 				if errors.As(err, &rl) {
@@ -119,7 +140,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, out 
 // 404 → 端點形狀未定(附錄 A C-0 前 base/路徑都是推定),無法驗證:非失敗,但也不算通過,
 // 呼叫端據此在後續失敗訊息裡把「API base 可能不對」列為原因。
 func (c *Client) Preflight(ctx context.Context) (bool, error) {
-	status, err := c.do(ctx, http.MethodGet, "/storefronts/us", nil, nil)
+	status, err := c.do(ctx, http.MethodGet, "/storefronts/us", nil, nil, nil)
 	switch {
 	case err == nil:
 		return true, nil
@@ -187,7 +208,7 @@ func (c *Client) Storefront(ctx context.Context) (string, error) {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if _, err := c.do(ctx, http.MethodGet, "/me/storefront", nil, &resp); err != nil {
+	if _, err := c.do(ctx, http.MethodGet, "/me/storefront", nil, nil, &resp); err != nil {
 		return "", err
 	}
 	if len(resp.Data) == 0 {
@@ -211,7 +232,7 @@ func (c *Client) SearchSongs(ctx context.Context, storefront, term string, limit
 				} `json:"songs"`
 			} `json:"results"`
 		}
-		if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/search", q, &resp); err != nil {
+		if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/search", q, nil, &resp); err != nil {
 			return nil, err
 		}
 		for i := range resp.Results.Songs.Data {
@@ -234,7 +255,7 @@ func (c *Client) SongsByISRC(ctx context.Context, storefront, isrc string) ([]pr
 	var resp struct {
 		Data []songJSON `json:"data"`
 	}
-	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/songs", url.Values{"filter[isrc]": {n}}, &resp); err != nil {
+	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/songs", url.Values{"filter[isrc]": {n}}, nil, &resp); err != nil {
 		return nil, err
 	}
 	out := make([]provider.Track, len(resp.Data))
@@ -274,7 +295,7 @@ func (c *Client) SearchArtists(ctx context.Context, storefront, term string, lim
 			} `json:"artists"`
 		} `json:"results"`
 	}
-	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/search", q, &resp); err != nil {
+	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/search", q, nil, &resp); err != nil {
 		return nil, err
 	}
 	out := make([]provider.Artist, len(resp.Results.Artists.Data))
@@ -290,7 +311,7 @@ func (c *Client) ArtistTopSongs(ctx context.Context, storefront, id string) ([]p
 		Data []songJSON `json:"data"`
 	}
 	path := "/catalog/" + url.PathEscape(storefront) + "/artists/" + url.PathEscape(id) + "/view/top-songs"
-	if _, err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+	if _, err := c.do(ctx, http.MethodGet, path, nil, nil, &resp); err != nil {
 		return nil, err
 	}
 	out := make([]provider.Track, len(resp.Data))
@@ -305,7 +326,7 @@ func (c *Client) Song(ctx context.Context, storefront, id string) (provider.Trac
 	var resp struct {
 		Data []songJSON `json:"data"`
 	}
-	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/songs/"+url.PathEscape(id), nil, &resp); err != nil {
+	if _, err := c.do(ctx, http.MethodGet, "/catalog/"+url.PathEscape(storefront)+"/songs/"+url.PathEscape(id), nil, nil, &resp); err != nil {
 		return provider.Track{}, "", err
 	}
 	if len(resp.Data) == 0 {
@@ -327,7 +348,7 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 			} `json:"data"`
 			Next string `json:"next"` // 分頁看這個,不是「回傳數 < limit」——Apple 可能單頁回不滿 limit 仍有下一頁
 		}
-		if _, err := c.do(ctx, http.MethodGet, "/me/library/playlists", q, &resp); err != nil {
+		if _, err := c.do(ctx, http.MethodGet, "/me/library/playlists", q, nil, &resp); err != nil {
 			return nil, err
 		}
 		for _, p := range resp.Data {
@@ -343,8 +364,28 @@ func (c *Client) LibraryPlaylists(ctx context.Context) ([]provider.PlaylistRef, 
 	}
 }
 
+// libraryEntry:library 清單的一列——列 id(PUT 整批取代與重讀對齊要用;真帳號看到 `i.…` / `a.…`)與它算出來的 Track。
+// Track.ProviderID 的規則(有 catalog 對應取 catalog id、否則列 id)只在這裡定一次:pull 觀測與 ApplyOps 的重讀對齊必須同一套,
+// 不然 library-only 曲目會被誤判成「平台已變」(計畫 2026-09-22 §3.2)。
+type libraryEntry struct {
+	ID    string
+	Track provider.Track
+}
+
 func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provider.Track, error) {
-	var out []provider.Track
+	es, err := c.libraryPlaylistEntries(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.Track, len(es))
+	for i := range es {
+		out[i] = es[i].Track
+	}
+	return out, nil
+}
+
+func (c *Client) libraryPlaylistEntries(ctx context.Context, id string) ([]libraryEntry, error) {
+	var out []libraryEntry
 	for offset := 0; ; {
 		q := url.Values{"include": {"catalog"}, "limit": {strconv.Itoa(libraryPage)}, "offset": {strconv.Itoa(offset)}}
 		var resp struct {
@@ -364,7 +405,7 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 			} `json:"data"`
 			Next string `json:"next"` // 分頁看這個,不是「回傳數 < limit」
 		}
-		status, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", q, &resp)
+		status, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", q, nil, &resp)
 		if err != nil {
 			if status == http.StatusNotFound { // Apple 對空清單或不存在的清單可能回 404
 				return nil, fmt.Errorf("清單為空或不存在:%w", provider.ErrNotFound)
@@ -386,7 +427,7 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 				c := cd[0].toTrack()
 				tr.URL, tr.ArtworkURL, tr.PreviewURL, tr.ReleaseDate, tr.Genres = c.URL, c.ArtworkURL, c.PreviewURL, c.ReleaseDate, c.Genres
 			}
-			out = append(out, tr)
+			out = append(out, libraryEntry{ID: it.ID, Track: tr})
 		}
 		if len(resp.Data) == 0 { // 防呆:有 next 但無資料也視為結束,不重打同一 offset
 			return out, nil
@@ -396,4 +437,152 @@ func (c *Client) LibraryPlaylistTracks(ctx context.Context, id string) ([]provid
 		}
 		offset += len(resp.Data)
 	}
+}
+
+// ── 寫入(計畫 docs/superpowers/plans/2026-09-22-apple-write.md;決策 49;全部端點 2026-09-22 真帳號各打過一次)──
+//
+// 建清單與 append 是 Apple 官方文件化的端點;PUT 整批取代、PATCH 改名是網頁播放器自己打的 amp-api 私有端點(多個開源客戶端同形,
+// Apple 未承諾)。⚠️ 這個套件不送 DELETE …/tracks:不帶 ids 會清空整份清單,帶 ids 的 mode=all 會把同一首的兩列一起刪。
+
+// playlistInfo:清單本體。CanEdit 是「使用者自建」的機器判準(真帳號:25 個清單裡恰好 7 個自建為 true,Apple 精選、喜好歌曲、
+// 已購買的音樂為 false);false 的清單寫入會回 500「Unable to update tracks」,所以寫之前先查。
+type playlistInfo struct {
+	ID, Name string
+	CanEdit  bool
+}
+
+func (c *Client) Playlist(ctx context.Context, id string) (playlistInfo, error) {
+	var resp struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Name    string `json:"name"`
+				CanEdit bool   `json:"canEdit"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	status, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id), nil, nil, &resp)
+	if status == http.StatusNotFound || (err == nil && len(resp.Data) == 0) {
+		return playlistInfo{}, fmt.Errorf("%w:清單 %s", provider.ErrNotFound, id)
+	}
+	if err != nil {
+		return playlistInfo{}, err
+	}
+	return playlistInfo{ID: resp.Data[0].ID, Name: resp.Data[0].Attributes.Name, CanEdit: resp.Data[0].Attributes.CanEdit}, nil
+}
+
+// trackRef:寫入 body 的一筆。type 依 id 形狀:catalog id 是純數字 → songs;帶「.」的是 library 列 id(i.… / a.…)→ library-songs。
+// 官方 LibraryPlaylistTracksRequest.Data 兩種都收;漏 type 會 2xx 但曲目靜默丟掉(kopuz),所以永遠帶。
+type trackRef struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+func refOf(id string) trackRef {
+	if strings.Contains(id, ".") {
+		return trackRef{ID: id, Type: "library-songs"}
+	}
+	return trackRef{ID: id, Type: "songs"}
+}
+
+// writeBatch:POST …/tracks 每批上限(社群實測值;R-8 只測到 3 首)。
+const writeBatch = 100
+
+// AddTracks:POST …/tracks 尾端 append,每批 100、依序(R-8 第 7 項:跨批順序正確);官方回 204。
+// 回傳已成功 append 的首數:第二批起失敗時前面的批已落地,呼叫端拿它組 PartialWriteError。
+func (c *Client) AddTracks(ctx context.Context, id string, ids []string) (written int, err error) {
+	path := "/me/library/playlists/" + url.PathEscape(id) + "/tracks"
+	for pos := 0; pos < len(ids); pos += writeBatch {
+		end := min(pos+writeBatch, len(ids))
+		refs := make([]trackRef, 0, end-pos)
+		for _, tid := range ids[pos:end] {
+			refs = append(refs, refOf(tid))
+		}
+		if _, err := c.do(ctx, http.MethodPost, path, nil, map[string]any{"data": refs}, nil); err != nil {
+			return pos, err
+		}
+	}
+	return len(ids), nil
+}
+
+// ReplaceTracks:PUT …/tracks 整批取代——網頁播放器自己的重排端點(R-8:反序 / 去重 / 混型 / 移除全 204)。
+// 陣列順序 = 新順序;沒列的就沒了;同一個列 id 出現幾次就留幾列。⚠️ 空陣列 = 清空整份(真帳號未驗;閘在 CLI 端:dry-run、閾值、確認)。
+func (c *Client) ReplaceTracks(ctx context.Context, id string, refs []trackRef) error {
+	if refs == nil {
+		refs = []trackRef{} // 序列化成 [] 而不是 null
+	}
+	_, err := c.do(ctx, http.MethodPut, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", nil, map[string]any{"data": refs}, nil)
+	return err
+}
+
+// Rename:PATCH …/{id} 只送 name(R-8 第 5 項:description 保留)。
+func (c *Client) Rename(ctx context.Context, id, name string) error {
+	_, err := c.do(ctx, http.MethodPatch, "/me/library/playlists/"+url.PathEscape(id), nil, map[string]any{"attributes": map[string]string{"name": name}}, nil)
+	return err
+}
+
+// createPollDelays:建清單後輪詢列表的間隔——退避 1 → 2 → 4 → 8 → 15 s(共 30 s、最多 6 次列表 GET;R-8 第 3 項量到 9 s)。
+// 不用 1 Hz × 30 次去撞所有網頁播放器共用的配額(PR #79 review)。測試替換點。
+var createPollDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}
+
+// CreatePlaylist:POST /me/library/playlists(官方端點;isPublic:false、不帶 tracks、不帶 description),再輪詢列表直到出現才回傳——
+// pull 的 gone 判準是「不在 ListPlaylists 裡」,不等的話 migrate / pl link --create 剛建的清單會被當成已刪。
+// POST 之後任何一條失敗(列表查不到、逾時、被中斷)都要帶著新清單的 id 與接回命令回錯:兩個 CLI 呼叫端只取 err,不然使用者的曲庫會留下一個
+// 連不回來的孤兒清單,而且下次重跑會被 sameNamePlaylists 擋住(PR #80 review)。逾時不能默默回傳成功:migrate 接著 observe 會把不在
+// 列表的清單當 gone 並取消連結,pl link --create 會連上一個 pull 視為已刪的 id。
+func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.PlaylistRef, error) {
+	var resp struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Name string `json:"name"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	body := map[string]any{"attributes": map[string]any{"name": name, "isPublic": false}}
+	if _, err := c.do(ctx, http.MethodPost, "/me/library/playlists", nil, body, &resp); err != nil {
+		return provider.PlaylistRef{}, err
+	}
+	if len(resp.Data) == 0 || resp.Data[0].ID == "" {
+		return provider.PlaylistRef{}, errors.New("Apple 建立清單的回應沒有 id")
+	}
+	ref := provider.PlaylistRef{ID: resp.Data[0].ID, Name: resp.Data[0].Attributes.Name, Total: -1}
+	if ref.Name == "" {
+		ref.Name = name
+	}
+	recover := fmt.Sprintf("稍後用 capy pl link <名稱> apple:%s 接上", ref.ID)
+	var total time.Duration
+	for _, d := range createPollDelays {
+		total += d
+	}
+	for attempt := 0; ; attempt++ {
+		pls, err := c.LibraryPlaylists(ctx)
+		if err != nil {
+			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但查清單列表失敗(%w);%s", ref.Name, ref.ID, err, recover)
+		}
+		if slices.ContainsFunc(pls, func(p provider.PlaylistRef) bool { return p.ID == ref.ID }) {
+			return ref, nil
+		}
+		if attempt >= len(createPollDelays) {
+			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但 %v 內還沒出現在清單列表(iCloud 傳播延遲);%s", ref.Name, ref.ID, total, recover)
+		}
+		if attempt == 0 { // 最長 30 秒的安靜等待要有一句話;走 BackoffStderr 接縫,web 模式也看得到(stderr 不污染 TSV)
+			fmt.Fprintf(provider.BackoffStderr, "等待 Apple 把新清單 %s 放進清單列表(通常幾秒)…\n", ref.ID)
+		}
+		if err := provider.Wait(ctx, createPollDelays[attempt]); err != nil {
+			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),等待它出現在列表時被中斷(%w);%s", ref.Name, ref.ID, err, recover)
+		}
+	}
+}
+
+// writeErr:寫入端點的錯誤翻成可行動的句子。500「Unable to update」= canEdit:false 的清單(第二道防線;ApplyOps 寫之前已查過);404 = 清單不存在。
+func writeErr(id string, err error) error {
+	var ae *apiError
+	switch {
+	case errors.As(err, &ae) && ae.Status == http.StatusInternalServerError && strings.Contains(ae.Title+" "+ae.Detail, "Unable to update"):
+		return fmt.Errorf("Apple 拒絕修改清單 %s——只有你自己建的清單能寫(Apple 精選、喜好歌曲、已購買的音樂不行):%w", id, err)
+	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+		return fmt.Errorf("%w:Apple 找不到清單 %s(%v)", provider.ErrNotFound, id, err)
+	}
+	return err
 }

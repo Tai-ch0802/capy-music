@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>capy: a free, open-source tool to move and sync playlists</title>
-<meta name="description" content="capy is a free, open-source music tool that runs on your own computer: move playlists from Apple Music to Spotify, keep Spotify and a local music folder in sync, search, and control playback.">
+<meta name="description" content="capy is a free, open-source music tool that runs on your own computer: move playlists between Apple Music, Spotify and a local music folder, keep them in sync, search, and control playback.">
 <link rel="canonical" href="https://capy.taislife.work/en/">
 <link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/">
 <link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/">
 <link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/">
 <meta property="og:url" content="https://capy.taislife.work/en/">
 <meta property="og:title" content="capy: a free, open-source tool to move and sync playlists">
-<meta property="og:description" content="capy is a free, open-source music tool that runs on your own computer: move playlists from Apple Music to Spotify, keep Spotify and a local music folder in sync, search, and control playback.">
+<meta property="og:description" content="capy is a free, open-source music tool that runs on your own computer: move playlists between Apple Music, Spotify and a local music folder, keep them in sync, search, and control playback.">
 <meta property="og:type" content="website">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
@@ -42,7 +42,7 @@
           <a class="btn btn--go" href="https://github.com/Tai-ch0802/capy-music/releases">Download capy</a>
           <a class="btn btn--quiet" href="https://github.com/Tai-ch0802/capy-music">View source</a>
         </div>
-        <p class="fine">macOS and Windows. Playlists can currently be read from Apple Music, Spotify or a music folder on your computer, and written to Spotify or the music folder. Apple Music is read-only.</p>
+        <p class="fine">macOS and Windows. Playlists can be read from and written to Apple Music, Spotify or a music folder on your computer. On Apple Music, capy only writes playlists you created yourself.</p>
       </div>
       <div class="route" aria-hidden="true">
         <div class="route__ends">
@@ -146,7 +146,7 @@
 
 <span class="c"># or straight from the terminal</span>
 <span class="p">$ </span>capy migrate "Commute" --from apple --to spotify</pre>
-          <p class="fine">Spotify requires you to create your own free developer app (capy walks you through it). Apple Music is currently read-only and relies on a method Apple does not officially support. Writing to Spotify playlists follows the official documentation and is still being verified on real accounts; please report problems. See the README for details.</p>
+          <p class="fine">Spotify requires you to create your own free developer app (capy walks you through it). Apple Music relies on a method Apple does not officially support (you copy the web player's tokens yourself; removing and reordering use the web player's own endpoints). capy only writes Apple Music playlists you created yourself, and songs added to a playlist are also added to your Apple Music library. Writing to Spotify playlists follows the official documentation and is still being verified on real accounts; please report problems. See the README for details.</p>
         </div>
       </div>
     </section>

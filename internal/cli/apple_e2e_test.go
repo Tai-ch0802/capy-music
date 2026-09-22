@@ -64,9 +64,18 @@ func TestCopyApplePlaylistToSpotify(t *testing.T) {
 	t.Cleanup(func() { newProvider = orig })
 
 	before := driveFiles(t, dc)
-	if _, _, err := runPull(t, "pl", "link", "公路旅行", "apple", "--create"); !errors.Is(err, provider.ErrNotSupported) || !sameFiles(before, driveFiles(t, dc)) {
-		t.Fatalf("Apple 還不能建清單,要在碰 Drive 之前擋:%v", err)
+	writable := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) { // 不能建清單的平台要在碰 Drive 之前擋(Apple 自決策 49 起能建,用只讀包裝重現)
+		p, err := writable(ctx, id)
+		if id == "apple" && err == nil {
+			return readOnlyProvider{p, p.(provider.PlaylistReader)}, nil
+		}
+		return p, err
 	}
+	if _, _, err := runPull(t, "pl", "link", "公路旅行", "apple", "--create"); !errors.Is(err, provider.ErrNotSupported) || !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatalf("不能建清單的平台要在碰 Drive 之前擋:%v", err)
+	}
+	newProvider = writable
 
 	mustPull(t, "pl", "link", "公路旅行", "apple:公路旅行")
 	mustPull(t, "pl", "link", "公路旅行", "spotify", "--create")
