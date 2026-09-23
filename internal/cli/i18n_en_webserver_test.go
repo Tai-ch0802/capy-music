@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -200,27 +199,5 @@ func TestEnglishWebStartupAndPortErrors(t *testing.T) {
 	cancel()
 	if err := <-errc; err != nil {
 		t.Errorf("ctx 取消 = 正常結束:%v", err)
-	}
-}
-
-// TestWebConsoleHidesCancelledInEveryLanguage:console.js 靠比對 web.err.cancelled 的文字藏掉重複的「已取消」
-// (計畫 §2.4 第 5 點):每個語系的那句都要在它的正規式裡,新增語系或改譯文時這裡會先壞。
-func TestWebConsoleHidesCancelledInEveryLanguage(t *testing.T) {
-	b, err := webUI.ReadFile("webui/js/console.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`\^\(Error: \)\?\(([^)]*)\)\$`).FindSubmatch(b)
-	if m == nil {
-		t.Fatal("console.js 找不到藏掉取消訊息的正規式")
-	}
-	alts := strings.Split(string(m[1]), "|")
-	prev := i18n.Current()
-	t.Cleanup(func() { i18n.Set(prev) })
-	for _, l := range i18n.Supported() {
-		i18n.Set(l)
-		if msg := errWebCancelled.Error(); !slices.Contains(alts, msg) {
-			t.Errorf("%s 的 web.err.cancelled %q 不在 console.js 的 %v 裡", l, msg, alts)
-		}
 	}
 }

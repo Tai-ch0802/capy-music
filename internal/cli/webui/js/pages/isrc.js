@@ -1,4 +1,6 @@
 // isrc.js:#/isrc[/<ISRC>] —— 打 GET /api/isrc/{isrc}(決策 42)。四段拆解、各平台卡片、本機鏡像的 canonical。
+import { t } from '../i18n.js';
+
 const el = (tag, cls, text) => {
   const x = document.createElement(tag);
   if (cls) x.className = cls;
@@ -6,11 +8,12 @@ const el = (tag, cls, text) => {
   return x;
 };
 
-// 非地理前綴不丟給 Intl.DisplayNames:它對結構合法但未指派的代碼會原樣回 QM,看起來像壞掉。
-function countryLabel(code, geographic) {
-  if (!geographic) return code === 'ZZ' ? '國際 ISRC 總部' : '發行商前綴(非國家)';
+// 非地理前綴不丟給 Intl.DisplayNames:它對結構合法但未指派的代碼會原樣回 QM,看起來像壞掉。帳號頁的 Apple storefront 也用它。
+export function countryLabel(code, geographic) {
+  if (!geographic) return code === 'ZZ' ? t('webui.isrc.country.zz') : t('webui.isrc.country.non_geo');
   try {
-    return new Intl.DisplayNames(['zh-Hant'], { type: 'region' }).of(code) || code;
+    // 國名跟著語系:zh-TW 與原本寫死的 zh-Hant 是同一份 CLDR 國名。
+    return new Intl.DisplayNames([document.documentElement.lang || 'en'], { type: 'region' }).of(code) || code;
   } catch (_) {
     return code;
   }
@@ -26,11 +29,11 @@ function partsBar(parts) {
   const cells = parts
     ? [
       { v: parts.country, k: countryLabel(parts.country, parts.geographic), w: '2ch' },
-      { v: parts.registrant, k: '登記者', w: '3ch' },
-      { v: `${parts.year} → ${parts.year_full}`, k: '年份(推測)', w: '7ch' },
-      { v: parts.designation, k: '流水號', w: '5ch' },
+      { v: parts.registrant, k: t('webui.isrc.part.registrant'), w: '3ch' },
+      { v: `${parts.year} → ${parts.year_full}`, k: t('webui.isrc.part.year'), w: '7ch' },
+      { v: parts.designation, k: t('webui.isrc.part.designation'), w: '5ch' },
     ]
-    : [{ v: '—', k: '這個 ISRC 拆不出四段(平台結果照樣顯示)', w: '100%' }];
+    : [{ v: '—', k: t('webui.isrc.part.unparsable'), w: '100%' }];
   for (const c of cells) {
     const cell = el('div', 'isrc__part');
     cell.style.minWidth = c.w;
@@ -49,41 +52,42 @@ function providerCard(id, data) {
     return card;
   }
   if (!data.tracks.length) {
-    card.appendChild(el('p', 'card__muted', '這個平台沒有符合的曲目'));
+    card.appendChild(el('p', 'card__muted', t('webui.isrc.no_match')));
     return card;
   }
-  for (const t of data.tracks) {
+  for (const tr of data.tracks) { // 不叫 t:會遮住 i18n 的 t()
     const row = el('div', 'track');
     // 封面只與「在這個平台開啟」的連結並列(ARCHITECTURE §8:cover art 只准用在播放脈絡或連回該平台的脈絡)。
-    if (t.artwork_url) {
+    if (tr.artwork_url) {
       const img = el('img', 'track__art');
-      img.src = t.artwork_url;
+      img.src = tr.artwork_url;
       img.alt = '';
       img.loading = 'lazy';
       row.appendChild(img);
     }
     const meta = el('div', 'track__meta');
-    meta.appendChild(el('div', 'track__title', t.title));
-    meta.appendChild(el('div', 'track__sub', `${(t.artists || []).join(', ')}${t.album ? ' · ' + t.album : ''}`));
+    meta.appendChild(el('div', 'track__title', tr.title));
+    meta.appendChild(el('div', 'track__sub', `${(tr.artists || []).join(', ')}${tr.album ? ' · ' + tr.album : ''}`));
     const facts = el('div', 'track__facts');
-    facts.appendChild(el('span', 'mono', t.id));
-    if (t.duration_ms) facts.appendChild(el('span', 'mono', mmss(t.duration_ms)));
-    if (t.release_date) facts.appendChild(el('span', 'mono', t.release_date));
-    if (t.popularity) facts.appendChild(el('span', 'mono', `popularity ${t.popularity}`));
-    for (const g of t.genres || []) facts.appendChild(el('span', 'chip', g));
+    facts.appendChild(el('span', 'mono', tr.id));
+    if (tr.duration_ms) facts.appendChild(el('span', 'mono', mmss(tr.duration_ms)));
+    if (tr.release_date) facts.appendChild(el('span', 'mono', tr.release_date));
+    if (tr.popularity) facts.appendChild(el('span', 'mono', `popularity ${tr.popularity}`));
+    for (const g of tr.genres || []) facts.appendChild(el('span', 'chip', g));
     meta.appendChild(facts);
-    if (t.url) {
-      const a = el('a', 'track__link', `在 ${id === 'apple' ? 'Apple Music' : id} 開啟`);
-      a.href = t.url;
+    if (tr.url) {
+      const platform = id === 'apple' ? 'Apple Music' : id;
+      const a = el('a', 'track__link', t('webui.isrc.open_on', { platform }));
+      a.href = tr.url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       meta.appendChild(a);
     }
-    if (t.preview_url) {
+    if (tr.preview_url) {
       const audio = document.createElement('audio');
       audio.controls = true;
       audio.preload = 'none';
-      audio.src = t.preview_url;
+      audio.src = tr.preview_url;
       audio.className = 'track__preview';
       meta.appendChild(audio);
     }
@@ -95,29 +99,31 @@ function providerCard(id, data) {
 
 function canonicalCard(d) {
   const card = el('section', 'card');
-  card.appendChild(el('h3', 'card__title', 'canonical(本機鏡像,以最近一次 pull 為準)'));
+  card.appendChild(el('h3', 'card__title', t('webui.isrc.canonical.title')));
   if (d.canonical_error) {
     card.appendChild(el('p', 'card__error', d.canonical_error));
     return card;
   }
   const c = d.canonical;
   if (!c) {
-    card.appendChild(el('p', 'card__muted', '本機還沒有這首的 canonical 紀錄(先 capy pl pull)'));
+    card.appendChild(el('p', 'card__muted', t('webui.isrc.canonical.none')));
     return card;
   }
   const dl = el('dl', 'defs');
   const add = (k, v) => { dl.appendChild(el('dt', null, k)); dl.appendChild(el('dd', 'mono', v)); };
   add('cid', c.cid);
-  add('曲目', `${c.title} — ${(c.artists || []).join(', ')}${c.album ? ' · ' + c.album : ''}`);
-  if (c.duration_ms) add('長度', mmss(c.duration_ms));
+  add(t('webui.isrc.canonical.track'), `${c.title} — ${(c.artists || []).join(', ')}${c.album ? ' · ' + c.album : ''}`);
+  if (c.duration_ms) add(t('webui.isrc.canonical.duration'), mmss(c.duration_ms));
   add('ISRC alias set', (c.isrc || []).join(' · ') || '—');
   for (const [prov, m] of Object.entries(c.mappings || {})) {
-    add(`mapping ${prov}`, `${m.id || '(不可得)'} · ${m.confidence} 分 · ${m.source}${m.pinned ? ' · 已釘選' : ''}`);
+    const id = m.id || t('webui.isrc.canonical.unavailable');
+    const score = t('webui.isrc.canonical.confidence', { confidence: m.confidence });
+    add(`mapping ${prov}`, `${id} · ${score} · ${m.source}${m.pinned ? ' · ' + t('webui.isrc.canonical.pinned') : ''}`);
   }
   for (const cf of c.conflicts || []) add('conflict', `${cf.provider}:${cf.provider_id} ${cf.title || ''}`);
   card.appendChild(dl);
   const pls = el('div', 'isrc__pls');
-  pls.appendChild(el('h4', 'card__sub', `含這首的清單(${(c.playlists || []).length})`));
+  pls.appendChild(el('h4', 'card__sub', t('webui.isrc.canonical.playlists', { count: (c.playlists || []).length })));
   for (const p of c.playlists || []) {
     const line = el('div', 'isrc__pl');
     line.appendChild(el('span', null, p.name));
@@ -145,13 +151,13 @@ export function initISRC(root, api, initial) {
     if (inflight) inflight.abort();
     inflight = new AbortController();
     location.hash = '#/isrc/' + encodeURIComponent(isrc);
-    status.textContent = '查詢中…';
+    status.textContent = t('webui.isrc.looking_up');
     out.replaceChildren();
     let r;
     try {
       r = await api.fetch('/api/isrc/' + encodeURIComponent(isrc), { signal: inflight.signal });
     } catch (e) {
-      if (mine === seq && e.name !== 'AbortError') status.textContent = '連不上 capy --web:' + e.message;
+      if (mine === seq && e.name !== 'AbortError') status.textContent = t('webui.isrc.unreachable', { err: e.message });
       return;
     }
     if (mine !== seq) return;

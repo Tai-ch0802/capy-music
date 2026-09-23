@@ -109,7 +109,7 @@ func TestEnglishDedupCanonicalRound(t *testing.T) {
 	t.Cleanup(func() { bothTTY, confirmWrite = origTTY, origConfirm })
 	bothTTY = func(*cobra.Command) bool { return true }
 	var asked []string
-	confirmWrite = func(p string) (bool, error) { asked = append(asked, p); return false, nil }
+	confirmWrite = func(_, p string) (bool, error) { asked = append(asked, p); return false, nil }
 	runPull(t, "pl", "dedup", "commute")
 	runPull(t, "pl", "dedup", "commute", "--force")
 	const confirm = "Apply the 4 changes above (duplicates to remove: 2; pulls to Drive: 0; pushes to platforms: 2)?"

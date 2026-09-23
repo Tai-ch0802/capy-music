@@ -89,11 +89,11 @@ func newPlSyncCmd() *cobra.Command {
 					if !bothTTY(cmd) {
 						return &PendingError{N: n}
 					}
-					prompt := i18n.T("sync.confirm", "count", n, "pulls", len(pullRows), "pushes", ops)
+					key, prompt := "sync.confirm", i18n.T("sync.confirm", "count", n, "pulls", len(pullRows), "pushes", ops)
 					if force {
-						prompt = i18n.T("sync.confirm_force", "prompt", prompt)
+						key, prompt = "sync.confirm_force", i18n.T("sync.confirm_force", "prompt", prompt)
 					}
-					ok, err := confirmWrite(prompt)
+					ok, err := confirmWrite(key, prompt)
 					if err != nil {
 						return err
 					}

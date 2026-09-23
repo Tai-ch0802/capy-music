@@ -138,7 +138,7 @@ func TestEnglishDriveInitConfirmWarnsWrongAccount(t *testing.T) {
 	t.Cleanup(func() { bothTTY, confirmWrite = origTTY, origConfirm })
 	bothTTY = func(*cobra.Command) bool { return true }
 	var asked string
-	confirmWrite = func(p string) (bool, error) { asked = p; return false, nil }
+	confirmWrite = func(_, p string) (bool, error) { asked = p; return false, nil }
 	const warn = " to the Drive appdata of tai@example.com? (If this is the wrong account, your playlist data (playlists and track mappings) ends up in someone else's space)"
 
 	_, _, err := runPull(t, "drive", "init", "--from-local")

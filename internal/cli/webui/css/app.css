@@ -35,6 +35,7 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .rail__more[open] > summary::after { content: ' ▾'; }
 .rail__more > summary:hover { color: var(--text); }
 .rail__meta { margin-top: auto; padding: .75rem .75rem 0; font-size: var(--t-12); color: var(--muted); }
+.rail select.rail__lang { margin: .5rem .75rem 0; min-width: 0; height: 32px; font-size: var(--t-12); } /* 語言選單(蓋過後面的 .in / select.in);窄畫面 rail__meta 會藏起來,它不跟著藏 */
 
 /* ── main ── */
 .main { grid-area: main; overflow: auto; padding: 2rem; }
@@ -227,7 +228,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 /* ── 診斷:輸出原樣,不解析 ✅ / ❌ / 🎉 ── */
 .doctor__out { margin: 1rem 0 0; padding: 1rem 1.25rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--t-14); color: var(--text); min-height: 3rem; }
 .doctor__out:empty:not([data-running]) { display: none; }
-.doctor__out[data-running]::after { content: '檢查中…'; color: var(--muted); }
+.doctor__out[data-running]::after { content: attr(data-running); color: var(--muted); } /* 字由 doctor.js 放進 data-running(CSS 叫不了 t()) */
 
 /* ── 播放清單:≥ 80rem 兩欄,以下上下疊 ── */
 .pl__cols { display: grid; grid-template-columns: 1fr; gap: 1.25rem; margin-top: 1rem; }

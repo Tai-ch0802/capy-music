@@ -1,8 +1,10 @@
 package i18n
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 )
 
@@ -109,5 +111,36 @@ func TestParseLocaleRejectsBadPluralCategory(t *testing.T) {
 	}
 	if _, err := parseLocale("en", []byte(`{"p": 3}`)); err == nil {
 		t.Fatal("值不是字串也不是物件要被拒")
+	}
+}
+
+func TestMessagesAndLocaleName(t *testing.T) {
+	for _, code := range Supported() { // 真目錄:語言選單上每個語系都要有自己的名稱
+		if LocaleName(code) == code {
+			t.Errorf("%s.json 缺 lang.name(語言選單顯示的名稱)", code)
+		}
+	}
+	fakeLocales(t, map[string]string{
+		"en":    `{"lang.name": "English", "w.a": "A {x}", "w.p": {"one": "{count} track", "other": "{count} tracks"}, "w.only_en": "E", "other.k": "O"}`,
+		"zh-TW": `{"lang.name": "繁體中文", "w.a": "甲 {x}", "w.p": {"other": "{count} 首"}, "other.k": "乙"}`,
+	}, "en")
+	web := func(k string) bool { return strings.HasPrefix(k, "w.") }
+	for _, c := range []struct{ lang, want string }{
+		{"zh-TW", `{"w.a":"甲 {x}","w.only_en":"E","w.p":{"other":"{count} 首"}}`}, // 缺的 key 逐個退回英文;沒選中的不給
+		{"en", `{"w.a":"A {x}","w.only_en":"E","w.p":{"one":"{count} track","other":"{count} tracks"}}`},
+		{"xx", `{"w.a":"A {x}","w.only_en":"E","w.p":{"one":"{count} track","other":"{count} tracks"}}`}, // 不支援 = 整份英文
+	} {
+		b, err := json.Marshal(Messages(c.lang, web))
+		if err != nil || string(b) != c.want {
+			t.Errorf("Messages(%s) = %s %v,要 %s", c.lang, b, err, c.want)
+		}
+	}
+	if Current() != "en" {
+		t.Errorf("Messages 不可以動目前語系:%s", Current())
+	}
+	for code, want := range map[string]string{"en": "English", "zh-TW": "繁體中文", "xx": "xx"} {
+		if got := LocaleName(code); got != want {
+			t.Errorf("LocaleName(%s) = %q,要 %q", code, got, want)
+		}
 	}
 }

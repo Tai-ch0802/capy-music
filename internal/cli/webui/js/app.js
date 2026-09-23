@@ -1,5 +1,7 @@
 // app.js:token 引導、/api/commands、命令列;命令的串流與區塊在 console.js。
 import { Console } from './console.js';
+import { loadI18n, applyStatic, t } from './i18n.js';
+import { languageMenu } from './lang.js';
 import { Player } from './player.js';
 import { initISRC } from './pages/isrc.js';
 import { initSearch } from './pages/search.js';
@@ -31,7 +33,14 @@ function bootToken() {
 
 async function loadCommands() {
   const r = await api.fetch('/api/commands');
-  if (r.status === 401) { notice('token 不對或已失效:回到啟動 capy --web 時印的網址'); return; }
+  // /api/i18n 也要 token:token 不對時目錄讀不到(t() 只會回 key 本身)。401 的回應本身就帶著伺服器語系的那一句
+  // (api() 的 web.err.bad_token),照印——跟 console.js 的 refused() 一樣;t() 只是回應不是 JSON 時的退路。
+  if (r.status === 401) {
+    let msg = '';
+    try { msg = (await r.json()).error || ''; } catch (_) { /* 非 JSON */ }
+    notice(msg || t('web.err.bad_token'));
+    return;
+  }
   const d = await r.json();
   document.getElementById('version').textContent = d.version;
   document.getElementById('default-provider').textContent = d.default_provider;
@@ -52,17 +61,24 @@ export function notice(text) {
 }
 
 bootToken();
+// 目錄要在任何畫面算字之前到(i18n.js 開頭的載入順序鐵則)。讀不到(token 不對 / 過期、伺服器不在)時 t() 只會回 key 本身:
+// 頁面、播放列與鍵盤層一個都不起(route()、底下的 player、keydown 都看 i18nOK),畫面上只有 notice 說原因——
+// loadCommands 印 401 回應裡伺服器語系的那一句,連不上時印瀏覽器的錯誤。
+// ponytail: 兩個端點過同一道守門,一個失敗另一個也會失敗;只有目錄那一次失敗、下一次又連上的話頁面是空的,重新整理即可。
+const i18nOK = await loadI18n(api);
+applyStatic();
 const con = new Console(document.getElementById('console'), api, notice);
+languageMenu(document.getElementById('lang'), con);
 const input = document.getElementById('cmd');
 const runBtn = document.getElementById('run');
-const BUSY_HINT = '還有事情在跑:等它結束,或按底部的「中止」';
+const busyHint = () => t('webui.shell.busy_hint');
 
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
 // 執行中命令列照樣可以打字(設計規格 §5 / §10):Enter 只說明、不排隊、不並行,打好的那一行留著。
 // 執行狀態列與中止鈕由 Console.run 管,頁面按鈕發起的命令也一樣。
 async function submit() {
-  if (con.running) { notice(BUSY_HINT); return; }
-  if (document.body.hasAttribute('data-stale')) { notice('binary 已更新,這個 capy --web 仍是舊版,請重啟'); return; }
+  if (con.running) { notice(busyHint()); return; }
+  if (document.body.hasAttribute('data-stale')) { notice(t('webui.shell.stale')); return; }
   const line = input.value.trim();
   input.value = '';
   const [, , reason] = await con.run(line);
@@ -84,7 +100,7 @@ input.addEventListener('keydown', (ev) => {
   submit();
 });
 runBtn.addEventListener('click', submit);
-document.addEventListener('capy:busy', () => notice(BUSY_HINT)); // 頁面按鈕在執行中被按(common.js btn)
+document.addEventListener('capy:busy', () => notice(busyHint())); // 頁面按鈕在執行中被按(common.js btn)
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
 // ── 路由:八頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–8;
 // 預設落在搬家(決策 45),後三頁收在「進階」。
@@ -107,6 +123,7 @@ function showPage(name) {
 }
 
 function route() {
+  if (!i18nOK) return;
   // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 isrc 頁(review #61)。
   const m = /^#\/([a-z]+)(?:\/([^/?#]+))?$/.exec(location.hash || '');
   const name = m && PAGES.includes(m[1]) ? m[1] : 'move';
@@ -146,7 +163,7 @@ const keysDialog = document.getElementById('keys');
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
   // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
-  if (inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (!i18nOK || inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   // 按鈕有焦點時空白鍵就是「按下它」:在這裡搶走,整頁的按鈕都不能用空白鍵按了(review #62 第 8 點)。
   if (ev.key === ' ' && document.activeElement?.tagName === 'BUTTON') return;
   const n = PAGES[Number(ev.key) - 1];
@@ -166,7 +183,7 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
-const player = new Player(document.getElementById('now'), api, notice, con);
+const player = i18nOK ? new Player(document.getElementById('now'), api, notice, con) : null; // 建構子就掛 visibilitychange → 輪詢
 // 先拿到 providers 再路由:深連結或在某頁 F5 時,該頁的平台下拉才不會用寫死的預設值建起來
 // (ready 保證每頁只初始化一次,建好之後不會補正)。連不上時照樣路由,頁面至少畫得出來。
 loadCommands()
@@ -174,8 +191,10 @@ loadCommands()
     if (d && d.default_provider) providers.current = d.default_provider;
     if (d && d.providers) providers.list = d.providers;
   })
-  .catch((e) => notice('連不上 capy --web:' + e.message))
+  .catch((e) => notice(i18nOK ? t('webui.shell.unreachable', { err: e.message }) : e.message)) // 沒有目錄時 t() 只會回 key
   .finally(() => {
     route();
-    player.start();
+    player?.start();
+    // 目錄讀不到、/api/commands 卻成功(網路閃斷):畫面是空的,至少說一句。沒有目錄可翻,只能用英文(也是預設語系)。
+    if (!i18nOK && !document.getElementById('notice').textContent) notice("capy --web couldn't load the interface texts; reload the page");
   });

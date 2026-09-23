@@ -468,7 +468,7 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 			if yes {
 				return true, nil
 			}
-			ok, err := confirmWrite(i18n.T("resolve.review.confirm_merge", "provider", it.prov, "other", other, "cid", it.cid))
+			ok, err := confirmWrite("resolve.review.confirm_merge", i18n.T("resolve.review.confirm_merge", "provider", it.prov, "other", other, "cid", it.cid))
 			if errors.Is(err, huh.ErrUserAborted) { // 確認畫面 Esc / Ctrl-C = 不同意合併:這筆略過,不中斷整輪
 				return false, nil
 			}
@@ -571,7 +571,7 @@ func newResolveCmd() *cobra.Command {
 						if !bothTTY(cmd) {
 							return &PendingError{N: pending}
 						}
-						ok, err := confirmWrite(i18n.T("resolve.confirm_write", "count", pending))
+						ok, err := confirmWrite("resolve.confirm_write", i18n.T("resolve.confirm_write", "count", pending))
 						if err != nil {
 							return err
 						}
@@ -658,7 +658,7 @@ func newResolvePinCmd() *cobra.Command {
 					if !bothTTY(cmd) {
 						return false, nil
 					}
-					return confirmWrite(i18n.T("resolve.pin.confirm_merge"))
+					return confirmWrite("resolve.pin.confirm_merge", i18n.T("resolve.pin.confirm_merge"))
 				}
 				got, merged, err := pinTrack(s, cid, prov, t, confirm)
 				if err != nil {

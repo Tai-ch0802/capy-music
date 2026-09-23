@@ -143,11 +143,11 @@ func newPlDedupCmd() *cobra.Command {
 					if !bothTTY(cmd) {
 						return &PendingError{N: n}
 					}
-					prompt := i18n.T("dedup.confirm", "count", n, "dups", len(dedupRows), "pulls", len(pullRows), "pushes", ops)
+					key, prompt := "dedup.confirm", i18n.T("dedup.confirm", "count", n, "dups", len(dedupRows), "pulls", len(pullRows), "pushes", ops)
 					if force {
-						prompt = i18n.T("dedup.confirm_force", "count", n, "dups", len(dedupRows), "pulls", len(pullRows), "pushes", ops)
+						key, prompt = "dedup.confirm_force", i18n.T("dedup.confirm_force", "count", n, "dups", len(dedupRows), "pulls", len(pullRows), "pushes", ops)
 					}
-					ok, err := confirmWrite(prompt)
+					ok, err := confirmWrite(key, prompt)
 					if err != nil {
 						return err
 					}

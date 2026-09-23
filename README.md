@@ -89,6 +89,31 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 
 不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。
 
+## 登入狀態給腳本讀:`capy auth status --json`
+
+`capy auth status` 是給人看的(跟著語系);腳本請用 `--json`。欄位只增不改,列舉值是固定的英文、**永不翻譯**;時間是 UTC 的 RFC 3339;沒有值的欄位不印。**輸出絕不含任何 token 或 secret 的值**,client ID 也只給來源(`internal/cli/auth_status_json_test.go` 把每一種憑證種成哨兵值、斷言它們不出現)。
+
+```json
+{
+  "spotify": { "state": "ok", "client_id": "set" },
+  "google": { "state": "ok", "client": "builtin", "access_token_expiry": "2026-09-23T09:00:00Z", "email": "you@example.com", "device_id": "…" },
+  "apple": { "state": "ok", "developer_token": "ok", "developer_token_expiry": "2026-11-01T00:00:00Z", "user_token": "ok", "storefront": "tw" }
+}
+```
+
+| 欄位 | 值 |
+|---|---|
+| `spotify.state` | `ok` 已登入 / `missing` 沒登入 / `keychain_error` 讀不到 keychain(要處理,不是沒登入) |
+| `spotify.client_id` | `set` / `missing` / `malformed`(config 裡的不是 32 碼十六進位) |
+| `google.state` | `ok` / `missing` / `keychain_error` |
+| `google.client` | `config` 自建 client / `builtin` release 內建 / `none` 還沒有 |
+| `google.access_token_expiry` | 存著的 access token 何時到期;capy 會自己換發,**不是登入的期限** |
+| `google.email`、`google.device_id` | 登入的 Google 帳號、這台裝置的 id |
+| `apple.state` | 兩個 token 合起來:`keychain_error` > `expired` > `missing` > `ok`(依序取第一個成立的) |
+| `apple.developer_token` | `ok` / `missing` / `expired` / `keychain_error`;`developer_token_expiry` 在 `ok` 與 `expired` 時給 |
+| `apple.user_token` | `ok` / `missing` / `keychain_error` |
+| `apple.storefront` | 例如 `tw` |
+
 ## 常用命令
 
 ```

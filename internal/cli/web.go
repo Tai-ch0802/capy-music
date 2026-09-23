@@ -4,10 +4,10 @@ package cli
 //
 // 不變式(-race 會抓,寫在檔頭給後人):Serve 開始後,newRootCmd()、defaultProvider()、resetDefaultProvider()、
 // 任何 var 接縫與 i18n.Set 的**寫入**只在 runMu 內發生;允許清單與 /api/commands 的命令樹在 Serve 前算好(後者每個語系一份);
-// /api/now、/api/isrc 兩個直達端點(T4)不經 cobra、不進 runMu、不呼叫 defaultProvider()。
+// /api/now、/api/isrc(T4)、/api/i18n(i18n T3)三個直達端點不經 cobra、不進 runMu、不呼叫 defaultProvider()、不 i18n.Set。
 // 五個 stderr 全域是例外:它們在 Serve 前指派一次(之後不再寫那幾個 var),但**寫入那些 writer** 的 goroutine
-// 不只 job——兩個直達端點也會經 BackoffStderr / LockStderr 印退避與等鎖提示(決策 42),所以併發安全靠的是
-// sseWriter 的 mu + closed 與 curMu,不是 runMu。
+// 不只 job——/api/now 與 /api/isrc 也會經 BackoffStderr / LockStderr 印退避與等鎖提示(決策 42),所以併發安全靠的是
+// sseWriter 的 mu + closed 與 curMu,不是 runMu。/api/i18n 只讀 config 與嵌入的語系目錄,不寫任何 stderr。
 // s.cur 由 curMu 守,是唯一的「目前 job」;橋接接縫(T3b)從它取 job,s.cur == nil 時回明確錯誤而不是掛住。
 
 import (
@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,6 +169,7 @@ func (s *webServer) serve(ln net.Listener) error {
 func (s *webServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/commands", s.api(s.handleCommands))
+	mux.HandleFunc("GET /api/i18n", s.api(s.handleI18n))
 	mux.HandleFunc("GET /api/isrc/{isrc}", s.api(s.handleISRC))
 	mux.HandleFunc("GET /api/now", s.api(s.handleNow))
 	mux.HandleFunc("POST /api/run", s.api(s.handleRun))
@@ -243,6 +245,35 @@ func (s *webServer) handleCommands(w http.ResponseWriter, _ *http.Request) {
 		"default_provider": loadDefaultProvider(), // 每次讀 config,不走 defaultProvider() 的 OnceValue
 		"commands":         s.commands[lang],
 	})
+}
+
+// webSharedKeys:網頁也要用、但不在 webui.* 底下的 key(同一句話 Go 那邊也在印)。/api/i18n 只送 webui.* 與這裡列的;
+// 頁面用到別的 key 只會拿到 key 本身(TestWebI18nServesEveryKeyThePageUses 會擋)。
+var webSharedKeys = []string{
+	"web.err.bad_token",        // app.js 的 401 提示:跟 api() 回的是同一句
+	"web.err.cancelled",        // console.js 的 exit 行:中止的命令
+	"web.err.prompt_timeout",   // console.js 的 exit 行:等待回答逾時
+	"changeset.confirm.apply",  // 確認鈕的字(web_prompt.go 送的 affirmative):搬家精靈的白話講到它
+	"changeset.confirm.cancel", // 同上(negative);console.js 在確認框沒給否定鈕的字時也用它
+	"local.display_name",       // common.js 的 providerName:本機曲庫的顯示名稱
+}
+
+// webI18n:/api/i18n 的回應。messages 的值是字串,複數訊息是「CLDR 類別 → 字串」;supported 的 name 是語系自己的名稱。
+func webI18n(lang string) map[string]any {
+	supported := []map[string]string{}
+	for _, code := range i18n.Supported() {
+		supported = append(supported, map[string]string{"code": code, "name": i18n.LocaleName(code)})
+	}
+	messages := i18n.Messages(lang, func(k string) bool { return strings.HasPrefix(k, "webui.") || slices.Contains(webSharedKeys, k) })
+	return map[string]any{"lang": lang, "supported": supported, "messages": messages}
+}
+
+// handleI18n:GET /api/i18n——網頁的語系目錄。直達端點:同 handleCommands 每次讀 config 的 language(終端機切的也看得到),
+// 只讀嵌入的目錄、不 i18n.Set(這裡在 runMu 外)。
+func (s *webServer) handleI18n(w http.ResponseWriter, _ *http.Request) {
+	lang, _ := configLanguage()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(webI18n(lang))
 }
 
 func (s *webServer) setCur(j *webJob) {

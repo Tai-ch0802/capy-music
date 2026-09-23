@@ -232,7 +232,7 @@ func newDriveInitCmd() *cobra.Command {
 				if !bothTTY(cmd) {
 					return &PendingError{N: len(rows)}
 				}
-				ok, err := confirmWrite(i18n.T("escape.drive_init.confirm", "count", len(rows), "account", googleAccount()))
+				ok, err := confirmWrite("escape.drive_init.confirm", i18n.T("escape.drive_init.confirm", "count", len(rows), "account", googleAccount()))
 				if err != nil {
 					return err
 				}

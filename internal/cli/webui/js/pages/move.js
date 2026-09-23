@@ -5,16 +5,17 @@
 import { el, btn, providerName, emptyState } from './common.js';
 import { parseStatus, stateOf } from './account.js';
 import { renderTable } from '../table.js';
-import { STAGES, CANCELLED_MSG } from '../console.js';
+import { stages } from '../console.js';
+import { t } from '../i18n.js';
 
 // 首頁的每一句主張都要查得到出處(決策 48):MIT LICENSE、憑證只進鑰匙圈、migrate 只新增不刪來源、順序不動(決策 38)。
-const FACTS = ['免費', '開源(MIT)', '在你自己的電腦上執行', '不刪來源,只新增'];
+// 使用者看得到的字一律是函式、用到時才算(i18n.js 開頭的載入順序鐵則)。
+const factTexts = () => [t('webui.move.fact.free'), t('webui.move.fact.open_source'), t('webui.move.fact.local'), t('webui.move.fact.no_delete')];
 const READ_ONLY = [];                    // 不能當目的地的平台(目前沒有;Apple 自決策 49 起可寫)
 const CAN_CREATE = ['spotify', 'apple']; // 能新建清單的平台;其餘(local)只能加進既有的
 const NO_LOGIN = ['local'];
-// 下面是 migrate.confirm.review 在每個語系的原文片段(zh-TW / en),精靈靠它認出「逐筆裁決」那一則;「這一首推得過去」改看 REASON_CODE 欄(見 tally)。
-// TestWebMoveWizardKeysOnMigrateWording 用兩種語系跑真的 migrate 一起釘,CLI 改字測試就紅。ponytail: 比對文字;T3 的提示事件帶 key 之後改比 key。
-const REVIEW_MARKS = ['現在逐筆裁決?', 'Review now, one by one?'];
+// 「逐筆裁決」那一則靠提示事件的 key 認(confirmWrite 帶的 i18n key;TestWebMigrateReviewPromptCarriesKey 釘住),
+// 不比對跟著語系變的標題;「這一首推得過去」看 REASON_CODE 欄(見 tally)。
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => {
@@ -30,7 +31,7 @@ const svg = (tag, attrs) => {
 // 尺寸是照螢幕上的大小訂的(review #71:10.5rem 寬、縮放 0.75):臉上的眼睛與鼻孔同一個量級、耳朵不可以比眼睛搶眼——
 // 不然頭頂那顆圈會被讀成眼睛,而會眨的是另一顆。耳朵先畫、身體後畫:身體的底色蓋掉耳朵的下半,只剩線上的一個小凸起。
 function capybara() {
-  const s = svg('svg', { viewBox: '0 0 224 124', class: 'capy-svg', role: 'img', 'aria-label': '水豚' });
+  const s = svg('svg', { viewBox: '0 0 224 124', class: 'capy-svg', role: 'img', 'aria-label': t('webui.move.capybara') });
   s.append(
     svg('rect', { class: 'capy-svg__line', x: 30, y: 88, width: 20, height: 28, rx: 7 }),  // 後腿
     svg('rect', { class: 'capy-svg__line', x: 112, y: 88, width: 20, height: 28, rx: 7 }), // 前腿
@@ -77,17 +78,16 @@ export function initMove(root, api, con, notice, providers) {
     closedBy: '',                  // 這一次最後一則提示是怎麼收的(prompt_closed 的 reason)
     running: false, preview: null, // 搬家那一次命令在跑 / 它送來的預覽表 { h, rows }
     progress: null,                // 伺服器送來的最新一筆進度 { stage, done, total };沒有就不畫進度條
-    result: null,                  // 跑完之後 { code, msg, moved, missed }
+    result: null,                  // 跑完之後 { code, msg, reason, moved, missed }
   };
 
   // ── 開場 + 路線示意 ──
   const hero = el('header', 'hero hero--split');
   const intro = el('div');
-  intro.appendChild(el('h1', 'hero__title', '把歌單搬過去,一首都不用重找。'));
-  intro.appendChild(el('p', 'hero__sub',
-    'capy 讀出你在一個平台的播放清單,在另一個平台找到同樣的歌,照原本的順序放好。它在你自己的電腦上執行,你的帳號不經過任何人的伺服器。'));
+  intro.appendChild(el('h1', 'hero__title', t('webui.move.hero.title')));
+  intro.appendChild(el('p', 'hero__sub', t('webui.move.hero.sub')));
   const facts = el('ul', 'facts');
-  for (const f of FACTS) facts.appendChild(el('li', 'fact', f));
+  for (const f of factTexts()) facts.appendChild(el('li', 'fact', f));
   intro.appendChild(facts);
   const route = el('div', 'route');
   route.setAttribute('role', 'img');
@@ -107,8 +107,8 @@ export function initMove(root, api, con, notice, providers) {
   // ── 精靈 ──
   const panel = el('section', 'panel wiz');
   const steps = el('ol', 'wiz__steps');
-  const stepEls = ['選路線', '選清單', '確認並搬家'].map((t) => {
-    const li = el('li', 'wiz__step', t);
+  const stepEls = [t('webui.move.step.route'), t('webui.move.step.playlist'), t('webui.move.step.confirm')].map((text) => {
+    const li = el('li', 'wiz__step', text);
     steps.appendChild(li);
     return li;
   });
@@ -120,34 +120,36 @@ export function initMove(root, api, con, notice, providers) {
 
   // 會問人的命令都帶同一組選項:提示畫進精靈;「逐筆裁決」那一則旁邊補一句白話(原文照留)。
   // 伺服器問的話逐字照留(規格 §9),這裡只在旁邊補白話;不替使用者回答任何一則。
+  // 白話裡說的按鈕名稱跟伺服器送來的確認鈕查同一個 key(changeset.confirm.*,web.go 的 webSharedKeys 送到頁面)。
   const onPrompt = (ev, box) => {
+    const apply = t('changeset.confirm.apply'), cancel = t('changeset.confirm.cancel');
     let help = '';
-    if (REVIEW_MARKS.some((m) => String(ev.title || '').includes(m))) {
-      help = '有幾首歌在目的地找不到完全一樣的。按「套用」可以一首一首挑;按「取消」就先搬找得到的,其餘之後可以再處理。這一步不會寫入任何東西。';
+    if (ev.key === 'migrate.confirm.review') {
+      help = t('webui.move.help.review', { apply, cancel });
     } else if (ev.kind === 'confirm' && state.running && state.preview) {
-      help = '這是最後一次確認:上面列的就是要搬的歌。按「套用」才會開始寫入;按「取消」什麼都不會改。';
+      help = t('webui.move.help.final', { apply, cancel });
     }
     if (help) box.insertBefore(el('p', 'prompt__help', help), box.firstChild);
   };
 
   const connected = (id) => {
-    if (NO_LOGIN.includes(id)) return { mark: '✓', text: '不需要登入', kind: 'ok' };
-    if (!state.status) return { mark: '·', text: '檢查中…', kind: 'muted' };
+    if (NO_LOGIN.includes(id)) return { mark: '✓', text: t('webui.move.no_login'), kind: 'ok' };
+    if (!state.status) return { mark: '·', text: t('webui.move.checking'), kind: 'muted' };
     return stateOf(id, state.status[id]);
   };
 
   function loadStatus() {
     let text = '';
     con.run('', {
-      onStdout: (t) => { text += t; },
+      onStdout: (s) => { text += s; },
       onExit: () => { state.status = parseStatus(text); render(); },
-    }, { args: ['auth', 'status'], label: '檢查帳號的連接狀態', promptHost: prompts });
+    }, { args: ['auth', 'status', '--json'], label: t('webui.move.label.status'), promptHost: prompts });
   }
 
   function connect(id) {
     prompts.replaceChildren();
     con.run('', { onPrompt, onExit: () => loadStatus() },
-      { args: ['auth', 'login', id], label: `連接 ${providerName(id)}`, promptHost: prompts });
+      { args: ['auth', 'login', id], label: t('webui.move.label.connect', { provider: providerName(id) }), promptHost: prompts });
   }
 
   // 讀一個平台的清單(pl list 的表:ID / NAME / TRACKS / OWNER;欄名是機器欄位,不跟語系,決策 50)。
@@ -159,7 +161,7 @@ export function initMove(root, api, con, notice, providers) {
         rows = r.map((x) => ({ id: x[id], name: x[name], count: x[count] }));
       },
       onExit: (code, msg) => done(code === 0 ? rows || [] : null, msg),
-    }, { args: ['pl', 'list', '--provider', prov], label: `讀取 ${providerName(prov)} 上的清單`, promptHost: prompts });
+    }, { args: ['pl', 'list', '--provider', prov], label: t('webui.move.label.lists', { provider: providerName(prov) }), promptHost: prompts });
   }
 
   function enterStep2() {
@@ -167,10 +169,10 @@ export function initMove(root, api, con, notice, providers) {
     state.dst = { mode: CAN_CREATE.includes(state.to) ? 'new' : 'existing', id: '' };
     render();
     loadLists(state.from, (src, msg) => {
-      if (!src) { state.listError = msg || `讀不到 ${providerName(state.from)} 的清單`; render(); return; }
+      if (!src) { state.listError = msg || t('webui.move.err.lists', { provider: providerName(state.from) }); render(); return; }
       state.srcLists = src; render();
       loadLists(state.to, (dst, msg2) => {
-        if (!dst) { state.listError = msg2 || `讀不到 ${providerName(state.to)} 的清單`; render(); return; }
+        if (!dst) { state.listError = msg2 || t('webui.move.err.lists', { provider: providerName(state.to) }); render(); return; }
         state.dstLists = dst; defaultDst(); render();
       });
     });
@@ -197,14 +199,14 @@ export function initMove(root, api, con, notice, providers) {
       onPromptClosed: (ev) => { state.closedBy = ev.reason; },
       onTable: (h, rows) => { state.preview = { h, rows }; render(); },
       onProgress: (ev) => { state.progress = ev; if (!state.preview) paintProgress(); },
-      onExit: (code, msg) => {
+      onExit: (code, msg, reason) => {
         const p = state.preview || {};
-        Object.assign(state, { running: false, result: { code, msg, ...tally(p.h, p.rows) } });
+        Object.assign(state, { running: false, result: { code, msg, reason, ...tally(p.h, p.rows) } });
         render();
       },
     }, {
       args: ['migrate', state.src.id, '--from', state.from, '--to', target],
-      label: `把「${state.src.name}」搬到 ${providerName(state.to)}`,
+      label: t('webui.move.label.migrate', { name: state.src.name, provider: providerName(state.to) }),
       promptHost: prompts,
     });
     render();
@@ -213,10 +215,10 @@ export function initMove(root, api, con, notice, providers) {
   function preview(h, rows) {
     const { moved, missed } = tally(h, rows);
     const box = el('div', 'wiz__preview');
-    box.appendChild(el('p', 'wiz__count', `會搬 ${moved} 首` + (missed.length ? `,${missed.length} 首這次搬不過去` : '')));
+    box.appendChild(el('p', 'wiz__count', t('webui.move.preview.count', { count: moved }) + (missed.length ? t('webui.move.preview.missed', { count: missed.length }) : '')));
     if (missed.length) box.appendChild(missedList(missed));
     const more = el('details', 'wiz__more');
-    more.appendChild(el('summary', null, '看完整的變更表'));
+    more.appendChild(el('summary', null, t('webui.move.preview.full_table')));
     const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
     wrap.appendChild(renderTable(h, rows));
     more.appendChild(wrap);
@@ -240,8 +242,8 @@ export function initMove(root, api, con, notice, providers) {
   const liveBar = el('progress', 'bar');
   function paintProgress() {
     const p = state.progress;
-    const name = p ? STAGES[p.stage] || p.stage : '';
-    liveStage.textContent = !p ? '正在準備…' : name + (p.total > 0 ? ` ${p.done} / ${p.total}` : '…');
+    const name = p ? stages()[p.stage] || p.stage : '';
+    liveStage.textContent = !p ? t('webui.move.progress.preparing') : name + (p.total > 0 ? ` ${p.done} / ${p.total}` : '…');
     liveBar.hidden = !(p && p.total > 0);
     if (!liveBar.hidden) { liveBar.max = p.total; liveBar.value = p.done; liveBar.setAttribute('aria-label', name); }
   }
@@ -252,9 +254,9 @@ export function initMove(root, api, con, notice, providers) {
       li.dataset.state = i + 1 < state.step ? 'done' : i + 1 === state.step ? 'now' : 'todo';
       if (i + 1 === state.step) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
     });
-    routeFrom.replaceChildren(el('span', 'route__role', '來源'), el('strong', 'route__name', providerName(state.from)));
-    routeTo.replaceChildren(el('span', 'route__role', '目的地'), el('strong', 'route__name', providerName(state.to)));
-    route.setAttribute('aria-label', `示意:把 ${providerName(state.from)} 的歌單搬到 ${providerName(state.to)}`);
+    routeFrom.replaceChildren(el('span', 'route__role', t('webui.move.route.from')), el('strong', 'route__name', providerName(state.from)));
+    routeTo.replaceChildren(el('span', 'route__role', t('webui.move.route.to')), el('strong', 'route__name', providerName(state.to)));
+    route.setAttribute('aria-label', t('webui.move.route.aria', { from: providerName(state.from), to: providerName(state.to) }));
     const a = document.activeElement;
     const group = a && body.contains(a) && a.type === 'radio' ? a.name : '';
     body.replaceChildren(...[step1, step2, step3][state.step - 1]());
@@ -274,8 +276,8 @@ export function initMove(root, api, con, notice, providers) {
 
   function pcard(id, role, disabledWhy) {
     const st = connected(id);
-    const text = disabledWhy || (NO_LOGIN.includes(id) ? '不需要登入'
-      : !state.status ? '檢查中…' : st.kind === 'ok' ? '已連接' : st.kind === 'warn' ? st.text : '需要連接');
+    const text = disabledWhy || (NO_LOGIN.includes(id) ? t('webui.move.no_login')
+      : !state.status ? t('webui.move.checking') : st.kind === 'ok' ? t('webui.move.pcard.connected') : st.kind === 'warn' ? st.text : t('webui.move.pcard.not_connected'));
     const mark = disabledWhy ? '' : st.kind === 'ok' ? '✓ ' : st.kind === 'warn' ? '⚠ ' : '· ';
     const line = el('span', 'pcard__state', mark + text);
     line.dataset.state = disabledWhy ? 'muted' : st.kind;
@@ -287,30 +289,30 @@ export function initMove(root, api, con, notice, providers) {
     const fs = el('fieldset', 'pick');
     fs.appendChild(el('legend', 'pick__legend', legend));
     for (const id of providers.list) {
-      fs.appendChild(pcard(id, role, role === 'to' && READ_ONLY.includes(id) ? '目前只能當來源' : ''));
+      fs.appendChild(pcard(id, role, role === 'to' && READ_ONLY.includes(id) ? t('webui.move.source_only') : ''));
     }
     return fs;
   }
 
   function step1() {
     const cols = el('div', 'wiz__cols');
-    cols.append(group('從哪裡搬', 'from'), group('搬到哪裡', 'to'));
-    const out = [el('h2', 'panel__title', '從哪裡搬到哪裡?'), cols];
+    cols.append(group(t('webui.move.pick.from'), 'from'), group(t('webui.move.pick.to'), 'to'));
+    const out = [el('h2', 'panel__title', t('webui.move.step1.title')), cols];
     // 還沒連接的平台:各給一顆「連接」。Google Drive 是清單正本放的地方,搬家也需要它。
     const need = [...new Set([state.from, state.to, 'google'])]
       .filter((id) => !NO_LOGIN.includes(id) && state.status && connected(id).kind !== 'ok');
     for (const id of need) {
       const row = el('p', 'wiz__need');
       row.appendChild(el('span', null, id === 'google'
-        ? 'capy 把清單的正本存在你自己的 Google Drive,搬家之前要先連接它。'
-        : `${providerName(id)} 還沒連接。用的是你自己的帳號憑證,第一次設定要花幾分鐘。`));
-      row.appendChild(btn(`連接 ${providerName(id)}`, '', () => connect(id)));
+        ? t('webui.move.need.google')
+        : t('webui.move.need.provider', { provider: providerName(id) })));
+      row.appendChild(btn(t('webui.move.connect', { provider: providerName(id) }), '', () => connect(id)));
       out.push(row);
     }
     const same = state.from === state.to;
-    if (same) out.push(el('p', 'page__warn', '來源和目的地要是不同的平台。'));
+    if (same) out.push(el('p', 'page__warn', t('webui.move.same')));
     const acts = el('div', 'form-row wiz__acts');
-    const next = btn('下一步:選清單', 'btn--primary', enterStep2);
+    const next = btn(t('webui.move.next.playlist'), 'btn--primary', enterStep2);
     next.disabled = same;
     acts.appendChild(next);
     out.push(acts);
@@ -318,37 +320,37 @@ export function initMove(root, api, con, notice, providers) {
   }
 
   function step2() {
-    const out = [el('h2', 'panel__title', `要搬 ${providerName(state.from)} 的哪一個清單?`)];
-    const back = btn('上一步', 'btn--ghost', () => { state.step = 1; render(); });
+    const out = [el('h2', 'panel__title', t('webui.move.step2.title', { provider: providerName(state.from) }))];
+    const back = btn(t('webui.move.back'), 'btn--ghost', () => { state.step = 1; render(); });
     if (state.listError) {
       out.push(el('p', 'page__warn', state.listError));
       const acts = el('div', 'form-row wiz__acts');
-      acts.append(back, btn('再試一次', '', enterStep2));
+      acts.append(back, btn(t('webui.move.retry'), '', enterStep2));
       out.push(acts);
       return out;
     }
     if (!state.srcLists) { out.push(skeleton()); return out; }
     if (!state.srcLists.length) {
-      out.push(emptyState(`${providerName(state.from)} 上沒有可以搬的清單。`));
+      out.push(emptyState(t('webui.move.no_lists', { provider: providerName(state.from) })));
       const acts = el('div', 'form-row wiz__acts');
       acts.appendChild(back);
       out.push(acts);
       return out;
     }
     const list = el('fieldset', 'wiz__list');
-    list.appendChild(el('legend', 'sr-only', '來源清單'));
+    list.appendChild(el('legend', 'sr-only', t('webui.move.src_legend')));
     const draw = () => {
       const filter = state.filter.trim().toLowerCase();
       list.replaceChildren(list.firstChild);
       for (const p of state.srcLists.filter((x) => !filter || x.name.toLowerCase().includes(filter))) {
         list.appendChild(radioCard('pl__item', 'wiz-src', !!state.src && state.src.id === p.id, false,
           () => { state.src = p; defaultDst(); render(); },
-          el('span', 'pl__name', p.name), el('span', 'pl__count', p.count && p.count !== '-' ? `${p.count} 首` : '')));
+          el('span', 'pl__name', p.name), el('span', 'pl__count', p.count && p.count !== '-' ? t('webui.move.track_count', { count: p.count }) : '')));
       }
     };
     if (state.srcLists.length > 8) {
       const f = el('input', 'in wiz__filter');
-      f.type = 'search'; f.placeholder = '過濾清單名稱'; f.setAttribute('aria-label', '過濾清單名稱');
+      f.type = 'search'; f.placeholder = t('webui.move.filter'); f.setAttribute('aria-label', t('webui.move.filter'));
       f.value = state.filter; // 挑了一個清單會整段重畫:過濾字串放在 state 才不會被洗掉(review #68)
       f.addEventListener('input', () => { state.filter = f.value; draw(); });
       out.push(f);
@@ -357,7 +359,7 @@ export function initMove(root, api, con, notice, providers) {
     out.push(list);
 
     // 放到哪裡:新建(只有能建清單的平台)或加進既有的。
-    out.push(el('h3', 'card__sub', `放到 ${providerName(state.to)} 的哪裡?`));
+    out.push(el('h3', 'card__sub', t('webui.move.where.title', { provider: providerName(state.to) })));
     if (!state.dstLists) out.push(skeleton());
     else {
       const dup = sameName();
@@ -372,12 +374,12 @@ export function initMove(root, api, con, notice, providers) {
       };
       const canNew = CAN_CREATE.includes(state.to);
       where.appendChild(opt('new', CAN_CREATE.includes(state.to)
-        ? '建一個同名的新清單(私人)'
-        : `建一個新清單(${providerName(state.to)} 做不到,只能加進既有的)`, canNew));
-      where.appendChild(opt('existing', '加進既有的清單,接在它原本的歌後面', state.dstLists.length > 0));
+        ? t('webui.move.where.new')
+        : t('webui.move.where.new_unsupported', { provider: providerName(state.to) }), canNew));
+      where.appendChild(opt('existing', t('webui.move.where.existing'), state.dstLists.length > 0));
       if (state.dst.mode === 'existing') {
         const sel = el('select', 'in');
-        sel.setAttribute('aria-label', '既有的清單');
+        sel.setAttribute('aria-label', t('webui.move.where.existing_aria'));
         for (const p of state.dstLists) {
           const o = el('option', null, p.name);
           o.value = p.id;
@@ -389,12 +391,15 @@ export function initMove(root, api, con, notice, providers) {
         where.appendChild(sel);
       }
       out.push(where);
-      if (dup) out.push(el('p', 'page__note', `${providerName(state.to)} 上已經有一個叫「${dup.name}」的清單,所以預設加進它。如果那個清單不是你的(例如你追蹤的別人的清單),改選「建一個同名的新清單」;想放到別的清單也可以在上面換。`));
+      if (dup) out.push(el('p', 'page__note', t('webui.move.where.dup', { provider: providerName(state.to), name: dup.name })));
       // 兩條路都走不通(不能新建、也沒有既有的):說原因,不要只留兩個灰掉的選項(review #68)。
-      if (!canNew && !state.dstLists.length) out.push(el('p', 'page__warn', `${providerName(state.to)} 上還沒有可以加進去的清單,而它不能新建${state.to === 'local' ? '(本機曲庫只能加進既有的 M3U 檔):先建一個檔案' : ''},或回上一步改搬到別的平台。`));
+      if (!canNew && !state.dstLists.length) {
+        const provider = providerName(state.to);
+        out.push(el('p', 'page__warn', state.to === 'local' ? t('webui.move.where.none_local', { provider }) : t('webui.move.where.none', { provider })));
+      }
     }
     const acts = el('div', 'form-row wiz__acts');
-    const next = btn('下一步:確認', 'btn--primary', () => { state.step = 3; state.result = null; render(); });
+    const next = btn(t('webui.move.next.confirm'), 'btn--primary', () => { state.step = 3; state.result = null; render(); });
     next.disabled = !state.src || !state.dstLists || (state.dst.mode === 'existing' && !state.dst.id);
     acts.append(back, next);
     out.push(acts);
@@ -403,11 +408,11 @@ export function initMove(root, api, con, notice, providers) {
 
   function step3() {
     const dstName = state.dst.mode === 'new'
-      ? `${providerName(state.to)} 的新清單「${state.src.name}」`
-      : `${providerName(state.to)} 的「${(state.dstLists.find((x) => x.id === state.dst.id) || {}).name || state.dst.id}」`;
+      ? t('webui.move.dst.new', { provider: providerName(state.to), name: state.src.name })
+      : t('webui.move.dst.existing', { provider: providerName(state.to), name: (state.dstLists.find((x) => x.id === state.dst.id) || {}).name || state.dst.id });
     const out = [
-      el('h2', 'panel__title', '確認並搬家'),
-      el('p', 'wiz__sum', `把 ${providerName(state.from)} 的「${state.src.name}」搬到 ${dstName}。`),
+      el('h2', 'panel__title', t('webui.move.step.confirm')),
+      el('p', 'wiz__sum', t('webui.move.summary', { from: providerName(state.from), name: state.src.name, target: dstName })),
     ];
     const r = state.result;
     const live = el('div', 'wiz__live');
@@ -416,38 +421,39 @@ export function initMove(root, api, con, notice, providers) {
       // 進度是真的才畫(決策 47):這裡只有階段說明與預覽;做到哪裡看底部的執行狀態列,要停按那裡的「中止」。
       if (state.preview) live.appendChild(preview(state.preview.h, state.preview.rows));
       else {
-        live.append(liveStage, liveBar, el('p', 'page__note', '清單越長越久。想停下來,按底部的「中止」。'));
+        live.append(liveStage, liveBar, el('p', 'page__note', t('webui.move.running_note', { button: t('webui.console.stop') })));
         paintProgress();
       }
     } else if (!r) {
-      out.push(el('p', 'page__note', '按下去之後會先比對、列出要搬的歌,再問你一次;你確認了才會寫入。來源的清單不會被更動,原本的順序也不會變。'));
-      acts.append(btn('上一步', 'btn--ghost', () => { state.step = 2; render(); }), btn('開始搬家', 'btn--primary', start));
+      out.push(el('p', 'page__note', t('webui.move.before_note')));
+      acts.append(btn(t('webui.move.back'), 'btn--ghost', () => { state.step = 2; render(); }), btn(t('webui.move.start'), 'btn--primary', start));
     } else if (r.code === 0) {
-      live.appendChild(el('p', 'wiz__done', r.moved ? `搬好了:${r.moved} 首已經在 ${dstName} 裡。` : '目的地已經都有這些歌了,沒有需要搬的。'));
+      live.appendChild(el('p', 'wiz__done', r.moved ? t('webui.move.done', { count: r.moved, target: dstName }) : t('webui.move.done_none')));
       if (r.missed.length) {
-        live.appendChild(el('p', 'page__note', `${r.missed.length} 首在 ${providerName(state.to)} 找不到,這次沒搬:`));
+        live.appendChild(el('p', 'page__note', t('webui.move.missed', { count: r.missed.length, provider: providerName(state.to) })));
         live.appendChild(missedList(r.missed));
       }
-      acts.append(btn('再搬一個', 'btn--primary', () => { state.result = null; enterStep2(); }));
-      const sync = el('a', 'wiz__link', '讓兩邊之後保持同步 →');
+      acts.append(btn(t('webui.move.again'), 'btn--primary', () => { state.result = null; enterStep2(); }));
+      const sync = el('a', 'wiz__link', t('webui.move.keep_synced'));
       sync.href = '#/sync';
       acts.appendChild(sync);
     } else {
       // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
       // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。
-      // 「已中止」(底部的中止鈕)另外說:中止前可能已經開始寫入,但再搬一次不會重複。
-      const stopped = r.msg === CANCELLED_MSG;
+      // 「已中止」(底部的中止鈕)另外說:中止前可能已經開始寫入,但再搬一次不會重複。認它看 exit 的 reason(機器欄位;
+      // 走到這裡 code 一定不是 0,所以跟 console.js 的 isCancelled 同一個判斷),不比對跟著語系變的訊息。
+      const stopped = r.reason === 'cancelled';
       const quit = stopped || r.code === 2 || (r.code === 1 && ['dismissed', 'timeout'].includes(state.closedBy));
       live.appendChild(el('p', quit ? 'wiz__stage' : 'page__warn',
-        !quit ? (r.msg || '沒有完成。').replace(/^Error: /, '')
-          : stopped ? '已中止。中止前如果已經開始寫入,可能只搬了一部分;再搬一次不會重複,已經在目的地的歌會自動略過。'
-            : state.closedBy === 'timeout' ? '等太久沒有回答,這次已經取消,什麼都沒有寫入。' : '已取消,什麼都沒有寫入。'));
+        !quit ? (r.msg || t('webui.move.failed')).replace(/^Error: /, '')
+          : stopped ? t('webui.move.stopped')
+            : state.closedBy === 'timeout' ? t('webui.move.timed_out') : t('webui.move.cancelled')));
       if (!quit) {
-        const c = el('a', 'wiz__link', '到主控台看完整的輸出 →');
+        const c = el('a', 'wiz__link', t('webui.move.see_console'));
         c.href = '#/console';
         live.appendChild(c);
       }
-      acts.append(btn('上一步', 'btn--ghost', () => { state.step = 2; state.result = null; render(); }), btn('再試一次', 'btn--primary', start));
+      acts.append(btn(t('webui.move.back'), 'btn--ghost', () => { state.step = 2; state.result = null; render(); }), btn(t('webui.move.retry'), 'btn--primary', start));
     }
     out.push(live, acts);
     return out;
@@ -467,11 +473,11 @@ function skeleton() {
 // ── 它怎麼搬的:三拍,左右交錯,每拍一個小示意(裝飾) ──
 function how() {
   const sec = el('section', 'how');
-  sec.appendChild(el('h2', 'how__title', '它怎麼搬的'));
+  sec.appendChild(el('h2', 'how__title', t('webui.move.how.title')));
   const beats = [
-    ['讀', '讀出清單裡的每一首', '從來源平台把清單讀出來:歌名、歌手、專輯,還有每首歌的國際編號(ISRC)。來源的清單只讀不改。', 'read'],
-    ['對', '在目的地找到同一首歌', '先用國際編號找,同一個錄音在兩個平台上是同一個編號;沒有編號的才用歌名、歌手與長度比對。沒把握的不會亂猜,會列出來問你。', 'match'],
-    ['建', '照原本的順序放進去', '在目的地建一個同名的清單(或加進你指定的清單),照來源的順序放好。你先看過要搬的歌,確認了才寫入。', 'build'],
+    [t('webui.move.how.read.mark'), t('webui.move.how.read.title'), t('webui.move.how.read.text'), 'read'],
+    [t('webui.move.how.match.mark'), t('webui.move.how.match.title'), t('webui.move.how.match.text'), 'match'],
+    [t('webui.move.how.build.mark'), t('webui.move.how.build.title'), t('webui.move.how.build.text'), 'build'],
   ];
   for (const [mark, title, text, kind] of beats) {
     const b = el('div', 'beat');
@@ -493,15 +499,15 @@ function how() {
 // ── 先說清楚的事:限制也是事實 ──
 function truths() {
   const sec = el('section', 'truths');
-  sec.appendChild(el('h2', 'how__title', '先說清楚的事'));
+  sec.appendChild(el('h2', 'how__title', t('webui.move.truths.title')));
   const ul = el('ul', 'truths__list');
   for (const [k, v] of [
-    ['不會刪你的東西', '來源的清單不會被更動;對目的地只新增,不移除、不重排。'],
-    ['順序不會變', '你排的順序是你的記憶,capy 沒有任何路徑會打亂它。'],
-    ['搬進 Apple Music 的歌不一定進資料庫', '加進 Apple Music 清單的曲目會不會一起加進你的 Apple Music 資料庫,看你在 Apple Music 裡的設定,這是 Apple 的行為;capy 只寫你自己建的清單。'],
-    ['連接帳號要花幾分鐘', 'capy 用的是你自己的帳號憑證,存在這台電腦的鑰匙圈裡。沒有人替你代管,所以也沒有人能跟你收費。'],
-    ['清單的正本在你的 Google Drive', 'capy 沒有伺服器。你隨時可以把那份資料清掉。'],
-    ['硬碟裡的歌單也可以搬', '本機的 M3U 播放清單可以搬到 Spotify,不另外收費——因為本來就沒有收費。'],
+    [t('webui.move.truths.no_delete.title'), t('webui.move.truths.no_delete.text')],
+    [t('webui.move.truths.order.title'), t('webui.move.truths.order.text')],
+    [t('webui.move.truths.apple_library.title'), t('webui.move.truths.apple_library.text')],
+    [t('webui.move.truths.setup.title'), t('webui.move.truths.setup.text')],
+    [t('webui.move.truths.drive.title'), t('webui.move.truths.drive.text')],
+    [t('webui.move.truths.local.title'), t('webui.move.truths.local.text')],
   ]) {
     const li = el('li', 'truths__item');
     li.append(el('strong', null, k), el('span', null, v));
@@ -513,8 +519,8 @@ function truths() {
 
 function foot() {
   const f = el('footer', 'move__foot');
-  f.appendChild(el('span', null, 'capy 是開源的(MIT)。'));
-  const a = el('a', null, '原始碼在 GitHub');
+  f.appendChild(el('span', null, t('webui.move.foot.open_source')));
+  const a = el('a', null, t('webui.move.foot.source'));
   a.href = 'https://github.com/Tai-ch0802/capy-music'; a.target = '_blank'; a.rel = 'noopener noreferrer';
   f.appendChild(a);
   return f;

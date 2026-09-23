@@ -20,12 +20,12 @@ func stubMigrateTTY(t *testing.T, answer bool) *[]string {
 	origTTY, origConfirm := migrateIsTTY, confirmWrite
 	prompts := &[]string{}
 	migrateIsTTY = func(*cobra.Command) bool { return true }
-	confirmWrite = func(p string) (bool, error) { *prompts = append(*prompts, p); return answer, nil }
+	confirmWrite = func(_, p string) (bool, error) { *prompts = append(*prompts, p); return answer, nil }
 	t.Cleanup(func() { migrateIsTTY, confirmWrite = origTTY, origConfirm })
 	return prompts
 }
 
-// migratePromptsDeclined:來源 [a, unmatched...]、只有 a 對得到;在終端機裡跑 migrate、每個確認都回「否」,回傳提示(TestWebMoveWizardKeysOnMigrateWording 也用)。
+// migratePromptsDeclined:來源 [a, unmatched...]、只有 a 對得到;在終端機裡跑 migrate、每個確認都回「否」,回傳提示。
 func migratePromptsDeclined(t *testing.T, unmatched ...string) []string {
 	t.Helper()
 	fs1, fs2, _, _ := twoPlatforms(t)

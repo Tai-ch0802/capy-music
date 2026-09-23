@@ -9,25 +9,27 @@
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body data-connected="true">
-<nav class="rail" aria-label="頁面">
+<!-- 使用者看得到的字都由 js/i18n.js 的 applyStatic() 依 data-i18n* 填上(決策 50):這裡的元素先是空的。 -->
+<nav class="rail" data-i18n-aria-label="webui.rail.label">
   <div class="rail__brand">capy<span>.</span></div>
-  <a class="rail__item is-active" href="#/move" data-page="move"><span class="rail__glyph" aria-hidden="true">⇄</span>搬家<span class="rail__key">1</span></a>
-  <a class="rail__item" href="#/playlists" data-page="playlists"><span class="rail__glyph" aria-hidden="true">♫</span>我的清單<span class="rail__key">2</span></a>
-  <a class="rail__item" href="#/sync" data-page="sync"><span class="rail__glyph" aria-hidden="true">↻</span>同步<span class="rail__key">3</span></a>
-  <a class="rail__item" href="#/search" data-page="search"><span class="rail__glyph" aria-hidden="true">⚲</span>搜尋<span class="rail__key">4</span></a>
-  <a class="rail__item" href="#/account" data-page="account"><span class="rail__glyph" aria-hidden="true">☺</span>帳號<span class="rail__key">5</span></a>
+  <a class="rail__item is-active" href="#/move" data-page="move"><span class="rail__glyph" aria-hidden="true">⇄</span><span data-i18n="webui.rail.move"></span><span class="rail__key">1</span></a>
+  <a class="rail__item" href="#/playlists" data-page="playlists"><span class="rail__glyph" aria-hidden="true">♫</span><span data-i18n="webui.rail.playlists"></span><span class="rail__key">2</span></a>
+  <a class="rail__item" href="#/sync" data-page="sync"><span class="rail__glyph" aria-hidden="true">↻</span><span data-i18n="webui.rail.sync"></span><span class="rail__key">3</span></a>
+  <a class="rail__item" href="#/search" data-page="search"><span class="rail__glyph" aria-hidden="true">⚲</span><span data-i18n="webui.rail.search"></span><span class="rail__key">4</span></a>
+  <a class="rail__item" href="#/account" data-page="account"><span class="rail__glyph" aria-hidden="true">☺</span><span data-i18n="webui.rail.account"></span><span class="rail__key">5</span></a>
   <details class="rail__more" id="rail-more">
-    <summary>進階</summary>
-    <a class="rail__item" href="#/console" data-page="console"><span class="rail__glyph" aria-hidden="true">›</span>主控台<span class="rail__key">6</span></a>
-    <a class="rail__item" href="#/isrc" data-page="isrc"><span class="rail__glyph" aria-hidden="true">#</span>ISRC 查詢<span class="rail__key">7</span></a>
-    <a class="rail__item" href="#/doctor" data-page="doctor"><span class="rail__glyph" aria-hidden="true">✓</span>診斷<span class="rail__key">8</span></a>
+    <summary data-i18n="webui.rail.more"></summary>
+    <a class="rail__item" href="#/console" data-page="console"><span class="rail__glyph" aria-hidden="true">›</span><span data-i18n="webui.rail.console"></span><span class="rail__key">6</span></a>
+    <a class="rail__item" href="#/isrc" data-page="isrc"><span class="rail__glyph" aria-hidden="true">#</span><span data-i18n="webui.rail.isrc"></span><span class="rail__key">7</span></a>
+    <a class="rail__item" href="#/doctor" data-page="doctor"><span class="rail__glyph" aria-hidden="true">✓</span><span data-i18n="webui.rail.doctor"></span><span class="rail__key">8</span></a>
   </details>
-  <div class="rail__meta"><span id="version">—</span> · 預設平台 <span id="default-provider">—</span></div>
+  <div class="rail__meta"><span id="version">—</span> · <span data-i18n="webui.rail.default_provider"></span> <span id="default-provider">—</span></div>
+  <select class="in rail__lang" id="lang" data-run data-i18n-aria-label="webui.lang.label"></select>
 </nav>
 <main class="main" id="main">
   <section class="page" id="page-move"></section>
   <section class="page" id="page-console" hidden>
-    <section class="console" id="console" role="region" aria-label="主控台"></section>
+    <section class="console" id="console" role="region" data-i18n-aria-label="webui.rail.console"></section>
   </section>
   <section class="page" id="page-search" hidden></section>
   <section class="page" id="page-playlists" hidden></section>
@@ -36,13 +38,13 @@
   <section class="page" id="page-doctor" hidden></section>
   <section class="page" id="page-isrc" hidden>
     <div class="page__head">
-      <h2 class="page__title">ISRC 查詢</h2>
-      <p class="page__lead">ISRC 是每首歌的國際編號。輸入一個,看它在三個平台上分別是哪一首。</p>
+      <h2 class="page__title" data-i18n="webui.isrc.title"></h2>
+      <p class="page__lead" data-i18n="webui.isrc.lead"></p>
     </div>
     <div class="isrc__bar">
       <label class="isrc__label" for="isrc-input">ISRC</label>
       <input id="isrc-input" class="in in--mono" spellcheck="false" autocomplete="off" placeholder="TWK231680790">
-      <button type="button" class="btn btn--primary" id="isrc-go">查詢</button>
+      <button type="button" class="btn btn--primary" id="isrc-go" data-i18n="webui.isrc.go"></button>
     </div>
     <p class="isrc__status" id="isrc-status" role="status"></p>
     <div id="isrc-out"></div>
@@ -50,47 +52,47 @@
 </main>
 <footer class="dock">
   <div class="dock__now" id="now" data-playing="false">
-    <span class="dock__now-line" id="now-line">讀取播放狀態…</span>
+    <span class="dock__now-line" id="now-line" data-i18n="webui.player.loading"></span>
     <span class="dock__now-ctl">
-      <button type="button" class="btn btn--ghost" data-cmd="play" data-run aria-label="播放">▶</button>
-      <button type="button" class="btn btn--ghost" data-cmd="pause" data-run aria-label="暫停">⏸</button>
-      <button type="button" class="btn btn--ghost" data-cmd="prev" data-run aria-label="上一首">⏮</button>
-      <button type="button" class="btn btn--ghost" data-cmd="next" data-run aria-label="下一首">⏭</button>
+      <button type="button" class="btn btn--ghost" data-cmd="play" data-run data-i18n-aria-label="webui.player.play">▶</button>
+      <button type="button" class="btn btn--ghost" data-cmd="pause" data-run data-i18n-aria-label="webui.player.pause">⏸</button>
+      <button type="button" class="btn btn--ghost" data-cmd="prev" data-run data-i18n-aria-label="webui.player.prev">⏮</button>
+      <button type="button" class="btn btn--ghost" data-cmd="next" data-run data-i18n-aria-label="webui.player.next">⏭</button>
     </span>
   </div>
   <div class="dock__busy" id="busy" hidden>
     <span class="dock__busy-dot" aria-hidden="true">●</span>
-    <a class="dock__busy-cmd" id="busy-cmd" href="#/console" title="到主控台看完整輸出"></a>
+    <a class="dock__busy-cmd" id="busy-cmd" href="#/console"></a>
     <span class="dock__busy-act" id="busy-act"></span>
-    <progress class="bar dock__busy-bar" id="busy-progress" max="1" value="0" hidden aria-label="進度"></progress>
+    <progress class="bar dock__busy-bar" id="busy-progress" max="1" value="0" hidden data-i18n-aria-label="webui.console.progress"></progress>
     <span class="dock__busy-time" id="busy-time" aria-hidden="true">running 00:00</span>
-    <button type="button" class="btn btn--danger" id="cancel">中止</button>
+    <button type="button" class="btn btn--danger" id="cancel" data-i18n="webui.console.stop"></button>
   </div>
   <span class="sr-only" id="busy-sr" role="status"></span>
   <div class="dock__notice" id="notice" role="status" hidden></div>
-  <div class="dock__cmd" id="cmdline" role="group" aria-label="命令列">
+  <div class="dock__cmd" id="cmdline" role="group" data-i18n-aria-label="webui.shell.cmdline">
     <label class="dock__prompt" for="cmd">capy</label>
-    <input id="cmd" name="cmd" class="dock__input" list="commands" autocomplete="off" spellcheck="false" placeholder="pl show 通勤 · search 五月天 · auth status">
+    <input id="cmd" name="cmd" class="dock__input" list="commands" autocomplete="off" spellcheck="false" data-i18n-placeholder="webui.shell.cmd_placeholder">
     <datalist id="commands"></datalist>
-    <button type="button" class="btn btn--primary" id="run" data-run>執行</button>
+    <button type="button" class="btn btn--primary" id="run" data-run data-i18n="webui.shell.run"></button>
   </div>
 </footer>
 <dialog id="keys" class="keys">
-  <h2 class="keys__title">鍵位</h2>
+  <h2 class="keys__title" data-i18n="webui.keys.title"></h2>
   <dl class="keys__list">
-    <dt>space</dt><dd>播放與暫停</dd>
-    <dt>n p</dt><dd>下一首、上一首</dd>
-    <dt>← →</dt><dd>前後各十秒</dd>
-    <dt>+ -</dt><dd>音量升降五格</dd>
-    <dt>1 – 8</dt><dd>跳到左邊第 n 頁(6 – 8 在「進階」裡)</dd>
-    <dt>/</dt><dd>到主控台的命令列</dd>
-    <dt>Ctrl-C</dt><dd>在主控台的命令列、沒選取文字時:中止執行中的命令(每一頁底部的「中止」鈕也一樣)</dd>
-    <dt>r</dt><dd>讀不到播放狀態而停擺後,重新連上</dd>
-    <dt>?</dt><dd>開這張表</dd>
-    <dt>Esc</dt><dd>回到指令模式(離開輸入框)</dd>
+    <dt>space</dt><dd data-i18n="webui.keys.space"></dd>
+    <dt>n p</dt><dd data-i18n="webui.keys.next_prev"></dd>
+    <dt>← →</dt><dd data-i18n="webui.keys.seek"></dd>
+    <dt>+ -</dt><dd data-i18n="webui.keys.volume"></dd>
+    <dt>1 – 8</dt><dd data-i18n="webui.keys.pages"></dd>
+    <dt>/</dt><dd data-i18n="webui.keys.slash"></dd>
+    <dt>Ctrl-C</dt><dd data-i18n="webui.keys.ctrl_c"></dd>
+    <dt>r</dt><dd data-i18n="webui.keys.reconnect"></dd>
+    <dt>?</dt><dd data-i18n="webui.keys.help"></dd>
+    <dt>Esc</dt><dd data-i18n="webui.keys.esc"></dd>
   </dl>
-  <p class="keys__note">任何輸入框有焦點時,單鍵快捷鍵全部失效。</p>
-  <form method="dialog"><button class="btn btn--ghost">關閉</button></form>
+  <p class="keys__note" data-i18n="webui.keys.note"></p>
+  <form method="dialog"><button class="btn btn--ghost" data-i18n="webui.keys.close"></button></form>
 </dialog>
 <script type="module" src="js/app.js"></script>
 </body>

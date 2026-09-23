@@ -2,11 +2,13 @@
 // 頁面絕不代加 --yes、絕不代加 --force)。這一頁再把同一份變更表畫大一點。
 import { el, quote, btn, field, input, select, providerOptions, emptyState, pageHead } from './common.js';
 import { renderTable } from '../table.js';
+import { t } from '../i18n.js';
 
 export function initSync(root, api, con, notice, providers) {
-  pageHead(root, '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。');
-  const name = input('sans', '清單名稱(留空 = 全部)');
-  const prov = select([{ value: '(全部)', label: '全部平台' }, ...providerOptions(providers.list)], '(全部)');
+  pageHead(root, t('webui.sync.title'), t('webui.sync.lead'));
+  const name = input('sans', t('webui.sync.name_placeholder'));
+  // 「全部平台」的值是空字串 = 不帶 --provider(值不拿顯示文字當,顯示文字跟著語系)。
+  const prov = select([{ value: '', label: t('webui.sync.all_platforms') }, ...providerOptions(providers.list)], '');
   const dry = el('input', null);
   dry.type = 'checkbox';
   dry.checked = true;
@@ -19,14 +21,15 @@ export function initSync(root, api, con, notice, providers) {
     if (n) return ' ' + quote(n);
     return verb === 'dedup' ? '' : ' --all';
   };
-  const flags = () => (prov.value === '(全部)' ? '' : ` --provider ${prov.value}`) + (dry.checked ? ' --dry-run' : '');
+  const flags = () => (prov.value ? ` --provider ${prov.value}` : '') + (dry.checked ? ' --dry-run' : '');
   // 按鈕說人話,命令原文在主控台(決策 45)。
   const VERBS = [
-    ['pull', '從平台更新', '把平台上的變更拉回來'],
-    ['push', '推到平台', '把 capy 保管的清單推到平台'],
-    ['sync', '雙向同步', '雙向同步'],
-    ['dedup', '去除重複', '去除重複的歌'],
+    ['pull', t('webui.sync.pull'), t('webui.sync.pull_label')],
+    ['push', t('webui.sync.push'), t('webui.sync.push_label')],
+    ['sync', t('webui.sync.sync'), t('webui.sync.sync_label')],
+    ['dedup', t('webui.sync.dedup'), t('webui.sync.dedup_label')],
   ];
+  const dryLabel = t('webui.sync.dry_run');
   const run = (verb, label) => {
     const wasDry = dry.checked; // 按下去那一刻的值:命令跑到一半才改勾選,不該改變這一次的收尾
     out.replaceChildren();
@@ -35,37 +38,37 @@ export function initSync(root, api, con, notice, providers) {
       onExit: (code, msg) => {
         // 只看變更 + 有變更 = exit 2,這是最常見的一次操作,是正常結果不是警告;CLI 的原文會叫人「加 --yes」,
         // 而那正是這一頁永遠不會做的事(決策 46)——說這一頁上的下一步(review #67 第二輪)。
-        if (code === 2 && wasDry) out.appendChild(el('p', 'page__note', '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。'));
+        if (code === 2 && wasDry) out.appendChild(el('p', 'page__note', t('webui.sync.dry_note', { option: dryLabel })));
         else if (code !== 0 && msg) out.appendChild(el('p', 'page__warn', msg));
-        else if (code === 0 && !out.firstChild) out.appendChild(emptyState('兩邊已經一致,沒有要改的東西。'));
+        else if (code === 0 && !out.firstChild) out.appendChild(emptyState(t('webui.sync.in_sync')));
       },
     }, { label });
   };
 
   const bar = el('div', 'form-row');
-  bar.append(field('清單', name, true), field('平台', prov), field('只看變更,先不寫入', dry));
+  bar.append(field(t('webui.sync.playlist'), name, true), field(t('webui.common.platform'), prov), field(dryLabel, dry));
   const acts = el('div', 'form-row');
   for (const [verb, text, label] of VERBS) acts.appendChild(btn(text, verb === 'sync' ? 'btn--primary' : '', () => run(verb, label)));
 
   root.append(bar, acts,
-    el('p', 'page__note', '「去除重複」整理的是 capy 保管的那一份(不分平台);上面選的平台只決定這次去檢查哪個平台上的重複——沒選到的平台這次不會檢查。清單留空時會讓你挑一個。要把清單搬到另一個平台,請到「搬家」。'),
+    el('p', 'page__note', t('webui.sync.dedup_note', { button: t('webui.sync.dedup') })),
     out);
-  out.appendChild(emptyState('選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。'));
+  out.appendChild(emptyState(t('webui.sync.empty', { button: t('webui.sync.sync') })));
 
   // 同步表(最後一欄是 REASON_CODE):自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
   function table(header, rows) {
     const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
-    const t = renderTable(header, rows);
+    const tbl = renderTable(header, rows);
     const ai = header.indexOf('ACTION');
     if (ai >= 0) {
-      for (const tr of t.querySelectorAll('tbody tr')) {
+      for (const tr of tbl.querySelectorAll('tbody tr')) {
         const cell = tr.children[ai];
         if (cell) cell.dataset.action = cell.textContent.trim();
       }
     }
-    wrap.appendChild(t);
+    wrap.appendChild(tbl);
     const n = rows.filter((r) => ai < 0 || r[ai] !== 'skip').length;
-    wrap.appendChild(el('p', 'page__note', `${n} 筆變更(skip 不算變更)`));
+    wrap.appendChild(el('p', 'page__note', t('webui.sync.changes', { count: n })));
     return wrap;
   }
 }
