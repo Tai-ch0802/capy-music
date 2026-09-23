@@ -88,8 +88,10 @@ func TestEnglishTUIHintsAreWholeAt80(t *testing.T) {
 }
 
 // ? 鍵位表:每一行在 80 欄都放得下(printBlock 逐行夾在 w-1,放不下就被截成 ".."、那行的說明就看不到了)。
-func TestEnglishTUIKeymapFitsAt80(t *testing.T) {
-	m := newEnglishTUI(t, 80)
+// TestEnglishTUIKeymapFitsAtMinWidth:最窄的 tuiMinWidth 下英文鍵位表每一行都完整印出(printBlock 夾到 w-1)。
+// 寬度用 len 量(英文是純 ASCII,每個字寬 1),不拿 tuiWidth 當尺。
+func TestEnglishTUIKeymapFitsAtMinWidth(t *testing.T) {
+	m := newEnglishTUI(t, tuiMinWidth)
 	got := recordPrintln(t)
 	step(t, m, tea.KeyPressMsg{Code: '?'}, true)
 	if len(*got) != 1 {
@@ -101,8 +103,8 @@ func TestEnglishTUIKeymapFitsAt80(t *testing.T) {
 		t.Fatalf("鍵位表 %d 行只印出 %d 行:%q", len(want), len(lines), (*got)[0])
 	}
 	for i, l := range lines {
-		if l != want[i] || wantWidth(l) > 79 || hasCJK(l) {
-			t.Errorf("第 %d 行被截斷、超寬或有中文(寬 %d):%q", i, wantWidth(l), l)
+		if l != want[i] || !isASCII(l) || len(l) > tuiMinWidth-1 {
+			t.Errorf("第 %d 行被截斷、超寬或不是純 ASCII(寬 %d):%q", i, len(l), l)
 		}
 	}
 	if !strings.Contains(tuiKeymap(), "/pl show Road Trip") {
@@ -224,4 +226,13 @@ func TestEnglishTUIPlaceholder(t *testing.T) {
 			t.Errorf("w=%d:%q,要 %q", w, got, want)
 		}
 	}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

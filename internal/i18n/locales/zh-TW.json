@@ -549,6 +549,7 @@
   "play.type.artist": "藝人",
   "play.type.playlist": "清單",
   "play.type.track": "曲目",
+  "player.device": "{name}({type})",
   "player.err.bad_seek_pos": "位置要寫成 [h:]mm:ss 或純秒數(例:1:23、1:05:30 或 83),不是 {value}",
   "player.err.bad_volume": "音量要是 0-100 的整數,不是 {value}",
   "player.err.watch_needs_tty": "--watch 需要終端機;非互動環境請用 capy now(單次純文字)",

@@ -251,7 +251,11 @@ func cacheCandidates(c *cache.Cache, providerID, q string) []candidate {
 		if r.Provider != providerID || r.Type == cache.TypeQuery {
 			continue
 		}
-		add(candidate{Type: r.Type, ID: r.ID, Label: r.Label, Detail: r.Detail})
+		detail := r.Detail // cache.json 裡的是存的當下的語系:藝人那句在這裡重翻;曲目的「藝人 · 專輯」是資料
+		if r.Type == cache.TypeArtist {
+			detail = i18n.T("play.candidate.top_tracks")
+		} // ponytail: 清單那句(N 首)不重翻——清單快取裡有的那份先進 seen;只有快取已沒有的舊清單會帶存的當下的語系
+		add(candidate{Type: r.Type, ID: r.ID, Label: r.Label, Detail: detail})
 	}
 	return out
 }

@@ -367,9 +367,9 @@ func newNowCmd() *cobra.Command {
 				mark = "▶"
 			}
 			fmt.Fprintf(w, "%s %s — %s\n", mark, ui.Bold(tty, st.Track.Title), strings.Join(st.Track.Artists, ", "))
-			fmt.Fprintf(w, "  %s / %s · %s(%s)\n",
+			fmt.Fprintf(w, "  %s / %s · %s\n",
 				ui.FormatDuration(st.ProgressMS), ui.FormatDuration(st.Track.DurationMS),
-				st.Device.Name, st.Device.Type)
+				i18n.T("player.device", "name", st.Device.Name, "type", st.Device.Type))
 			return nil
 		},
 	}

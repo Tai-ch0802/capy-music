@@ -579,7 +579,7 @@
   "play.err.prefix_type_conflict": "the prefix {prefix} conflicts with --type {type}",
   "play.err.type_without_query": "--type only applies to a search query (no arguments resumes playback; a URI / track ID needs no type)",
   "play.err.unsupported_uri": "only track URIs / IDs are supported for now, not {ref} — get the track IDs with capy pl show and play those",
-  "play.label.artist_first_only": "{artist}: {title} ({platform} plays one track at a time; queueing comes in P4)",
+  "play.label.artist_first_only": "{artist}: {title} ({platform} can't queue tracks, so only the first top track plays; queueing comes in P4)",
   "play.label.artist_top": {
     "one": "Top track by {artist} ({count} track)",
     "other": "Top tracks by {artist} ({count} tracks)"
@@ -591,6 +591,7 @@
   "play.type.artist": "artist",
   "play.type.playlist": "playlist",
   "play.type.track": "track",
+  "player.device": "{name} ({type})",
   "player.err.bad_seek_pos": "the position must be [h:]mm:ss or plain seconds (e.g. 1:23, 1:05:30 or 83), not {value}",
   "player.err.bad_volume": "the volume must be a whole number 0-100, not {value}",
   "player.err.watch_needs_tty": "--watch needs a terminal; elsewhere use capy now (one-shot plain text)",
@@ -805,7 +806,7 @@
   "tui.hint.playing": "space play/pause · ←→ ±10 s · / commands · ? keys · q quit",
   "tui.hint.stalled": "r reconnect · / commands · ? keys · q quit",
   "tui.hint.typing": "↑↓ history · Enter run · Esc clear · Ctrl-C quit",
-  "tui.keymap": "Keys:\n  space    play/pause        n / p    next / previous track\n  <- / ->  seek -/+10 s      + / -    volume +/-5\n  /        command menu      up/down  recall commands from this session\n  r        reconnect after polling stops     ?  this list\n  q        quit (Ctrl-C while typing)\n\nCommand menu (when the input starts with /): up/down selects, Tab / Enter\nputs the command on the input line, Esc closes it.\nOnce the input is a full command (arguments allowed, e.g. /pl show Road Trip),\nthe menu closes and Enter runs it; no need to delete the /.",
+  "tui.keymap": "Keys:\n  space    play/pause\n  n / p    next / previous track\n  <- / ->  seek -/+10 s\n  + / -    volume +/-5\n  /        command menu\n  up/down  recall commands from this session\n  r        reconnect after polling stops\n  ?        this list\n  q        quit (Ctrl-C while typing)\n\nCommand menu (input starting with /):\nup/down selects, Tab / Enter puts the\ncommand on the input line, Esc closes it.\nOnce the input is a full command (arguments\nallowed, e.g. /pl show Road Trip), the menu\ncloses and Enter runs it; no need to delete\nthe /.",
   "tui.menu.no_match": "No matching commands",
   "tui.placeholder.long": "Type a capy subcommand, e.g. pl list",
   "tui.placeholder.short": "capy subcommand",

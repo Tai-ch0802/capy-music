@@ -80,7 +80,7 @@ func TestEnglishPlayLabels(t *testing.T) {
 	}
 	f.top = append(f.top, provider.Track{ProviderID: "h2"})
 	f.caps &^= provider.CapPlayQueue
-	if out, err := runCLI(t, "play", "artist:五月天"); err != nil || out != "▶ 五月天: Stubborn (Fake plays one track at a time; queueing comes in P4)\n" {
+	if out, err := runCLI(t, "play", "artist:五月天"); err != nil || out != "▶ 五月天: Stubborn (Fake can't queue tracks, so only the first top track plays; queueing comes in P4)\n" {
 		t.Errorf("不能排佇列:%q %v", out, err)
 	}
 	f.top = nil
@@ -178,10 +178,17 @@ func TestEnglishPlayErrors(t *testing.T) {
 		t.Errorf("--pick 沒有符合的:%v", err)
 	}
 	c := cache.Load()
-	c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypeArtist, ID: "a1", Label: "五月天", Detail: "top tracks"})
+	c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypeArtist, ID: "a1", Label: "五月天", Detail: "熱門歌曲"}) // 在 zh-TW 下存的
 	_ = c.Save()
 	origPicker := runPlayPicker
-	runPlayPicker = func(cs []candidate) (*candidate, error) { return &cs[len(cs)-1], nil } // 最近的藝人
+	var shown string
+	runPlayPicker = func(cs []candidate) (*candidate, error) { shown = cs[len(cs)-1].Detail; return &cs[len(cs)-1], nil } // 最近的藝人
+	t.Cleanup(func() { runPlayPicker = origPicker })
+	defer func() {
+		if shown != "top tracks" {
+			t.Errorf("最近播過的藝人要照目前的語系重翻,不是 cache.json 存的那句:%q", shown)
+		}
+	}()
 	t.Cleanup(func() { runPlayPicker = origPicker })
 	f.caps &^= provider.CapArtistSearch
 	_, err := runCLI(t, "play", "--pick")
@@ -233,7 +240,7 @@ func TestEnglishWatchView(t *testing.T) {
 		Device:     provider.Device{Name: "MacBook Pro", Type: "Computer", VolumePct: 50, VolumeKnown: true},
 	}
 	v := ansi.Strip(m.View().Content)
-	for _, want := range []string{"MacBook Pro(Computer) · volume 50\n", "  space play/pause · n next · p previous · q/esc quit\n"} {
+	for _, want := range []string{"MacBook Pro (Computer) · volume 50\n", "  space play/pause · n next · p previous · q/esc quit\n"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("畫面缺 %q:\n%s", want, v)
 		}

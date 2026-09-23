@@ -166,7 +166,7 @@ func (m watchModel) View() tea.View {
 		bar.SetWidth(max(10, w-2-ansi.StringWidth(times)))
 		line("  " + bar.ViewAs(pct) + times)
 		if st.Device.Name != "" {
-			dev := fmt.Sprintf("  %s(%s)", st.Device.Name, st.Device.Type)
+			dev := "  " + i18n.T("player.device", "name", st.Device.Name, "type", st.Device.Type)
 			if st.Device.VolumePct > 0 {
 				dev += i18n.T("watch.volume", "pct", st.Device.VolumePct)
 			}
