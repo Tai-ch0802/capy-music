@@ -112,7 +112,7 @@ const appleDisclosure = `⚠️ 非 Apple 官方支援。你要貼上的兩個 t
   · Apple 可能隨時更換或撤銷 —— 屆時重新執行 capy auth login apple 即可
   · 以第三方工具存取 Apple Music 的服務條款風險由你自行承擔
   · capy 只指導你複製,不會讀取你的瀏覽器資料
-  · 寫入時,加進清單的曲目會同時加進你的 Apple Music 資料庫(Apple 的行為);capy 只寫你自己建的清單`
+  · 寫入時,加進清單的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);capy 只寫你自己建的清單`
 
 const appleGuide = `從 Apple 網頁播放器複製 token(約 1 分鐘):
   1. 用瀏覽器開 https://music.apple.com 並登入
