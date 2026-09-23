@@ -12,7 +12,7 @@ func TestUpdateInEnglish(t *testing.T) {
 	setCLITestConfig(t)
 	withLanguage(t, "en")
 
-	if out, err := runCLI(t, "update", "--help"); err != nil || hasCJK(out) || !strings.Contains(out, "Update capy itself.") || !strings.Contains(out, "Update to the latest commit on main") {
+	if out, err := runCLI(t, "update", "--help"); err != nil || hasCJK(out) || !strings.Contains(out, "Update capy itself.") || !strings.Contains(out, "update to the latest commit on main") {
 		t.Errorf("update --help:%v %q", err, out)
 	}
 

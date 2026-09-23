@@ -103,7 +103,7 @@ func TestEnglishProviderErrors(t *testing.T) {
 		t.Errorf("沒有權限:%v", err)
 	}
 
-	if _, err := newLocalProvider(); err == nil || err.Error() != "no local library folder is set — run capy config set local_root <folder> first (it holds your *.m3u8 playlists and library.json)" {
+	if _, err := newLocalProvider(); err == nil || err.Error() != "no local library directory is set — run capy config set local_root <directory> first (it holds your *.m3u8 playlists and library.json)" {
 		t.Errorf("沒設 local_root:%v", err)
 	}
 	if err := config.Save(&config.Config{LocalRoot: t.TempDir()}); err != nil {

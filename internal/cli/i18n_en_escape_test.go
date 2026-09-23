@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/zalando/go-keyring"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
-	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
@@ -125,16 +125,33 @@ func TestEnglishEscapeHelp(t *testing.T) {
 	}
 }
 
-// TestEnglishDriveInitConfirmWarnsWrongAccount:drive init 的確認訊息只在終端機出現(測試跑不到那個 huh 表單),
-// 但它是這個命令唯一的「登錯帳號」防線:英文的單複數與警告直接釘住。
+// TestEnglishDriveInitConfirmWarnsWrongAccount:drive init 在終端機裡問的那一句是這個命令唯一的「登錯帳號」防線。
+// 走真的命令路徑(假裝有 TTY、攔下 confirmWrite 並拒絕),英文的單複數與警告都要在,拒絕後 Drive 一個檔都不寫。
 func TestEnglishDriveInitConfirmWarnsWrongAccount(t *testing.T) {
 	withLanguage(t, "en")
-	for n, want := range map[int]string{
-		1: "Upload the file above to the Drive appdata of a@b.c? (If this is the wrong account, your playlist data (playlists and track mappings) ends up in someone else's space)",
-		3: "Upload the 3 files above to the Drive appdata of a@b.c? (If this is the wrong account, your playlist data (playlists and track mappings) ends up in someone else's space)",
-	} {
-		if got := i18n.T("escape.drive_init.confirm", "count", n, "account", "a@b.c"); got != want {
-			t.Errorf("count %d:\ngot  %s\nwant %s", n, got, want)
-		}
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "commute", "a", "b")
+	mustPull(t, "pl", "link", "commute", "spotify:p1")
+	mustPull(t, "pl", "pull", "commute", "--yes")
+	wipeDrive(t, dc)
+	origTTY, origConfirm := bothTTY, confirmWrite
+	t.Cleanup(func() { bothTTY, confirmWrite = origTTY, origConfirm })
+	bothTTY = func(*cobra.Command) bool { return true }
+	var asked string
+	confirmWrite = func(p string) (bool, error) { asked = p; return false, nil }
+	const warn = " to the Drive appdata of tai@example.com? (If this is the wrong account, your playlist data (playlists and track mappings) ends up in someone else's space)"
+
+	_, _, err := runPull(t, "drive", "init", "--from-local")
+	var pend *PendingError
+	if !errors.As(err, &pend) || asked != "Upload the 4 files above"+warn {
+		t.Fatalf("複數:%v\n%q", err, asked)
+	}
+	if n := len(driveFiles(t, dc)); n != 0 {
+		t.Fatalf("拒絕之後 Drive 不該有檔,得 %d 個", n)
+	}
+	mustPull(t, "drive", "init", "--from-local", "--yes")
+	deleteDriveFile(t, dc, "pl__")
+	if _, _, err := runPull(t, "drive", "init", "--from-local"); !errors.As(err, &pend) || asked != "Upload the file above"+warn {
+		t.Fatalf("單數:%v\n%q", err, asked)
 	}
 }

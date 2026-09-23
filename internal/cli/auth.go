@@ -374,7 +374,7 @@ func newAuthStatusCmd() *cobra.Command {
 			fmt.Fprintln(w, "google:")
 			switch {
 			case cfg.GoogleClientID != "":
-				fmt.Fprintf(w, "  client: config(%s)\n", maskGoogleClientID(cfg.GoogleClientID))
+				fmt.Fprintln(w, "  client: "+i18n.T("auth.status.google_config", "client", maskGoogleClientID(cfg.GoogleClientID)))
 			case auth.BuiltinGoogleClientID != "":
 				fmt.Fprintln(w, "  client: "+i18n.T("auth.status.google_builtin"))
 			default:

@@ -132,8 +132,8 @@ func TestAuthLoginEnglish(t *testing.T) {
 	}{
 		{[]string{"auth", "login", "tidal"}, "currently supported: spotify, apple, google"},
 		{[]string{"auth", "logout", "tidal"}, "currently supported: spotify, apple, google"},
-		{[]string{"auth", "login", "local"}, "local has no credentials (plan §2 A8): just run capy config set local_root <dir>"},
-		{[]string{"auth", "login", "spotify", "--client-id", "not-hex"}, "the Client ID should be a 32-character lowercase hex string (copy it from the dashboard)"},
+		{[]string{"auth", "login", "local"}, "local has no credentials (plan §2 A8): just run capy config set local_root <directory>"},
+		{[]string{"auth", "login", "spotify", "--client-id", "not-hex"}, "the client ID should be 32 lowercase hex characters (copy it from the dashboard)"},
 		{[]string{"auth", "login", "apple", "--user-token", "MUT1"}, "got a user token (--user-token / CAPY_APPLE_USER_TOKEN) but no developer token — pass both, or neither (wizard / --auto)"},
 	} {
 		if _, err := runCLI(t, c.args...); err == nil || err.Error() != c.want {

@@ -31,20 +31,22 @@ export function parseStatus(text) {
 //   google   token: keychain 存在(…) / 不存在(…)
 //   apple    developer token: 有效至 … | 已於 … 過期 | 不存在(…);user token: 存在 | 不存在(…)
 // 「讀取 keychain 失敗」三家都可能印,那是要使用者處理的錯誤態,不是「未登入」(review #62)。
+// auth status 的值跟著語系(決策 50):每條都寫出 zh-TW 與 en 的完整字面。
+// ponytail: 比對兩種語系的文字,T3 改讀 auth status --json(計畫 §2.4 第 1 點)。
 export function stateOf(id, lines) {
   const j = (lines || []).join('\n');
-  if (/讀取 keychain 失敗/.test(j)) return { mark: '⚠', text: '讀取 keychain 失敗', kind: 'warn' };
+  if (/讀取 keychain 失敗|couldn't read the keychain/.test(j)) return { mark: '⚠', text: '讀取 keychain 失敗', kind: 'warn' };
   if (id === 'apple') {
-    if (/developer token: 已於 .* 過期/.test(j)) return { mark: '⚠', text: '已過期', kind: 'warn' };
-    if (/developer token: 有效至/.test(j) && /user token: 存在/.test(j)) return { mark: '✓', text: '已登入', kind: 'ok' };
+    if (/developer token: 已於 .* 過期|developer token: expired at /.test(j)) return { mark: '⚠', text: '已過期', kind: 'warn' };
+    if (/developer token: 有效至|developer token: valid until /.test(j) && /user token: 存在|user token: present/.test(j)) return { mark: '✓', text: '已登入', kind: 'ok' };
     return { mark: '·', text: '未登入', kind: 'muted' };
   }
   if (id === 'google') {
-    return /token: keychain 存在/.test(j)
+    return /token: keychain 存在|token: in the keychain/.test(j)
       ? { mark: '✓', text: '已登入', kind: 'ok' }
       : { mark: '·', text: '未登入', kind: 'muted' };
   }
-  return /refresh token: keychain 存在/.test(j)
+  return /refresh token: keychain 存在|refresh token: in the keychain/.test(j)
     ? { mark: '✓', text: '已登入', kind: 'ok' }
     : { mark: '·', text: '未登入', kind: 'muted' };
 }

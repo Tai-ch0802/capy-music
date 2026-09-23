@@ -37,7 +37,7 @@ func TestDoctorEnglishFailedCount(t *testing.T) {
 	if err == nil || err.Error() != "2 checks failed" {
 		t.Fatalf("%v", err)
 	}
-	if !strings.Contains(out, "❌ local_root setting: not set — capy config set local_root <directory>\n") {
+	if !strings.Contains(out, "❌ local_root setting: not set — run capy config set local_root <directory>\n") {
 		t.Errorf("%q", out)
 	}
 
@@ -88,7 +88,7 @@ func TestDoctorEnglishSpotifyChecks(t *testing.T) {
 	if err := config.Save(&config.Config{SpotifyClientID: "nope"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := checkConfig(ctx); err == nil || err.Error() != `the client ID is malformed (it should be 32 hex digits): "nope"` {
+	if _, err := checkConfig(ctx); err == nil || err.Error() != `the client ID is malformed (it should be 32 hex characters): "nope"` {
 		t.Errorf("%v", err)
 	}
 	if err := config.Save(&config.Config{SpotifyClientID: "0123456789abcdef0123456789abcdef"}); err != nil {

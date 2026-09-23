@@ -975,6 +975,42 @@ func TestWebAccountPageKeysOnAuthStatusWording(t *testing.T) {
 	}
 }
 
+// TestWebAccountPageKeysOnEnglishAuthStatus:language = en 時 auth status 的值是英文(決策 50),帳號頁一樣要認得;
+// 只有 zh-TW 的話,切成英文後每個已登入的帳號都會顯示成未登入。T3 改成讀 auth status --json 之前,兩種字面都要在 account.js。
+func TestWebAccountPageKeysOnEnglishAuthStatus(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/account.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := string(b)
+	withLanguage(t, "en")
+	setupAppleTokens(t)
+	apple, _ := runCLI(t, "auth", "status")
+	t.Cleanup(keyring.MockInit)
+	_, _ = fakeLoginOK(t, "")(context.Background(), "", nil)
+	_, _, _ = fakeGoogleLogin(t, "", "", "")(context.Background(), auth.GoogleClient{}, nil)
+	loggedIn, _ := runCLI(t, "auth", "status")
+	keyring.MockInitWithError(errors.New("locked"))
+	broken, _ := runCLI(t, "auth", "status")
+	for _, c := range []struct{ out, lit string }{
+		{apple, "developer token: valid until "},
+		{apple, "user token: present"},
+		{loggedIn, "refresh token: in the keychain"},
+		{loggedIn, "\n  token: in the keychain"},
+		{broken, "couldn't read the keychain"},
+	} {
+		if !strings.Contains(c.out, c.lit) {
+			t.Errorf("英文的 auth status 不再印 %q:%q", c.lit, c.out)
+		}
+		if !strings.Contains(account, strings.TrimPrefix(c.lit, "\n  ")) {
+			t.Errorf("account.js 沒有認英文的 %q", c.lit)
+		}
+	}
+	if !strings.Contains(account, "developer token: expired at ") || !strings.Contains(i18n.T("auth.status.dev_token_expired", "expiry", "x"), "expired at ") {
+		t.Error("過期的 Apple token 在英文也要認得出來")
+	}
+}
+
 func walkEmbedded(t *testing.T, dir string, fn func(name string, b []byte)) error {
 	t.Helper()
 	entries, err := webUI.ReadDir(dir)

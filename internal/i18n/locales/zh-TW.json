@@ -49,6 +49,7 @@
   "auth.status.client_id_set": "已設定({head}…{tail})",
   "auth.status.dev_token_expired": "已於 {expiry} 過期(執行 capy auth login apple)",
   "auth.status.google_builtin": "內建(release binary)",
+  "auth.status.google_config": "config({client})",
   "auth.status.google_not_set": "未設定(執行 capy auth login google)",
   "auth.status.google_token": "keychain 存在(access token 到期 {expiry};refresh token 不輪替)",
   "auth.status.in_keychain": "keychain 存在",

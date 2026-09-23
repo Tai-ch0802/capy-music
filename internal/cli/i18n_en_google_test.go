@@ -69,10 +69,10 @@ func TestGoogleLoginConfigSaveFailureEnglish(t *testing.T) {
 
 func TestMaskGoogleClientIDEnglish(t *testing.T) {
 	withLanguage(t, "en")
-	if got := maskGoogleClientID("abc.apps.googleusercontent.com"); got != "configured" {
+	if got := maskGoogleClientID("abc.apps.googleusercontent.com"); got != "set" {
 		t.Errorf("短 id:%q", got)
 	}
-	if got := maskGoogleClientID("1234567890-abc.apps.googleusercontent.com"); got != "configured (123456…)" {
+	if got := maskGoogleClientID("1234567890-abc.apps.googleusercontent.com"); got != "set, 123456…" {
 		t.Errorf("長 id:%q", got)
 	}
 }
