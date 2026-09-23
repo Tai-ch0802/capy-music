@@ -52,7 +52,7 @@ func newMigrateCmd() *cobra.Command {
 一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason;dir ∈ pull / migrate / push)、一次確認;
 --dry-run 只列(有東西時 exit 2、不建清單);非 TTY 沒 --yes 也是 exit 2。確認之後才在目標平台建清單。
 完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要持續同步,結尾會給 pl link + pl sync 的命令。
-local 只能加進既有檔(--to local:<檔名>)。搬進 Apple Music 的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);Apple 只寫你自己建的清單,商店裡已無法播放的歌搬不過去。`,
+local 只能加進既有檔(--to local:<檔名>)。搬進 Apple Music 的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);Apple 只寫你自己建的清單,商店裡已下架的歌搬不過去。`,
 		Args: argsOrPicker(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runMigrate(cmd, args, from, to, dryRun, yes) },
 	}

@@ -186,7 +186,7 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 |---|---|---|
 | 列數 | 538 列的整批取代 204,而且真的倒過來了 | **列數排除**;222 列協作清單的 500 只剩「`a.` 列 id」或「協作本身」兩個原因(Q47:不再追) |
 | POST 每批 100 | 6 批全 204,跨批順序正確 | `writeBatch = 100` 驗過 |
-| 少了 4 首 | Bohemian Rhapsody、Merry Christmas Mr. Lawrence - FYI、外面的世界、莉莉安:catalog 版本在 tw 商店已無法播放;POST 回 204 但默默不加 | capy 寫完重讀、L′ ≠ want 時已會警告(`push.go`「套用後的內容與預期不同」);README 補一句 |
+| 少了 4 首 | Bohemian Rhapsody、Merry Christmas Mr. Lawrence - FYI、外面的世界、莉莉安:catalog id 在 tw 商店 GET 都是 404(已下架或換了 id);POST 回 204 但默默不加 | capy 寫完重讀、L′ ≠ want 時已會警告(`push.go`「套用後的內容與預期不同」);README 補一句 |
 | 2 首拿到不同的列 id | Ho Hey、I Gotta Feeling:資料庫裡同一首各有兩個項目(在同一張 2024-05-06 加入的資料庫專輯裡),catalog → 資料庫的對應指向「太好聽」沒用的那一個 | 那兩個項目是探測前就有的重複:`relate=library` 指向它們,而這個帳號用清單加的歌不會進資料庫(下面的更正);刪複本後它們仍在 |
 | 列 id 與原清單 | 536 / 538 列相同 | 用 catalog id 加歌會對到既有的資料庫項目,不會另建 |
 
@@ -211,7 +211,7 @@ R-8 第 4 項以「列 id 是 `i.`」推論「加進清單的曲目同時進了�
 | 跳跳兒歌 | 20 | 0 |
 | R-8 用過的 7 首五月天 | 7 | 0 |
 
-這個帳號的一般清單本來就有大量不在資料庫的歌,R-8 加進清單的歌也沒留在資料庫;看起來是 Apple Music「把加進播放列表的歌也加入資料庫」那個設定沒開(iPhone:設定 > 音樂)。Z-Han-Z 觀察到「建清單會把曲目加進資料庫」,可能是設定開著的帳號。
+這個帳號的一般清單本來就有大量不在資料庫的歌,R-8 加進清單的歌也沒留在資料庫;看起來是 Apple Music「把加進播放列表的歌也加入資料庫」那個設定沒開(iPhone:設定 > 音樂),**這只是推測,沒有驗過**。
 → 揭露改成「會不會同時加進資料庫,看你的 Apple Music 設定」,不寫成必然:README、指南、網站條款中英與英文首頁、`auth login apple` 的揭露、migrate 說明、搬家精靈的 FAQ、CLAUDE.md 硬約束,同一個 PR 改。
 
 ## 6. 要請使用者拍板的問題
