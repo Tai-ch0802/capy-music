@@ -21,6 +21,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
@@ -694,7 +695,7 @@ func removalBlocked(removes, visible int) bool {
 	return removes > 10 || (removes > 3 && removes*10 > visible*3)
 }
 
-var pullHeader = []string{"ACTION", "PROVIDER", "PLAYLIST", "POS", "CID", "PROVIDER_ID", "TITLE", "ARTISTS", "REASON"}
+var pullHeader = []string{"ACTION", "PROVIDER", "PLAYLIST", "POS", "CID", "PROVIDER_ID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"}
 
 func newPlPullCmd() *cobra.Command {
 	var all, dryRun, yes, force bool
@@ -702,12 +703,12 @@ func newPlPullCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull [name|pid]",
 		Short: "平台 → canonical → Drive:列出變更、確認後才寫(spec §6.1)",
-		Long: `平台 → canonical → Drive(spec §6.1、§6.5)。變更集先印出(非 TTY 是無標題 TSV:action provider playlist pos cid provider_id title artists reason),
+		Long: `平台 → canonical → Drive(spec §6.1、§6.5)。變更集先印出(非 TTY 是無標題 TSV:action provider playlist pos cid provider_id title artists reason reason_code;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼),
 確認後才寫入;寫入順序 Drive 先、SQLite 後。exit code:0 無變更或已套用、1 錯誤、2 有待套用變更(--dry-run、非 TTY 沒 --yes、取消)、
 3 安全閥擋下(Drive 不完整;刪除 >10 首或 >30% 且 >3 首)。--yes 跳過確認、--force 才越過刪除閾值,兩者都不放行「Drive 不完整」。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := needTarget(cmd, args, all, "拉"); err != nil {
+			if err := needTarget(cmd, args, all, i18n.Errorf("pick.err.need_target.pull")); err != nil {
 				return err
 			}
 			if prov != "" && !isProviderID(prov) {
@@ -877,7 +878,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				if ch.Action == "add" || ch.Action == "move" || ch.Action == "remove" {
 					pos = strconv.Itoa(ch.Pos)
 				}
-				rows = append(rows, []string{ch.Action, prov, pl.Name, pos, ch.CID, ch.ProviderID, ch.Title, strings.Join(ch.Artists, ", "), ch.Reason})
+				rows = append(rows, []string{ch.Action, prov, pl.Name, pos, ch.CID, ch.ProviderID, ch.Title, strings.Join(ch.Artists, ", "), ch.Reason, ch.Code})
 			}
 			if removalBlocked(removes, res.VisibleCount) {
 				blocked = append(blocked, fmt.Sprintf("%s 在 %s 要移除 %d 首(可見 %d 首),超過閾值", pl.Name, prov, removes, res.VisibleCount))

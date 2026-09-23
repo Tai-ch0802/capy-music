@@ -1502,7 +1502,7 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 			t.Errorf("平台的能力變了,move.js 要是:%s", want)
 		}
 	}
-	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON"} {
+	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"} {
 		if !slices.Contains(syncHeader, col) || !strings.Contains(move, "'"+col+"'") {
 			t.Errorf("migrate 的表要有 %s 欄,move.js 的 tally() 也要認它", col)
 		}
@@ -1564,9 +1564,10 @@ func TestWebProgressEventsAreRealAndCLIStaysSilent(t *testing.T) {
 	}
 }
 
-// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩個中文字面認東西——「現在逐筆裁決?」(那一則確認
-// 旁邊要補白話)與 reason 開頭的「推到 」(這一首推得過去)。純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,
-// 所以兩邊一起釘(同 TestWebAccountPageKeysOnAuthStatusWording):CLI 改字,這裡就紅並指向 move.js。
+// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩樣東西認列——「現在逐筆裁決?」(那一則確認
+// 旁邊要補白話)與 REASON_CODE 欄的 push(這一首推得過去;REASON 跟著語系,不能拿來判斷——Q52)。純文字契約的測試只保證
+// CLI 自己不變、不保證網頁跟得上,所以兩邊一起釘(同 TestWebAccountPageKeysOnAuthStatusWording):CLI 改了,這裡就紅並指向 move.js。
+// Go 這半邊(migrateReason 推得過去 = "push")由 TestMigrateReasonCodes 與 migrate_test.go 的整列比對釘住。
 func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 	b, err := webUI.ReadFile("webui/js/pages/move.js")
 	if err != nil {
@@ -1576,9 +1577,11 @@ func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(b), "r[dir] === 'migrate' && r[code] !== 'push'") || strings.Contains(string(b), "PUSHABLE_MARK") {
+		t.Error("move.js 的 tally() 要以 REASON_CODE 是不是 push 判斷搬得過去,不看 REASON 的字(會跟著語系變)")
+	}
 	for _, pair := range [][2]string{
 		{"const REVIEW_MARK = '現在逐筆裁決?';", "現在逐筆裁決?(否 = 先推有對應的"},
-		{"const PUSHABLE_MARK = '推到 ';", `fmt.Sprintf("推到 %s:%s(%s %d)"`},
 	} {
 		if !strings.Contains(string(b), pair[0]) {
 			t.Errorf("move.js 要有 %s", pair[0])

@@ -29,7 +29,7 @@ func TestMigrateNewPlaylistKeepsSourceOrderAndSkipsDuplicates(t *testing.T) {
 	if exitOf(t, err) != 2 || !slices.Equal(dirActions(out), []string{"migrate add apple", "migrate add apple", "migrate add apple"}) {
 		t.Fatalf("dry-run:%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "migrate\tadd\tapple\t公路旅行\t0\t"+fakeCID("a")+"\ta\tsong-a\tartist\t推到 spotify:a(isrc 95)\n") || !strings.Contains(out, "\t2\t"+fakeCID("c")+"\tc\t") {
+	if !strings.Contains(out, "migrate\tadd\tapple\t公路旅行\t0\t"+fakeCID("a")+"\ta\tsong-a\tartist\t推到 spotify:a(isrc 95)\tpush\n") || !strings.Contains(out, "\t2\t"+fakeCID("c")+"\tc\t") {
 		t.Fatalf("migrate 列:pos 是正本位置、reason 說推到哪:\n%s", out)
 	}
 	if _, _, err := runPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify"); exitOf(t, err) != 2 {
@@ -211,7 +211,7 @@ func TestMigrateNewTargetReportsUnmappedExisting(t *testing.T) {
 	mustPull(t, "pl", "link", "公路旅行", "apple:q1")
 	mustPull(t, "pl", "pull", "公路旅行", "--yes")
 	out, errs := mustPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify", "--yes")
-	if !slices.Equal(dirActions(out), []string{"push add spotify", "push skip spotify"}) || !strings.Contains(out, "\t"+fakeCID("b")+"\t\tsong-b\tartist\tspotify 沒有對應,這次不推\n") {
+	if !slices.Equal(dirActions(out), []string{"push add spotify", "push skip spotify"}) || !strings.Contains(out, "\t"+fakeCID("b")+"\t\tsong-b\tartist\tspotify 沒有對應,這次不推\tno_mapping\n") {
 		t.Fatalf("既有的 b 要列成 skip:\n%s", out)
 	}
 	if !strings.Contains(errs, "1 首在 spotify 沒有對應、這次沒推:capy resolve \"公路旅行\" --provider spotify --review") || !strings.Contains(errs, "推了 1 首到 spotify:new1") || strings.Contains(errs, "一起推到新清單") {
@@ -257,7 +257,7 @@ func TestMigrateUnmappedTrackSkippedThenResolved(t *testing.T) {
 	catalogISRC(fs1, "a")
 	fs2.set("q1", "公路旅行", "a", "n")
 	out, errs := mustPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify", "--yes")
-	if !strings.Contains(out, "\t"+fakeCID("n")+"\tn\tsong-n\tartist\tspotify 沒有對應,這次不推\n") || !slices.Equal(fs1.tracksOf("new1"), []string{"a"}) {
+	if !strings.Contains(out, "\t"+fakeCID("n")+"\tn\tsong-n\tartist\tspotify 沒有對應,這次不推\tno_mapping\n") || !slices.Equal(fs1.tracksOf("new1"), []string{"a"}) {
 		t.Fatalf("n 沒對到、不推:\n%s%v", out, fs1.tracksOf("new1"))
 	}
 	if !strings.Contains(errs, "resolve:1 首自動對應到 spotify,1 首要人裁決") || !strings.Contains(errs, "1 首在 spotify 沒有對應、這次沒推:capy resolve \"公路旅行\" --provider spotify --review") {
@@ -294,7 +294,7 @@ func TestMigrateOffersReviewInTTYAndCancelCreatesNothing(t *testing.T) {
 	}
 	prompts, answer = nil, true
 	out, errs := mustPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify")
-	if !strings.Contains(errs, "裁決 1 筆") || !strings.Contains(out, "\tspotify 沒有對應,這次不推\n") || !slices.Equal(fs1.tracksOf("new1"), []string{"a"}) {
+	if !strings.Contains(errs, "裁決 1 筆") || !strings.Contains(out, "\tspotify 沒有對應,這次不推\tno_mapping\n") || !slices.Equal(fs1.tracksOf("new1"), []string{"a"}) {
 		t.Fatalf("當場裁決成不可得:\n%s%s", out, errs)
 	}
 	if m := driveTracks(t, dc).Tracks[fakeCID("n")].Mappings["spotify"]; !m.Pinned || m.ID != "" {

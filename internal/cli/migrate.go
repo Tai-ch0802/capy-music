@@ -49,7 +49,7 @@ func newMigrateCmd() *cobra.Command {
 順序:目標原本的順序是前綴,來源的曲目依來源的順序接在後面;來源裡目標已經有的(同平台 id 或同 ISRC)略過,來源自己的重複也只留一份。
 永遠不動來源;對目標只做新增——目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 capy pl sync。
 每一首先用 ISRC 反查、再模糊比對(≥85 自動);沒對到的這次不推,表裡會說,終端機裡可以當場逐筆裁決。
-一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason;dir ∈ pull / migrate / push)、一次確認;
+一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code;dir ∈ pull / migrate / push;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼)、一次確認;
 --dry-run 只列(有東西時 exit 2、不建清單);非 TTY 沒 --yes 也是 exit 2。確認之後才在目標平台建清單。
 完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要持續同步,結尾會給 pl link + pl sync 的命令。
 local 只能加進既有檔(--to local:<檔名>)。搬進 Apple Music 的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);Apple 只寫你自己建的清單,商店裡已下架的歌搬不過去:表裡可能照樣列出,寫完重讀時會警告。`,
@@ -318,7 +318,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		if dst.id == "" { // 新建的目標:正本既有的也會推過去——同樣進表(建了才算得出真的 push 列,先用 mapping 算等價的)、同樣算沒對應的;
 			pos := 0 //   不然對不到的默默不推、表是空的、結尾不說(review #55)
 			for _, it := range pl.Items[:existing] {
-				id, reason, ok := migrateReason(s, wB, dst.prov, it.CID)
+				id, reason, code, ok := migrateReason(s, wB, dst.prov, it.CID)
 				action, at := "add", strconv.Itoa(pos)
 				if ok {
 					pos++
@@ -326,15 +326,15 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 					action, at, unmapped = "skip", "", unmapped+1
 				}
 				t := s.tracks.Tracks[it.CID]
-				rows = append(rows, []string{"push", action, dst.prov, pl.Name, at, it.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
+				rows = append(rows, []string{"push", action, dst.prov, pl.Name, at, it.CID, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 			}
 		}
 		for _, a := range added {
-			_, reason, ok := migrateReason(s, wB, dst.prov, a.cid)
+			_, reason, code, ok := migrateReason(s, wB, dst.prov, a.cid)
 			if !ok {
 				unmapped++
 			}
-			rows = append(rows, []string{"migrate", "add", src.prov, pl.Name, strconv.Itoa(a.pos), a.cid, a.track.ProviderID, a.track.Title, strings.Join(a.track.Artists, ", "), reason})
+			rows = append(rows, []string{"migrate", "add", src.prov, pl.Name, strconv.Itoa(a.pos), a.cid, a.track.ProviderID, a.track.Title, strings.Join(a.track.Artists, ", "), reason, code})
 		}
 		var plans []*pushPlan
 		if dst.id != "" {
@@ -511,16 +511,17 @@ func migratePlanPush(ctx context.Context, s *canonState, targets []*canon.Playli
 	return plans, rows, nil
 }
 
-// migrateReason:一首曲目在目標平台的去向——推得出去 / 有 mapping 但推不出去 / 沒對應(後兩種算 unmapped);id 給表的 provider_id 欄。
-func migrateReason(s *canonState, w provider.PlaylistWriter, prov, cid string) (id, reason string, ok bool) {
+// migrateReason:一首曲目在目標平台的去向——推得出去 / 有 mapping 但推不出去 / 沒對應(後兩種算 unmapped);id 給表的 provider_id 欄,
+// code 給 REASON_CODE 欄(同 pushRows 的 push / unpushable / no_mapping;網頁的搬家精靈靠 "push" 認「搬得過去」)。
+func migrateReason(s *canonState, w provider.PlaylistWriter, prov, cid string) (id, reason, code string, ok bool) {
 	m := s.tracks.Tracks[cid].Mappings[prov]
 	switch {
 	case m.ID != "" && w.Pushable(m.ID):
-		return m.ID, fmt.Sprintf("推到 %s:%s(%s %d)", prov, m.ID, m.Source, m.Confidence), true
+		return m.ID, fmt.Sprintf("推到 %s:%s(%s %d)", prov, m.ID, m.Source, m.Confidence), "push", true
 	case m.ID != "":
-		return m.ID, "有 mapping 但推不出去(local file / library-only),只能在平台手動加", false
+		return m.ID, "有 mapping 但推不出去(local file / library-only),只能在平台手動加", "unpushable", false
 	}
-	return "", prov + " 沒有對應,這次不推", false
+	return "", prov + " 沒有對應,這次不推", "no_mapping", false
 }
 
 // sameNamePlaylists:平台上跟 name 同名(EqualFold,同 resolvePlaylistID)而且連得上的清單 id。pl link --create 與 migrate 建清單前都先擋——

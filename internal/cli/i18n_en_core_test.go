@@ -147,8 +147,11 @@ func TestEnglishPickers(t *testing.T) {
 	withLanguage(t, "en")
 	origTTY := isInteractive
 	isInteractive = func(*cobra.Command) bool { return false }
-	if err := needTarget(&cobra.Command{}, nil, false, "pull"); err == nil || err.Error() != "specify a playlist (name or pid), or use --all to pull all linked playlists" {
-		t.Errorf("needTarget:%v", err)
+	for _, verb := range []string{"pull", "push", "sync"} { // 整句一個 key(pick.err.need_target.<verb>),不拼動詞
+		want := "specify a playlist (name or pid), or use --all to " + verb + " all linked playlists"
+		if _, _, err := runPull(t, "pl", verb); err == nil || err.Error() != want {
+			t.Errorf("pl %s 非 TTY:%v,want %q", verb, err, want)
+		}
 	}
 	isInteractive = origTTY
 

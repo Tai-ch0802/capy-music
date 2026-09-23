@@ -39,7 +39,7 @@ func (e *ReviewNeedsTTYError) Error() string {
 	return fmt.Sprintf("%d 筆待人工裁決:--review 需要終端機(佇列已印出;腳本用 capy resolve pin <cid> <provider>:<id|none>)", e.N)
 }
 
-var resolveHeader = []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFIDENCE", "SOURCE", "TITLE", "ARTISTS", "REASON"}
+var resolveHeader = []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFIDENCE", "SOURCE", "TITLE", "ARTISTS", "REASON", "REASON_CODE"}
 
 // resolveItem 是佇列的一列:map(待自動寫入)/ review(要人裁決)/ conflict(來源 (c):conflicts 非空且 mapping 未 pinned)。
 type resolveItem struct {
@@ -50,7 +50,8 @@ type resolveItem struct {
 	cand    *provider.Track // map:要寫的候選;review:最佳候選(可能 nil)
 	score   int
 	source  string
-	reason  string
+	reason  string        // 給人看,跟著語系
+	code    string        // REASON_CODE 欄:機器可讀,永不翻譯
 	current canon.Mapping // conflict:現有 mapping
 }
 
@@ -62,7 +63,7 @@ func (it resolveItem) row() []string {
 	case it.cand != nil:
 		pid, conf, src = it.cand.ProviderID, strconv.Itoa(it.score), it.source
 	}
-	return []string{it.action, it.cid, it.prov, pid, conf, src, it.track.Title, strings.Join(it.track.Artists, ", "), it.reason}
+	return []string{it.action, it.cid, it.prov, pid, conf, src, it.track.Title, strings.Join(it.track.Artists, ", "), it.reason, it.code}
 }
 
 func describe(t provider.Track) string {
@@ -199,28 +200,28 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 			reportProgress("match", done, total)
 			continue
 		default:
-			it.reason = "查詢失敗:" + friendlyErr(need.Provider, err).Error()
+			it.reason, it.code = "查詢失敗:"+friendlyErr(need.Provider, err).Error(), "lookup_failed"
 			items = append(items, it)
 			continue
 		}
 		switch {
 		case it.cand == nil:
-			it.reason = "找不到候選"
+			it.reason, it.code = "找不到候選", "no_candidate"
 		default:
 			key := need.Provider + "\x00" + it.cand.ProviderID
 			switch owner, prev := ownedBy(s, id, need.CID, need.Provider, *it.cand), claimed[key]; {
 			case owner != "":
-				it.reason = fmt.Sprintf("候選 %s 已屬 cid %s(合併只由人決定:capy resolve pin)", describe(*it.cand), owner)
+				it.reason, it.code = fmt.Sprintf("候選 %s 已屬 cid %s(合併只由人決定:capy resolve pin)", describe(*it.cand), owner), "candidate_taken"
 			case prev != "":
-				it.reason = fmt.Sprintf("候選 %s 這一輪已配給 cid %s", describe(*it.cand), prev)
+				it.reason, it.code = fmt.Sprintf("候選 %s 這一輪已配給 cid %s", describe(*it.cand), prev), "candidate_assigned"
 			case it.score < autoThreshold:
-				it.reason = fmt.Sprintf("%d 分 < %d:候選 %s", it.score, autoThreshold, describe(*it.cand))
+				it.reason, it.code = fmt.Sprintf("%d 分 < %d:候選 %s", it.score, autoThreshold, describe(*it.cand)), "low_score"
 			default:
 				it.action = "map"
 				if it.source == canon.SourceISRC {
-					it.reason = "ISRC 反查"
+					it.reason, it.code = "ISRC 反查", "isrc"
 				} else {
-					it.reason = fmt.Sprintf("fuzzy %d 分:%s", it.score, describe(*it.cand))
+					it.reason, it.code = fmt.Sprintf("fuzzy %d 分:%s", it.score, describe(*it.cand)), "fuzzy"
 				}
 				claimed[key] = need.CID
 			}
@@ -258,7 +259,7 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 					continue
 				}
 				items = append(items, resolveItem{action: "conflict", cid: item.CID, prov: prov, track: tr, current: m,
-					reason: "同 ISRC 觀測到不同 id:" + strings.Join(others, "、") + ";--review 的 keep 釘住現有 mapping"})
+					reason: "同 ISRC 觀測到不同 id:" + strings.Join(others, "、") + ";--review 的 keep 釘住現有 mapping", code: "isrc_conflict"})
 			}
 		}
 	}
@@ -515,7 +516,7 @@ func newResolveCmd() *cobra.Command {
 		Long: `對每個已連結的 (清單, provider),找出 items 裡缺該 provider mapping 的曲目:先以 ISRC 反查(信心 95),沒有再用
 標題 + 藝人 + 時長模糊比對(0–100)。≥85 自動寫入(走 pl pull 同一套:pull.lock、Drive 不完整的閘、Drive 先 SQLite 後),
 其餘印成 review 佇列——候選已屬另一個 cid 的一律進佇列,合併只由人決定。
-非 TTY 輸出 TSV:action cid provider provider_id confidence source title artists reason(action ∈ map | review | conflict)。
+非 TTY 輸出 TSV:action cid provider provider_id confidence source title artists reason reason_code(action ∈ map | review | conflict;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼)。
 exit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有待寫入的自動 mapping 但沒有確認(--dry-run、非 TTY 沒 --yes、取消)。
 --review 在終端機逐筆裁決(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有);非 TTY 只印佇列並以 exit 2 結束;
 裁決完才一起寫入,中途 Esc / Ctrl-C 整輪不寫入(含自動 mapping)並以 exit 2 結束。`,

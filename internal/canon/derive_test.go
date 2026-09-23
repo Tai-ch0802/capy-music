@@ -565,3 +565,21 @@ func TestDeriveNewTrackKeyMatchesCIDField(t *testing.T) {
 		t.Fatalf("map key 與 cid 欄一致:%+v %s", res.Tracks, actions(res.Changes))
 	}
 }
+
+// TestDeriveChangeCodes:每一種變更都帶機器可讀的 Code(TSV 的 REASON_CODE 欄;永不翻譯,Reason 才跟著語系)。
+func TestDeriveChangeCodes(t *testing.T) {
+	want := map[string]string{"unlink": "playlist_gone", "rename": "renamed_on_platform", "remove": "removed_on_platform", "add": "added_on_platform", "move": "moved_on_platform"}
+	pl, tracks := world(t, "a", "b", "c", "d")
+	res := mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("舊名", "a", "b", "c", "d"), Live: live("新名", "c", "a", "d", "e")})
+	gone := mustDerive(t, canon.DeriveInput{Provider: prov, Playlist: pl, Tracks: tracks, Base: snap("舊名", "a"), Live: nil})
+	seen := map[string]bool{}
+	for _, c := range append(res.Changes, gone.Changes...) {
+		seen[c.Action] = true
+		if c.Code != want[c.Action] {
+			t.Errorf("%s 的 Code = %q,want %q", c.Action, c.Code, want[c.Action])
+		}
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("五種變更都要出現:%v(%s)", seen, actions(res.Changes))
+	}
+}

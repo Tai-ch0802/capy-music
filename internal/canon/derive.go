@@ -27,7 +27,7 @@ type DeriveInput struct {
 	Merged   map[string]string // tracks.json 的合併墓碑(敗者 cid → 勝者);nil = 沒有
 }
 
-// Change 是變更集的一列;欄位對齊 T8 的 TSV:action pos cid provider_id title artists reason。
+// Change 是變更集的一列;欄位對齊 T8 的 TSV:action pos cid provider_id title artists reason reason_code。
 type Change struct {
 	Action     string // add / remove / move / rename / unlink
 	Pos        int    // add、move:在 L 的位置;remove:原本在 C 的位置(rank 序)
@@ -37,7 +37,8 @@ type Change struct {
 	ProviderID string
 	Title      string
 	Artists    []string
-	Reason     string
+	Reason     string // 給人看,跟著語系
+	Code       string // 機器可讀的原因代碼(TSV 的 REASON_CODE 欄;永不翻譯)
 }
 
 type DeriveResult struct {
@@ -63,7 +64,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	}
 	if in.Live == nil {
 		res.Gone = true
-		res.Changes = []Change{{Action: "unlink", Reason: "平台端清單不存在(Q6:自動取消連結)"}}
+		res.Changes = []Change{{Action: "unlink", Reason: "平台端清單不存在(Q6:自動取消連結)", Code: "playlist_gone"}}
 		return res, nil
 	}
 	L := in.Live.Tracks
@@ -226,7 +227,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	// 變更集(順序:rename、remove、add、move)。
 	var changes []Change
 	if in.Base != nil && in.Live.Name != in.Base.Name && c.Name != in.Live.Name { // 規則 7
-		changes = append(changes, Change{Action: "rename", Title: in.Live.Name, Reason: "平台改名:" + c.Name + " → " + in.Live.Name})
+		changes = append(changes, Change{Action: "rename", Title: in.Live.Name, Reason: "平台改名:" + c.Name + " → " + in.Live.Name, Code: "renamed_on_platform"})
 		c.Name = in.Live.Name
 	}
 	title := func(cid string) (string, []string) {
@@ -242,18 +243,18 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 			if tr, ok := lookup(it.CID); ok {
 				pid = tr.Mappings[prov].ID
 			}
-			changes = append(changes, Change{Action: "remove", Pos: i, IID: it.IID, CID: it.CID, ProviderID: pid, Title: t, Artists: a, Reason: "平台已移除"})
+			changes = append(changes, Change{Action: "remove", Pos: i, IID: it.IID, CID: it.CID, ProviderID: pid, Title: t, Artists: a, Reason: "平台已移除", Code: "removed_on_platform"})
 		}
 	}
 	for pos, t := range L {
 		if pairedL[pos] < 0 && !ignoredL[pos] {
-			changes = append(changes, Change{Action: "add", Pos: pos, CID: lcid[pos], ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台新增"})
+			changes = append(changes, Change{Action: "add", Pos: pos, CID: lcid[pos], ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台新增", Code: "added_on_platform"})
 		}
 	}
 	for pos, t := range L {
 		if item := pairedL[pos]; item >= 0 && moved[item] {
 			it := c.Items[item]
-			changes = append(changes, Change{Action: "move", Pos: pos, From: item, IID: it.IID, CID: it.CID, ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台換序"})
+			changes = append(changes, Change{Action: "move", Pos: pos, From: item, IID: it.IID, CID: it.CID, ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台換序", Code: "moved_on_platform"})
 		}
 	}
 	if len(changes) > 0 { // 規則 10:無變更時逐位元不變

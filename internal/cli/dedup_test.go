@@ -26,7 +26,7 @@ func TestPlDedupReportsPlatformPlaylistWithoutDrive(t *testing.T) {
 	fs.aliasISRC("a2", "a") // a2 是 a 的另一個 id(單曲版 / 專輯版)
 	fs.set("p1", "通勤", "a", "b", "a", "c", "b", "a2")
 	out, errs := mustPull(t, "pl", "dedup", "spotify:通勤")
-	want := "2\ta\tsong-a\tartist\t重複:與 pos 0 同 id\n4\tb\tsong-b\tartist\t重複:與 pos 1 同 id\n5\ta2\tsong-a2\tartist\t重複:與 pos 0 同 ISRC " + fakeISRC("a") + "\n"
+	want := "2\ta\tsong-a\tartist\t重複:與 pos 0 同 id\tdup_id\n4\tb\tsong-b\tartist\t重複:與 pos 1 同 id\tdup_id\n5\ta2\tsong-a2\tartist\t重複:與 pos 0 同 ISRC " + fakeISRC("a") + "\tdup_isrc\n"
 	if out != want {
 		t.Fatalf("報告:\n%s", out)
 	}
@@ -70,7 +70,7 @@ func TestPlDedupReportReadOnlyPlatformSaysManual(t *testing.T) {
 	t.Cleanup(func() { newProvider = orig })
 	fs2.set("q1", "冬日暖調", "a", "a", "b")
 	out, errs := mustPull(t, "pl", "dedup", "apple:冬日暖調")
-	if out != "1\ta\tsong-a\tartist\t重複:與 pos 0 同 id\n" || !strings.Contains(errs, "apple 目前只讀") || strings.Contains(errs, "capy pl link") {
+	if out != "1\ta\tsong-a\tartist\t重複:與 pos 0 同 id\tdup_id\n" || !strings.Contains(errs, "apple 目前只讀") || strings.Contains(errs, "capy pl link") {
 		t.Fatalf("只讀平台指路手動刪:\n%s%s", out, errs)
 	}
 }
@@ -88,6 +88,12 @@ func TestPlDedupRoundKeepsFirstCopyAndOrder(t *testing.T) {
 	}
 	if !strings.Contains(out, "dedup\tremove\t\t通勤\t2\t"+fakeCID("a")+"\t\tsong-a\tartist\t重複:與 pos 0 同一首") || !strings.Contains(out, "\t4\t"+fakeCID("b")+"\t") {
 		t.Fatalf("dedup 列的 pos 是正本位置、指向保留的那份:\n%s", out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") { // REASON_CODE:正本去重 = duplicate、推到平台的移除 = removed_in_master
+		f := strings.Split(line, "\t")
+		if want := map[string]string{"dedup": "duplicate", "push": "removed_in_master"}[f[0]]; len(f) != len(syncHeader) || f[len(f)-1] != want {
+			t.Errorf("REASON_CODE 要是 %q:%q", want, line)
+		}
 	}
 	if _, _, err := runPull(t, "pl", "dedup", "通勤"); exitOf(t, err) != 2 {
 		t.Fatalf("非 TTY 沒 --yes 要 exit 2:%v", err)

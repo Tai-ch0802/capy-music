@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -272,36 +273,36 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		}
 	}
 	work, ids := slices.Clone(lcid), slices.Clone(plan.current)
-	row := func(action string, pos int, cid, id, reason string) {
+	row := func(action string, pos int, cid, id, reason, code string) {
 		t := s.tracks.Tracks[cid]
-		rows = append(rows, []string{action, plan.prov, plan.pl.Name, strconv.Itoa(pos), cid, id, t.Title, strings.Join(t.Artists, ", "), reason})
+		rows = append(rows, []string{action, plan.prov, plan.pl.Name, strconv.Itoa(pos), cid, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 	}
 	for _, op := range plan.ops {
 		switch op.Kind {
 		case provider.OpRemove:
 			cid := work[op.Pos]
 			work, ids = slices.Delete(work, op.Pos, op.Pos+1), slices.Delete(ids, op.Pos, op.Pos+1)
-			row("remove", op.Pos, cid, op.ProviderID, "canonical 已移除")
+			row("remove", op.Pos, cid, op.ProviderID, "canonical 已移除", "removed_in_master")
 		case provider.OpMove:
 			cid, id := work[op.From], ids[op.From]
 			work = slices.Insert(slices.Delete(work, op.From, op.From+1), op.Pos, cid)
 			ids = slices.Insert(slices.Delete(ids, op.From, op.From+1), op.Pos, id)
-			row("move", op.Pos, cid, id, "canonical 換序")
+			row("move", op.Pos, cid, id, "canonical 換序", "moved_in_master")
 		case provider.OpAdd:
 			cid := byID[op.ProviderID]
 			work, ids = slices.Insert(work, op.Pos, cid), slices.Insert(ids, op.Pos, op.ProviderID)
-			row("add", op.Pos, cid, op.ProviderID, "推到平台")
+			row("add", op.Pos, cid, op.ProviderID, "推到平台", "push")
 		case provider.OpRename:
-			rows = append(rows, []string{"rename", plan.prov, plan.pl.Name, "", "", "", op.Name, "", "canonical 改名:" + plan.liveName + " → " + op.Name})
+			rows = append(rows, []string{"rename", plan.prov, plan.pl.Name, "", "", "", op.Name, "", "canonical 改名:" + plan.liveName + " → " + op.Name, "renamed_in_master"})
 		}
 	}
 	for _, sk := range skipped {
 		t := s.tracks.Tracks[sk.CID]
-		reason, id := sk.Reason, ""
+		reason, code, id := sk.Reason, sk.Code, ""
 		if m := t.Mappings[plan.prov]; m.ID != "" { // 有 mapping 但推不出去:resolve 修不了,提示也不會算它
-			reason, id = "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加", m.ID // ponytail: Pushable 只回 bool,理由三選一由使用者看平台判斷;第三個平台時讓 Pushable 回原因(P6 §2 A10)
+			reason, code, id = "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加", "unpushable", m.ID // ponytail: Pushable 只回 bool,理由三選一由使用者看平台判斷;第三個平台時讓 Pushable 回原因(P6 §2 A10)
 		}
-		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
+		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 	}
 	return rows, work
 }
@@ -433,7 +434,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 「動了幾筆」看 stdout 行數時要扣掉 skip 列。`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := needTarget(cmd, args, all, "推"); err != nil {
+			if err := needTarget(cmd, args, all, i18n.Errorf("pick.err.need_target.push")); err != nil {
 				return err
 			}
 			if prov != "" && !isProviderID(prov) {

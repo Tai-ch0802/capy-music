@@ -52,7 +52,7 @@ export function initSync(root, api, con, notice, providers) {
     out);
   out.appendChild(emptyState('選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。'));
 
-  // 十欄同步表:自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
+  // 同步表(最後一欄是 REASON_CODE):自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
   function table(header, rows) {
     const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
     const t = renderTable(header, rows);

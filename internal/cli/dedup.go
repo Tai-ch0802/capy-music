@@ -31,7 +31,7 @@ import (
 // errRestrictedPlaylist:pl show / pl dedup 讀到 ErrRestricted 時的說法。
 var errRestrictedPlaylist = i18n.Errorf("dedup.err.restricted_playlist")
 
-var dedupReportHeader = []string{"POS", "ID", "TITLE", "ARTISTS", "REASON"}
+var dedupReportHeader = []string{"POS", "ID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"}
 
 func newPlDedupCmd() *cobra.Command {
 	var dryRun, yes, force bool
@@ -41,11 +41,11 @@ func newPlDedupCmd() *cobra.Command {
 		Short: "去掉清單裡重複的曲目(同平台 id 或同 ISRC;保留第一份,其餘順序不動)",
 		Long: `重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首)。保留第一次出現的那份、拿掉後面的,剩下的相對順序一個都不動。
 
-<provider>:<清單 ID 或名稱>:直接讀平台清單、只報告(非 TTY 是無標題 TSV:pos id title artists reason;pos 從 0 起);不碰 Drive、
+<provider>:<清單 ID 或名稱>:直接讀平台清單、只報告(非 TTY 是無標題 TSV:pos id title artists reason reason_code;pos 從 0 起;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼);不碰 Drive、
 不需要連結;有沒有重複 exit code 都是 0。要由 capy 移除,把清單連到正本再用下面那種寫法。--yes / --force / --dry-run / --provider 配這種寫法是錯誤。
 
 canonical 清單(name|pid;不帶參數且在終端機裡會開挑選器):pl sync 的一輪中間多一步——先 pull(平台現況吸進正本)、
-正本去重、再 push 把多出來的份從可寫的平台拿掉。一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason,
+正本去重、再 push 把多出來的份從可寫的平台拿掉。一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code,
 dir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確認;exit code 同 pl sync(0 無變更或已套用、1 錯誤、2 待套用、3 安全閥)。
 正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 pl sync;--provider 沒選到或讀不到的平台這次沒檢查,stderr 會說)。
 刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),--force 越過;寫不了的平台還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。`,
@@ -228,11 +228,11 @@ func dedupReport(cmd *cobra.Command, prov, ref string) error {
 	rows := make([][]string, len(dups))
 	for i, d := range dups {
 		t := tracks[d.Pos]
-		reason := fmt.Sprintf("重複:與 pos %d 同 id", d.Keep)
+		reason, code := fmt.Sprintf("重複:與 pos %d 同 id", d.Keep), "dup_id"
 		if tracks[d.Keep].ProviderID != t.ProviderID {
-			reason = fmt.Sprintf("重複:與 pos %d 同 ISRC %s", d.Keep, strings.TrimPrefix(keys[d.Pos], "i:"))
+			reason, code = fmt.Sprintf("重複:與 pos %d 同 ISRC %s", d.Keep, strings.TrimPrefix(keys[d.Pos], "i:")), "dup_isrc"
 		}
-		rows[i] = []string{strconv.Itoa(d.Pos), t.ProviderID, t.Title, strings.Join(t.Artists, ", "), reason}
+		rows[i] = []string{strconv.Itoa(d.Pos), t.ProviderID, t.Title, strings.Join(t.Artists, ", "), reason, code}
 	}
 	if err := ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), dedupReportHeader, rows); err != nil {
 		return err
@@ -261,7 +261,7 @@ func dedupCanonical(s *canonState, pl *canon.Playlist) (rows [][]string) {
 	for _, d := range dups {
 		it := pl.Items[d.Pos]
 		t := s.tracks.Tracks[keys[d.Pos]]
-		rows = append(rows, []string{"remove", "", pl.Name, strconv.Itoa(d.Pos), it.CID, "", t.Title, strings.Join(t.Artists, ", "), fmt.Sprintf("重複:與 pos %d 同一首,保留前面那份", d.Keep)})
+		rows = append(rows, []string{"remove", "", pl.Name, strconv.Itoa(d.Pos), it.CID, "", t.Title, strings.Join(t.Artists, ", "), fmt.Sprintf("重複:與 pos %d 同一首,保留前面那份", d.Keep), "duplicate"})
 		drop[d.Pos] = true
 	}
 	kept := make([]canon.Item, 0, len(pl.Items)-len(dups))

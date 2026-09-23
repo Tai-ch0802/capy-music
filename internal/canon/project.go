@@ -22,6 +22,7 @@ type LiveItem struct {
 type Skip struct {
 	IID, CID string
 	Reason   string
+	Code     string // 機器可讀的原因代碼(TSV 的 REASON_CODE 欄;永不翻譯)
 }
 
 // PushPlan:diff(L 的 cid 序列, C 的 cid 序列)→ ops。mappingID 給 cid 在這個 provider 的**可推** id——沒有 mapping、釘成不可得、
@@ -69,7 +70,7 @@ func PushPlan(live []LiveItem, want []Item, liveName, wantName string, mappingID
 		}
 		id, ok := mappingID(it.CID)
 		if !ok {
-			skipped = append(skipped, Skip{IID: it.IID, CID: it.CID, Reason: "沒有這個平台的 mapping(或釘成不可得):capy resolve"})
+			skipped = append(skipped, Skip{IID: it.IID, CID: it.CID, Reason: "沒有這個平台的 mapping(或釘成不可得):capy resolve", Code: "no_mapping"})
 			continue
 		}
 		target = append(target, slot{id, -1})

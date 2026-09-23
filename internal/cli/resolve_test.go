@@ -57,7 +57,7 @@ func TestResolveAutoWritesISRCMappings(t *testing.T) {
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-b", Name: "song-b", ISRC: fakeISRC("b")})
 	before := driveFiles(t, dc)
 	out, _, err := runPull(t, "resolve")
-	want := "map\t" + fakeCID("a") + "\tapple\tap-a\t95\tisrc\tsong-a\tartist\tISRC 反查\nmap\t" + fakeCID("b") + "\tapple\tap-b\t95\tisrc\tsong-b\tartist\tISRC 反查\n"
+	want := "map\t" + fakeCID("a") + "\tapple\tap-a\t95\tisrc\tsong-a\tartist\tISRC 反查\tisrc\nmap\t" + fakeCID("b") + "\tapple\tap-b\t95\tisrc\tsong-b\tartist\tISRC 反查\tisrc\n"
 	if exitOf(t, err) != 2 || out != want {
 		t.Fatalf("非 TTY 沒 --yes → exit 2、TSV:%d %q", exitOf(t, err), out)
 	}
@@ -106,9 +106,12 @@ func TestResolveFuzzyThresholdAndReviewQueueExitZero(t *testing.T) {
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-b-live", Name: "song-b (Live)", ISRC: "TW00000000ZY"}) // 只有 Live 版 → 84 → review
 	out, errs := mustPull(t, "resolve", "--yes")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 || lines[0] != "map\t"+fakeCID("a")+"\tapple\tap-a2\t100\tfuzzy\tsong-a\tartist\tfuzzy 100 分:song-a — artist(3:20)" ||
+	if len(lines) != 2 || lines[0] != "map\t"+fakeCID("a")+"\tapple\tap-a2\t100\tfuzzy\tsong-a\tartist\tfuzzy 100 分:song-a — artist(3:20)\tfuzzy" ||
 		!strings.HasPrefix(lines[1], "review\t"+fakeCID("b")+"\tapple\tap-b-live\t84\tfuzzy\tsong-b\tartist\t84 分 < 85:候選 song-b (Live)") {
 		t.Fatalf("佇列:%q", out)
+	}
+	if !strings.HasSuffix(lines[1], "\tlow_score") {
+		t.Errorf("REASON_CODE 要是 low_score:%q", lines[1])
 	}
 	if !strings.Contains(errs, "寫入 1 筆 mapping") || !strings.Contains(errs, "1 筆待人工裁決") {
 		t.Fatalf("stderr:%s", errs)
@@ -130,6 +133,9 @@ func TestResolveCandidateOwnedByOtherCidGoesToReview(t *testing.T) {
 	out, _ := mustPull(t, "resolve", "--yes")
 	if !strings.HasPrefix(out, "review\t"+fakeCID("b")+"\tapple\tap-a\t95\tisrc\tsong-b\tartist\t候選 song-a — artist(3:20) 已屬 cid "+fakeCID("a")) {
 		t.Fatalf("已屬另一 cid → review、不自動合併:%q", out)
+	}
+	if !strings.HasSuffix(out, "\tcandidate_taken\n") {
+		t.Errorf("REASON_CODE 要是 candidate_taken:%q", out)
 	}
 	if _, has := driveTracks(t, dc).Tracks[fakeCID("b")].Mappings["apple"]; has {
 		t.Fatal("不寫")
@@ -192,7 +198,7 @@ func TestResolveReviewNonTTYPrintsQueueExit2ZeroWrites(t *testing.T) {
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-b-live", Name: "song-b (Live)", ISRC: "TW00000000ZY"})
 	before := driveFiles(t, dc)
 	out, _, err := runPull(t, "resolve", "--review")
-	if exitOf(t, err) != 2 || !strings.Contains(err.Error(), "需要終端機") || strings.Count(out, "\n") != 2 || !strings.HasPrefix(out, "review\t"+fakeCID("a")+"\tapple\t\t\t\tsong-a\tartist\t找不到候選\n") {
+	if exitOf(t, err) != 2 || !strings.Contains(err.Error(), "需要終端機") || strings.Count(out, "\n") != 2 || !strings.HasPrefix(out, "review\t"+fakeCID("a")+"\tapple\t\t\t\tsong-a\tartist\t找不到候選\tno_candidate\n") {
 		t.Fatalf("非 TTY --review:%v %q", err, out)
 	}
 	if !sameFiles(before, driveFiles(t, dc)) {
@@ -299,7 +305,7 @@ func TestResolveConflictRowsAndKeep(t *testing.T) {
 	tr.Tracks[fakeCID("a")] = ta
 	putTracks(t, dc, tr)
 	out, _ := mustPull(t, "resolve", "--yes")
-	if out != "conflict\t"+fakeCID("a")+"\tspotify\ta\t100\tobserved\tsong-a\tartist\t同 ISRC 觀測到不同 id:a-live(song-a (Live),4:10);--review 的 keep 釘住現有 mapping\n" {
+	if out != "conflict\t"+fakeCID("a")+"\tspotify\ta\t100\tobserved\tsong-a\tartist\t同 ISRC 觀測到不同 id:a-live(song-a (Live),4:10);--review 的 keep 釘住現有 mapping\tisrc_conflict\n" {
 		t.Fatalf("來源 (c):%q", out)
 	}
 	stubReview(t, func(it resolveItem, _ func(string) ([]provider.Track, error)) reviewDecision {
@@ -417,6 +423,9 @@ func TestResolveSameCandidateClaimedOnceGoesToReview(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "map\t"+fakeCID("a")+"\tapple\tap-x\t") || !strings.HasPrefix(lines[1], "review\t"+fakeCID("b")+"\tapple\tap-x\t") || !strings.Contains(lines[1], "這一輪已配給 cid "+fakeCID("a")) {
 		t.Fatalf("第二個要進 review:%q", out)
+	}
+	if !strings.HasSuffix(lines[0], "\tfuzzy") || !strings.HasSuffix(lines[1], "\tcandidate_assigned") {
+		t.Errorf("REASON_CODE 要是 fuzzy / candidate_assigned:%q", out)
 	}
 	tracks := driveTracks(t, dc)
 	if _, has := tracks.Tracks[fakeCID("b")].Mappings["apple"]; has || tracks.Tracks[fakeCID("a")].Mappings["apple"].ID != "ap-x" {
@@ -683,5 +692,8 @@ func TestResolvePlanDegradesProviderAndCallFailures(t *testing.T) {
 	out, _, err := runPull(t, "resolve", "--yes")
 	if exitOf(t, err) != 0 || strings.Count(out, "review\t") != 2 || strings.Count(out, "\t查詢失敗:") != 2 || !sameFiles(before, driveFiles(t, dc)) {
 		t.Fatalf("單次失敗 = 那筆 review、零寫入:%v\n%s", err, out)
+	}
+	if strings.Count(out, "\tlookup_failed\n") != 2 {
+		t.Errorf("REASON_CODE 要是 lookup_failed:%s", out)
 	}
 }
