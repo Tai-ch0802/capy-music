@@ -175,6 +175,9 @@ Caps(): T1 加 CapPlaylistCreate|CapPlaylistAppend;T2 依 R-8 加 Remove|Reorder
 **第三個沒排除的原因:列數**——R-8 的 PUT 只送過 7 列,補測一次送 222 列;500 也可能是 body 大小。無損的分辨法:對非協作、`i.` 列的大清單(「太好聽」543 列)原序全量 PUT 一次,待使用者授權。
 **決定(PR #81)**:清單列表就帶 `PlaylistRef.Unwritable`(`canEdit:false`、`hasCollaboration:true`),push 在 plan 階段列 refused——sync 只跳過那一格、cron 不會每輪 exit 1、dry-run 看得到、migrate 在確認之前就擋(exit 3);`ApplyOps` 留第二道防線(協作 → 整份不寫,連只改名與純尾端 append 也不寫,協作清單上的 PATCH / POST 沒驗過;非協作卻是 `a.` 列 → 沒看過的情況、請回報,先於「已經變了」報);500 的翻譯補上協作清單這個原因。非協作、`i.` 列的既有清單仍是 R-9 的驗收對象。
 
+**補測 2(2026-09-23,使用者授權,#81 合併後)**:對非協作、Music.app 建的「跳跳兒歌」(25 列,全 `i.`)原序全量 PUT → **204、讀回 25 列與備份逐列相同**。
+→ PUT 對 Music.app 建的清單(不只 API 建的)成立;`i.` 列 + `library-songs` 正確。列數(543 列的「太好聽」)仍未排除。
+
 ## 6. 要請使用者拍板的問題
 
 **使用者 2026-09-22 定案:Q41–Q46 全部採建議**;Q46 依探測第 4 項 = 要加揭露;Q43 探測已跑(§5)。
