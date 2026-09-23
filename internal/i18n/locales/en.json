@@ -102,7 +102,7 @@
   "cmd.export.short": "Print this computer's canonical data to stdout (the Drive files merged into one JSON; an escape hatch that doesn't depend on Drive)",
   "cmd.history.clear.short": "Clear recent history (the playlist cache is kept)",
   "cmd.history.short": "Recent searches and plays (local cache, used by completion and the picker)",
-  "cmd.migrate.flag.dry_run": "only list what would be moved; creates no playlist and touches neither the platforms nor Drive (exits 2 if there is anything to move)",
+  "cmd.migrate.flag.dry_run": "only list what would be moved; create no playlist and touch neither the platforms nor Drive (exits 2 if there is anything to move)",
   "cmd.migrate.flag.from": "source platform ({ids}); picked interactively in a terminal if omitted",
   "cmd.migrate.flag.to": "target platform, or <platform>:<existing-playlist-id-or-name>; a platform alone creates a new playlist named after the source (Spotify / Apple Music); picked interactively in a terminal if omitted",
   "cmd.migrate.flag.yes": "skip the confirmation (for cron / pipelines); unmatched tracks aren't reviewed on the spot",
@@ -114,11 +114,11 @@
   "cmd.pause.done": "⏸ Paused",
   "cmd.pause.short": "Pause playback",
   "cmd.pl.dedup.args": "[name|pid | <provider>:<playlist-id-or-name>]",
-  "cmd.pl.dedup.flag.dry_run": "only list the changes; touches neither the platforms nor Drive (exits 2 if there are changes)",
-  "cmd.pl.dedup.flag.force": "override the deletion threshold (dedup and push counted separately); removed copies are pushed to the playlist's other linked platforms in the same command, so run --dry-run first",
+  "cmd.pl.dedup.flag.dry_run": "only list the changes; touch neither the platforms nor Drive (exits 2 if there are changes)",
+  "cmd.pl.dedup.flag.force": "override the removal threshold (checked separately for dedup and push); removed copies are pushed to the playlist's other linked platforms in the same command, so run --dry-run first",
   "cmd.pl.dedup.flag.provider": "run the pull / push halves only for this provider (default: every provider the playlist is linked to); the master copy itself is always deduped in full, whatever --provider says",
   "cmd.pl.dedup.flag.yes": "skip the confirmation (for cron / pipelines)",
-  "cmd.pl.dedup.long": "A duplicate is the same platform id or the same ISRC (a single and its album version count as one track). The first occurrence is kept and later ones are removed; the rest keep their relative order.\n\n<provider>:<playlist-id-or-name>: reads the platform playlist directly and only reports (without a TTY: headerless TSV with columns pos id title artists reason reason_code; pos starts at 0; reason is for people and follows the language, reason_code is a fixed code for scripts).\nIt doesn't touch Drive and needs no link; it exits 0 whether or not there are duplicates. To have capy remove them, link the playlist to a master copy and use the form below.\n--yes / --force / --dry-run / --provider are errors with this form.\n\nA canonical playlist (name|pid; with no argument in a terminal, opens a picker): one pl sync round with an extra step in the middle —\npull first (the platforms' current state goes into the master copy), dedup the master copy, then push to remove the extra copies from the platforms capy can write to.\nOne table (without a TTY: TSV with columns dir action provider playlist pos cid provider_id title artists reason reason_code; dir ∈ pull / dedup / push; pos in dedup rows is the position in the master copy) and one confirmation;\nexit codes as for pl sync (0 = no changes or applied, 1 = error, 2 = pending, 3 = safety check).\nNothing is written when neither the master copy nor the platforms checked this time have duplicates (other changes the pull half sees are left for pl sync; platforms not selected by --provider or unreadable are not checked this time, and stderr says so).\nThe deletion threshold applies to dedup and push separately (>10 tracks, or >30% and >3 tracks); --force overrides it.\nCopies left on platforms capy can't write to are listed on stderr for you to delete by hand; the next pull won't add them back to the master copy.",
+  "cmd.pl.dedup.long": "A duplicate is the same platform id or the same ISRC (a single and its album version count as one track). The first occurrence is kept and later ones are removed; the rest keep their relative order.\n\n<provider>:<playlist-id-or-name>: reads the platform playlist directly and only reports (without a TTY: headerless TSV with columns pos id title artists reason reason_code; pos starts at 0; reason is for people and follows the language, reason_code is a fixed code for scripts).\nIt doesn't touch Drive and needs no link; it exits 0 whether or not there are duplicates. To have capy remove them, link the playlist to a master copy and use the form below.\n--yes / --force / --dry-run / --provider can't be used with this form.\n\nA master copy (name|pid; with no argument in a terminal, opens a picker): one pl sync round with an extra step in the middle —\npull first (the platforms' current state goes into the master copy), dedup the master copy, then push to remove the extra copies from the platforms capy can write to.\nOne table (without a TTY: TSV with columns dir action provider playlist pos cid provider_id title artists reason reason_code; dir ∈ pull / dedup / push; pos in dedup rows is the position in the master copy) and one confirmation;\nexit codes are the same as for pl sync (0 = no changes or applied, 1 = error, 2 = pending, 3 = safety check).\nNothing is written when neither the master copy nor the platforms checked this time have duplicates (other changes the pull half sees are left for pl sync; platforms not selected by --provider or unreadable are not checked this time, and stderr says so).\nThe removal threshold applies to dedup and push separately (>10 tracks, or >30% and >3 tracks); --force overrides it.\nCopies left on platforms capy can't write to are listed on stderr for you to delete by hand; the next pull won't add them back to the master copy.",
   "cmd.pl.dedup.short": "Remove duplicate tracks from a playlist (same platform id or same ISRC; keeps the first copy, the rest stay in order)",
   "cmd.pl.link.flag.create": "create an empty playlist on the platform with the master copy's name, then link it; the second argument is then just the platform, without \":\" (e.g. spotify); works with Spotify and Apple Music, not local",
   "cmd.pl.link.short": "Link a master copy to a platform playlist (creates the master copy if it doesn't exist; only explicit links count; run it with no arguments in a terminal to pick in three steps)",
@@ -128,7 +128,7 @@
   "cmd.pl.pull.flag.dry_run": "only list the changes, don't write (exits 2 if there are any)",
   "cmd.pl.pull.flag.force": "override the removal threshold (>10 tracks, or >30% and >3 tracks); single playlist only, not with --all; doesn't let an incomplete Drive through",
   "cmd.pl.pull.flag.provider": "pull only the links to this provider (default: every provider the playlist is linked to)",
-  "cmd.pl.pull.flag.yes": "skip the confirmation (for cron / pipes); doesn't let an incomplete Drive through",
+  "cmd.pl.pull.flag.yes": "skip the confirmation (for cron / pipelines); doesn't let an incomplete Drive through",
   "cmd.pl.pull.long": "Platform → master copy → Drive (spec §6.1, §6.5).\nThe change set is printed first (when not a TTY, as headerless TSV: action provider playlist pos cid provider_id title artists reason reason_code; reason is for people and follows the language, reason_code is a fixed code for scripts),\nand written only after you confirm; Drive is written first, then SQLite.\nExit codes: 0 no changes or applied, 1 error, 2 changes pending (--dry-run, not a TTY without --yes, cancelled), 3 stopped by a safety check (Drive incomplete; removing >10 tracks, or >30% and >3 tracks).\n--yes skips the confirmation and only --force overrides the removal threshold; neither lets an incomplete Drive through.",
   "cmd.pl.pull.short": "Platform → master copy → Drive: list the changes, write only after you confirm (spec §6.1)",
   "cmd.pl.push.flag.all": "push all linked playlists",
@@ -142,7 +142,7 @@
   "cmd.pl.show.short": "Show a playlist's tracks (with no argument in a terminal, opens a picker)",
   "cmd.pl.sync.flag.all": "sync all linked playlists",
   "cmd.pl.sync.flag.dry_run": "only list the changes for the whole round; touch neither the platforms nor Drive (exits 2 if there are changes)",
-  "cmd.pl.sync.flag.force": "override the removal threshold (checked separately for pull and push); also pushes those removals to the playlist's other linked platforms, so use --dry-run first; single playlist only, not with --all",
+  "cmd.pl.sync.flag.force": "override the removal threshold (checked separately for pull and push); those removals are also pushed to the playlist's other linked platforms, so run --dry-run first; single playlist only, not with --all",
   "cmd.pl.sync.flag.provider": "run the round for this provider only (default: every provider the playlist is linked to)",
   "cmd.pl.sync.flag.yes": "skip the confirmation (for cron / pipelines)",
   "cmd.pl.sync.long": "Under one lock, each playlist is first pulled from each platform (platform → master copy), then pushed to each platform (master copy → platform); --provider runs just one platform.\nThe change set is printed all at once (without a TTY it's a headerless TSV: dir action provider playlist pos cid provider_id title artists reason reason_code; dir ∈ pull / push; reason is for people and follows the language, reason_code is a fixed code for scripts), and you confirm once.\nWith --dry-run the push half is projected from the master copy as it would be after the pull, so you see the whole round.\nThe threshold is checked per (playlist, platform); exit codes are the same as pl pull / pl push.\nThe push half reuses the platform playlists the pull half just read instead of reading them again; the platforms are written before Drive, and if writing Drive then fails, the message says the platforms were already changed.\nWhen --provider points to a platform that can't be written (e.g. another device's local library playlist), sync only pulls and says so on stderr.\nWhen one playlist can't be pushed to one platform (e.g. it has local files), only that push half is skipped, not the whole round (a cron sync --all won't get stuck on one playlist).\nThe removal threshold still stops the whole round; with --force, removals absorbed by the pull half are pushed in the same command to every platform linked to this playlist — check with --dry-run first.",
@@ -158,7 +158,7 @@
   "cmd.resolve.pin.flag.yes": "merge right away when the id already belongs to another cid (without a TTY and without this flag, exits 2 and writes nothing)",
   "cmd.resolve.pin.long": "A pin is written as pinned / confidence 100 / source review, and automatic runs never change it afterwards.\nWith an id, capy first reads that track from the platform to make sure it exists, and adds its ISRC to the alias set.\nIf the id (or its ISRC) already belongs to another cid, the two are the same recording:\nafter you confirm, they are merged per decision 21 (the lexicographically smaller cid wins and every playlist item is repointed to it).\nWithout a TTY this needs --yes; otherwise it exits 2 and writes nothing.",
   "cmd.resolve.pin.short": "Pin a cid's id on a platform by hand (none = the platform doesn't have this track); merges the two when the id already belongs to another cid",
-  "cmd.resolve.short": "Map canonical tracks to their ids on each platform (ISRC lookup → fuzzy match; ≥85 is written automatically, the rest go to the review queue)",
+  "cmd.resolve.short": "Map the master copies' tracks to their ids on each platform (ISRC lookup → fuzzy match; ≥85 is written automatically, the rest go to the review queue)",
   "cmd.resolve.use": "resolve [<playlist-name|id>]",
   "cmd.root.flag.port": "port for --web (default 0 = any free port; 8888, 80 and 443 are not allowed)",
   "cmd.root.flag.web": "use capy from your browser: binds to 127.0.0.1 only and prints a one-time URL at startup",
@@ -192,8 +192,8 @@
     "other": "Apply the {count} changes above (duplicates to remove: {dups}; pulls to Drive: {pulls}; pushes to platforms: {pushes})?"
   },
   "dedup.confirm_force": {
-    "one": "--force: deletions propagate to every platform this playlist is linked to. Apply the change above (duplicates to remove: {dups}; pulls to Drive: {pulls}; pushes to platforms: {pushes})?",
-    "other": "--force: deletions propagate to every platform this playlist is linked to. Apply the {count} changes above (duplicates to remove: {dups}; pulls to Drive: {pulls}; pushes to platforms: {pushes})?"
+    "one": "--force: removals propagate to every platform this playlist is linked to. Apply the change above (duplicates to remove: {dups}; pulls to Drive: {pulls}; pushes to platforms: {pushes})?",
+    "other": "--force: removals propagate to every platform this playlist is linked to. Apply the {count} changes above (duplicates to remove: {dups}; pulls to Drive: {pulls}; pushes to platforms: {pushes})?"
   },
   "dedup.err.report_only": "{platform}:{ref} is only reported on, never changed (--yes / --force / --dry-run / --provider mean nothing here); to have capy remove the duplicates: capy pl link <name> {platform}:{ref}, then capy pl dedup <name>",
   "dedup.err.restricted_playlist": "can't read this playlist's tracks — it may be someone else's playlist you follow (since 2026-02 Spotify only returns their metadata, spec §1.1), or the authorization may be insufficient; run capy doctor to check",
@@ -368,7 +368,7 @@
   "link.err.same_name_many": "{platform} already has {count} playlists named \"{name}\" ({ids}): pick one and link it with capy pl link {quoted} {platform}:<ID>",
   "link.err.same_name_one": "{platform} already has a playlist named \"{name}\" ({id}): to link it, run capy pl link {quoted} {platform}:{id}; if you really want another one, create it in the app first and link it with {platform}:<ID>",
   "link.err.taken": "{platform}:{id} is already linked to master copy {name} ({pid}); a platform playlist can be linked to only one master copy",
-  "link.err.unreadable": "can't read the tracks of {platform} playlist {id} (an app in development mode can't get Spotify's own or other users' playlists), so it can't be linked",
+  "link.err.unreadable": "can't read the contents of {platform} playlist {id} (an app in development mode can't read Spotify's own or other users' playlists), so it can't be linked",
   "link.err.with_recovery": "{err}; {recovery}",
   "link.pick.create_new": "+ Create a new empty playlist on {platform} (named after the playlist you pick next)",
   "link.pick.platform": "Which platform should it link to?",
@@ -414,7 +414,7 @@
   "migrate.created": "Created the playlist {name} ({id}) on {platform}",
   "migrate.err.bad_from": "--from must be {ids}: {value}",
   "migrate.err.bad_to": "--to must be <platform> or <platform>:<existing-playlist>, where the platform is {ids}: {value}",
-  "migrate.err.blocked": "{blocked}. migrate doesn't go past the deletion threshold: run capy pl sync {name} first to handle the changes there, then migrate",
+  "migrate.err.blocked": "{blocked}. migrate doesn't go past the removal threshold: run capy pl sync {name} first to handle the changes there, then migrate",
   "migrate.err.cannot_create": "{platform} can't create playlists, only add to existing ones: --to {platform}:<playlist-id-or-name> ({err})",
   "migrate.err.canon_linked_elsewhere": "the master copy with the same name, {name} ({pid}), is linked to {platform}:{linked}, not {id}: first run capy pl unlink {name_arg} {platform}",
   "migrate.err.canon_linked_other_source": "the master copy with the same name, {name} ({pid}), is linked to {platform}:{linked}, not the source {src}: if that's the one you want to move, use it; otherwise first run capy pl unlink {name_arg} {platform}",
@@ -426,7 +426,7 @@
   "migrate.err.target_gone": "playlist {id} was not found on {platform} (the link was removed); run it again",
   "migrate.err.target_not_listed": "{platform}:{id} is not in your playlist list (only what capy pl list shows counts), so it can't be the target",
   "migrate.err.target_read_only": "{platform} is read-only for now, so it can't be a migrate target: {err}",
-  "migrate.err.target_unreadable": "can't read the contents of the {platform} playlist {id} (an app in development mode can't get Spotify's own or other people's playlists), so it can't be the target",
+  "migrate.err.target_unreadable": "can't read the contents of {platform} playlist {id} (an app in development mode can't read Spotify's own or other users' playlists), so it can't be the target",
   "migrate.next.relink": "the playlist {created_name} ({id}) on {platform} was created, but its link wasn't saved to Drive: reconnect it with capy pl link {name_arg} {platform}:{id}, then capy pl sync {name_arg} --provider {platform}",
   "migrate.next.relink_after": "then reconnect it with capy pl link {name_arg} {platform}:{id} and run capy pl sync {name_arg} --provider {platform}",
   "migrate.next.rerun": "run capy migrate {name_arg} --from {from} --to {platform}:{id} again (tracks already pushed to the platform are absorbed as existing content, not duplicated)",
@@ -444,8 +444,8 @@
   "migrate.resolve_summary": "resolve: {mapped} matched on {platform} automatically, {queued} left for review",
   "migrate.review.cancelled": "Cancelled: nothing is written this time",
   "migrate.reviewed": {
-    "one": "Reviewed {count} track",
-    "other": "Reviewed {count} tracks"
+    "one": "Recorded {count} review decision",
+    "other": "Recorded {count} review decisions"
   },
   "migrate.source_empty": "{src} is empty; nothing to move",
   "migrate.summary.appended": {
@@ -548,7 +548,7 @@
   "provider.err.restricted": "the platform doesn't provide this content",
   "provider.err.volume_not_allowed": "this device doesn't allow remote volume control",
   "pull.blocked.drive_incomplete": "the Drive appdata is incomplete; can't get {files}. This is not treated as \"you deleted everything\": nothing was written, and neither --yes nor --force overrides it. If Drive really was wiped, or you're logged in to the wrong Google account (currently {account}), the way out is capy drive init --from-local (it only restores the files missing on Drive; this computer's state.db is the only copy left, so don't delete it)",
-  "pull.blocked.threshold": "{name} would remove {removes} tracks on {platform} ({visible} visible), over the threshold",
+  "pull.blocked.threshold": "{name}: pulling from {platform} would remove {removes} of {visible} tracks from the master copy, over the threshold",
   "pull.confirm": {
     "one": "Apply the {count} change above to Drive?",
     "other": "Apply the {count} changes above to Drive?"
@@ -620,17 +620,17 @@
   "push.reason.renamed": "renamed in the master copy: {from} → {to}",
   "push.reason.unpushable": "has a mapping but can't be pushed (local file / library-only / file not on this computer); add it on the platform by hand",
   "push.refuse.local_files": {
-    "one": "{playlist} on {platform} has {count} local file ({titles}) that a full replace would lose; pushing this playlist isn't supported yet",
-    "other": "{playlist} on {platform} has {count} local files ({titles}) that a full replace would lose; pushing this playlist isn't supported yet"
+    "one": "{playlist} on {platform} has {count} local file ({titles}) that a full replace would lose, so pushing this playlist isn't supported yet",
+    "other": "{playlist} on {platform} has {count} local files ({titles}) that a full replace would lose, so pushing this playlist isn't supported yet"
   },
-  "push.refuse.no_base": "{playlist} on {platform} hasn't been pulled yet (no base); run capy pl pull {playlist} first",
-  "push.refuse.playlist_missing": "playlist {link} ({playlist}) wasn't found on {platform}; run capy pl pull {playlist} first (it will unlink it)",
-  "push.refuse.unpulled": "{playlist} has changes on {platform} that haven't been pulled; run capy pl pull {playlist} first (or capy pl sync)",
+  "push.refuse.no_base": "{playlist} on {platform} hasn't been pulled yet (no base): run capy pl pull {playlist} first",
+  "push.refuse.playlist_missing": "playlist {link} ({playlist}) wasn't found on {platform}: run capy pl pull {playlist} first (it will unlink it)",
+  "push.refuse.unpulled": "{playlist} has changes on {platform} that haven't been pulled: run capy pl pull {playlist} first (or capy pl sync)",
   "push.refuse.unwritable": "can't write to {playlist} on {platform} ({link}): {reason}",
   "push.skip.foreign_link": "Skipping {platform}:{link} of {playlist}: it belongs to device {device} (to take it over on this computer: capy pl link {playlist} {platform}:<file-name>)",
   "push.skip.not_writable": "Skipping {platform} for {playlist}: {err}",
   "push.skip.push_half": "Skipping the push half for {playlist} on {platform}: {reason}",
-  "push.skip.restricted": "Skipping {platform}:{link} of {playlist} (an app in development mode can't read playlists owned by Spotify or by other users, or write to them)",
+  "push.skip.restricted": "Skipping {platform}:{link} of {playlist} (an app in development mode can't read Spotify's own or other users' playlists, or write to them)",
   "push.stale.changed": "{playlist} changed on {platform} while waiting for confirmation; not writing it",
   "push.stale.item": "{playlist} on {platform}",
   "push.stale.reread_failed": "Re-reading {playlist} on {platform} before applying failed: {err}; not writing it",
@@ -647,8 +647,8 @@
     "other": "This resolve made {count} API calls (more than {limit}): unresolved cids are looked up again every time; if you run it from cron, please report it — it's time to add the negative cache that decision 24 postponed"
   },
   "resolve.cancelled": {
-    "one": "Cancelled: nothing from this run is written ({count} automatic mapping, {decisions} review decision(s))",
-    "other": "Cancelled: nothing from this run is written ({count} automatic mappings, {decisions} review decision(s))"
+    "one": "Cancelled: nothing from this run is written ({count} automatic mapping, {decisions})",
+    "other": "Cancelled: nothing from this run is written ({count} automatic mappings, {decisions})"
   },
   "resolve.confirm_write": {
     "one": "Write the mapping above to Drive?",
@@ -700,7 +700,7 @@
   "resolve.reason.no_candidate": "no candidate found",
   "resolve.review.confirm_merge": "This {provider} id already belongs to cid {other}: merge {cid} with it? (The lexicographically smaller cid wins and every playlist item is repointed to it)",
   "resolve.review.opt.accept": "Accept the candidate (score {score}): {candidate}",
-  "resolve.review.opt.keep": "Keep the current mapping {id} (you confirmed it; won't ask again)",
+  "resolve.review.opt.keep": "Keep the current mapping {id} (counts as confirmed by you; won't ask again)",
   "resolve.review.opt.manual": "Search manually",
   "resolve.review.opt.none": "This platform doesn't have it (pin as unavailable)",
   "resolve.review.opt.skip": "Skip (ask again next time)",
@@ -710,6 +710,10 @@
   "resolve.review.search_failed": "Search failed, skipping this one for now: {err}",
   "resolve.review.search_query": "Search for a track",
   "resolve.review.title": "[{pos}/{total}] {title} — {artists} ({duration})\n{provider}: {reason}",
+  "resolve.review_decisions": {
+    "one": "{count} review decision",
+    "other": "{count} review decisions"
+  },
   "resolve.reviewed": {
     "one": "Recorded {count} review decision",
     "other": "Recorded {count} review decisions"
@@ -730,10 +734,10 @@
     "one": "Apply the {count} change above ({pulls} pulled to Drive, {pushes} pushed to platforms)?",
     "other": "Apply the {count} changes above ({pulls} pulled to Drive, {pushes} pushed to platforms)?"
   },
-  "sync.confirm_force": "--force: removals will spread to every platform this playlist is linked to. {prompt}",
+  "sync.confirm_force": "--force: removals propagate to every platform this playlist is linked to. {prompt}",
   "sync.done_pull": {
-    "one": "Applied {count} pulled change",
-    "other": "Applied {count} pulled changes"
+    "one": "Applied {count} pull change",
+    "other": "Applied {count} pull changes"
   },
   "sync.err.force_with_all": "--force works with a single playlist only (capy pl sync <name> --force), not with --all",
   "sync.next": "run capy pl sync again (its pull half absorbs what was already pushed as platform changes, so nothing is duplicated)",

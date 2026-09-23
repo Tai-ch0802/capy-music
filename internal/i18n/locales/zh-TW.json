@@ -598,7 +598,7 @@
     "other": "這次 resolve 打了 {count} 次 API(超過 {limit}):未解開的 cid 每次都會重查;若已放進 cron 請回報,該加決策 24 延後的 negative cache 了"
   },
   "resolve.cancelled": {
-    "other": "已取消:這輪的 {count} 筆自動 mapping 與 {decisions} 筆裁決都不寫入"
+    "other": "已取消:這輪的 {count} 筆自動 mapping 與 {decisions}都不寫入"
   },
   "resolve.confirm_write": {
     "other": "寫入以上 {count} 筆 mapping 到 Drive?"
@@ -656,6 +656,9 @@
   "resolve.review.search_failed": "搜尋失敗,這筆先略過:{err}",
   "resolve.review.search_query": "搜尋字串",
   "resolve.review.title": "[{pos}/{total}] {title} — {artists}({duration})\n{provider}:{reason}",
+  "resolve.review_decisions": {
+    "other": "{count} 筆裁決"
+  },
   "resolve.reviewed": {
     "other": "裁決 {count} 筆"
   },

@@ -159,7 +159,7 @@ func TestEnglishMigrateReviewedAndUnmapped(t *testing.T) {
 	out, errs := mustPull(t, "migrate", "road trip", "--from", "apple", "--to", "spotify")
 	wantLine(t, out, "\t"+fakeCID("n")+"\tn\tsong-n\tartist\tno mapping for spotify; not pushed this time\tno_mapping")
 	wantLine(t, errs, "resolve: 1 matched on spotify automatically, 1 left for review")
-	wantLine(t, errs, "Reviewed 1 track")
+	wantLine(t, errs, "Recorded 1 review decision")
 	wantLine(t, errs, "Pushed 1 change")
 	wantLine(t, errs, `1 track has no match on spotify and wasn't pushed: review it with capy resolve "road trip" --provider spotify --review, then push it with capy pl sync "road trip" --provider spotify`)
 }
@@ -265,7 +265,7 @@ func TestEnglishMigratePicker(t *testing.T) {
 	fs1.mu.Unlock()
 	log := stubPickers(t, 1, 0, 0, 0) // apple → q1 → spotify → p1(讀不到)
 	_, _, err := runPull(t, "migrate", "--yes")
-	if err == nil || err.Error() != "can't read the contents of the spotify playlist p1 (an app in development mode can't get Spotify's own or other people's playlists), so it can't be the target" {
+	if err == nil || err.Error() != "can't read the contents of spotify playlist p1 (an app in development mode can't read Spotify's own or other users' playlists), so it can't be the target" {
 		t.Fatalf("%v", err)
 	}
 	if len(log.titles) != 4 || !strings.Contains(log.titles[0], "Move from which platform?") || !strings.Contains(log.titles[2], "Move to which platform?") ||

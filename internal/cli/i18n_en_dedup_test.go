@@ -113,7 +113,7 @@ func TestEnglishDedupCanonicalRound(t *testing.T) {
 	runPull(t, "pl", "dedup", "commute")
 	runPull(t, "pl", "dedup", "commute", "--force")
 	const confirm = "Apply the 4 changes above (duplicates to remove: 2; pulls to Drive: 0; pushes to platforms: 2)?"
-	if len(asked) != 2 || asked[0] != confirm || asked[1] != "--force: deletions propagate to every platform this playlist is linked to. "+confirm {
+	if len(asked) != 2 || asked[0] != confirm || asked[1] != "--force: removals propagate to every platform this playlist is linked to. "+confirm {
 		t.Fatalf("確認句:%q", asked)
 	}
 	bothTTY, confirmWrite = origTTY, origConfirm

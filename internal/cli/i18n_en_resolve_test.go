@@ -99,7 +99,7 @@ func TestEnglishResolveReviewCancelAndSearchFailure(t *testing.T) {
 		return reviewDecision{}, huh.ErrUserAborted
 	}
 	if _, errs, err := runPull(t, "resolve", "--review", "--yes"); exitOf(t, err) != 2 ||
-		!strings.Contains(errs, "Cancelled: nothing from this run is written (1 automatic mapping, 0 review decision(s))\n") {
+		!strings.Contains(errs, "Cancelled: nothing from this run is written (1 automatic mapping, 0 review decisions)\n") {
 		t.Fatalf("%v\n%s", err, errs)
 	}
 	stubReview(t, func(it resolveItem, search func(string) ([]provider.Track, error)) reviewDecision {
@@ -232,7 +232,7 @@ func TestEnglishReviewMenu(t *testing.T) {
 	}
 	want := []string{
 		"Accept the candidate (score 84): song-b (Live) — artist (4:10)=accept",
-		"Keep the current mapping ap-b (you confirmed it; won't ask again)=keep",
+		"Keep the current mapping ap-b (counts as confirmed by you; won't ask again)=keep",
 		"Skip (ask again next time)=skip", "Search manually=manual", "This platform doesn't have it (pin as unavailable)=none",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

@@ -86,7 +86,7 @@ func TestEnglishPlLinkRefusals(t *testing.T) {
 	fs.set("p5", "run", "r1")
 	fs.set("p6", "run", "r2")
 	for _, c := range []struct{ args, want string }{
-		{"pl link hits spotify:ed", "can't read the tracks of spotify playlist ed (an app in development mode can't get Spotify's own or other users' playlists), so it can't be linked"},
+		{"pl link hits spotify:ed", "can't read the contents of spotify playlist ed (an app in development mode can't read Spotify's own or other users' playlists), so it can't be linked"},
 		{"pl link other spotify:p1", "spotify:p1 is already linked to master copy commute (" + pid + "); a platform playlist can be linked to only one master copy"},
 		{"pl link commute spotify:p2", "commute (" + pid + ") is already linked to spotify:p1; run capy pl unlink commute spotify first"},
 		{"pl link commute tidal:p2", `the format is <provider>:<playlist-id-or-name>, where provider is spotify|apple|local: "tidal:p2"`},
@@ -129,7 +129,7 @@ func TestEnglishPlPullSafetyChecks(t *testing.T) {
 	mustPull(t, "pl", "pull", "commute", "--yes")
 	fs.set("p1", "commute", ids[0])
 	_, _, err := runPull(t, "pl", "pull", "commute", "--yes")
-	if want := "commute would remove 11 tracks on spotify (12 visible), over the threshold. Pass --force to override (check what would be removed with --dry-run first)"; exitOf(t, err) != 3 || err.Error() != want {
+	if want := "commute: pulling from spotify would remove 11 of 12 tracks from the master copy, over the threshold. Pass --force to override (check what would be removed with --dry-run first)"; exitOf(t, err) != 3 || err.Error() != want {
 		t.Fatalf("閾值:\n got %v\nwant %s", err, want)
 	}
 	pid := enPID(t, "commute", driveFiles(t, dc))

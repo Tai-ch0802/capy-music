@@ -118,7 +118,7 @@ func TestEnglishPushRefusals(t *testing.T) {
 		fs.set("p1", "Commute", "a")
 		mustPull(t, "pl", "link", "Commute", "spotify:p1")
 		_, _, err := runPull(t, "pl", "push", "Commute", "--yes", "--force")
-		if exitOf(t, err) != 3 || err.Error() != "Commute on spotify hasn't been pulled yet (no base); run capy pl pull Commute first" {
+		if exitOf(t, err) != 3 || err.Error() != "Commute on spotify hasn't been pulled yet (no base): run capy pl pull Commute first" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -127,7 +127,7 @@ func TestEnglishPushRefusals(t *testing.T) {
 		editCanonical(t, dc, drivePlaylist(t, dc), []string{"a", "b"}, nil, "")
 		fs.set("p1", "Commute", "a", "b", "c", "x")
 		_, _, err := runPull(t, "pl", "push", "Commute", "--yes")
-		if exitOf(t, err) != 3 || err.Error() != "Commute has changes on spotify that haven't been pulled; run capy pl pull Commute first (or capy pl sync)" {
+		if exitOf(t, err) != 3 || err.Error() != "Commute has changes on spotify that haven't been pulled: run capy pl pull Commute first (or capy pl sync)" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -135,7 +135,7 @@ func TestEnglishPushRefusals(t *testing.T) {
 		fs, _ := enPushWorld(t, "a")
 		fs.drop("p1")
 		_, _, err := runPull(t, "pl", "push", "Commute", "--yes")
-		if exitOf(t, err) != 3 || err.Error() != "playlist p1 (Commute) wasn't found on spotify; run capy pl pull Commute first (it will unlink it)" {
+		if exitOf(t, err) != 3 || err.Error() != "playlist p1 (Commute) wasn't found on spotify: run capy pl pull Commute first (it will unlink it)" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -151,7 +151,7 @@ func TestEnglishPushRefusals(t *testing.T) {
 		pl.UpdatedAt = 2
 		putPlaylist(t, dc, pl)
 		_, _, err := runPull(t, "pl", "push", "Commute", "--yes", "--force")
-		if exitOf(t, err) != 3 || err.Error() != "Commute on spotify has 1 local file (local-l1) that a full replace would lose; pushing this playlist isn't supported yet" {
+		if exitOf(t, err) != 3 || err.Error() != "Commute on spotify has 1 local file (local-l1) that a full replace would lose, so pushing this playlist isn't supported yet" {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -262,13 +262,13 @@ func TestEnglishSyncRound(t *testing.T) {
 	fs2.set("q1", "Commute", "a", "b", "c")
 	mustPull(t, "pl", "link", "Commute", "spotify:p1")
 	mustPull(t, "pl", "link", "Commute", "apple:q1")
-	if _, errs := mustPull(t, "pl", "sync", "Commute", "--yes"); !strings.Contains(errs, "Applied 3 pulled changes\n") {
+	if _, errs := mustPull(t, "pl", "sync", "Commute", "--yes"); !strings.Contains(errs, "Applied 3 pull changes\n") {
 		t.Fatalf("bootstrap:%s", errs)
 	}
 	fs1.set("p1", "Commute", "a", "c")
 	fs2.set("q1", "Commute", "c", "a", "b")
 	_, errs := mustPull(t, "pl", "sync", "Commute", "--yes")
-	if !strings.Contains(errs, "Pushed 2 changes\n") || !strings.Contains(errs, "Applied 2 pulled changes\n") {
+	if !strings.Contains(errs, "Pushed 2 changes\n") || !strings.Contains(errs, "Applied 2 pull changes\n") {
 		t.Fatalf("收尾:%s", errs)
 	}
 	if _, errs := mustPull(t, "pl", "sync", "Commute", "--yes"); !strings.Contains(errs, "No changes\n") {
@@ -283,7 +283,7 @@ func TestEnglishSyncRound(t *testing.T) {
 	mustPull(t, "pl", "sync", "--all", "--yes")
 	fs2.set("q2", "Bedtime", "x", "c")
 	_, errs = mustPull(t, "pl", "sync", "--all", "--yes")
-	want := "Skipping the push half for Bedtime on spotify: Bedtime on spotify has 1 local file (local-lf1) that a full replace would lose; pushing this playlist isn't supported yet\n"
+	want := "Skipping the push half for Bedtime on spotify: Bedtime on spotify has 1 local file (local-lf1) that a full replace would lose, so pushing this playlist isn't supported yet\n"
 	if !strings.Contains(errs, want) {
 		t.Fatalf("只跳過那一格:%s", errs)
 	}
@@ -311,7 +311,7 @@ func TestEnglishPushSyncConfirmPrompts(t *testing.T) {
 	runPull(t, "pl", "sync", "Commute")
 	want := []string{
 		"Apply the 1 change above (1 pulled to Drive, 0 pushed to platforms)?",
-		"--force: removals will spread to every platform this playlist is linked to. Apply the 1 change above (1 pulled to Drive, 0 pushed to platforms)?",
+		"--force: removals propagate to every platform this playlist is linked to. Apply the 1 change above (1 pulled to Drive, 0 pushed to platforms)?",
 		"Push the 1 change above?",
 		"Apply the 1 change above (0 pulled to Drive, 1 pushed to platforms)?",
 		"Push the 2 changes above?",

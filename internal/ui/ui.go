@@ -196,13 +196,13 @@ func Table(w io.Writer, tty bool, header []string, rows [][]string, opts ...Tabl
 	return nil
 }
 
-// atomicHeader:這一欄是原子值 —— ID 之類要複製去下一個命令的字串,永遠不縮、不折(折成三段夾在補白裡,
+// atomicHeader:這一欄是原子值 —— ID 之類要複製去下一個命令的字串、腳本比對的 REASON_CODE,永遠不縮、不折(折成三段夾在補白裡,
 // 使用者會以為複製到的是完整值,比看得出被截的 … 更糟)。靠標題名判斷,規則集中在這裡:標題都是這個 repo
 // 自己定的,加新表時對照這條;改成呼叫端逐一宣告要動 12 個呼叫點,換來的只是同一份知識散在各處
 // (PR #51 review 的取捨)。
 func atomicHeader(h string) bool {
 	switch h {
-	case "ID", "CID", "PID", "ISRC", "DEVICE":
+	case "ID", "CID", "PID", "ISRC", "DEVICE", "REASON_CODE":
 		return true
 	}
 	return strings.HasSuffix(h, "_ID")

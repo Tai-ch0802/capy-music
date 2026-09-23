@@ -1103,6 +1103,17 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(table, "Math.floor(ms / 1000)") || strings.Contains(table, "Math.round(ms") {
 		t.Error("時長要用整數除法,對齊 ui.FormatDuration")
 	}
+	// 原子欄同 ui.atomicHeader:REASON_CODE 是腳本比對的代碼,折成 candidat / e_assign 就不能複製(T2b 自審)。
+	if m := regexp.MustCompile(`const ATOMIC = /(.+)/;`).FindStringSubmatch(table); m == nil {
+		t.Error("table.js 找不到 ATOMIC")
+	} else {
+		atomic := regexp.MustCompile(m[1])
+		for h, want := range map[string]bool{"ID": true, "CID": true, "PROVIDER_ID": true, "REASON_CODE": true, "REASON": false, "TITLE": false} {
+			if atomic.MatchString(h) != want {
+				t.Errorf("table.js 的 ATOMIC 對 %s 要是 %v", h, want)
+			}
+		}
+	}
 	// 設計規格 §8:三個 secret flag 的值在回聲裡遮成 ***(伺服器 403 之外的第二層,值不留在 DOM)。
 	for _, f := range []string{"--developer-token", "--user-token", "--client-secret"} {
 		if !strings.Contains(console, f) {

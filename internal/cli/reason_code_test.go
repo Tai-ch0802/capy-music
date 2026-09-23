@@ -3,7 +3,15 @@ package cli
 // REASON_CODE(計畫 §2.4 第 3 點、Q52):REASON 給人看、跟著語系;REASON_CODE 是給腳本與網頁的穩定代碼,加在最後一欄、永不翻譯。
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
@@ -81,4 +89,126 @@ func TestMigrateReasonCodes(t *testing.T) {
 			t.Errorf("%s:code %q ok %v,want %q %v", cid, code, ok, want.code, want.ok)
 		}
 	}
+}
+
+// TestReasonCodesDocumented:TSV 的 REASON_CODE 是對外契約(決策 50),README 的「reason_code 代碼表」要跟程式碼一致。
+// 兩個方向都比:程式碼用到、表上沒有(新代碼忘了寫文件);表上有、程式碼找不到(改了名,或這個掃描本身失效)。
+// 掃描規則:同一個運算式清單(呼叫參數、composite literal、賦值右邊、return)裡,緊接在 i18n.T("….reason.…") 後面的
+// 字串字面就是代碼——產生原因欄的每個地方都是「原因、代碼」相鄰(Reason: …, Code: "x" / row(…, reason, "x") / reason, code = …, "x")。
+func TestReasonCodesDocumented(t *testing.T) {
+	inCode := map[string]string{} // 代碼 → 第一次出現的位置
+	fset := token.NewFileSet()
+	for _, dir := range []string{".", "../canon"} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range files {
+			if strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(fset, name, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				var list []ast.Expr
+				switch x := n.(type) {
+				case *ast.CallExpr:
+					list = x.Args
+				case *ast.CompositeLit:
+					list = x.Elts
+				case *ast.AssignStmt:
+					list = x.Rhs
+				case *ast.ReturnStmt:
+					list = x.Results
+				}
+				for i := 0; i+1 < len(list); i++ {
+					if !isReasonT(list[i]) {
+						continue
+					}
+					if lit, ok := unKV(list[i+1]).(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						code, _ := strconv.Unquote(lit.Value)
+						if _, seen := inCode[code]; !seen {
+							inCode[code] = fset.Position(lit.Pos()).String()
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, ok := strings.Cut(string(readme), "\n### reason_code 代碼表\n")
+	if !ok {
+		t.Fatal("README 找不到「### reason_code 代碼表」")
+	}
+	inDoc := map[string]bool{}
+	col := -1
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(line, "|") {
+			if col >= 0 {
+				break // 表結束
+			}
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if col < 0 {
+			for i, c := range cells {
+				if strings.TrimSpace(c) == "reason_code" {
+					col = i
+				}
+			}
+			if col < 0 {
+				t.Fatalf("代碼表的表頭要有 reason_code 欄:%q", line)
+			}
+			continue
+		}
+		if col < len(cells) {
+			for _, m := range regexp.MustCompile("`([a-z_]+)`").FindAllStringSubmatch(cells[col], -1) {
+				inDoc[m[1]] = true
+			}
+		}
+	}
+	if len(inCode) == 0 || len(inDoc) == 0 {
+		t.Fatalf("掃描失效:程式碼找到 %d 個、README 找到 %d 個代碼", len(inCode), len(inDoc))
+	}
+	for code, pos := range inCode {
+		if !inDoc[code] {
+			t.Errorf("%s 用了 REASON_CODE %q,README 的代碼表沒有", pos, code)
+		}
+	}
+	for code := range inDoc {
+		if _, ok := inCode[code]; !ok {
+			t.Errorf("README 的代碼表有 %q,程式碼裡找不到(改名了?還是掃描規則漏了新的寫法)", code)
+		}
+	}
+}
+
+// isReasonT:i18n.T("<area>.reason.<name>", …)。
+func isReasonT(e ast.Expr) bool {
+	call, ok := unKV(e).(*ast.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "T" {
+		return false
+	}
+	if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "i18n" {
+		return false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING && strings.Contains(lit.Value, ".reason.")
+}
+
+func unKV(e ast.Expr) ast.Expr {
+	if kv, ok := e.(*ast.KeyValueExpr); ok {
+		return kv.Value
+	}
+	return e
 }

@@ -44,6 +44,7 @@ Use one English term per concept so messages stay consistent.
 | 裁決、逐筆裁決 | review | the review queue; "review each match" |
 | 變更集 | change set | |
 | 閾值 | threshold | |
+| 刪除閾值 | removal threshold | the >10 tracks, or >30% and >3 tracks limit; not "deletion threshold" |
 | 安全閥 | safety check | |
 | 協作清單 | collaborative playlist | |
 | Apple 精選 | Apple-curated playlist | |

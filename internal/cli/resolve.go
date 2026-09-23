@@ -587,7 +587,7 @@ func newResolveCmd() *cobra.Command {
 				case review && queued > 0:
 					n, err := reviewLoop(ctx, s, items, yes, stderr)
 					if errors.Is(err, huh.ErrUserAborted) { // 取消 = 整輪不寫入(自動 mapping 與已做的裁決都丟),同 pull 取消:exit 2
-						fmt.Fprintln(stderr, i18n.T("resolve.cancelled", "count", applied, "decisions", n))
+						fmt.Fprintln(stderr, i18n.T("resolve.cancelled", "count", applied, "decisions", i18n.T("resolve.review_decisions", "count", n)))
 						return &PendingError{N: pending + queued}
 					}
 					if err != nil {
