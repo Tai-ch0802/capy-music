@@ -60,7 +60,7 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 3. 複製 `authorization`(`Bearer eyJ…`)與 `media-user-token` 兩個值
 4. 執行 `capy auth login apple`,依精靈貼上(非互動環境用 `CAPY_APPLE_DEVELOPER_TOKEN` / `CAPY_APPLE_USER_TOKEN` 環境變數並加 `--i-understand`)
 
-需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app);搜尋與播放清單在 macOS / Windows 皆可用。寫入播放清單(建清單、加歌、移除、換序、改名)只對你自己建的清單;加進清單的曲目會同時加進你的 Apple Music 資料庫——這是 Apple 的行為,不是 capy 多做的。
+需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app);搜尋與播放清單在 macOS / Windows 皆可用。寫入播放清單(建清單、加歌、移除、換序、改名)只對你自己建的清單;加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你在 Apple Music 裡有沒有開「把加進播放列表的歌也加入資料庫」那個設定(iPhone 在「設定 > 音樂」)——這是 Apple 的行為,capy 不另外加;2026-09-23 實測的帳號,清單裡本來就有很多歌不在資料庫,capy 加進清單的歌也沒有進資料庫。
 
 ## 本機曲庫(local,選用):M3U 清單 + library.json
 
@@ -161,7 +161,7 @@ capy update [--dev]                      # 見上方「更新」
 
 `capy pl pull` 的 exit code 是對外契約(cron 靠它):`0` 無變更或已成功套用、`1` 錯誤、`2` 有待套用的變更(`--dry-run`、非 TTY 沒給 `--yes`、在終端機取消)、`3` 安全閥擋下(Drive appdata 不完整;或單一清單要刪 >10 首、或 >30% 且 >3 首)。`--yes` 只跳過確認、`--force` 只越過刪除閾值且只能配單一清單(`capy pl pull <名稱> --force`,不能配 `--all`:安全閥一次只解除一個清單),兩者都不放行「Drive 不完整」——那條的出口是 `capy drive init --from-local`。變更集在非 TTY 下是無標題 TSV:`action provider playlist pos cid provider_id title artists reason`;「這次動了幾筆」看行數,不佔 exit code。寫入順序固定 Drive 先、本機 `state.db` 後;`state.db` 只是快取,刪掉後下一次 pull 會從 Drive 重建。
 
-`capy pl push` 是反方向(canonical → 平台),形狀與 exit code 同 `pl pull`,多兩個 `--yes` / `--force` 都不放行的前提:這台裝置對那個平台清單 pull 過(不然會把平台清單刪光),而且平台上沒有還沒 pull 的變更(不然會蓋掉你剛在平台改的)——先 `capy pl pull`。變更集的 `action` 多了 `skip`(canonical 有、平台沒有、又沒有這個平台的 id:先 `capy resolve`),它不是變更,數行數時要扣掉。寫入 Spotify 是整批取代(前 100 首一次、其後每批 100),所以平台端的「加入時間」會重設;含 local file 的 Spotify 清單暫不支援 push(local file 加不回去)。寫到一半失敗會以 exit 1 結束並講明已寫幾首,重跑一次補回其餘;確認之後寫入之前平台又變了(手機同時在加歌)那份不寫、exit 3。寫入 Apple Music:只加歌走 Apple 文件化的新增端點(每批 100、接在尾端);有移除或換序時是整批取代(網頁播放器自己用的端點,Apple 沒有正式承諾);改名只改名字、描述保留。只有你自己建的清單能寫——Apple 精選、喜好歌曲、已購買的音樂會擋下、零寫入;**協作播放清單**目前 capy 完全不寫(Apple 對它的整批取代回 500):push / sync 在列變更時就跳過那一格並說明,明說 `--provider apple` 要推它是 exit 3;請在 app 裡手動,或先複製成一般清單再連結(未實測,通常可以);加進清單的曲目會同時加進你的 Apple Music 資料庫。
+`capy pl push` 是反方向(canonical → 平台),形狀與 exit code 同 `pl pull`,多兩個 `--yes` / `--force` 都不放行的前提:這台裝置對那個平台清單 pull 過(不然會把平台清單刪光),而且平台上沒有還沒 pull 的變更(不然會蓋掉你剛在平台改的)——先 `capy pl pull`。變更集的 `action` 多了 `skip`(canonical 有、平台沒有、又沒有這個平台的 id:先 `capy resolve`),它不是變更,數行數時要扣掉。寫入 Spotify 是整批取代(前 100 首一次、其後每批 100),所以平台端的「加入時間」會重設;含 local file 的 Spotify 清單暫不支援 push(local file 加不回去)。寫到一半失敗會以 exit 1 結束並講明已寫幾首,重跑一次補回其餘;確認之後寫入之前平台又變了(手機同時在加歌)那份不寫、exit 3。寫入 Apple Music:只加歌走 Apple 文件化的新增端點(每批 100、接在尾端);有移除或換序時是整批取代(網頁播放器自己用的端點,Apple 沒有正式承諾);改名只改名字、描述保留。只有你自己建的清單能寫——Apple 精選、喜好歌曲、已購買的音樂會擋下、零寫入;**協作播放清單**目前 capy 完全不寫(Apple 對它的整批取代回 500):push / sync 在列變更時就跳過那一格並說明,明說 `--provider apple` 要推它是 exit 3;請在 app 裡手動,或先複製成一般清單再連結(未實測,通常可以);加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定。移除與換序同樣是整批取代:清單順序一定照正本;Mac 的 Music app 能顯示每首歌加進清單的「加入日期」,它會不會因此被重設還沒驗證(Spotify 的加入時間會,見上)。Apple 商店裡已經無法播放的歌,加歌請求照樣成功但實際上不會加入;capy 寫完會重讀,內容和預期不同時會警告。
 
 `capy pl sync` 是同一把鎖裡「每個清單先 pull 各平台、再 push 各平台」的一輪(provider 依字典序),一張表、一次確認,exit code 同上;push 的兩個前提由「先 pull 後 push」自動滿足,push 半邊直接用 pull 半邊剛讀到的平台清單、不再讀一次。TSV 比 pull / push 多一欄在最前面:`dir`(`pull` / `push`)。`--dry-run` 的 push 半邊是用 pull 套用後的 canonical 算的,所以看得到完整一輪;`--provider spotify` 只走一個平台;指到寫不了的平台(例如別台裝置的本機清單)時只做 pull 半邊(stderr 會說)。刪除閾值對每個 (清單, 平台) 各算,任一個擋下整輪就零寫入(`--force` 放行的話,pull 吸收進來的刪除會在同一個指令裡推到這個清單連結的每一個平台——先跑 `--dry-run`);但某個清單的某個平台推不了(例如含 local file)只會跳過那一格的 push 半邊(stderr 會說),其餘照常——cron 放 `capy pl sync --all --yes` 不會被一個清單綁死,exit 2 / 3 時再到終端機看。
 
@@ -181,7 +181,7 @@ capy --web
 
 **打開就是「搬家」:把一個平台的播放清單搬到另一個平台,三步做完。** 選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度(「比對歌曲 37 / 120」),搬不過去的歌會逐首列出來。它不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。
 
-先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify 與 Apple Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會同時加進你的 Apple Music 資料庫,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify 或 Apple Music。
+先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify 與 Apple Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify 或 Apple Music。
 
 其他頁面:**我的清單**、**同步**、**搜尋**、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**(播放狀態面板):現在放什麼、進度、播放控制,`capy now` 的內容都在那裡。頁面上的每一個動作背後都是一條 capy 命令,主控台留著完整紀錄;要確認的事一律由命令自己問,頁面不會替你按。
 
@@ -210,7 +210,7 @@ capy migrate 公路旅行 --from spotify --to apple                # 反方向:�
 capy migrate                                                # 終端機裡不帶參數:逐段挑選來源平台、清單、目標平台、既有清單或建新的
 ```
 
-它把下面手動流程的七步一次做完:讀來源(不連結、不動它)→ 決定正本與目標(既有的目標先拉進正本)→ 來源裡目標還沒有的依來源順序接在尾端(同平台 id 或同 ISRC 的略過,來源自己的重複也只留一份)→ 替每一首找目標平台的 id(ISRC 反查 → 模糊比對;沒對到的在終端機可以當場逐筆裁決)→ 一張表(`dir` 有 `pull` / `migrate` / `push` 三種)、一次確認 → 需要時才在目標建清單 → 推。先看不做用 `--dry-run`;腳本裡要 `--yes`(非 TTY 沒給以 exit 2 結束、不建清單)。**順序**:目標原本的順序是前綴,來源的曲目依來源的順序接在後面。**只新增**:永遠不動來源,對目標也不移除;目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 `capy pl sync`。沒對到的曲目這次不推,表裡會說,結尾給你 `capy resolve --review` 與 `capy pl sync` 的命令補上。完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要之後跟著來源的變動,結尾也會給 `capy pl link` + `capy pl sync` 的命令。例外:正本本來就連著來源(下面的手動流程做到一半)時,來源那半也一起拉進正本、以正本為準,結尾會說兩邊都連著。local 只能加進既有檔(`--to local:<檔名>`);搬進 Apple Music 的曲目會同時加進你的 Apple Music 資料庫(Apple 的行為),而且只能搬進你自己建的清單(Apple 精選不行)。
+它把下面手動流程的七步一次做完:讀來源(不連結、不動它)→ 決定正本與目標(既有的目標先拉進正本)→ 來源裡目標還沒有的依來源順序接在尾端(同平台 id 或同 ISRC 的略過,來源自己的重複也只留一份)→ 替每一首找目標平台的 id(ISRC 反查 → 模糊比對;沒對到的在終端機可以當場逐筆裁決)→ 一張表(`dir` 有 `pull` / `migrate` / `push` 三種)、一次確認 → 需要時才在目標建清單 → 推。先看不做用 `--dry-run`;腳本裡要 `--yes`(非 TTY 沒給以 exit 2 結束、不建清單)。**順序**:目標原本的順序是前綴,來源的曲目依來源的順序接在後面。**只新增**:永遠不動來源,對目標也不移除;目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 `capy pl sync`。沒對到的曲目這次不推,表裡會說,結尾給你 `capy resolve --review` 與 `capy pl sync` 的命令補上。完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要之後跟著來源的變動,結尾也會給 `capy pl link` + `capy pl sync` 的命令。例外:正本本來就連著來源(下面的手動流程做到一半)時,來源那半也一起拉進正本、以正本為準,結尾會說兩邊都連著。local 只能加進既有檔(`--to local:<檔名>`);搬進 Apple Music 的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定(Apple 的行為),而且只能搬進你自己建的清單(Apple 精選不行);Apple 商店裡已經無法播放的歌搬不過去。
 
 > ⚠️ 建清單(`POST /me/playlists`)與推曲目(`PUT /playlists/{id}/items`)是照 Spotify 2026-02 的官方文件實作,**還沒在真帳號上驗證過**。遇到 404,或建出來的清單在 app 裡是公開的,請回報。
 
@@ -231,7 +231,7 @@ capy pl push 公路旅行 --provider spotify              # 7. 真的推
 - **不一定 100% 複製得過去。** Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
 - **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單(例如之前先在 app 裡建好了)時會擋下,並給你連它的命令;追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
 - **之後兩邊保持連結。** 任一邊有變動時跑 `capy pl sync 公路旅行` 就會帶到另一邊。只要一次性複製的話,完成後 `capy pl unlink 公路旅行 apple`。
-- **反方向(Spotify → Apple)一樣**:`capy migrate 公路旅行 --from spotify --to apple`,或把手動流程裡的兩個平台對調(`capy pl link 公路旅行 apple --create`)。Apple 這一側的加歌走 Apple 文件化的端點,移除與換序走網頁播放器自己用的端點(Apple 沒有正式承諾;細節見 docs/ARCHITECTURE.md §1.2),只寫你自己建的清單,加進清單的曲目會同時進資料庫。
+- **反方向(Spotify → Apple)一樣**:`capy migrate 公路旅行 --from spotify --to apple`,或把手動流程裡的兩個平台對調(`capy pl link 公路旅行 apple --create`)。Apple 這一側的加歌走 Apple 文件化的端點,移除與換序走網頁播放器自己用的端點(Apple 沒有正式承諾;細節見 docs/ARCHITECTURE.md §1.2),只寫你自己建的清單,加進清單的曲目會不會同時進資料庫看你的 Apple Music 設定。
 
 ## Shell 補全(TAB 列出播放清單名與最近搜尋)
 
