@@ -1,6 +1,7 @@
 // account.js:#/account —— auth status --json 的三段畫成三列。登入一律打進主控台(Apple 的揭露是提示橋的 note,
 // 不可收合);web 不自動擷取任何 token、不開瀏覽器抓 cookie、--auto 在伺服器端 403。
 import { el, btn, providerName, emptyState, pageHead } from './common.js';
+import { countryLabel } from './isrc.js';
 import { t } from '../i18n.js';
 
 // 函式、用到時才算:模組頂層不可以算使用者看得到的字(i18n.js 開頭的載入順序鐵則)。
@@ -32,8 +33,33 @@ export function stateOf(id, st) {
   return { mark: '·', text: t('webui.account.state.missing'), kind: 'muted' };
 }
 
-// detail:state 以外的欄位原樣列出。欄名與列舉值是機器欄位,不翻譯;裡面絕不含 token 值(auth_status_json_test.go)。
-const detail = (st) => Object.entries(st || {}).filter(([k]) => k !== 'state').map(([k, v]) => `${k}: ${v}`).join(' · ') || '—';
+// localTime:到期時間換成這台電腦的時區,寫成 YYYY-MM-DD HH:MM。不用 toLocaleString:它的格式跟著瀏覽器與 ICU 版本變。
+function localTime(iso) {
+  const d = new Date(iso || '');
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// details:auth status --json 的事實 → 給人看、跟著語系的句子;沒有的事實不畫。JSON 的欄名與列舉值是給腳本的,不上畫面;
+// 也沒有任何 token 值可畫(--json 本來就沒有,auth_status_json_test.go)。Google 的 client 來源、access token 到期
+// (會自動換發)與 device_id 對使用者沒有意義,不列。
+// 不用 switch:TestWebAccountPageKeysOnAuthStatusJSON 把這個檔的每個 case '…' 都當成 state 的值核對。
+const details = {
+  spotify: (st) => [
+    st.client_id === 'set' && t('webui.account.detail.client_id_set'),
+    st.client_id === 'malformed' && t('webui.account.detail.client_id_malformed'),
+  ],
+  google: (st) => [st.email],
+  apple: (st) => {
+    const when = localTime(st.developer_token_expiry);
+    return [
+      when && (st.developer_token === 'expired' ? t('webui.account.detail.dev_token_expired', { when }) : t('webui.account.detail.dev_token_valid', { when })),
+      st.storefront && t('webui.account.detail.storefront', { region: countryLabel(st.storefront.toUpperCase(), true) }),
+    ];
+  },
+};
+const detail = (id, st) => details[id](st || {}).filter(Boolean).join(' · ') || '—';
 
 export function initAccount(root, api, con, notice) {
   pageHead(root, t('webui.account.title'), t('webui.account.lead'));
@@ -63,7 +89,7 @@ export function initAccount(root, api, con, notice) {
       row.dataset.state = st.kind;
       row.appendChild(el('span', 'acct__name', p.label));
       row.appendChild(el('span', 'acct__state', `${st.mark} ${st.text}`));
-      row.appendChild(el('span', 'acct__detail', detail(parsed[p.id])));
+      row.appendChild(el('span', 'acct__detail', detail(p.id, parsed[p.id])));
       const ok = st.kind === 'ok';
       row.appendChild(btn(ok ? t('webui.account.reconnect') : t('webui.account.connect'), ok ? 'btn--ghost' : '', () => {
         con.run(`auth login ${p.id}`, { onExit: () => refresh() }, { label: t('webui.account.connecting', { name: providerName(p.id) }) });

@@ -537,16 +537,17 @@ func TestWebExitReasonCancelled(t *testing.T) {
 	}
 }
 
-// pauseIgnoresCtx:Pause 不吃取消(同 Apple 的 osascript 走 exec.Command、沒有 ctx):卡到 release 才回 nil。
+// pauseIgnoresCtx:Pause 不吃取消(同 Apple 的 osascript 走 exec.Command、沒有 ctx):卡到 release 才回 err(nil = 做完了)。
 type pauseIgnoresCtx struct {
 	*nowFake
 	entered, release chan struct{}
+	err              error
 }
 
 func (f *pauseIgnoresCtx) Pause(context.Context) error {
 	close(f.entered)
 	<-f.release
-	return nil
+	return f.err
 }
 
 // TestWebExitReasonDoneWhenCommandFinishedDespiteCancel:中止落在不吃取消的那一段、命令其實做完了(exit 0):
@@ -1254,6 +1255,10 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]]") || !strings.Contains(console, "export const cancelledMsg = () => t('webui.console.stopped');") {
 		t.Error("中止的命令交給頁面的訊息要是「已中止」,不是 context canceled 那串內部錯誤")
 	}
+	// 上面兩條搬進語系目錄前是字面:zh-TW 的字要跟搬之前一字不差(頁面的 onExit 拿到的就是它們)。
+	if zh := webI18n("zh-TW")["messages"].(map[string]any); zh["webui.console.busy"] != "另一個命令執行中" || zh["webui.console.stopped"] != "已中止" {
+		t.Errorf("zh-TW 的被擋 / 中止訊息:%q %q", zh["webui.console.busy"], zh["webui.console.stopped"])
+	}
 	// 中止中的按鈕不可以用 disabled:disabled 會把焦點丟到 body,鍵盤使用者失去位置、收尾也交不回命令列。
 	if strings.Contains(console, "stopBtn.disabled") || !strings.Contains(console, "document.activeElement === this.stopBtn") {
 		t.Error("中止鈕用 aria-disabled 擋重複按,收尾時把焦點交回命令列")
@@ -1579,6 +1584,7 @@ func TestWebConsoleBehaviour(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, "harness.mjs")
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TZ=Asia/Taipei") // 帳號頁的到期時間用這台電腦的時區(情境 14b)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("前端行為不成立(%v):\n%s", err, out)
 	}

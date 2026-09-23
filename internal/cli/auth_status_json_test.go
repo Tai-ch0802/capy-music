@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"math/rand/v2"
 	"net/http"
 	"regexp"
 	"strings"
@@ -18,27 +19,40 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
-// TestAuthStatusNeverLeaksSecrets(安全測試,先寫):keychain 裡每一種 token / secret 都種哨兵值,
-// auth status --json 與純文字 auth status 的 stdout + stderr 裡一個都不可以出現。每一顆都以同一個記號 SENTINEL
-// 開頭:斷言看的是記號本身,只印出一截(前綴、截斷成 tok[:8]+"…")也抓得到,不只抓整顆原樣印出。
+// TestAuthStatusNeverLeaksSecrets(安全測試,先寫):keychain 裡每一種 token / secret 都種一顆整段都獨一無二的值
+// (固定種子的亂數英數字,不是「共用前綴 + 普通字」),auth status --json 與純文字 auth status 的 stdout + stderr 裡,
+// 任何一顆的任何連續 6 個字元都不可以出現——整顆、前綴、截斷成 tok[:8]+"…"、只印尾巴 8 碼,全都抓得到。
+// developer token 也整顆都算:auth status 的到期時間讀 keychain 裡另存的 exp,從不解 JWT,沒有哪一段是它本來就會印的。
 func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 	setCLITestConfig(t)
 	t.Cleanup(keyring.MockInit)
-	const marker = "SENTINEL"
 	exp := time.Now().Add(24 * time.Hour).Truncate(time.Second)
-	dev := marker + "-APPLE-DEV." + fakeJWT(t, exp) // auth status 的到期時間讀 keychain 裡另存的 exp,不解 JWT:開頭可以放記號
+	rnd := rand.New(rand.NewPCG(50, 49))
+	gen := func(n int) string { // 只有英數字:不會跟輸出裡的時間(數字與 - : T)、路徑或英文字剛好湊出 6 個字元
+		const abc = "ABCDEFGHJKMNPQRSTVWXYZabcdefghjkmnpqrstvwxyz"
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = abc[rnd.IntN(len(abc))]
+		}
+		return string(b)
+	}
+	sec := map[string]string{
+		"spotify access": gen(40), "spotify refresh": gen(40), "spotify legacy refresh": gen(40),
+		"google access": gen(40), "google refresh": gen(40), "google client secret": gen(35),
+		"apple developer token": gen(36) + "." + gen(48) + "." + gen(64), "apple user token": gen(60),
+	}
 	must := func(err error) {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	must(auth.SaveToken(auth.KeySpotifyToken, &oauth2.Token{AccessToken: "SENTINEL-SPOTIFY-ACCESS", RefreshToken: "SENTINEL-SPOTIFY-REFRESH", Expiry: exp}))
-	must(secret.Set(auth.KeySpotifyRefreshToken, "SENTINEL-SPOTIFY-LEGACY-REFRESH"))
-	must(auth.SaveToken(auth.KeyGoogleToken, &oauth2.Token{AccessToken: "SENTINEL-GOOGLE-ACCESS", RefreshToken: "SENTINEL-GOOGLE-REFRESH", Expiry: exp}))
-	must(secret.Set(auth.KeyGoogleClientSecret, "SENTINEL-GOOGLE-CLIENT-SECRET"))
-	must(apple.SaveDeveloperToken(dev, exp))
-	must(secret.Set(apple.KeyMusicUserToken, "SENTINEL-APPLE-USER"))
+	must(auth.SaveToken(auth.KeySpotifyToken, &oauth2.Token{AccessToken: sec["spotify access"], RefreshToken: sec["spotify refresh"], Expiry: exp}))
+	must(secret.Set(auth.KeySpotifyRefreshToken, sec["spotify legacy refresh"]))
+	must(auth.SaveToken(auth.KeyGoogleToken, &oauth2.Token{AccessToken: sec["google access"], RefreshToken: sec["google refresh"], Expiry: exp}))
+	must(secret.Set(auth.KeyGoogleClientSecret, sec["google client secret"]))
+	must(apple.SaveDeveloperToken(sec["apple developer token"], exp))
+	must(secret.Set(apple.KeyMusicUserToken, sec["apple user token"]))
 	must(config.Save(&config.Config{SpotifyClientID: strings.Repeat("ab", 16), GoogleClientID: "1234-byo.apps.googleusercontent.com",
 		GoogleEmail: "me@example.com", DeviceID: "dev1", AppleStorefront: "tw"}))
 
@@ -47,8 +61,13 @@ func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v:%v", args, err)
 		}
-		if strings.Contains(out, marker) {
-			t.Errorf("%v 印出了 keychain 裡的秘密(整顆或一截,記號 %s):\n%s", args, marker, out)
+		for name, v := range sec {
+			for i := 0; i+6 <= len(v); i++ {
+				if strings.Contains(out, v[i:i+6]) {
+					t.Errorf("%v 印出了 keychain 裡的 %s(第 %d 個字元起的 %q):\n%s", args, name, i, v[i:i+6], out)
+					break
+				}
+			}
 		}
 	}
 

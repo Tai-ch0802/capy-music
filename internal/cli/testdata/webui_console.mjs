@@ -483,7 +483,7 @@ await scenario('8j', async () => {
   const lists = (rows) => (h) => { h.onTable(['ID', 'NAME', 'TRACKS', 'OWNER'], rows); h.onExit(0, '', 'done'); };
   let mig = null;
   const plan = {
-    'auth status': (h) => h.onExit(0, '', 'done'),
+    'auth status --json': (h) => { h.onStdout(JSON.stringify({ spotify: { state: 'missing', client_id: 'missing' }, google: { state: 'ok', client: 'builtin' }, apple: { state: 'ok', developer_token: 'ok', user_token: 'ok' } })); h.onExit(0, '', 'done'); },
     'pl list --provider apple': lists([['q1', 'Road trip', '12', 'me']]),
     'pl list --provider spotify': lists([['p1', 'road trip', '3', 'me']]),
     'migrate q1 --from apple --to spotify:p1': (h) => { mig = h; },
@@ -499,6 +499,7 @@ await scenario('8j', async () => {
     initMove(r, api, fcon, () => {}, { list: ['apple', 'spotify'] });
     look(r);
     check(r.textContent.includes('Move your playlists over'), `英文的開場:${r.textContent.slice(0, 120)}`);
+    button(r, t('webui.move.connect', { provider: 'Spotify' })).click(); // 按鈕是祈使句,執行狀態列的 label 是進行式(兩個 key)
     button(r, t('webui.move.next.playlist')).click();
     radios(r, 'wiz-src')[0].l.change();
     look(r);
@@ -527,11 +528,19 @@ await scenario('8j', async () => {
     look(r);
     check(r.textContent.includes('Stopped. If writing had already started'), `中止只看 reason(訊息是空的):${r.textContent.slice(-300)}`);
     button(r, t('webui.move.retry')).click();
+    mig.onPromptClosed({ id: 1, reason: 'timeout' });
+    mig.onExit(1, '', 'timeout');
+    look(r);
+    check(r.textContent.includes("You didn't answer in time, so the move was cancelled. Nothing was written."), `逾時的收尾:${r.textContent.slice(-300)}`);
+    button(r, t('webui.move.retry')).click();
     mig.onTable(H, [['migrate', 'add', 'spotify', 'road trip', '0', 'a', 'x', 'song-a', 'artist', 'push to spotify:x', 'push'],
       ['migrate', 'add', 'spotify', 'road trip', '1', 'c', 'y', 'song-c', 'artist', 'push to spotify:y', 'push']]);
     mig.onExit(0, '', 'done');
     look(r);
     check(r.textContent.includes('Done: 2 songs are now in "road trip" on Spotify.'), `完成要是英文、複數:${r.textContent.slice(-300)}`);
+    const moving = 'Moving "Road trip" to Spotify';
+    check(JSON.stringify(labels) === JSON.stringify(['Checking account connections', 'Connecting Spotify', 'Reading playlists on Apple Music', 'Reading playlists on Spotify', moving, moving, moving]),
+      `執行狀態列的 label 在英文一律是進行式:${JSON.stringify(labels)}`);
     const bad = [...seen, ...labels].filter((s) => CJK.test(s) || s.includes('webui.'));
     check(bad.length === 0, `英文目錄下搬家頁不該有中文或沒送到的 key:${JSON.stringify([...new Set(bad)])}`);
   } finally {
@@ -641,6 +650,7 @@ await scenario('8k', async () => {
     const en = await paint();
     const CJK = /[　-〿㐀-鿿＀-￯]/;
     for (const s of [...en.seen, ...en.labels]) check(!CJK.test(s), `en:頁面或 label 還有中文:「${s}」`);
+    for (const s of en.labels) check(/^[A-Z][a-z]*ing /.test(s), `en:執行狀態列的 label 要是進行式:「${s}」`);
     want(en, 'en', ['My playlists', 'Local library', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
     check([...en.seen].some((s) => s.includes('Uncheck "Preview only, don\'t write yet"')), 'en:只看變更的收尾要指名那個勾選框');
     check(en.labels.includes('Reading "road trip" on Spotify') && en.labels.includes('Playing "Song One"') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
@@ -858,12 +868,14 @@ await scenario('14', async () => {
   };
   const draw = async () => {
     const runs = [];
+    const labels = [];
     let running = null;
     const acct = mk();
     const doc = mk();
     const fake = {
-      run(cmd, hooks) {
+      run(cmd, hooks, o) {
         runs.push(cmd);
+        labels.push(o?.label);
         if (cmd === 'doctor') running = find(doc, '.doctor__out').dataset.running;
         hooks.onStdout?.(cmd === 'auth status --json' ? status : '');
         hooks.onExit?.(0, '');
@@ -886,14 +898,14 @@ await scenario('14', async () => {
     } finally {
       globalThis.document.createElement = mk;
     }
-    return { runs, running, acct: acct.textContent, rows: allByClass(acct, 'acct__state').map((e) => e.textContent), doctor: doc.textContent, isrc: iroot.children.map((e) => e.textContent).join('\n') + '\n' + parts['#isrc-out'].textContent };
+    return { runs, labels, running, acct: acct.textContent, rows: allByClass(acct, 'acct__state').map((e) => e.textContent), doctor: doc.textContent, isrc: iroot.children.map((e) => e.textContent).join('\n') + '\n' + parts['#isrc-out'].textContent };
   };
 
   const zh = await draw();
   check(zh.runs.join('|') === 'auth status --json|doctor', `帳號頁跑 --json、診斷頁的預設平台不帶 --provider:${zh.runs}`);
   check(zh.rows.join('|') === '✓ 已登入|⚠ 已過期|⚠ 讀取 keychain 失敗', `三列的狀態看 state:${zh.rows}`);
   check(stateOf('apple', parseStatus('spotify:\n  refresh token: keychain 存在\n').apple).text === '未登入', '讀不懂(不是 JSON)就是未登入,不回頭解析文字');
-  check(zh.acct.includes('Google Drive(保管你的清單)') && zh.acct.includes('重新連接') && zh.acct.includes('client_id: set'), `帳號頁的 zh-TW:${zh.acct}`);
+  check(zh.acct.includes('Google Drive(保管你的清單)') && zh.acct.includes('重新連接') && zh.acct.includes('client ID 已設定') && !zh.acct.includes('client_id'), `帳號頁的 zh-TW:${zh.acct}`);
   check(zh.running === '檢查中…' && zh.doctor.includes('還沒檢查過。按「開始檢查」。'), `診斷頁的 zh-TW:${zh.running} ${zh.doctor}`);
   for (const s of ['ISRC 查詢', 'ISRC 是每首歌的國際編號。輸入一個,看它在三個平台上分別是哪一首。', '查詢', '台灣', '年份(推測)', '在 spotify 開啟', '這個平台沒有符合的曲目', '(不可得) · 95 分 · isrc · 已釘選', '含這首的清單(1)']) {
     check(zh.isrc.includes(s), `ISRC 頁的 zh-TW 少了「${s}」:${zh.isrc}`);
@@ -906,11 +918,82 @@ await scenario('14', async () => {
     const all = [en.acct, en.doctor, en.running, en.isrc].join('\n');
     check(!/[\p{Script=Han}　-〿＀-￯]/u.test(all), `英文畫出來不可以有中文字:${all}`);
     check(en.rows.join('|') === "✓ Logged in|⚠ Expired|⚠ Couldn't read the keychain", `英文的三列狀態:${en.rows}`);
+    check(JSON.stringify(en.labels) === JSON.stringify(['Checking account connections', 'Checking config, logins and connections']) && /^Switching /.test(t('webui.lang.switching')),
+      `英文的 label 是進行式:${JSON.stringify(en.labels)} / ${t('webui.lang.switching')}`);
     check(en.running === 'Checking…' && en.isrc.includes('ISRC lookup') && en.isrc.includes('Look up') && en.isrc.includes('Taiwan') && en.isrc.includes('Open in spotify') && en.isrc.includes('(unavailable) · confidence 95 · isrc · pinned'),
       `診斷與 ISRC 頁的英文:${en.running} ${en.isrc}`);
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);
+  }
+});
+
+// 14b. 帳號頁的細節欄(i18n T3 自審):auth status --json 的事實畫成給人看、跟著語系的句子,沒有的事實不畫(整欄都沒有就是 —);
+//      JSON 的欄名與列舉值(client_id: / missing / developer_token …)不上畫面。到期時間用這台電腦的時區
+//      (TestWebConsoleBehaviour 給 node 的是 TZ=Asia/Taipei)。三列的順序是 Spotify、Apple Music、Google Drive。
+await scenario('14b', async () => {
+  const { initAccount } = await import('./pages/account.mjs');
+  const fixtures = [
+    { spotify: { state: 'ok', client_id: 'set' },
+      google: { state: 'ok', client: 'builtin', access_token_expiry: '2026-09-24T05:00:00Z', email: 'me@example.com', device_id: 'dev1' },
+      apple: { state: 'ok', developer_token: 'ok', developer_token_expiry: '2026-10-01T04:30:00Z', user_token: 'ok', storefront: 'tw' } },
+    { spotify: { state: 'keychain_error', client_id: 'malformed' }, google: { state: 'missing', client: 'none' },
+      apple: { state: 'expired', developer_token: 'expired', developer_token_expiry: '2026-01-01T00:00:00Z', user_token: 'missing' } },
+    { spotify: { state: 'missing', client_id: 'missing' }, google: { state: 'keychain_error', client: 'config' },
+      apple: { state: 'keychain_error', developer_token: 'keychain_error', user_token: 'keychain_error' } },
+  ];
+  const want = {
+    'zh-TW': [['client ID 已設定', 'developer token 有效至 2026-10-01 12:30 · 商店地區:台灣', 'me@example.com'],
+      ['client ID 格式不對', 'developer token 已於 2026-01-01 08:00 過期', '—'], ['—', '—', '—']],
+    en: [['client ID set', 'developer token valid until 2026-10-01 12:30 · store region: Taiwan', 'me@example.com'],
+      ['client ID has the wrong format', 'developer token expired on 2026-01-01 08:00', '—'], ['—', '—', '—']],
+  };
+  const raw = ['client_id', 'developer_token', 'user_token', 'access_token', 'device_id', 'dev1', 'storefront', 'missing', 'keychain_error', 'builtin', 'malformed', 'T04:30', ': ok', ': set'];
+  try {
+    for (const [lang, file] of [['zh-TW', './i18n.json'], ['en', './i18n-en.json']]) {
+      i18nFile = file;
+      await loadI18n(api);
+      fixtures.forEach((st, i) => {
+        const r = mk();
+        initAccount(r, null, { run: (_c, h) => { h.onStdout(JSON.stringify(st)); h.onExit(0, ''); }, idle: (fn) => fn() }, () => {});
+        const got = allByClass(r, 'acct__detail').map((e) => e.textContent);
+        check(JSON.stringify(got) === JSON.stringify(want[lang][i]), `${lang} 帳號頁的細節欄(第 ${i + 1} 組):${JSON.stringify(got)}`);
+        const leaked = raw.filter((k) => r.textContent.includes(k));
+        check(!leaked.length, `${lang} 帳號頁不可以畫出 JSON 的欄名或列舉值(第 ${i + 1} 組):${leaked} / ${r.textContent}`);
+      });
+    }
+  } finally {
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
+});
+
+// 15. 目錄讀不到(token 不對 / 過期 → 401、伺服器不在 → 連不上):app.js 不建頁面、不起播放列,畫面上沒有任何 webui.* 的 key,
+//     只有 notice 說原因(401 的那一句是伺服器回應裡的;連不上是瀏覽器的錯誤)。放在最後:app.mjs 跟這裡共用 i18n.mjs,
+//     跑完目錄是空的;每一種情況用不同的 ?case= 各載入一次(ESM 同一個網址只執行一次)。
+await scenario('15', async () => {
+  const badToken = JSON.parse(readFileSync('./i18n.json')).messages['web.err.bad_token'];
+  globalThis.window = { addEventListener() {} };
+  globalThis.history = { replaceState() {} };
+  globalThis.location.pathname = '/';
+  const empty = { fetch: async () => new Response(JSON.stringify({ lang: '', supported: [], messages: {} }), { status: 200 }) };
+  for (const [name, fetchImpl, want] of [
+    ['401', async () => new Response(JSON.stringify({ error: badToken }), { status: 401, headers: { 'Content-Type': 'application/json' } }), badToken],
+    ['down', async () => { throw new TypeError('Failed to fetch'); }, 'Failed to fetch'],
+  ]) {
+    await loadI18n(empty); // 真的瀏覽器裡這時還沒有目錄:別讓前面情境載進來的中文目錄替 t() 墊字
+    for (const k of Object.keys(ids)) delete ids[k];
+    globalThis.document.body = mk('body');
+    globalThis.location.hash = ''; // 落在預設的搬家頁(前面的情境可能留下別頁的 hash)
+    globalThis.fetch = fetchImpl;
+    await import(`./app.mjs?case=${name}`);
+    await tick(50);
+    const drawn = [];
+    const walk = (e) => { drawn.push(e._text || '', ...Object.values(e.attrs || {}), e.placeholder || ''); for (const c of e.children || []) walk(c); };
+    for (const e of [...Object.values(ids), globalThis.document.body]) walk(e);
+    const keys = drawn.filter((s) => s.includes('webui.'));
+    check(!keys.length, `${name}:目錄讀不到時畫面上不可以有 key:${JSON.stringify(keys.slice(0, 5))}`);
+    check(ids.notice?.textContent === want && ids.notice.hidden === false, `${name}:notice 要說原因:「${ids.notice?.textContent}」`);
   }
 });
 

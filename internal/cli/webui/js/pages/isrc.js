@@ -8,8 +8,8 @@ const el = (tag, cls, text) => {
   return x;
 };
 
-// 非地理前綴不丟給 Intl.DisplayNames:它對結構合法但未指派的代碼會原樣回 QM,看起來像壞掉。
-function countryLabel(code, geographic) {
+// 非地理前綴不丟給 Intl.DisplayNames:它對結構合法但未指派的代碼會原樣回 QM,看起來像壞掉。帳號頁的 Apple storefront 也用它。
+export function countryLabel(code, geographic) {
   if (!geographic) return code === 'ZZ' ? t('webui.isrc.country.zz') : t('webui.isrc.country.non_geo');
   try {
     // 國名跟著語系:zh-TW 與原本寫死的 zh-Hant 是同一份 CLDR 國名。

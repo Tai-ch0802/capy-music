@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"slices"
@@ -184,5 +185,107 @@ func TestWebMigrateReviewPromptCarriesKey(t *testing.T) {
 	}
 	if ex := evExit(t, ev); ex["code"] != float64(2) {
 		t.Errorf("兩則都按取消 = exit 2:%v", ex)
+	}
+}
+
+// TestWebStopDuringPromptExitHasNoMessage:【fails-before-fix】提示開著時按「中止」:挑選器回 errCancelled、確認閘回
+// huh.ErrUserAborted——兩個都只是在重複「已取消」(後者還是 huh 的英文 user aborted,每個語系都一樣),exit 的 message
+// 要是空的;不然 exit 行是「· exit 1 · 已取消 · 已取消」/「· exit 1 · 已取消 · user aborted」。
+// 關掉提示(reason done)照舊帶著訊息:TestWebPickOneCancelIsErrCancelledExit1。
+func TestWebStopDuringPromptExitHasNoMessage(t *testing.T) {
+	for _, lang := range []string{"zh-TW", "en"} {
+		for _, args := range [][]string{{"pl", "show"}, {"pl", "pull", "通勤"}} {
+			t.Run(lang+"/"+strings.Join(args, " "), func(t *testing.T) {
+				fs, _, _ := pullWorld(t)
+				fs.set("p1", "通勤", "t1")
+				mustPull(t, "pl", "link", "通勤", "spotify:p1")
+				if lang == "en" {
+					webEnglish(t)
+				}
+				_, c := startWeb(t)
+				asked := 0
+				ev := c.runInteractive(map[string]any{"args": args}, func(_ int, job string, p map[string]any) *promptReply {
+					asked++
+					if want := map[string]string{"show": "select", "pull": "confirm"}[args[1]]; p["kind"] != want {
+						t.Errorf("%v 的提示要是 %s:%v", args, want, p)
+					}
+					if st := c.status(http.MethodPost, "/api/jobs/"+job+"/cancel", nil, nil); st != http.StatusNoContent {
+						t.Errorf("cancel → 204,得到 %d", st)
+					}
+					return nil // 不回答:提示由中止收掉
+				})
+				if ex := evExit(t, ev); asked != 1 || ex["reason"] != "cancelled" || ex["code"] != float64(1) || ex["message"] != "" {
+					t.Errorf("提示開著時中止:問一次、exit 1、reason cancelled、message 空:%d %v", asked, ex)
+				}
+			})
+		}
+	}
+}
+
+// TestWebStopKeepsARealErrorMessage:中止時剛好撞上的真錯誤不是取消本身,訊息照送(這裡是不吃取消的 Pause 回來時帶著錯)。
+func TestWebStopKeepsARealErrorMessage(t *testing.T) {
+	f := &pauseIgnoresCtx{nowFake: newNowFake(), entered: make(chan struct{}), release: make(chan struct{}), err: errors.New("Music.app 沒有回應")}
+	s, c := startWeb(t)
+	swapProviderWith(t, f)
+	done := make(chan []map[string]any, 1)
+	go func() {
+		_, ev, _ := c.run(map[string]any{"args": []string{"pause"}})
+		done <- ev
+	}()
+	waitFor(t, "pause 進 provider", f.entered)
+	if st := c.status(http.MethodPost, "/api/jobs/"+s.current().id+"/cancel", nil, nil); st != http.StatusNoContent {
+		t.Fatalf("cancel → 204,得到 %d", st)
+	}
+	close(f.release)
+	select {
+	case ev := <-done:
+		if ex := evExit(t, ev); ex["code"] != float64(1) || ex["reason"] != "cancelled" || !strings.Contains(ex["message"].(string), "Music.app 沒有回應") {
+			t.Errorf("中止時撞上的真錯誤要照送:%v", ex)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("job 沒結束")
+	}
+}
+
+// TestWebStopDuringReviewKeepsPending:逐筆裁決被中止 → reviewLoop 回 ErrUserAborted → migrate 回 PendingError(exit 2)。
+// 那是「N 筆沒套用」的實情(終端機按 Esc 也是它),不是取消本身:訊息照送。
+func TestWebStopDuringReviewKeepsPending(t *testing.T) {
+	fs1, fs2, _, _ := twoPlatforms(t)
+	catalogISRC(fs1, "a")
+	fs2.set("q1", "road trip", "a", "n") // n 在 spotify 上沒有:要逐筆裁決
+	_, c := startWeb(t)
+	ev := c.runInteractive(map[string]any{"args": []string{"migrate", "q1", "--from", "apple", "--to", "spotify"}}, func(_ int, job string, p map[string]any) *promptReply {
+		if p["kind"] == "confirm" {
+			return reply(true) // 現在逐筆裁決
+		}
+		if st := c.status(http.MethodPost, "/api/jobs/"+job+"/cancel", nil, nil); st != http.StatusNoContent {
+			t.Errorf("cancel → 204,得到 %d", st)
+		}
+		return nil
+	})
+	if ex := evExit(t, ev); ex["code"] != float64(2) || ex["reason"] != "cancelled" || !strings.Contains(ex["message"].(string), "待套用") {
+		t.Errorf("逐筆裁決被中止:exit 2、reason cancelled、訊息照送待套用的筆數:%v", ex)
+	}
+}
+
+// TestWebI18nNotBlockedByRunningJob:/api/i18n 是直達端點、不進 runMu——序列槽被握著時照樣回(同 TestWebNowNotBlockedByRunningJob)。
+func TestWebI18nNotBlockedByRunningJob(t *testing.T) {
+	setCLITestConfig(t)
+	s, c := startWeb(t)
+	s.runMu.Lock() // = 有一個 job 正在跑
+	defer s.runMu.Unlock()
+
+	done := make(chan int, 1)
+	go func() { done <- c.status(http.MethodGet, "/api/i18n", nil, nil) }()
+	select {
+	case st := <-done:
+		if st != http.StatusOK {
+			t.Errorf("/api/i18n → %d,要 200", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("/api/i18n 被序列槽擋住了")
+	}
+	if code, _, _ := c.run(map[string]any{"args": []string{"--help"}}); code != http.StatusConflict {
+		t.Errorf("序列槽握著時 /api/run 要 409,得到 %d", code)
 	}
 }

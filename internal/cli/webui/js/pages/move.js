@@ -149,7 +149,7 @@ export function initMove(root, api, con, notice, providers) {
   function connect(id) {
     prompts.replaceChildren();
     con.run('', { onPrompt, onExit: () => loadStatus() },
-      { args: ['auth', 'login', id], label: t('webui.move.connect', { provider: providerName(id) }), promptHost: prompts });
+      { args: ['auth', 'login', id], label: t('webui.move.label.connect', { provider: providerName(id) }), promptHost: prompts });
   }
 
   // 讀一個平台的清單(pl list 的表:ID / NAME / TRACKS / OWNER;欄名是機器欄位,不跟語系,決策 50)。

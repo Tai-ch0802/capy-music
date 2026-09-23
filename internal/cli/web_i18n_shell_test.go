@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,9 @@ func TestWebShellTextsHaveEnglish(t *testing.T) {
 				for _, v := range vals {
 					if v == "" || hasCJK(v) {
 						t.Errorf("%s 的 %q 英文是 %q:不可以是空的、不可以有中日韓字元", name, key, v)
+					}
+					if strings.Contains(v, "Keychain") { // 英文目錄其他地方都寫小寫的 keychain(指作業系統的鑰匙圈,不是產品名)
+						t.Errorf("%s 的 %q 英文是 %q:keychain 小寫,跟其他地方一樣", name, key, v)
 					}
 				}
 			}

@@ -61,7 +61,10 @@ export function notice(text) {
 }
 
 bootToken();
-// 目錄要在任何畫面算字之前到(i18n.js 開頭的載入順序鐵則)。讀不到也照樣往下:t() 回 key 本身,錯誤由 loadCommands 說。
+// 目錄要在任何畫面算字之前到(i18n.js 開頭的載入順序鐵則)。讀不到(token 不對 / 過期、伺服器不在)時 t() 只會回 key 本身:
+// 頁面、播放列與鍵盤層一個都不起(route()、底下的 player、keydown 都看 i18nOK),畫面上只有 notice 說原因——
+// loadCommands 印 401 回應裡伺服器語系的那一句,連不上時印瀏覽器的錯誤。
+// ponytail: 兩個端點過同一道守門,一個失敗另一個也會失敗;只有目錄那一次失敗、下一次又連上的話頁面是空的,重新整理即可。
 const i18nOK = await loadI18n(api);
 applyStatic();
 const con = new Console(document.getElementById('console'), api, notice);
@@ -120,6 +123,7 @@ function showPage(name) {
 }
 
 function route() {
+  if (!i18nOK) return;
   // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 isrc 頁(review #61)。
   const m = /^#\/([a-z]+)(?:\/([^/?#]+))?$/.exec(location.hash || '');
   const name = m && PAGES.includes(m[1]) ? m[1] : 'move';
@@ -159,7 +163,7 @@ const keysDialog = document.getElementById('keys');
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
   // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
-  if (inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (!i18nOK || inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   // 按鈕有焦點時空白鍵就是「按下它」:在這裡搶走,整頁的按鈕都不能用空白鍵按了(review #62 第 8 點)。
   if (ev.key === ' ' && document.activeElement?.tagName === 'BUTTON') return;
   const n = PAGES[Number(ev.key) - 1];
@@ -179,7 +183,7 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 
-const player = new Player(document.getElementById('now'), api, notice, con);
+const player = i18nOK ? new Player(document.getElementById('now'), api, notice, con) : null; // 建構子就掛 visibilitychange → 輪詢
 // 先拿到 providers 再路由:深連結或在某頁 F5 時,該頁的平台下拉才不會用寫死的預設值建起來
 // (ready 保證每頁只初始化一次,建好之後不會補正)。連不上時照樣路由,頁面至少畫得出來。
 loadCommands()
@@ -190,5 +194,5 @@ loadCommands()
   .catch((e) => notice(i18nOK ? t('webui.shell.unreachable', { err: e.message }) : e.message)) // 沒有目錄時 t() 只會回 key
   .finally(() => {
     route();
-    player.start();
+    player?.start();
   });
