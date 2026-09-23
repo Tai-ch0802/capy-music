@@ -184,31 +184,33 @@ func TestCapybaraIsASideProfile(t *testing.T) {
 }
 
 // 使用指南是水豚的第三份拷貝(開頭的 <pre>、TUI 示意、會動的那段 JS),沒有共用執行期,只能逐行比(review #71:
-// tui_capybara.go 與 console.js 由 TestWebCapybaraMatchesTUI 釘住,指南那份以前只靠人眼)。
+// tui_capybara.go 與 console.js 由 TestWebCapybaraMatchesTUI 釘住,指南那份以前只靠人眼)。英文版指南是第四份,一起比。
 func TestGuideCapybaraMatchesTUI(t *testing.T) {
-	b, err := os.ReadFile("../../docs/guide.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	guide := strings.ReplaceAll(string(b), "\r\n", "\n")
-	var still []string
-	for _, l := range capybaraStill() {
-		still = append(still, strings.TrimRight(l, " "))
-	}
-	if n := strings.Count(guide, strings.Join(still, "\n")); n != 2 {
-		t.Errorf("指南裡靜態的水豚要有兩隻(開頭與 TUI 示意)、都跟終端機的定格幀一樣,找到 %d 隻", n)
-	}
-	var story []string
-	for n, p := range capyStory { // 劇本的每一幀的每一行,JS 那段都要有
-		for _, l := range capybaraFrame(n) {
-			if !strings.Contains(guide, strconv.Quote(l)) {
-				t.Errorf("指南的 JS 幀少了這一行(或跟終端機不一樣):%q", l)
-			}
+	for _, name := range []string{"guide.html", "guide.en.html"} {
+		b, err := os.ReadFile("../../docs/" + name)
+		if err != nil {
+			t.Fatal(err)
 		}
-		story = append(story, fmt.Sprintf("[%d, %d, %d]", b2i(p.ear), b2i(p.shut), p.straw))
-	}
-	if want := "const STORY = [" + strings.Join(story, ", ") + "];"; !strings.Contains(guide, want) {
-		t.Errorf("指南的劇本要跟終端機同一份([轉耳朵, 閉眼, 草的長度]):\n%s", want)
+		guide := strings.ReplaceAll(string(b), "\r\n", "\n")
+		var still []string
+		for _, l := range capybaraStill() {
+			still = append(still, strings.TrimRight(l, " "))
+		}
+		if n := strings.Count(guide, strings.Join(still, "\n")); n != 2 {
+			t.Errorf("%s:靜態的水豚要有兩隻(開頭與 TUI 示意)、都跟終端機的定格幀一樣,找到 %d 隻", name, n)
+		}
+		var story []string
+		for n, p := range capyStory { // 劇本的每一幀的每一行,JS 那段都要有
+			for _, l := range capybaraFrame(n) {
+				if !strings.Contains(guide, strconv.Quote(l)) {
+					t.Errorf("%s 的 JS 幀少了這一行(或跟終端機不一樣):%q", name, l)
+				}
+			}
+			story = append(story, fmt.Sprintf("[%d, %d, %d]", b2i(p.ear), b2i(p.shut), p.straw))
+		}
+		if want := "const STORY = [" + strings.Join(story, ", ") + "];"; !strings.Contains(guide, want) {
+			t.Errorf("%s 的劇本要跟終端機同一份([轉耳朵, 閉眼, 草的長度]):\n%s", name, want)
+		}
 	}
 }
 

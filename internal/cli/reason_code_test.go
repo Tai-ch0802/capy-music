@@ -91,7 +91,8 @@ func TestMigrateReasonCodes(t *testing.T) {
 	}
 }
 
-// TestReasonCodesDocumented:TSV 的 REASON_CODE 是對外契約(決策 50),README 的「reason_code 代碼表」要跟程式碼一致。
+// TestReasonCodesDocumented:TSV 的 REASON_CODE 是對外契約(決策 50),兩份 README(英文 README.md 的「reason_code table」、
+// README.zh-TW.md 的「reason_code 代碼表」)都要跟程式碼一致。
 // 兩個方向都比:程式碼用到、表上沒有(新代碼忘了寫文件);表上有、程式碼找不到(改了名,或這個掃描本身失效)。
 // 掃描規則:同一個運算式清單(呼叫參數、composite literal、賦值右邊、return)裡,緊接在 i18n.T("….reason.…") 後面的
 // 字串字面就是代碼——產生原因欄的每個地方都是「原因、代碼」相鄰(Reason: …, Code: "x" / row(…, reason, "x") / reason, code = …, "x")。
@@ -139,13 +140,37 @@ func TestReasonCodesDocumented(t *testing.T) {
 		}
 	}
 
-	readme, err := os.ReadFile("../../README.md")
+	if len(inCode) == 0 {
+		t.Fatal("掃描失效:程式碼裡一個代碼都沒找到")
+	}
+	for _, doc := range []struct{ file, heading string }{
+		{"README.md", "### reason_code table"},
+		{"README.zh-TW.md", "### reason_code 代碼表"},
+	} {
+		inDoc := readmeReasonCodes(t, doc.file, doc.heading)
+		for code, pos := range inCode {
+			if !inDoc[code] {
+				t.Errorf("%s 用了 REASON_CODE %q,%s 的代碼表沒有", pos, code, doc.file)
+			}
+		}
+		for code := range inDoc {
+			if _, ok := inCode[code]; !ok {
+				t.Errorf("%s 的代碼表有 %q,程式碼裡找不到(改名了?還是掃描規則漏了新的寫法)", doc.file, code)
+			}
+		}
+	}
+}
+
+// readmeReasonCodes:repo 根目錄的 file 裡,heading 那一節第一張表的 reason_code 欄出現的代碼。
+func readmeReasonCodes(t *testing.T, file, heading string) map[string]bool {
+	t.Helper()
+	readme, err := os.ReadFile(filepath.Join("../..", file))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, section, ok := strings.Cut(string(readme), "\n### reason_code 代碼表\n")
+	_, section, ok := strings.Cut(string(readme), "\n"+heading+"\n")
 	if !ok {
-		t.Fatal("README 找不到「### reason_code 代碼表」")
+		t.Fatalf("%s 找不到「%s」", file, heading)
 	}
 	inDoc := map[string]bool{}
 	col := -1
@@ -164,7 +189,7 @@ func TestReasonCodesDocumented(t *testing.T) {
 				}
 			}
 			if col < 0 {
-				t.Fatalf("代碼表的表頭要有 reason_code 欄:%q", line)
+				t.Fatalf("%s:代碼表的表頭要有 reason_code 欄:%q", file, line)
 			}
 			continue
 		}
@@ -174,19 +199,10 @@ func TestReasonCodesDocumented(t *testing.T) {
 			}
 		}
 	}
-	if len(inCode) == 0 || len(inDoc) == 0 {
-		t.Fatalf("掃描失效:程式碼找到 %d 個、README 找到 %d 個代碼", len(inCode), len(inDoc))
+	if len(inDoc) == 0 {
+		t.Fatalf("掃描失效:%s 的代碼表一個代碼都沒找到", file)
 	}
-	for code, pos := range inCode {
-		if !inDoc[code] {
-			t.Errorf("%s 用了 REASON_CODE %q,README 的代碼表沒有", pos, code)
-		}
-	}
-	for code := range inDoc {
-		if _, ok := inCode[code]; !ok {
-			t.Errorf("README 的代碼表有 %q,程式碼裡找不到(改名了?還是掃描規則漏了新的寫法)", code)
-		}
-	}
+	return inDoc
 }
 
 // isReasonT:i18n.T("<area>.reason.<name>", …)。

@@ -28,12 +28,12 @@ func read(t *testing.T, name string) string {
 // Google 對首頁的要求(support.google.com/cloud/answer/13807376):說明 app 做什麼、透明地說明為什麼要使用者資料、
 // 有隱私權政策的連結、不用登入就看得到。三頁要互相連得到,兩種語言都一樣。
 func TestHomeExplainsTheAppAndLinksToPolicies(t *testing.T) {
-	for _, tc := range []struct{ page, privacy, terms string }{
-		{"index.html", `href="/privacy"`, `href="/terms"`},
-		{"en/index.html", `href="/en/privacy"`, `href="/en/terms"`},
+	for _, tc := range []struct{ page, privacy, terms, guide string }{
+		{"index.html", `href="/privacy"`, `href="/terms"`, `href="/guide"`},
+		{"en/index.html", `href="/en/privacy"`, `href="/en/terms"`, `href="/en/guide"`}, // 英文首頁連英文指南(Q53)
 	} {
 		html := read(t, tc.page)
-		for _, want := range []string{tc.privacy, tc.terms, `id="what"`, `id="google"`, "openid", "userinfo.email", "drive.appdata", "https://myaccount.google.com/permissions"} {
+		for _, want := range []string{tc.privacy, tc.terms, tc.guide, `id="what"`, `id="google"`, "openid", "userinfo.email", "drive.appdata", "https://myaccount.google.com/permissions"} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s 少了 %s:首頁要說明 app 做什麼、為什麼要 Google 的資料,並連到隱私權政策與條款", tc.page, want)
 			}
@@ -87,7 +87,7 @@ func TestBothLanguagesHaveTheSameSections(t *testing.T) {
 func TestPagesLoadNothingFromThirdParties(t *testing.T) {
 	// script / iframe / embed / object 一律不准;圖片與媒體只擋外部來源(之後放一張自己的截圖不該讓這裡變紅)。
 	loads := regexp.MustCompile(`(?i)<(?:script|iframe|embed|object)\b|<(?:img|video|audio|source)\b[^>]*\bsrc="(?:https?:)?//|<link[^>]+rel="(?:stylesheet|icon|preload|preconnect|dns-prefetch)"[^>]+href="(?:https?:)?//|@import|url\(\s*['"]?(?:https?:)?//`)
-	for _, name := range append(slices.Clone(pages), "style.css", "guide.html", "guide.css") {
+	for _, name := range append(slices.Clone(pages), "style.css", "guide.html", "en/guide.html", "guide.css") {
 		if m := loads.FindString(read(t, name)); m != "" {
 			t.Errorf("%s 會載入外部資源或執行 script:%q", name, m)
 		}
@@ -127,7 +127,7 @@ func TestNotFoundPageIsNotCanonical(t *testing.T) {
 
 func TestInternalLinksResolve(t *testing.T) {
 	href := regexp.MustCompile(`href="(/[^"#]*)`)
-	for _, name := range append(slices.Clone(pages), "guide.html") {
+	for _, name := range append(slices.Clone(pages), "guide.html", "en/guide.html") {
 		for _, m := range href.FindAllStringSubmatch(read(t, name), -1) {
 			p := strings.TrimPrefix(m[1], "/")
 			candidates := []string{p, p + ".html", filepath.ToSlash(filepath.Join(p, "index.html"))}
