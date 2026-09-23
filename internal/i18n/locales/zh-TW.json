@@ -532,7 +532,6 @@
     "other": "修復 {count} 筆清單項目的合併殘留({playlists};上次寫入中斷:tracks.json 已合併、清單還指著舊 cid),下次寫入時一併上傳"
   },
   "pull.hint.rename_unsupported": "提示:{name} 改名為 {new_name},但 {platform} 不支援改名,它那邊仍叫 {name}(要一致請自己在那邊改名再重新 capy pl link)",
-  "pull.pick.title.any": "選一個清單來",
   "pull.pick.title.pull": "選一個清單來拉",
   "pull.pick.title.push": "選一個清單來推",
   "pull.pick.title.sync": "選一個清單來同步",

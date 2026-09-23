@@ -771,9 +771,7 @@ func newPlPullCmd() *cobra.Command {
 }
 
 // pullTargets:--all = 所有有連結的清單(可用 --provider 篩),否則指定的那一個;依 (name, pid) 排序,輸出才決定性。
-// verb:挑選器標題 pull.pick.title 的 {verb},呼叫端翻好的原形動詞(en:pull / push / sync;zh-TW:拉 / 推 / 同步);
-// len(args) == 1 或 --all 時用不到。ponytail: 英文「Pick a playlist to {verb}」拼得通;哪個語系的動詞會變形,再改成呼叫端傳整句標題。
-// title 是挑選器的整句標題(每個呼叫者一則 key:英文不拼動詞)。
+// title 是挑選器的整句標題(每個呼叫者一則 key,英文不拼動詞);len(args) == 1 或 --all 時用不到。
 func pullTargets(s *canonState, args []string, all bool, prov, title string) ([]*canon.Playlist, error) {
 	linked := func(pl *canon.Playlist) bool {
 		if prov != "" {

@@ -573,7 +573,6 @@
     "other": "Repaired {count} playlist items that still pointed at a merged-away cid after an interrupted merge (in {playlists}; the last write merged tracks.json but stopped before updating the playlist data); they will be uploaded with the next write"
   },
   "pull.hint.rename_unsupported": "Tip: {name} was renamed to {new_name}, but {platform} doesn't support renaming, so it's still called {name} there (to match, rename it there yourself and run capy pl link again)",
-  "pull.pick.title.any": "Pick a playlist",
   "pull.pick.title.pull": "Pick a playlist to pull",
   "pull.pick.title.push": "Pick a playlist to push",
   "pull.pick.title.sync": "Pick a playlist to sync",

@@ -63,14 +63,7 @@ func newPlDedupCmd() *cobra.Command {
 			var deferred error
 			applied, touched, pulled, deduped := 0, false, 0, 0
 			err := withCanonical(ctx, stderr, func(s *canonState) error {
-				if len(args) == 0 { // 挑選器的標題整句在這裡給:pullTargets 那句是「動詞拼進句子」(pull.go),別的語言語序會錯
-					pid, err := pickLinkedPlaylist(s, prov, i18n.T("dedup.pick_title"))
-					if err != nil {
-						return err
-					}
-					args = []string{pid}
-				}
-				targets, err := pullTargets(s, args, false, prov, i18n.T("pull.pick.title.any"))
+				targets, err := pullTargets(s, args, false, prov, i18n.T("dedup.pick_title"))
 				if err != nil {
 					return err
 				}
