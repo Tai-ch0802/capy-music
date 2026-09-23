@@ -41,9 +41,12 @@ function mk(tag = 'div') {
     scrollHeight: 0, scrollTop: 0, clientHeight: 0,
   };
 }
-// 只認 '.class'、'tag'、'[data-x]' 與 '.class[data-k="v"]':console.js 用到的就這些,其餘回 null。
+// 只認 '.class'、'tag'、'[data-x]' 與 '.class[data-k="v"]',以及用空白串起來的後代選擇器('thead tr':search.js 的結果表);
+// 其餘回 null。
 const camel = (k) => k.replace(/-(\w)/g, (_, c) => c.toUpperCase());
 function find(root, sel) {
+  const sp = sel.indexOf(' ');
+  if (sp > 0) { const x = find(root, sel.slice(0, sp)); return x && find(x, sel.slice(sp + 1)); }
   const cls = /^\.([\w-]+)$/.exec(sel);
   const tag = /^([a-z]+)$/.exec(sel);
   const data = /^\[data-([\w-]+)\]$/.exec(sel);
@@ -65,9 +68,18 @@ function find(root, sel) {
   };
   return walk(root);
 }
-// findAll:只認以逗號分開的 '[attr]'(applyStatic 的 data-i18n*、Console 的 [data-run] / [data-pending]),其餘回 []。
+// findAll:只認以逗號分開的 '[attr]'(applyStatic 的 data-i18n*、Console 的 [data-run] / [data-pending])與 'tag tag'
+// (search.js 的 'tbody tr'),其餘回 []。
 // 屬性看 setAttribute 設的,data-* 也看 dataset(btn() 用 dataset.run 標)。
 function findAll(root, sel) {
+  const desc = /^([a-z]+) ([a-z]+)$/.exec(sel); // 'tbody tr'
+  if (desc) {
+    const out = [];
+    const walk = (e) => { for (const c of e.children || []) { if (c.tagName === desc[2].toUpperCase()) out.push(c); walk(c); } };
+    const x = find(root, desc[1]);
+    if (x) walk(x);
+    return out;
+  }
   const names = sel.split(',').map((s) => /^\[([\w-]+)\]$/.exec(s.trim())?.[1]);
   if (names.some((n) => !n)) return [];
   const has = (e, n) => (e.attrs && n in e.attrs) || (n.startsWith('data-') && e.dataset && camel(n.slice(5)) in e.dataset);
@@ -494,6 +506,7 @@ await scenario('8j', async () => {
     button(r, t('webui.move.next.confirm')).click();
     look(r);
     button(r, t('webui.move.start')).click();
+    check(r.textContent.includes('To stop, click "Stop" at the bottom.'), `執行中的說明指名底部的中止鈕(同一個 key):${r.textContent.slice(-200)}`);
     const titled = mk();
     mig.onPrompt({ kind: 'confirm', title: 'Review now, one by one?' }, titled); // 沒有 key、還沒有預覽:不補話
     const review = mk();
@@ -528,6 +541,8 @@ await scenario('8j', async () => {
   // zh-TW:白話拼上共用的按鈕名稱之後,跟搬進目錄之前一個位元組都不差。
   const zh = t('webui.move.help.review', { apply: t('changeset.confirm.apply'), cancel: t('changeset.confirm.cancel') });
   check(zh === '有幾首歌在目的地找不到完全一樣的。按「套用」可以一首一首挑;按「取消」就先搬找得到的,其餘之後可以再處理。這一步不會寫入任何東西。', `zh-TW 的白話:${zh}`);
+  const zhNote = t('webui.move.running_note', { button: t('webui.console.stop') });
+  check(zhNote === '清單越長越久。想停下來,按底部的「中止」。', `zh-TW 執行中的說明:${zhNote}`);
 });
 
 // 8k. 清單 / 搜尋 / 同步三頁(i18n T3):zh-TW 畫出來的每一句、執行狀態列的每個 label,都跟搬進語系目錄之前一字不差;
@@ -560,10 +575,16 @@ await scenario('8k', async () => {
       await settle();
       for (const s of [fail, stdout('not json')]) { script = { export: s }; page(initPlaylists); await settle(); }
 
-      script = { 'search x --provider spotify --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [] }, done] }, 'search y --provider spotify --limit 10': fail };
+      script = { 'search x --provider spotify --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [] }, done] }, 'search y --provider spotify --limit 10': fail,
+        'search z --provider spotify --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [['sp1', 'Song One']] }, done] } };
       const se = page(initSearch);
       await settle();
-      for (const v of ['x', 'y']) { se.querySelector('input').value = v; se.querySelector('.btn--primary').click(); await settle(); }
+      for (const v of ['x', 'y', 'z']) { se.querySelector('input').value = v; se.querySelector('.btn--primary').click(); await settle(); }
+      // 有結果的那一次真的畫出結果表(resultTable 裡的列變數若再叫 t,會遮住 i18n 的 t() 而丟例外),列尾的「播放」按得下去。
+      const tw = se.querySelector('.tbl-wrap');
+      const rowsDrawn = tw ? tw.querySelectorAll('tbody tr').map((tr) => tr.children.map((td) => td.textContent)) : null;
+      tw?.querySelector('.btn--ghost')?.click();
+      await settle();
 
       const table = { type: 'table', header: ['DIR', 'ACTION', 'CID', 'REASON_CODE'], rows: [['push', 'add', 'c1', 'push'], ['push', 'skip', 'c2', 'no_mapping']] };
       script = { 'pl sync --all --dry-run': { events: [table, { type: 'exit', code: 2, message: 'x', reason: 'done' }] } };
@@ -571,7 +592,7 @@ await scenario('8k', async () => {
       await settle();
       for (const b of sy.children[2].children) { b.click(); await settle(); } // 從平台更新 / 推到平台 / 雙向同步 / 去除重複
       const all = sy.querySelector('select').children[0];
-      return { seen, labels, calls: [...calls], all: [all.value, all.textContent] };
+      return { seen, labels, calls: [...calls], all: [all.value, all.textContent], rowsDrawn };
     } finally {
       delete con.run;
     }
@@ -593,6 +614,7 @@ await scenario('8k', async () => {
   };
   const want = (r, lang, list) => { for (const s of list) check(r.seen.has(s), `${lang}:頁面上少了「${s}」:${JSON.stringify([...r.seen])}`); };
   const cmds = JSON.stringify(['export', 'pl show "road trip" --provider spotify', 'pl list --provider spotify', 'export', 'export', 'search x --provider spotify --limit 10', 'search y --provider spotify --limit 10',
+    'search z --provider spotify --limit 10', 'play --id sp1 --provider spotify',
     'pl pull --all --dry-run', 'pl push --all --dry-run', 'pl sync --all --dry-run', 'pl dedup --dry-run']);
 
   const zh = await paint();
@@ -607,8 +629,9 @@ await scenario('8k', async () => {
     '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。']);
   check([...zh.seen].some((s) => s.startsWith('export 的輸出不是 JSON:') && s.length > 'export 的輸出不是 JSON:'.length), 'zh-TW:export 不是 JSON 要說出來並附上原因');
   check(JSON.stringify(zh.labels) === JSON.stringify(['讀取你的清單', '讀取 Spotify 上的「road trip」', '讀取 Spotify 上的清單', '讀取你的清單', '讀取你的清單',
-    '在 Spotify 找「x」', '在 Spotify 找「y」', '把平台上的變更拉回來', '把 capy 保管的清單推到平台', '雙向同步', '去除重複的歌']), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
+    '在 Spotify 找「x」', '在 Spotify 找「y」', '在 Spotify 找「z」', '播放「Song One」', '把平台上的變更拉回來', '把 capy 保管的清單推到平台', '雙向同步', '去除重複的歌']), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
   check(JSON.stringify(zh.calls) === cmds && JSON.stringify(zh.all) === JSON.stringify(['', '全部平台']), `送出的命令與「全部平台」的值:${JSON.stringify(zh.calls)} ${JSON.stringify(zh.all)}`);
+  check(JSON.stringify(zh.rowsDrawn) === JSON.stringify([['sp1', 'Song One', '播放']]), `zh-TW 的搜尋結果表:${JSON.stringify(zh.rowsDrawn)}`);
   const zhChecking = await checking();
   check(zhChecking === '檢查中…', `zh-TW 診斷頁的 data-running:「${zhChecking}」`);
 
@@ -618,9 +641,10 @@ await scenario('8k', async () => {
     const en = await paint();
     const CJK = /[　-〿㐀-鿿＀-￯]/;
     for (const s of [...en.seen, ...en.labels]) check(!CJK.test(s), `en:頁面或 label 還有中文:「${s}」`);
-    want(en, 'en', ['My playlists', 'Local library', 'road trip (2 tracks)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
+    want(en, 'en', ['My playlists', 'Local library', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
     check([...en.seen].some((s) => s.includes('Uncheck "Preview only, don\'t write yet"')), 'en:只看變更的收尾要指名那個勾選框');
-    check(en.labels.includes('Reading "road trip" on Spotify') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
+    check(en.labels.includes('Reading "road trip" on Spotify') && en.labels.includes('Playing "Song One"') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
+    check(JSON.stringify(en.rowsDrawn) === JSON.stringify([['sp1', 'Song One', 'Play']]), `en 的搜尋結果表:${JSON.stringify(en.rowsDrawn)}`);
     const enChecking = await checking();
     check(enChecking === 'Checking…', `en 診斷頁的 data-running:「${enChecking}」`);
   } finally {
@@ -697,6 +721,15 @@ await scenario('12', async () => {
     `applyStatic 填文字與三個屬性:${span.textContent} ${JSON.stringify(inp.attrs)}`);
   await loadI18n(fake({ lang: 'zh-TW', supported: [], messages: { p: { other: '{count} 首' } } }));
   check(t('p', { count: 1 }) === '1 首', '中文只有 other');
+  // 目錄讀不到(token 過期 → 401、連不上):applyStatic 不把 key 當字填上去,元素留空;原因由 app.js 的 notice 說。
+  const stale = mk('span'); stale.setAttribute('data-i18n', 'webui.rail.move');
+  const staleIn = mk('input'); staleIn.setAttribute('data-i18n-placeholder', 'webui.shell.cmd_placeholder');
+  const staleBox = mk(); staleBox.append(stale, staleIn);
+  for (const bad of [{ fetch: async () => new Response('{"error":"x"}', { status: 401 }) }, { fetch: async () => { throw new Error('down'); } }]) {
+    check(await loadI18n(bad) === false, 'loadI18n 讀不到要回 false');
+    applyStatic(staleBox);
+    check(stale.textContent === '' && staleIn.getAttribute('placeholder') === null, `目錄讀不到時元素留空:「${stale.textContent}」「${staleIn.getAttribute('placeholder')}」`);
+  }
   i18nFile = './i18n-en.json';
   await loadI18n(api);
   check(t('webui.lang.label') === 'Language' && globalThis.document.documentElement.lang === 'en', `英文的真目錄:${t('webui.lang.label')}`);
@@ -752,7 +785,7 @@ await scenario('13', async () => {
     script = { sync: { first: [{ type: 'progress', stage: 'match', done: 37, total: 120 }], gate: g, events: [{ type: 'exit', code: 1, message: '', reason: 'cancelled' }] } };
     const p = con.run('sync');
     await tick(5);
-    check(stopBtn.textContent === 'Stop' && sr.textContent === 'Running: sync' && act.textContent === 'Matching tracks 37 / 120',
+    check(stopBtn.textContent === 'Stop' && sr.textContent === 'Running: sync' && act.textContent === 'Matching songs 37 / 120',
       `執行狀態列(英文):「${stopBtn.textContent}」「${sr.textContent}」「${act.textContent}」`);
     const busy = await con.run('x');
     check(busy[1] === 'another command is running' && notices[notices.length - 1] === 'sync is running; wait for it to finish or press Stop',
@@ -843,6 +876,9 @@ await scenario('14', async () => {
     const parts = { '#isrc-out': mk(), '#isrc-input': mk('input'), '#isrc-status': mk(), '#isrc-go': mk('button') };
     const iroot = mk();
     iroot.querySelector = (s) => parts[s];
+    // ISRC 頁的標題、說明與按鈕是 index.html 裡的 data-i18n(開機時 app.js 的 applyStatic() 填):照樣建出來、照樣填。
+    for (const k of ['webui.isrc.title', 'webui.isrc.lead', 'webui.isrc.go']) { const e = mk(); e.setAttribute('data-i18n', k); iroot.appendChild(e); }
+    applyStatic(iroot);
     globalThis.document.createElement = (tag) => Object.assign(mk(tag), { style: {} }); // 四段拆解設 style.minWidth
     try {
       initISRC(iroot, { fetch: async () => new Response(JSON.stringify(isrc), { status: 200 }) }, 'TWK231680790');
@@ -850,7 +886,7 @@ await scenario('14', async () => {
     } finally {
       globalThis.document.createElement = mk;
     }
-    return { runs, running, acct: acct.textContent, rows: allByClass(acct, 'acct__state').map((e) => e.textContent), doctor: doc.textContent, isrc: parts['#isrc-out'].textContent };
+    return { runs, running, acct: acct.textContent, rows: allByClass(acct, 'acct__state').map((e) => e.textContent), doctor: doc.textContent, isrc: iroot.children.map((e) => e.textContent).join('\n') + '\n' + parts['#isrc-out'].textContent };
   };
 
   const zh = await draw();
@@ -859,7 +895,7 @@ await scenario('14', async () => {
   check(stateOf('apple', parseStatus('spotify:\n  refresh token: keychain 存在\n').apple).text === '未登入', '讀不懂(不是 JSON)就是未登入,不回頭解析文字');
   check(zh.acct.includes('Google Drive(保管你的清單)') && zh.acct.includes('重新連接') && zh.acct.includes('client_id: set'), `帳號頁的 zh-TW:${zh.acct}`);
   check(zh.running === '檢查中…' && zh.doctor.includes('還沒檢查過。按「開始檢查」。'), `診斷頁的 zh-TW:${zh.running} ${zh.doctor}`);
-  for (const s of ['台灣', '年份(推測)', '在 spotify 開啟', '這個平台沒有符合的曲目', '(不可得) · 95 分 · isrc · 已釘選', '含這首的清單(1)']) {
+  for (const s of ['ISRC 查詢', 'ISRC 是每首歌的國際編號。輸入一個,看它在三個平台上分別是哪一首。', '查詢', '台灣', '年份(推測)', '在 spotify 開啟', '這個平台沒有符合的曲目', '(不可得) · 95 分 · isrc · 已釘選', '含這首的清單(1)']) {
     check(zh.isrc.includes(s), `ISRC 頁的 zh-TW 少了「${s}」:${zh.isrc}`);
   }
 
@@ -870,7 +906,7 @@ await scenario('14', async () => {
     const all = [en.acct, en.doctor, en.running, en.isrc].join('\n');
     check(!/[\p{Script=Han}　-〿＀-￯]/u.test(all), `英文畫出來不可以有中文字:${all}`);
     check(en.rows.join('|') === "✓ Logged in|⚠ Expired|⚠ Couldn't read the keychain", `英文的三列狀態:${en.rows}`);
-    check(en.running === 'Checking…' && en.isrc.includes('Taiwan') && en.isrc.includes('Open in spotify') && en.isrc.includes('(unavailable) · confidence 95 · isrc · pinned'),
+    check(en.running === 'Checking…' && en.isrc.includes('ISRC lookup') && en.isrc.includes('Look up') && en.isrc.includes('Taiwan') && en.isrc.includes('Open in spotify') && en.isrc.includes('(unavailable) · confidence 95 · isrc · pinned'),
       `診斷與 ISRC 頁的英文:${en.running} ${en.isrc}`);
   } finally {
     i18nFile = './i18n.json';

@@ -421,7 +421,7 @@ export function initMove(root, api, con, notice, providers) {
       // 進度是真的才畫(決策 47):這裡只有階段說明與預覽;做到哪裡看底部的執行狀態列,要停按那裡的「中止」。
       if (state.preview) live.appendChild(preview(state.preview.h, state.preview.rows));
       else {
-        live.append(liveStage, liveBar, el('p', 'page__note', t('webui.move.running_note')));
+        live.append(liveStage, liveBar, el('p', 'page__note', t('webui.move.running_note', { button: t('webui.console.stop') })));
         paintProgress();
       }
     } else if (!r) {

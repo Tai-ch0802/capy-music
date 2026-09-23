@@ -20,12 +20,14 @@
 
 let lang = '';
 let catalog = null; // null = 還沒 loadI18n()
+let loaded = false; // 最近一次 loadI18n() 真的讀到目錄
 let supported = [];
 let rules = null;
 
 // loadI18n:讀目錄。失敗(連不上、token 不對)也照樣收尾:t() 之後回 key 本身,頁面至少畫得出來,
-// 真正的錯誤由 app.js 的 /api/commands 說。
+// 真正的錯誤由 app.js 的 /api/commands 說(401 印伺服器回的那一句;連不上印瀏覽器的錯誤)。
 export async function loadI18n(api) {
+  loaded = false;
   try {
     const r = await api.fetch('/api/i18n');
     if (!r.ok) return false;
@@ -34,6 +36,7 @@ export async function loadI18n(api) {
     catalog = d.messages || {};
     supported = d.supported || [];
     document.documentElement.lang = lang;
+    loaded = true;
     return true;
   } catch (_) {
     return false;
@@ -54,7 +57,9 @@ export function t(key, params = {}) {
 const ATTRS = { 'data-i18n-aria-label': 'aria-label', 'data-i18n-placeholder': 'placeholder', 'data-i18n-title': 'title' };
 
 // applyStatic:把 root 底下 data-i18n* 的元素填上目前語系的字。
+// 目錄沒讀到就什麼都不填:rail、底部列留空,不把 webui.rail.move 這種 key 當成字畫出來。
 export function applyStatic(root = document) {
+  if (!loaded) return;
   for (const el of root.querySelectorAll('[data-i18n],[data-i18n-aria-label],[data-i18n-placeholder],[data-i18n-title]')) {
     const k = el.getAttribute('data-i18n');
     if (k) el.textContent = t(k);

@@ -19,17 +19,14 @@ import (
 )
 
 // TestAuthStatusNeverLeaksSecrets(安全測試,先寫):keychain 裡每一種 token / secret 都種哨兵值,
-// auth status --json 與純文字 auth status 的 stdout + stderr 裡一個都不可以出現。
+// auth status --json 與純文字 auth status 的 stdout + stderr 裡一個都不可以出現。每一顆都以同一個記號 SENTINEL
+// 開頭:斷言看的是記號本身,只印出一截(前綴、截斷成 tok[:8]+"…")也抓得到,不只抓整顆原樣印出。
 func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 	setCLITestConfig(t)
 	t.Cleanup(keyring.MockInit)
+	const marker = "SENTINEL"
 	exp := time.Now().Add(24 * time.Hour).Truncate(time.Second)
-	dev := strings.TrimSuffix(fakeJWT(t, exp), ".sig") + ".SENTINEL-APPLE-DEV-SIG"
-	sentinels := []string{
-		"SENTINEL-SPOTIFY-REFRESH", "SENTINEL-SPOTIFY-ACCESS", "SENTINEL-SPOTIFY-LEGACY-REFRESH",
-		"SENTINEL-GOOGLE-REFRESH", "SENTINEL-GOOGLE-ACCESS", "SENTINEL-GOOGLE-CLIENT-SECRET",
-		dev, "SENTINEL-APPLE-DEV-SIG", "SENTINEL-APPLE-USER",
-	}
+	dev := marker + "-APPLE-DEV." + fakeJWT(t, exp) // auth status 的到期時間讀 keychain 裡另存的 exp,不解 JWT:開頭可以放記號
 	must := func(err error) {
 		t.Helper()
 		if err != nil {
@@ -50,10 +47,8 @@ func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v:%v", args, err)
 		}
-		for _, s := range sentinels {
-			if strings.Contains(out, s) {
-				t.Errorf("%v 印出了 keychain 裡的秘密 %q:\n%s", args, s, out)
-			}
+		if strings.Contains(out, marker) {
+			t.Errorf("%v 印出了 keychain 裡的秘密(整顆或一截,記號 %s):\n%s", args, marker, out)
 		}
 	}
 

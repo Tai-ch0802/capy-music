@@ -159,8 +159,17 @@ func TestWebCancelledExitHasNoMessage(t *testing.T) {
 }
 
 // TestWebMigrateReviewPromptCarriesKey:搬家精靈認「現在逐筆裁決?」那一則,靠提示事件的 key(confirmWrite 帶的
-// i18n key),不靠跟著語系變的標題;最後的確認是另一個 key。
+// i18n key),不靠跟著語系變的標題;最後的確認是另一個 key。伺服器與頁面兩頭在這裡接起來:migrate 真的送出的第一個 key
+// 就是 move.js 拿來比 ev.key 的那個字面,任何一邊改了另一邊沒改都會紅。
 func TestWebMigrateReviewPromptCarriesKey(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/move.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageKeys := regexp.MustCompile(`ev\.key === '([^']+)'`).FindAllStringSubmatch(string(b), -1)
+	if len(pageKeys) != 1 {
+		t.Fatalf("move.js 要剛好一處拿 ev.key 比字面(逐筆裁決那一則):%v", pageKeys)
+	}
 	fs1, fs2, _, _ := twoPlatforms(t)
 	catalogISRC(fs1, "a")
 	fs2.set("q1", "road trip", "a", "n") // n 在 spotify 上沒有:要逐筆裁決
@@ -170,8 +179,8 @@ func TestWebMigrateReviewPromptCarriesKey(t *testing.T) {
 		keys = append(keys, p["key"])
 		return reply(false)
 	})
-	if len(keys) != 2 || keys[0] != "migrate.confirm.review" || keys[1] != "migrate.confirm.create" {
-		t.Errorf("第一則是逐筆裁決、第二則是最後確認,各帶自己的 key:%v", keys)
+	if len(keys) != 2 || keys[0] != pageKeys[0][1] || keys[1] != "migrate.confirm.create" {
+		t.Errorf("第一則是逐筆裁決(move.js 認的 %q)、第二則是最後確認,各帶自己的 key:%v", pageKeys[0][1], keys)
 	}
 	if ex := evExit(t, ev); ex["code"] != float64(2) {
 		t.Errorf("兩則都按取消 = exit 2:%v", ex)

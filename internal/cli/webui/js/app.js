@@ -62,7 +62,7 @@ export function notice(text) {
 
 bootToken();
 // 目錄要在任何畫面算字之前到(i18n.js 開頭的載入順序鐵則)。讀不到也照樣往下:t() 回 key 本身,錯誤由 loadCommands 說。
-await loadI18n(api);
+const i18nOK = await loadI18n(api);
 applyStatic();
 const con = new Console(document.getElementById('console'), api, notice);
 languageMenu(document.getElementById('lang'), con);
@@ -187,7 +187,7 @@ loadCommands()
     if (d && d.default_provider) providers.current = d.default_provider;
     if (d && d.providers) providers.list = d.providers;
   })
-  .catch((e) => notice(t('webui.shell.unreachable', { err: e.message })))
+  .catch((e) => notice(i18nOK ? t('webui.shell.unreachable', { err: e.message }) : e.message)) // 沒有目錄時 t() 只會回 key
   .finally(() => {
     route();
     player.start();

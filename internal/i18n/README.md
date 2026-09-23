@@ -44,6 +44,7 @@ Use one English term per concept so messages stay consistent.
 |---|---|---|
 | 正本 | master copy | capy's own copy of a playlist, kept in the user's Google Drive |
 | 清單、播放清單 | playlist | |
+| 歌、首、曲目 | song (web UI), track (CLI) | every `webui.*` value says "song" (the web UI is the general-user surface: "Matching songs", "(2 songs)", "Next song"); CLI keys keep "track" |
 | 平台 | platform | Spotify, Apple Music, local library |
 | 本機 | this computer | "this computer's state.db"; not "this machine" |
 | 本機曲庫 | local library | M3U playlists plus `library.json` on this computer; as the platform's display name (next to Spotify and Apple Music) it's capitalized: `Local library` |

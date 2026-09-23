@@ -313,8 +313,11 @@ func scanWeb(rel, src, ext string) []callSite {
 		c := callSite{pos: pos(m[1])}
 		rest := strings.TrimLeft(src[m[1]:], space)
 		if rest != "" && (rest[0] == '\'' || rest[0] == '"') {
+			// 字面要是整個第一個參數:t('k' + x)、t('k' || x)、t('k'.trim()) 只讀得到開頭那段,算非字面
 			if end := strings.IndexByte(rest[1:], rest[0]); end >= 0 {
-				c.key, rest = rest[1:1+end], strings.TrimLeft(rest[2+end:], space)
+				if after := strings.TrimLeft(rest[2+end:], space); strings.HasPrefix(after, ",") || strings.HasPrefix(after, ")") {
+					c.key, rest = rest[1:1+end], after
+				}
 			}
 		}
 		if c.key != "" && strings.HasPrefix(rest, ",") {
@@ -492,8 +495,12 @@ func TestScanWeb(t *testing.T) {
 			[]callSite{{pos: "2", key: "webui.a", names: []string{"q", "n", "s", "o"}}}},
 		{"t('webui.a', params)", ".js", []callSite{{pos: "1", key: "webui.a", dynamic: true}}},
 		{"t('webui.a',)", ".js", []callSite{{pos: "1", key: "webui.a"}}},
-		{"t(key)", ".js", []callSite{{pos: "1"}}},                                           // key 不是字面:TestCodeKeysExistInCatalog 會報
-		{"t(`webui.a`)", ".js", []callSite{{pos: "1"}}},                                     // 樣板字串也不算字面
+		{"t(key)", ".js", []callSite{{pos: "1"}}},           // key 不是字面:TestCodeKeysExistInCatalog 會報
+		{"t(`webui.a`)", ".js", []callSite{{pos: "1"}}},     // 樣板字串也不算字面
+		{"t('webui.a' + k)", ".js", []callSite{{pos: "1"}}}, // 字面只是開頭那段:算非字面
+		{"t('webui.a' || k, { x })", ".js", []callSite{{pos: "1"}}},
+		{"t('webui.a'.trim())", ".js", []callSite{{pos: "1"}}},
+		{"t( 'webui.a' \n)", ".js", []callSite{{pos: "1", key: "webui.a"}}},                 // 字面後面的空白、換行不算
 		{"t('webui.a', { ...p })", ".js", []callSite{{pos: "1", key: "webui.a", bad: "x"}}}, // 展開:佔位符看不出來
 		{"t('webui.a', { [k]: 1 })", ".js", []callSite{{pos: "1", key: "webui.a", bad: "x"}}},
 		{"x.t('a'); s.split('a'); a.at(1); rotate(1); set('a'); $t('a'); _t('a')", ".js", nil}, // 不是 t( 的呼叫

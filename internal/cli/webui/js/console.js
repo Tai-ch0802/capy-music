@@ -281,7 +281,7 @@ export class Console {
     const counted = ev.total > 0;
     this.barProg.hidden = !counted;
     if (counted) { this.barProg.max = ev.total; this.barProg.value = ev.done; }
-    this.lastAct = (stages()[ev.stage] || ev.stage) +(counted ? ` ${ev.done} / ${ev.total}` : '');
+    this.lastAct = (stages()[ev.stage] || ev.stage) + (counted ? ` ${ev.done} / ${ev.total}` : '');
     if (!this.stopping && !this.armed && !this.openPrompt) this.barAct.textContent = this.lastAct;
   }
 

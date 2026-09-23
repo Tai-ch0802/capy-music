@@ -1154,7 +1154,7 @@
   "webui.move.route.aria": "示意:把 {from} 的歌單搬到 {to}",
   "webui.move.route.from": "來源",
   "webui.move.route.to": "目的地",
-  "webui.move.running_note": "清單越長越久。想停下來,按底部的「中止」。",
+  "webui.move.running_note": "清單越長越久。想停下來,按底部的「{button}」。",
   "webui.move.same": "來源和目的地要是不同的平台。",
   "webui.move.see_console": "到主控台看完整的輸出 →",
   "webui.move.source_only": "目前只能當來源",
