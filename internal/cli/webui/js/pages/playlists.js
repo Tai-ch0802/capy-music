@@ -2,9 +2,10 @@
 // 第二段是平台清單(pl list / pl show)。順序永遠照清單本來的順序,沒有排序、沒有拖曳(決策 38)。
 import { el, quote, btn, field, select, providerOptions, providerName, emptyState, pageHead } from './common.js';
 import { renderTable } from '../table.js';
+import { t } from '../i18n.js';
 
 export function initPlaylists(root, api, con, notice, providers) {
-  pageHead(root, '我的清單', 'capy 替你保管的清單(正本在你的 Google Drive),以及各平台上現有的清單。');
+  pageHead(root, t('webui.playlists.title'), t('webui.playlists.lead'));
   const cols = el('div', 'pl__cols');
   const left = el('div', 'pl__left');
   const right = el('div', 'pl__right');
@@ -13,14 +14,14 @@ export function initPlaylists(root, api, con, notice, providers) {
   const platform = el('section', 'pl__platform');
   const prov = select(providerOptions(providers.list), providers.current);
   const pbar = el('div', 'form-row');
-  pbar.appendChild(field('平台', prov));
+  pbar.appendChild(field(t('webui.common.platform'), prov));
   const pout = el('div', 'page__out');
 
-  root.append(btn('重新整理', 'btn--ghost', load), cols, el('h3', 'card__sub', '平台上現有的清單'), pbar, pout);
+  root.append(btn(t('webui.playlists.refresh'), 'btn--ghost', load), cols, el('h3', 'card__sub', t('webui.playlists.platform_heading')), pbar, pout);
   pbar.append(
-    btn('列出來', '', () => con.run(`pl list --provider ${prov.value}`, {
+    btn(t('webui.playlists.list'), '', () => con.run(`pl list --provider ${prov.value}`, {
       onTable: (h, r) => pout.replaceChildren(wrapTable(h, r)),
-    }, { label: `讀取 ${providerName(prov.value)} 上的清單` })),
+    }, { label: t('webui.playlists.list_label', { platform: providerName(prov.value) }) })),
   );
   con.idle(load); // 同帳號頁:有命令在跑就等它結束,不要撞上它、畫成「沒有清單」
 
@@ -29,19 +30,19 @@ export function initPlaylists(root, api, con, notice, providers) {
     left.replaceChildren();
     right.replaceChildren();
     con.run('export', {
-      onStdout: (t) => { text += t; },
+      onStdout: (s) => { text += s; },
       onExit: (code) => {
-        if (code !== 0) { left.appendChild(emptyState('還沒有清單。到「搬家」搬一個過來,或到「同步」把平台上的清單連起來。')); return; }
+        if (code !== 0) { left.appendChild(emptyState(t('webui.playlists.empty'))); return; }
         let files;
         try {
           files = JSON.parse(text);
         } catch (e) {
-          left.appendChild(el('p', 'card__error', 'export 的輸出不是 JSON:' + e.message));
+          left.appendChild(el('p', 'card__error', t('webui.playlists.bad_export', { error: e.message })));
           return;
         }
         render(files);
       },
-    }, { label: '讀取你的清單' });
+    }, { label: t('webui.playlists.load_label') });
   }
 
   function render(files) {
@@ -53,7 +54,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       .sort()
       .map((k) => files[k]);
     left.replaceChildren();
-    if (!pls.length) { left.appendChild(emptyState('還沒有清單。到「搬家」搬一個過來,或到「同步」把平台上的清單連起來。')); return; }
+    if (!pls.length) { left.appendChild(emptyState(t('webui.playlists.empty'))); return; }
     for (const pl of pls) {
       const row = el('button', 'pl__item');
       row.type = 'button';
@@ -74,18 +75,18 @@ export function initPlaylists(root, api, con, notice, providers) {
 
   function showItems(pl, tracks) {
     right.replaceChildren();
-    right.appendChild(el('h3', 'card__sub', `${pl.name}(${(pl.items || []).length} 首)`));
+    right.appendChild(el('h3', 'card__sub', t('webui.playlists.items_title', { name: pl.name, count: (pl.items || []).length })));
     const rows = (pl.items || []).map((it) => {
-      const t = tracks[it.cid] || {};
-      return [it.cid, t.title || '(本機沒有這首的資料)', (t.artists || []).join(', '), t.album || '', String(t.duration_ms || 0)];
+      const trk = tracks[it.cid] || {};
+      return [it.cid, trk.title || t('webui.playlists.no_track_data'), (trk.artists || []).join(', '), trk.album || '', String(trk.duration_ms || 0)];
     });
     right.appendChild(wrapTable(['CID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], rows));
     const names = Object.keys(pl.links || {});
     if (names.length) {
-      right.appendChild(btn(`看 ${providerName(names[0])} 上的內容`, 'btn--ghost', () =>
+      right.appendChild(btn(t('webui.playlists.view_on', { platform: providerName(names[0]) }), 'btn--ghost', () =>
         con.run(`pl show ${quote(pl.name)} --provider ${names[0]}`, {
           onTable: (h, r) => pout.replaceChildren(wrapTable(h, r)),
-        }, { label: `讀取 ${providerName(names[0])} 上的「${pl.name}」` })));
+        }, { label: t('webui.playlists.view_label', { platform: providerName(names[0]), name: pl.name }) })));
     }
   }
 

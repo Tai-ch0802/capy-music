@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +114,94 @@ func TestAuthStatusJSONStates(t *testing.T) {
 	if st, _ = status(); st.Spotify.State != "keychain_error" || st.Google.State != "keychain_error" || st.Apple.State != "keychain_error" ||
 		st.Apple.DeveloperToken != "keychain_error" || st.Apple.UserToken != "keychain_error" {
 		t.Errorf("keychain 讀不到不是「沒登入」:%+v", st)
+	}
+}
+
+// TestWebAccountPageKeysOnAuthStatusJSON:帳號頁(搬家精靈也借它的 stateOf)讀 auth status --json 的 state,不再比對跟著語系的
+// 文字(計畫 §2.4 第 1 點)。兩邊一起釘:account.js 認的每個 case 都是 CLI 在對應狀態真的給的值、CLI 給的每個值 account.js 都認
+// (missing 走預設分支)。CLI 改了列舉值,這裡紅並指向 account.js,而不是讓網頁靜默判成未登入。
+func TestWebAccountPageKeysOnAuthStatusJSON(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/account.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := string(b)
+	if !strings.Contains(account, "con.run('auth status --json'") {
+		t.Error("帳號頁要跑 auth status --json")
+	}
+	for _, prose := range []string{"keychain 存在", "in the keychain", "有效至", "valid until"} {
+		if strings.Contains(account, prose) {
+			t.Errorf("account.js 不可以再比對 auth status 給人看的文字 %q", prose)
+		}
+	}
+	// 借 parseStatus 的頁面(搬家精靈)跑的也要是 --json:沒帶的話 parseStatus 讀不懂,每個平台都畫成未登入。
+	if err := walkEmbedded(t, "webui/js", func(name string, b []byte) {
+		if src := string(b); strings.Contains(src, "parseStatus(") && !strings.HasSuffix(name, "/account.js") &&
+			!strings.Contains(src, "args: ['auth', 'status', '--json']") {
+			t.Errorf("%s 用 parseStatus 讀帳號狀態,跑的 auth status 要帶 --json", name)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	setCLITestConfig(t)
+	t.Cleanup(keyring.MockInit)
+	keyring.MockInit()
+	seen := map[string]bool{}
+	observe := func() {
+		t.Helper()
+		out, err := runCLI(t, "auth", "status", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var st authStatus
+		if err := json.Unmarshal([]byte(out), &st); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		seen[st.Spotify.State], seen[st.Google.State], seen[st.Apple.State] = true, true, true
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe() // 什麼都沒有:missing
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+	must(auth.SaveToken(auth.KeySpotifyToken, &oauth2.Token{AccessToken: "a", RefreshToken: "r", Expiry: exp}))
+	must(auth.SaveToken(auth.KeyGoogleToken, &oauth2.Token{AccessToken: "a", RefreshToken: "r", Expiry: exp}))
+	must(apple.SaveDeveloperToken(fakeJWT(t, exp), exp))
+	must(secret.Set(apple.KeyMusicUserToken, "u"))
+	observe() // 三家都登入:ok
+	past := time.Now().Add(-time.Hour).Truncate(time.Second)
+	must(apple.SaveDeveloperToken(fakeJWT(t, past), past))
+	observe() // Apple 過期:expired
+	keyring.MockInitWithError(errors.New("locked"))
+	observe() // keychain 讀不到:keychain_error
+
+	for _, s := range []string{"missing", "ok", "expired", "keychain_error"} {
+		if !seen[s] {
+			t.Errorf("auth status --json 沒給出 state %q(看過 %v):這個測試的四種狀態沒種對", s, seen)
+		}
+	}
+	cases := map[string]bool{"missing": true} // stateOf 的預設分支
+	for _, m := range regexp.MustCompile(`case '(\w+)'`).FindAllStringSubmatch(account, -1) {
+		cases[m[1]] = true
+		if !seen[m[1]] {
+			t.Errorf("account.js 認 state %q,但 auth status --json 不會給這個值", m[1])
+		}
+	}
+	for s := range seen {
+		if !cases[s] {
+			t.Errorf("auth status --json 會給 state %q,account.js 的 stateOf 沒有認它", s)
+		}
+	}
+
+	// 真的走 /api/run(允許清單、deny、序列槽):頁面送的就是這一行,stdout 要是 parseStatus 讀得懂的 JSON。
+	_, c := startWeb(t)
+	code, events, msg := c.run(map[string]any{"line": "auth status --json"})
+	var st authStatus
+	if code != http.StatusOK || evExit(t, events)["code"] != float64(0) || json.Unmarshal([]byte(evText(events, "stdout")), &st) != nil || st.Apple.State == "" {
+		t.Errorf("網頁跑 auth status --json:%d %s %v", code, msg, events)
 	}
 }

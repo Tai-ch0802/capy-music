@@ -250,7 +250,12 @@ func (s *webServer) handleCommands(w http.ResponseWriter, _ *http.Request) {
 // webSharedKeys:網頁也要用、但不在 webui.* 底下的 key(同一句話 Go 那邊也在印)。/api/i18n 只送 webui.* 與這裡列的;
 // 頁面用到別的 key 只會拿到 key 本身(TestWebI18nServesEveryKeyThePageUses 會擋)。
 var webSharedKeys = []string{
-	"web.err.bad_token", // app.js 的 401 提示:跟 api() 回的是同一句
+	"web.err.bad_token",        // app.js 的 401 提示:跟 api() 回的是同一句
+	"web.err.cancelled",        // console.js 的 exit 行:中止的命令
+	"web.err.prompt_timeout",   // console.js 的 exit 行:等待回答逾時
+	"changeset.confirm.apply",  // 確認鈕的字(web_prompt.go 送的 affirmative):搬家精靈的白話講到它
+	"changeset.confirm.cancel", // 同上(negative);console.js 在確認框沒給否定鈕的字時也用它
+	"local.display_name",       // common.js 的 providerName:本機曲庫的顯示名稱
 }
 
 // webI18n:/api/i18n 的回應。messages 的值是字串,複數訊息是「CLDR 類別 → 字串」;supported 的 name 是語系自己的名稱。

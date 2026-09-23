@@ -1,5 +1,7 @@
 // player.js:dock 的正在播放列。每 2 秒打 GET /api/now(輪詢不串流),document.hidden 時停;
 // 控制鈕不另做端點,跑既有命令(決策 42):走 Console.run 的 quiet 模式,跟其他命令共用同一個序列槽、閘與中止。
+import { t } from './i18n.js';
+
 // POLL_MS 要大於伺服器的 webNowWait(2 s):相等的話單飛的 TryLock 幾乎每兩輪就固定失敗一次。
 const POLL_MS = 2500;
 // 上一份快照超過這麼久沒更新才算失聯。用時間而不是「連續幾次 stale」:State 穩定超過 webNowWait 時
@@ -54,7 +56,7 @@ export class Player {
   // 面板自己的旗標:body[data-connected] 是 console 在用的(那次 job 的串流斷了),兩個狀態不該互相蓋。
   disconnected() {
     this.root.dataset.nowConnected = 'false';
-    this.line.textContent = 'capy --web 已停止或讀不到播放狀態';
+    this.line.textContent = t('webui.player.disconnected');
   }
 
   render(d) {
@@ -62,18 +64,18 @@ export class Player {
     this.root.dataset.playing = String(!!d.playing);
     this.root.dataset.stale = d.stale ? 'true' : '';
     if (d.error) {
-      this.line.textContent = `${d.provider}:${d.error}`;
+      this.line.textContent = t('webui.player.error', { provider: d.provider, error: d.error });
       return;
     }
     if (!d.track) {
-      this.line.textContent = `${d.provider}:目前沒有播放內容`;
+      this.line.textContent = t('webui.player.idle', { provider: d.provider });
       return;
     }
-    const t = d.track;
+    const tr = d.track;
     const dev = d.device ? ` · ${d.device.name}${d.device.volume_known ? ` · 🔊 ${d.device.volume_pct}` : ''}` : '';
-    const age = d.stale ? ` · ${Math.round((d.stale_ms || 0) / 1000)} 秒前` : '';
-    this.line.textContent = `${d.playing ? '▶' : '⏸'} ${t.title} — ${(t.artists || []).join(', ')}` +
-      ` · ${mmss(d.position_ms)} / ${mmss(t.duration_ms)}${dev}${age}`;
+    const age = d.stale ? ' · ' + t('webui.player.age', { count: Math.round((d.stale_ms || 0) / 1000) }) : '';
+    this.line.textContent = `${d.playing ? '▶' : '⏸'} ${tr.title} — ${(tr.artists || []).join(', ')}` +
+      ` · ${mmss(d.position_ms)} / ${mmss(tr.duration_ms)}${dev}${age}`;
   }
 
   // 前後各十秒、音量升降五格:鏡射 TUI 的鍵位。沒有最後一份狀態就不動作(算不出絕對值)。
@@ -95,7 +97,7 @@ export class Player {
   // 又因為沒有中止路徑,卡在等 token 鎖時整個介面會鎖死到重啟(review #65 第 1 點)。
   async control(cmd) {
     if (this.con.running) { // 連按兩下的第二下不必說話;別的命令在跑才說
-      if (!this.con.quiet) this.notice('正在執行別的命令:等它結束,或按「中止」');
+      if (!this.con.quiet) this.notice(t('webui.player.busy'));
       return;
     }
     const [code] = await this.con.run(cmd, {}, { quiet: true }); // 失敗的說明由 Console.report 負責

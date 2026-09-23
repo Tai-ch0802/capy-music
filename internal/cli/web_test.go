@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -22,7 +21,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/zalando/go-keyring"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
@@ -912,105 +910,6 @@ func TestWebCapybaraMatchesTUI(t *testing.T) {
 	}
 }
 
-// TestWebAccountPageKeysOnAuthStatusWording:帳號頁的正確性綁在 auth status 的中文字面上,而純文字契約的測試
-// 只保證 CLI 自己不變、不保證網頁跟得上(review #62)。這裡兩邊一起釘:account.js 認的每個字面都要真的出現在
-// auth status 的輸出裡。CLI 那邊改一個字,這個測試就會紅並指向 account.js,而不是讓網頁靜默判錯。
-func TestWebAccountPageKeysOnAuthStatusWording(t *testing.T) {
-	b, err := webUI.ReadFile("webui/js/pages/account.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	account := string(b)
-
-	// (1) Apple 有效:developer token 有效至 … + user token 存在。這正是舊版判成「未登入」的那一種狀態
-	// ——「keychain 存在」只出現在 spotify 與 google 段落,apple 段一個字都不中。
-	setupAppleTokens(t)
-	out, err := runCLI(t, "auth", "status")
-	if err != nil {
-		t.Fatalf("auth status: %v", err)
-	}
-	for _, lit := range []string{"developer token: 有效至", "user token: 存在"} {
-		if !strings.Contains(out, lit) {
-			t.Errorf("auth status 的 apple 段不再印 %q,帳號頁會把有效的 Apple 判成未登入", lit)
-		}
-		if !strings.Contains(account, lit) {
-			t.Errorf("account.js 沒有認 %q", lit)
-		}
-	}
-
-	// (2) 三家都未登入:apple 段要印「不存在」,而且不可以出現任何一個「已登入」的字面。
-	clearAppleTokens(t)
-	out, err = runCLI(t, "auth", "status")
-	if err != nil {
-		t.Fatalf("auth status: %v", err)
-	}
-	if !strings.Contains(out, "developer token: 不存在") {
-		t.Errorf("未登入時 apple 段要印「不存在」:%q", out)
-	}
-	for _, lit := range []string{"developer token: 有效至", "user token: 存在", "refresh token: keychain 存在"} {
-		if strings.Contains(out, lit) {
-			t.Errorf("什麼都沒設定時不該出現 %q:%q", lit, out)
-		}
-	}
-
-	// (3) 另外兩家與錯誤態的字面也要對得上(spotify / google 各自不同,不能用同一個 regex 打天下)。
-	for _, lit := range []string{"refresh token: keychain 存在", "token: keychain 存在", "讀取 keychain 失敗"} {
-		if !strings.Contains(account, lit) {
-			t.Errorf("account.js 沒有認 %q", lit)
-		}
-	}
-	// 這三個字面搬進了語系目錄(決策 50),不在 auth.go 原始碼裡了:改看 auth status 真的印出來的。
-	setCLITestConfig(t)
-	t.Cleanup(keyring.MockInit)                                                              // 連同下面種的 token 一起清掉
-	_, _ = fakeLoginOK(t, "")(context.Background(), "", nil)                                 // spotify refresh token
-	_, _, _ = fakeGoogleLogin(t, "", "", "")(context.Background(), auth.GoogleClient{}, nil) // google token
-	loggedIn, _ := runCLI(t, "auth", "status")
-	keyring.MockInitWithError(errors.New("locked"))
-	broken, _ := runCLI(t, "auth", "status")
-	// "\n  token:" 是 google 那一行(兩格縮排);只寫 "token:" 的話 spotify 的 refresh token 那行就滿足了,google 那行沒被釘住。
-	for _, lit := range []string{"refresh token: keychain 存在", "\n  token: keychain 存在", "讀取 keychain 失敗"} {
-		if !strings.Contains(loggedIn+broken, lit) {
-			t.Errorf("auth status 不再印 %q,帳號頁的判斷會靜默失效", lit)
-		}
-	}
-}
-
-// TestWebAccountPageKeysOnEnglishAuthStatus:language = en 時 auth status 的值是英文(決策 50),帳號頁一樣要認得;
-// 只有 zh-TW 的話,切成英文後每個已登入的帳號都會顯示成未登入。T3 改成讀 auth status --json 之前,兩種字面都要在 account.js。
-func TestWebAccountPageKeysOnEnglishAuthStatus(t *testing.T) {
-	b, err := webUI.ReadFile("webui/js/pages/account.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	account := string(b)
-	withLanguage(t, "en")
-	setupAppleTokens(t)
-	apple, _ := runCLI(t, "auth", "status")
-	t.Cleanup(keyring.MockInit)
-	_, _ = fakeLoginOK(t, "")(context.Background(), "", nil)
-	_, _, _ = fakeGoogleLogin(t, "", "", "")(context.Background(), auth.GoogleClient{}, nil)
-	loggedIn, _ := runCLI(t, "auth", "status")
-	keyring.MockInitWithError(errors.New("locked"))
-	broken, _ := runCLI(t, "auth", "status")
-	for _, c := range []struct{ out, lit string }{
-		{apple, "developer token: valid until "},
-		{apple, "user token: present"},
-		{loggedIn, "refresh token: in the keychain"},
-		{loggedIn, "\n  token: in the keychain"},
-		{broken, "couldn't read the keychain"},
-	} {
-		if !strings.Contains(c.out, c.lit) {
-			t.Errorf("英文的 auth status 不再印 %q:%q", c.lit, c.out)
-		}
-		if !strings.Contains(account, strings.TrimPrefix(c.lit, "\n  ")) {
-			t.Errorf("account.js 沒有認英文的 %q", c.lit)
-		}
-	}
-	if !strings.Contains(account, "developer token: expired at ") || !strings.Contains(i18n.T("auth.status.dev_token_expired", "expiry", "x"), "expired at ") {
-		t.Error("過期的 Apple token 在英文也要認得出來")
-	}
-}
-
 func walkEmbedded(t *testing.T, dir string, fn func(name string, b []byte)) error {
 	t.Helper()
 	entries, err := webUI.ReadDir(dir)
@@ -1179,8 +1078,18 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("搜尋頁:沒有命中(空表)要說一句話")
 	}
 	// 「去除重複」的說明要留著警告那一半:--provider 沒選到的平台這次不會檢查(review #67;會移除曲目的路徑不可以只說讓人安心的半句)。
-	if !strings.Contains(read("js/pages/sync.js"), "沒選到的平台這次不會檢查") {
+	// 字在語系目錄裡(決策 50):頁面用那個 key,兩個語系的譯文都要留著警告的那一半。
+	note := func(lang string) string {
+		s, _ := webI18n(lang)["messages"].(map[string]any)["webui.sync.dedup_note"].(string)
+		return s
+	}
+	if !strings.Contains(read("js/pages/sync.js"), "t('webui.sync.dedup_note'") ||
+		!strings.Contains(note("zh-TW"), "沒選到的平台這次不會檢查") || !strings.Contains(note("en"), "platforms you didn't choose are not checked") {
 		t.Error("同步頁「去除重複」的說明要講明沒選到的平台這次不會檢查")
+	}
+	// 診斷頁的「檢查中…」:CSS 叫不了 t(),字由 doctor.js 用 t() 放進 data-running(行為見 TestWebConsoleBehaviour 8j)。
+	if !strings.Contains(css, ".doctor__out[data-running]::after { content: attr(data-running);") {
+		t.Error("診斷頁執行中的字要來自 data-running,不可以寫死在 CSS")
 	}
 	if !strings.Contains(app, "case '/': ev.preventDefault(); location.hash = '#/console'; input.focus(); break;") {
 		t.Error("/ 要先切到主控台再聚焦命令列(別頁的命令列是藏起來的)")
@@ -1195,7 +1104,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
 		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
 	}
-	if !strings.Contains(move, "const READ_ONLY = [];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? '目前只能當來源' : ''") {
+	if !strings.Contains(move, "const READ_ONLY = [];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? t('webui.move.source_only') : ''") {
 		t.Error("只讀平台當目的地要是不可選並說明原因,不是直接消失(目前沒有只讀平台:Apple 自決策 49 起可寫)")
 	}
 	// 精靈的命令走 args 陣列(決策 46;review #66 第 2 點):splitArgs 沒有跳脫,local 的清單 ID 含空白 / 雙引號會組不出來。
@@ -1229,10 +1138,10 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(move, "onProgress: (ev) => { state.progress = ev; if (!state.preview) paintProgress(); },") {
 		t.Error("精靈的 onProgress 要就地更新進度,不可以每一首歌 render() 一次")
 	}
-	// 精靈認「使用者自己中止」靠 console.js 匯出的常數,不自己抄一份字面(review #69):不然有人改了說法,
-	// 這裡會安靜地把中止畫成紅字錯誤。
-	if !strings.Contains(move, "const stopped = r.msg === cancelledMsg();") || strings.Contains(move, "'已中止'") {
-		t.Error("move.js 要用 console.js 的 cancelledMsg()")
+	// 精靈認「使用者自己中止」看 exit 的 reason(機器欄位),不比對訊息(review #69:比對字面的話,有人改了說法——
+	// 或換了語系——這裡會安靜地把中止畫成紅字錯誤)。
+	if !strings.Contains(move, "const stopped = r.reason === 'cancelled';") || strings.Contains(move, "cancelledMsg") {
+		t.Error("move.js 要以 exit 的 reason 認中止,不比對訊息")
 	}
 	// 搬家頁的水豚跟終端機那隻同一個構圖:側面(一隻眼睛),由後往前是耳朵 → 眼睛 → 鼻孔(2026-09-20 重畫;
 	// 舊版的正面圓臉 + 兩個鼻孔是豬。ASCII 那隻由 TestCapybaraIsASideProfile 守)。
@@ -1320,7 +1229,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("run() 開頭要先擋掉進行中的第二次呼叫(在設 running / job / hooks 之前就 return)")
 	}
 	// 被擋、409 / 401 / 503 也要通知發起的頁面,否則那一頁永遠不會收尾。
-	if !strings.Contains(run, "[-1, '另一個命令執行中', 'busy']") || !strings.Contains(run, "hooks.onExit?.(...busy)") || !strings.Contains(run, "this.ex = [-1, msg, 'refused']") {
+	if !strings.Contains(run, "[-1, t('webui.console.busy'), 'busy']") || !strings.Contains(run, "hooks.onExit?.(...busy)") || !strings.Contains(run, "this.ex = [-1, msg, 'refused']") {
 		t.Error("被擋與被伺服器拒絕都要以 -1 通知頁面的 onExit,否則那一頁會永久空白")
 	}
 	// onExit 要等串流收尾(伺服器已放開序列槽、running 已歸零)才叫:帳號頁在 onExit 裡接著跑 auth status,
@@ -1342,7 +1251,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(console, "if (this.stopping) this.cancel()") {
 		t.Error("start 事件到達時,若已經按過中止要立刻送 cancel")
 	}
-	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]]") || !strings.Contains(console, "export const cancelledMsg = () => '已中止';") {
+	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]]") || !strings.Contains(console, "export const cancelledMsg = () => t('webui.console.stopped');") {
 		t.Error("中止的命令交給頁面的訊息要是「已中止」,不是 context canceled 那串內部錯誤")
 	}
 	// 中止中的按鈕不可以用 disabled:disabled 會把焦點丟到 body,鍵盤使用者失去位置、收尾也交不回命令列。
@@ -1359,7 +1268,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(app, "cancelBtn") || strings.Contains(app, "input.disabled = true") {
 		t.Error("submit() 不可以再自己管取消鈕與停用輸入框(設計規格:執行中命令列仍可打字)")
 	}
-	if !strings.Contains(index, `id="busy"`) || !strings.Contains(index, `id="cancel">中止</button>`) || strings.Contains(index, `id="cancel" hidden`) {
+	if !strings.Contains(index, `id="busy"`) || !strings.Contains(index, `id="cancel" data-i18n="webui.console.stop"></button>`) || strings.Contains(index, `id="cancel" hidden`) {
 		t.Error("dock 要有執行狀態列,中止鈕在列裡、標籤是「中止」")
 	}
 	if !strings.Contains(index, `id="busy-time" aria-hidden="true"`) || !strings.Contains(index, `id="busy-sr" role="status"`) {
@@ -1575,41 +1484,21 @@ func TestWebProgressEventsAreRealAndCLIStaysSilent(t *testing.T) {
 	}
 }
 
-// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩樣東西認列——「逐筆裁決」那一則確認(旁邊要補白話;
-// 認的是 reviewMarks() 裡每個語系的片段)與 REASON_CODE 欄的 push(這一首推得過去;REASON 跟著語系,不能拿來判斷——Q52)。
-// 純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,所以兩邊一起釘(同 TestWebAccountPageKeysOnEnglishAuthStatus):
-// 用每個語系(英文單複數兩種)跑真的 migrate,第一個提示要被 reviewMarks() 認出、最後確認不能被誤認;CLI 改了字,這裡就紅並指向 move.js。
-// Go 這半邊(migrateReason 推得過去 = "push")由 TestMigrateReasonCodes 與 migrate_test.go 的整列比對釘住。
-func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
+// TestWebMoveWizardKeysOnMachineFields:搬家精靈靠 migrate 的兩個機器欄位認列——「逐筆裁決」那一則確認看提示事件的 key
+// (migrate.confirm.review;旁邊要補白話),這一首推得過去看 REASON_CODE 欄的 push。兩樣都不跟著語系變(REASON 與提示標題
+// 會——Q52 / 決策 50)。Go 那半邊:key 由 TestWebMigrateReviewPromptCarriesKey、push 由 TestMigrateReasonCodes 與
+// migrate_test.go 的整列比對釘住;行為由 webui_console.mjs 的 8i(tally)與 8j(提示的白話)情境釘住。
+func TestWebMoveWizardKeysOnMachineFields(t *testing.T) {
 	b, err := webUI.ReadFile("webui/js/pages/move.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src := string(b); !strings.Contains(src, "'REASON_CODE'") || !strings.Contains(src, "'push'") || strings.Contains(src, "PUSHABLE_MARK") { // 行為由 webui_console.mjs 的 tally 情境釘住
+	src := string(b)
+	if !strings.Contains(src, "'REASON_CODE'") || !strings.Contains(src, "'push'") || strings.Contains(src, "PUSHABLE_MARK") {
 		t.Error("move.js 的 tally() 要以 REASON_CODE 是不是 push 判斷搬得過去,不看 REASON 的字(會跟著語系變)")
 	}
-	decl := regexp.MustCompile(`const reviewMarks = \(\) => \[([^\]]*)\];`).FindStringSubmatch(string(b))
-	if decl == nil || !strings.Contains(string(b), "reviewMarks().some((m) => String(ev.title || '').includes(m))") {
-		t.Fatal("move.js 要以 reviewMarks() 認「逐筆裁決」那一則提示")
-	}
-	var marks []string
-	for _, m := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(decl[1], -1) {
-		marks = append(marks, m[1])
-	}
-	matches := func(title string) bool {
-		return slices.ContainsFunc(marks, func(m string) bool { return strings.Contains(title, m) })
-	}
-	for _, c := range []struct {
-		lang      string
-		unmatched []string
-	}{{"zh-TW", []string{"n"}}, {"en", []string{"n"}}, {"en", []string{"n", "m"}}} {
-		t.Run(c.lang+"/"+strconv.Itoa(len(c.unmatched)), func(t *testing.T) {
-			withLanguage(t, c.lang)
-			prompts := migratePromptsDeclined(t, c.unmatched...)
-			if len(prompts) != 2 || !matches(prompts[0]) || matches(prompts[1]) {
-				t.Errorf("move.js 的 reviewMarks() %q 要認得出逐筆裁決那一則、不能誤認最後確認:%q", marks, prompts)
-			}
-		})
+	if !strings.Contains(src, "if (ev.key === 'migrate.confirm.review') {") || strings.Contains(src, "reviewMarks") || strings.Contains(src, "ev.title") {
+		t.Error("move.js 要以提示事件的 key 認「逐筆裁決」那一則,不比對跟著語系變的標題")
 	}
 }
 

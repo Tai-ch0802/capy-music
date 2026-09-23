@@ -1,5 +1,6 @@
 // console.js:POST /api/run 的 SSE 串流 → 區塊(回聲 / stdout / stderr / table / exit)。
 import { renderTable } from './table.js';
+import { t } from './i18n.js';
 
 // CAPYBARA:與 tui_capybara.go 的 capybaraStill() 逐字元相同(TestWebCapybaraMatchesTUI 釘住)。
 // 全部純 ASCII:方框繪製字元在 CJK 終端機是兩欄,會讓橫幅垮掉——網頁沿用同一份是為了兩邊長得一樣。
@@ -38,9 +39,9 @@ function isCancelled([code, , reason]) {
 
 // progress 事件的階段 → 白話(決策 47)。進度條只吃伺服器送來的 done / total;沒有事件就不畫,不編百分比。
 // 兩個都是函式、用到時才算:模組頂層不可以算使用者看得到的字(i18n.js 開頭的載入順序鐵則)。
-export const stages = () => ({ read: '讀取來源清單', match: '比對歌曲', write: '寫入目的地' });
+export const stages = () => ({ read: t('webui.console.stage.read'), match: t('webui.console.stage.match'), write: t('webui.console.stage.write') });
 // 使用者自己中止時,交給頁面 onExit 的訊息。頁面要認它就 import 這個函式,不要各自抄一份字面(review #69)。
-export const cancelledMsg = () => '已中止';
+export const cancelledMsg = () => t('webui.console.stopped');
 
 // 播放控制(quiet)跑超過這麼久才亮執行狀態列:按一下暫停不該整條 dock 閃一下,
 // 但卡住(等 token 鎖沒有上限、在等系統對話框)時一定要看得到在等什麼、也要按得到中止(review #65 第 1 點)。
@@ -105,7 +106,7 @@ export class Console {
     if (SYSTEM_DIALOG.some((p) => line.startsWith(p))) {
       const h = document.createElement('div');
       h.className = 'block__hint';
-      h.textContent = '可能在這台電腦跳出系統對話框(keychain / Music.app)';
+      h.textContent = t('webui.console.system_dialog');
       b.appendChild(h);
     }
     this.root.appendChild(b);
@@ -144,8 +145,9 @@ export class Console {
     // 以前是照送、吃 409,而被擋的那一次收尾時會把進行中那次的 job 與 hooks 清掉——中止、提示回答、
     // 頁面結果全跟著失效;連點兩下、或跑 sync 時第一次切到帳號頁就會撞到。
     if (this.running) {
-      this.notice(`正在執行 ${this.barCmd.textContent},等它結束` + (this.bar.hidden ? '' : '或按「中止」'));
-      const busy = [-1, '另一個命令執行中', 'busy'];
+      const command = this.barCmd.textContent;
+      this.notice(this.bar.hidden ? t('webui.console.busy_wait', { command }) : t('webui.console.busy_wait_stop', { command }));
+      const busy = [-1, t('webui.console.busy'), 'busy'];
       hooks.onExit?.(...busy);
       return busy;
     }
@@ -173,7 +175,7 @@ export class Console {
         await this.stream(r.body, b);
       }
     } catch (e) {
-      const msg = '連線中斷:' + e.message;
+      const msg = t('webui.console.disconnected', { err: e.message });
       this.exit(b, 1, msg, 'disconnected');
       document.body.dataset.connected = 'false';
       this.ex = [1, msg, 'disconnected'];
@@ -188,8 +190,8 @@ export class Console {
     // 串流結束才通知頁面:此刻伺服器已放開序列槽(runMu 在 handler return 前 Unlock,回應在那之後才收尾)、
     // 這邊的 running 也已歸零。在 exit 事件當下叫的話,onExit 裡再跑一個命令(帳號頁登入完刷新)
     // 會被上面的閘擋掉,或撞上伺服器還沒放的鎖(review #62 第 2 點)。
-    let ex = this.ex || [1, '串流在 exit 之前就結束了', 'disconnected'];
-    // 使用者自己中止的:頁面拿到的是「已中止」,不是一串「Get …: context canceled」(完整原文留在主控台)。
+    let ex = this.ex || [1, t('webui.console.stream_ended'), 'disconnected'];
+    // 使用者自己中止的:頁面拿到的是 cancelledMsg()(取消本身伺服器不送訊息;撞上的別的錯誤留在主控台)。
     // exit 0 = 命令其實做完了(中止落在不吃取消的那一段,例如 osascript),照「完成」算。
     if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]];
     if (!quiet || this.barShown) this.announce(shown, ex); // 按一下暫停不必念「完成:pause」
@@ -222,13 +224,13 @@ export class Console {
   // 輔助技術從第一刻就要知道。看得到的部分(調暗、狀態列、頂線)在 busyOn()。
   slotOn(shown, raw) {
     this.t0 = Date.now();
-    this.barCmd.title = `${raw}(到主控台看完整輸出)`;
+    this.barCmd.title = t('webui.console.bar_title', { command: raw });
     this.stopping = false; this.wrote = false; this.armed = false; this.barShown = false; this.lastAct = '';
     this.barCmd.textContent = shown;
     this.barAct.textContent = '';
     this.barProg.hidden = true;
     this.stopBtn.removeAttribute('aria-disabled');
-    this.stopBtn.textContent = '中止';
+    this.stopBtn.textContent = t('webui.console.stop');
     document.body.dataset.slot = '';
     // <select data-run>(語言選單)沒有 click 可以擋,換值就會送命令:直接停用。
     // ponytail: 停用會讓焦點離開它;換語言成功就重新載入,只有失敗那次焦點回不去。
@@ -244,7 +246,8 @@ export class Console {
     this.bar.hidden = false;
     document.body.dataset.busy = '';
     // 同一拍剛結束的那一次(onExit 接著跑的刷新、等著的自動讀取)的結果不能被蓋掉沒念到:接在前面。
-    this.barSR.textContent = (this.lastDone ? this.lastDone + '。' : '') + '執行中:' + this.barCmd.textContent;
+    const running = t('webui.console.sr_running', { command: this.barCmd.textContent });
+    this.barSR.textContent = this.lastDone ? t('webui.console.sr_after', { done: this.lastDone, running }) : running;
     this.lastDone = '';
   }
 
@@ -285,8 +288,9 @@ export class Console {
   // 結束的那一句給螢幕閱讀器(role=status)。
   announce(shown, ex) {
     const [code, , reason] = ex;
-    const done = isCancelled(ex) ? cancelledMsg() :reason === 'refused' ? '未執行' : (code === 0 ? '完成' : `結束(exit ${code})`);
-    this.lastDone = `${done}:${shown}`;
+    const status = isCancelled(ex) ? cancelledMsg() : reason === 'refused' ? t('webui.console.announce.refused')
+      : (code === 0 ? t('webui.console.announce.done') : t('webui.console.announce.exit', { code }));
+    this.lastDone = t('webui.console.announce.line', { status, command: shown });
     this.barSR.textContent = this.lastDone;
   }
 
@@ -301,9 +305,9 @@ export class Console {
     }
     if (reason === 'refused') { this.notice(msg); return; }
     if (!quiet && !this.root.closest('.page')?.hidden) return;
-    const where = quiet ? '' : '(完整輸出在主控台)';
-    if (isCancelled(ex)) this.notice(`已中止:${shown}`);
-    else if (code > 0) this.notice(`✗ ${shown}:${(msg || '').replace(/^Error: /, '')}${where}`);
+    const why = (msg || '').replace(/^Error: /, '');
+    if (isCancelled(ex)) this.notice(t('webui.console.report.stopped', { command: shown }));
+    else if (code > 0) this.notice(quiet ? t('webui.console.report.failed', { command: shown, msg: why }) : t('webui.console.report.failed_console', { command: shown, msg: why }));
   }
 
   async stream(body, b) {
@@ -340,7 +344,7 @@ export class Console {
         if (!b.parentNode && !this.promptHost) this.root.appendChild(b); // quiet 的區塊平常不掛上去;要問人就得看得到
         this.prompt(ev, b);
         // 別蓋掉「確定中止?」的警告。提示畫在頁面自己的容器裡時,那一頁就看得到原文,狀態列只說在等。
-        if (!this.stopping && !this.armed) this.barAct.textContent = this.promptHost ? '等你回答' : '等你回答:' + ev.title;
+        if (!this.stopping && !this.armed) this.barAct.textContent = this.promptHost ? t('webui.console.waiting') : t('webui.console.waiting_for', { title: ev.title });
         break;
       case 'prompt_closed':
         this.promptClosed(ev, b);
@@ -385,12 +389,12 @@ export class Console {
     let focus = null;
     switch (ev.kind) {
       case 'confirm': {
-        const yes = btn(ev.affirmative || '確定', ev.default === true ? 'btn--primary' : '', () => {
+        const yes = btn(ev.affirmative || t('webui.console.prompt.ok'), ev.default === true ? 'btn--primary' : '', () => {
           // 區塊裡有變更表、又按了肯定 = 答應寫入:之後的中止可能停在半套,stop() 要按第二次。
           if (b.querySelector('table')) this.wrote = true;
           answer(false, true);
         });
-        const no = btn(ev.negative || '取消', ev.default === false ? 'btn--primary' : '', () => answer(false, false));
+        const no = btn(ev.negative || t('changeset.confirm.cancel'), ev.default === false ? 'btn--primary' : '', () => answer(false, false));
         row.append(yes, no);
         focus = ev.default === false ? no : yes;
         break;
@@ -407,7 +411,7 @@ export class Console {
         inp.type = 'text'; inp.spellcheck = false; inp.autocomplete = 'off';
         inp.value = ev.default == null ? '' : String(ev.default);
         onKeys(inp, () => answer(false, inp.value));
-        row.append(inp, btn('確定', 'btn--primary', () => answer(false, inp.value)));
+        row.append(inp, btn(t('webui.console.prompt.ok'), 'btn--primary', () => answer(false, inp.value)));
         focus = inp;
         break;
       }
@@ -423,7 +427,7 @@ export class Console {
           inp.autocomplete = f.secret ? 'new-password' : 'off';
           inp.spellcheck = false;
           if (f.value) inp.value = f.value;                      // 重問時帶回上一輪的值(非 secret 欄)
-          if (f.filled) inp.placeholder = '已填,留空 = 沿用上次'; // secret 欄的值絕不回到頁面
+          if (f.filled) inp.placeholder = t('webui.console.prompt.filled'); // secret 欄的值絕不回到頁面
           onKeys(inp, submit);
           inputs[f.name] = inp;
           lab.appendChild(inp);
@@ -431,12 +435,12 @@ export class Console {
           if (!focus) focus = inp;
         });
         box.appendChild(fields);
-        row.appendChild(btn('送出', 'btn--primary', submit));
+        row.appendChild(btn(t('webui.console.prompt.submit'), 'btn--primary', submit));
         break;
       }
       default: break;
     }
-    row.appendChild(btn('✕ 關掉', 'btn--ghost', () => answer(true, null)));
+    row.appendChild(btn(t('webui.console.prompt.dismiss'), 'btn--ghost', () => answer(true, null)));
     box.appendChild(row);
     const host = this.promptHost || b;
     host.appendChild(box);
@@ -476,13 +480,13 @@ export class Console {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, cancel, value }),
       });
     } catch (e) { // fetch 在網路層失敗是 reject,不是 r.ok === false:自己收,讓控制項解鎖可以重送
-      this.notice('回答沒送到:' + e.message);
+      this.notice(t('webui.console.answer_failed', { err: e.message }));
       return false;
     }
     if (r.ok) return true;
     let msg = r.statusText;
     try { msg = (await r.json()).error || msg; } catch (_) { /* 非 JSON */ }
-    this.notice('回答沒送到:' + msg);
+    this.notice(t('webui.console.answer_failed', { err: msg }));
     return r.status !== 400; // 400 = 型別不合,讓使用者改;其他(404 / 409)不必重試
   }
 
@@ -503,7 +507,10 @@ export class Console {
     box.classList.add('is-closed');
     box.dataset.reason = reason;
     box.querySelectorAll('button,input').forEach((c) => { c.disabled = true; });
-    const text = { answered: '已回答', dismissed: '已關掉', timeout: '等待回答逾時,命令已取消', cancelled: '命令已取消', disconnected: '連線中斷,這一則已經失效' }[reason] || reason;
+    const text = {
+      answered: t('webui.console.closed.answered'), dismissed: t('webui.console.closed.dismissed'), timeout: t('webui.console.closed.timeout'),
+      cancelled: t('webui.console.closed.cancelled'), disconnected: t('webui.console.closed.disconnected'),
+    }[reason] || reason;
     const tag = document.createElement('div');
     tag.className = 'prompt__closed';
     tag.textContent = text;
@@ -515,7 +522,7 @@ export class Console {
     p.className = 'block__link';
     const a = document.createElement('a');
     a.href = ev.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.textContent = '在瀏覽器開啟授權頁:' + ev.url;
+    a.textContent = t('webui.console.open_url', { url: ev.url });
     p.appendChild(a);
     const host = this.promptHost || b;
     host.appendChild(p);
@@ -535,14 +542,14 @@ export class Console {
     if (cancelled) { b.dataset.exit = 'cancelled'; el.dataset.code = 'cancelled'; }
     const mark = code === 0 ? '✓' : (cancelled || code === 2 || code === 3 ? '·' : '✗');
     let text = `${mark} exit ${code}`;
-    // 取消原因本身(errWebCancelled:zh-TW「已取消」、en「cancelled」)或 context canceled 那串都只是在重複「已取消」,不印。
-    // ponytail: 比對兩種語系的文字,T3(計畫 §2.4 第 5 點)改成只看 reason。
-    if (cancelled) { text += ' · 已取消'; if (/context canceled|^(Error: )?(已取消|cancelled)$/.test(message || '')) message = ''; }
-    else if (reason === 'shutdown') text += ' · capy --web 已結束';
-    else if (reason === 'timeout') text += ' · 等待回答逾時';
-    else if (reason === 'stale') text += ' · 請重啟 capy --web';
+    // 取消本身(已取消、context canceled)伺服器不送訊息(計畫 §2.4 第 5 點):只看 reason,不比對跟著語系變的文字。
+    // 還有訊息 = 中止時剛好撞上別的錯誤,照印。
+    if (cancelled) text += ' · ' + t('web.err.cancelled');
+    else if (reason === 'shutdown') text += ' · ' + t('webui.console.exit.shutdown');
+    else if (reason === 'timeout') text += ' · ' + t('web.err.prompt_timeout');
+    else if (reason === 'stale') text += ' · ' + t('webui.console.restart');
     if (message) text += ' · ' + message.replace(/^Error: /, '');
-    if (code === 2 && /--yes/.test(message || '')) text += '(未套用:加 --yes 重跑)';
+    if (code === 2 && /--yes/.test(message || '')) text += t('webui.console.exit.needs_yes');
     el.textContent = text;
     b.appendChild(el);
     this.stick(b);
@@ -555,8 +562,10 @@ export class Console {
     el.className = 'block__exit';
     el.dataset.code = 'refused';
     el.setAttribute('role', 'status');
-    const why = { 401: 'token 不對或已失效', 403: '這個命令在 web 不提供', 409: '另一個命令執行中', 503: '請重啟 capy --web' }[status] || ('HTTP ' + status);
-    el.textContent = `· 未執行(${why})· ${msg}`;
+    const why = {
+      401: t('webui.console.refused.bad_token'), 403: t('webui.console.refused.not_offered'), 409: t('webui.console.busy'), 503: t('webui.console.restart'),
+    }[status] || ('HTTP ' + status);
+    el.textContent = t('webui.console.refused.line', { why, msg });
     b.appendChild(el);
     if (status === 503) document.body.dataset.stale = '';
     this.stick(b);
@@ -571,11 +580,11 @@ export class Console {
     // 已答應寫入:中止可能停在「平台已寫、Drive 未寫」的半套(計畫 Q24),要再按一次確認。
     if (this.wrote && !this.armed) {
       this.armed = true;
-      this.stopBtn.textContent = '確定中止?';
-      this.barAct.textContent = '已經開始寫入:現在中止可能只寫了一半,下一次 sync 會把差異列出來';
+      this.stopBtn.textContent = t('webui.console.stop_confirm');
+      this.barAct.textContent = t('webui.console.stop_warn');
       this.disarm = setTimeout(() => { // 過期:按鈕與活動列都還原,別留著一句看起來還在等確認的警告(review #65 第 2 點)
         this.armed = false;
-        this.stopBtn.textContent = '中止';
+        this.stopBtn.textContent = t('webui.console.stop');
         this.barAct.textContent = this.lastAct || '';
       }, 5000);
       return;
@@ -585,12 +594,12 @@ export class Console {
     // 不用 disabled:disabled 的按鈕會把焦點丟到 body,鍵盤使用者就失去位置,收尾時也交不回命令列。
     // 重複按由上面的 this.stopping 擋。
     this.stopBtn.setAttribute('aria-disabled', 'true');
-    this.stopBtn.textContent = '中止中…';
-    this.barAct.textContent = '已送出中止,等命令收尾';
+    this.stopBtn.textContent = t('webui.console.stopping');
+    this.barAct.textContent = t('webui.console.stop_sent');
     // 網路請求、等鎖、退避都會立刻停;已送出的 token 換發(最多 30 秒)、鑰匙圈與 Music.app 的 osascript
     // 不吃取消,要等它們自己回來(review #65 第 3 點:換發是這個 PR 自己造出來的等待,要點名)。
     this.stuck = setTimeout(() => {
-      this.barAct.textContent = '命令還沒停下:可能正在換發登入 token(最多 30 秒),或在等這台電腦上的系統對話框(鑰匙圈 / Music.app);真的卡住就在終端機按 Ctrl-C 結束 capy --web';
+      this.barAct.textContent = t('webui.console.stop_stuck');
     }, 8000);
     if (this.job) await this.cancel();
   }
@@ -602,11 +611,11 @@ export class Console {
       // 404 = 那個 job 已經收尾(中止與結束擦身而過),串流馬上就會結束,不必多說。
       if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
     } catch (e) { // 同 answer():裸 await 在斷線時是 unhandled rejection,使用者只看到「按了沒反應」
-      this.notice('中止沒送到:' + e.message);
+      this.notice(t('webui.console.stop_failed', { err: e.message }));
       clearTimeout(this.stuck);
       this.stopping = false;
       this.stopBtn.removeAttribute('aria-disabled');
-      this.stopBtn.textContent = '中止';
+      this.stopBtn.textContent = t('webui.console.stop');
     }
   }
 }

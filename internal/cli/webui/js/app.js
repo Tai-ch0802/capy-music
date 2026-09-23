@@ -1,6 +1,6 @@
 // app.js:token 引導、/api/commands、命令列;命令的串流與區塊在 console.js。
 import { Console } from './console.js';
-import { loadI18n, applyStatic } from './i18n.js';
+import { loadI18n, applyStatic, t } from './i18n.js';
 import { languageMenu } from './lang.js';
 import { Player } from './player.js';
 import { initISRC } from './pages/isrc.js';
@@ -33,7 +33,14 @@ function bootToken() {
 
 async function loadCommands() {
   const r = await api.fetch('/api/commands');
-  if (r.status === 401) { notice('token 不對或已失效:回到啟動 capy --web 時印的網址'); return; }
+  // /api/i18n 也要 token:token 不對時目錄讀不到(t() 只會回 key 本身)。401 的回應本身就帶著伺服器語系的那一句
+  // (api() 的 web.err.bad_token),照印——跟 console.js 的 refused() 一樣;t() 只是回應不是 JSON 時的退路。
+  if (r.status === 401) {
+    let msg = '';
+    try { msg = (await r.json()).error || ''; } catch (_) { /* 非 JSON */ }
+    notice(msg || t('web.err.bad_token'));
+    return;
+  }
   const d = await r.json();
   document.getElementById('version').textContent = d.version;
   document.getElementById('default-provider').textContent = d.default_provider;
@@ -61,14 +68,14 @@ const con = new Console(document.getElementById('console'), api, notice);
 languageMenu(document.getElementById('lang'), con);
 const input = document.getElementById('cmd');
 const runBtn = document.getElementById('run');
-const busyHint = () => '還有事情在跑:等它結束,或按底部的「中止」';
+const busyHint = () => t('webui.shell.busy_hint');
 
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
 // 執行中命令列照樣可以打字(設計規格 §5 / §10):Enter 只說明、不排隊、不並行,打好的那一行留著。
 // 執行狀態列與中止鈕由 Console.run 管,頁面按鈕發起的命令也一樣。
 async function submit() {
   if (con.running) { notice(busyHint()); return; }
-  if (document.body.hasAttribute('data-stale')) { notice('binary 已更新,這個 capy --web 仍是舊版,請重啟'); return; }
+  if (document.body.hasAttribute('data-stale')) { notice(t('webui.shell.stale')); return; }
   const line = input.value.trim();
   input.value = '';
   const [, , reason] = await con.run(line);
@@ -180,7 +187,7 @@ loadCommands()
     if (d && d.default_provider) providers.current = d.default_provider;
     if (d && d.providers) providers.list = d.providers;
   })
-  .catch((e) => notice('連不上 capy --web:' + e.message))
+  .catch((e) => notice(t('webui.shell.unreachable', { err: e.message })))
   .finally(() => {
     route();
     player.start();

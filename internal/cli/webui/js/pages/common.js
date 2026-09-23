@@ -1,8 +1,10 @@
 // common.js:頁面共用的小工具。頁面本身不打 /api/run 以外的東西——表單只負責組出一條 capy 命令,
 // 輸出的呈現靠 Console 的 hooks。頁面的第一眼不出現命令字串(決策 45):按鈕說人話,命令原文在主控台。
+import { t } from '../i18n.js';
 
 // 平台的顯示名稱:文字就好,不用官方標誌(決策 48)。表寫在函式裡、用到時才算(i18n.js 開頭的載入順序鐵則)。
-export const providerName = (id) => ({ spotify: 'Spotify', apple: 'Apple Music', local: '本機曲庫', google: 'Google Drive' })[id] || id;
+// 本機曲庫跟 CLI 用同一個 key(web.go 的 webSharedKeys);平台名本身不翻。
+export const providerName = (id) => ({ spotify: 'Spotify', apple: 'Apple Music', local: t('local.display_name'), google: 'Google Drive' })[id] || id;
 export const el = (tag, cls, text) => {
   const x = document.createElement(tag);
   if (cls) x.className = cls;
