@@ -79,7 +79,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       const t = tracks[it.cid] || {};
       return [it.cid, t.title || '(本機沒有這首的資料)', (t.artists || []).join(', '), t.album || '', String(t.duration_ms || 0)];
     });
-    right.appendChild(wrapTable(['CID', '曲名', '藝人', '專輯', '時長'], rows));
+    right.appendChild(wrapTable(['CID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], rows));
     const names = Object.keys(pl.links || {});
     if (names.length) {
       right.appendChild(btn(`看 ${providerName(names[0])} 上的內容`, 'btn--ghost', () =>

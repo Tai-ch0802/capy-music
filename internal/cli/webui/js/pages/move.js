@@ -150,12 +150,12 @@ export function initMove(root, api, con, notice, providers) {
       { args: ['auth', 'login', id], label: `連接 ${providerName(id)}`, promptHost: prompts });
   }
 
-  // 讀一個平台的清單(pl list 的表:ID / 名稱 / 曲數 / 擁有者)。
+  // 讀一個平台的清單(pl list 的表:ID / NAME / TRACKS / OWNER;欄名是機器欄位,不跟語系,決策 50)。
   function loadLists(prov, done) {
     let rows = null;
     con.run('', {
       onTable: (h, r) => {
-        const [id, name, count] = [h.indexOf('ID'), h.indexOf('名稱'), h.indexOf('曲數')];
+        const [id, name, count] = [h.indexOf('ID'), h.indexOf('NAME'), h.indexOf('TRACKS')];
         rows = r.map((x) => ({ id: x[id], name: x[name], count: x[count] }));
       },
       onExit: (code, msg) => done(code === 0 ? rows || [] : null, msg),

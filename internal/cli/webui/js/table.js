@@ -27,7 +27,7 @@ export function renderTable(header, rows) {
       const td = document.createElement('td');
       const h = header[i] || '';
       let v = r[i] == null ? '' : r[i];
-      if ((h === '時長' || h === 'DURATION') && /^\d+$/.test(v)) { v = mmss(Number(v)); td.className = 'num'; }
+      if (h === 'DURATION' && /^\d+$/.test(v)) { v = mmss(Number(v)); td.className = 'num'; }
       if (ATOMIC.test(h)) td.className = 'atomic';
       td.textContent = v;
       tr.appendChild(td);

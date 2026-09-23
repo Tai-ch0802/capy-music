@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 const (
@@ -46,7 +48,7 @@ var (
 // downloadClient:release 檔約 20 MB,5 分鐘綽綽有餘;沒有 Timeout 的話半開連線會無聲卡死。
 var downloadClient = &http.Client{Timeout: 5 * time.Minute}
 
-var errGitHubNotFound = errors.New("GitHub 回 404")
+var errGitHubNotFound = i18n.Errorf("update.err.github_not_found")
 
 // devStampRe:capy update --dev / 手動安裝的版本戳記 YYYY.MM.DD-<sha7>;正式版是 tag 去掉 v 的 semver。
 var devStampRe = regexp.MustCompile(`^\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7}$`)

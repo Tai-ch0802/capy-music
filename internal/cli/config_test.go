@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -72,8 +74,8 @@ func TestConfigGetAndListPlainText(t *testing.T) {
 		t.Fatalf("get 非 TTY 應印裸值,得到 %q", out)
 	}
 	_ = config.Save(&config.Config{DefaultProvider: "apple", SpotifyClientID: "cid", AppleStorefront: "tw"})
-	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\n" {
-		t.Fatalf("list 非 TTY 應列出四個非機密欄位 key\\tvalue,得到 %q", out)
+	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\nlanguage\t\n" {
+		t.Fatalf("list 非 TTY 應列出五個非機密欄位 key\\tvalue(language 加在最後,既有的行位置不動),得到 %q", out)
 	}
 	if out, _ := runCLI(t, "config", "get", "spotify_client_id"); out != "cid\n" {
 		t.Fatalf("get 應支援三個欄位,得到 %q", out)
@@ -154,5 +156,103 @@ func TestLoginHintsDefaultProviderOnlyWhenUnset(t *testing.T) {
 	out, _ = runCLI(t, "auth", "login", "spotify")
 	if strings.Contains(out, "config set default_provider") {
 		t.Fatalf("已設預設平台就不該再提示:%q", out)
+	}
+}
+
+// withLanguage:換語系並在測試結束還原(i18n 是 process 全域;這個 repo 沒有 t.Parallel)。
+func withLanguage(t *testing.T, lang string) {
+	t.Helper()
+	prev := i18n.Current()
+	if !i18n.Set(lang) {
+		t.Fatalf("不支援 %s", lang)
+	}
+	t.Cleanup(func() { i18n.Set(prev) })
+}
+
+// hasCJK:英文模式的輸出不該有中日韓字元(含 、。 與全形標點)。
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) || (r >= 0x3000 && r <= 0x303F) || (r >= 0xFF00 && r <= 0xFFEF) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestConfigSetLanguage(t *testing.T) {
+	setCLITestConfig(t)
+	withLanguage(t, i18n.Current()) // 只為了還原:config set language 會當場換語系
+	if out, err := runCLI(t, "config", "set", "language", "EN"); err != nil || out != "language = en\n" || i18n.Current() != "en" {
+		t.Fatalf("大小寫寬鬆、印存下去的值、當場換語系:%v %q %s", err, out, i18n.Current())
+	}
+	if out, err := runCLI(t, "config", "set", "language", "zh_tw"); err != nil || out != "language = zh-TW\n" || i18n.Current() != "zh-TW" {
+		t.Fatalf("底線也認:%v %q %s", err, out, i18n.Current())
+	}
+	if out, _ := runCLI(t, "config", "get", "language"); out != "zh-TW\n" {
+		t.Fatalf("存正規化後的代碼:%q", out)
+	}
+	_, err := runCLI(t, "config", "set", "language", "zh-CN") // 不能被配到相近的 zh-TW
+	if err == nil || !strings.Contains(err.Error(), "en 或 zh-TW") || !strings.Contains(err.Error(), `"zh-CN"`) {
+		t.Fatalf("不支援的語系要被拒並列出可用的:%v", err)
+	}
+	if c, _ := config.Load(); c.Language != "zh-TW" || i18n.Current() != "zh-TW" {
+		t.Fatalf("被拒的 set 不得落地、也不換語系:%q %s", c.Language, i18n.Current())
+	}
+}
+
+// TestApplyLanguage:Execute 與網頁 job 在建命令樹之前走這裡。runCLI 不經 Execute,所以直接測。
+func TestApplyLanguage(t *testing.T) {
+	setCLITestConfig(t)
+	withLanguage(t, i18n.Current())
+	dir, _ := config.Dir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, file, want string
+		warn             bool
+	}{
+		{"沒有 config.json", "", i18n.Default(), false},
+		{"en", `{"language":"en"}`, "en", false},
+		{"手改成底線", `{"language":"zh_tw"}`, "zh-TW", false},
+		{"不認得的值", `{"language":"klingon"}`, i18n.Default(), true},
+		{"config 壞掉:由讀它的命令報,這裡不吵", `{not json`, i18n.Default(), false},
+	} {
+		_ = os.Remove(filepath.Join(dir, "config.json"))
+		if c.file != "" {
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(c.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		i18n.Set("en") // 起點刻意跟預期不同:證明是 applyLanguage 設的
+		if c.want == "en" {
+			i18n.Set("zh-TW")
+		}
+		warn := applyLanguage()
+		if i18n.Current() != c.want || (warn != "") != c.warn || strings.Contains(warn, "\n") {
+			t.Errorf("%s:語系 %s(要 %s)、提示 %q", c.name, i18n.Current(), c.want, warn)
+		}
+		if c.warn && (!strings.Contains(warn, `"klingon"`) || !strings.Contains(warn, "capy config set language")) {
+			t.Errorf("%s:提示要講是哪個值、怎麼改:%q", c.name, warn)
+		}
+	}
+}
+
+// TestConfigInEnglish:搬進目錄的字在英文模式下整段是英文(T2 每搬一區就在這類測試加一組命令)。
+func TestConfigInEnglish(t *testing.T) {
+	setCLITestConfig(t)
+	withLanguage(t, "en")
+	_, err := runCLI(t, "config", "set", "theme", "dark")
+	if err == nil || err.Error() != `unknown setting "theme" (settable: default_provider, local_root, language)` {
+		t.Fatalf("英文的錯誤訊息:%v", err)
+	}
+	_, err = runCLI(t, "config", "set", "language", "fr")
+	if err == nil || err.Error() != `language must be en or zh-TW, got "fr"` {
+		t.Fatalf("英文的錯誤訊息:%v", err)
+	}
+	for _, args := range [][]string{{"config", "--help"}, {"config", "set", "--help"}, {"config", "list"}} {
+		if out, err := runCLI(t, args...); err != nil || hasCJK(out) {
+			t.Errorf("capy %s 在英文模式下不該有中文:%v %q", strings.Join(args, " "), err, out)
+		}
 	}
 }

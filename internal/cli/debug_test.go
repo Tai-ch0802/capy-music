@@ -106,7 +106,7 @@ func TestDebugLookupISRCPrintsTracksWithISRC(t *testing.T) {
 
 	f.tracks = nil
 	out, err = runCLI(t, "debug", "lookup-isrc", "TWA472400123")
-	if err != nil || !strings.Contains(out, "沒有曲目符合") {
+	if err != nil || !strings.Contains(out, "has no track matching") {
 		t.Fatalf("沒有命中要說明、exit 0:%q %v", out, err)
 	}
 

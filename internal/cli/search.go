@@ -48,6 +48,9 @@ func stdoutIsTTY(cmd *cobra.Command) bool {
 	return false // 測試 buffer / pipe 一律純文字
 }
 
+// trackHeader:search 與 pl show 的表頭。欄名是機器欄位,不跟語系(決策 50;網頁照欄名找欄位)。
+var trackHeader = []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION"}
+
 func trackRows(tracks []provider.Track, tty bool) [][]string {
 	rows := make([][]string, len(tracks))
 	for i, tr := range tracks {
@@ -85,7 +88,7 @@ func newSearchCmd() *cobra.Command {
 			_ = cc.Save()
 			tty := stdoutIsTTY(cmd)
 			// TSV 欄序(文件化):id, title, artists, album, duration_ms
-			return ui.Table(cmd.OutOrStdout(), tty, []string{"ID", "曲名", "藝人", "專輯", "時長"}, trackRows(tracks, tty))
+			return ui.Table(cmd.OutOrStdout(), tty, trackHeader, trackRows(tracks, tty))
 		},
 	}
 	cmd.Flags().Int("limit", 10, "結果數(單次 API 上限 10,超過自動分頁)")

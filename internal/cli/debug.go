@@ -18,7 +18,7 @@ import (
 func newDebugCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "debug",
-		Short:  "開發驗證用指令(介面不保證穩定)",
+		Short:  "Developer verification commands (interface not guaranteed stable)",
 		Hidden: true,
 	}
 	cmd.AddCommand(newDebugAppleTokenCmd())
@@ -32,7 +32,7 @@ func newDebugCmd() *cobra.Command {
 func newDebugLookupISRCCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lookup-isrc <isrc>",
-		Short: "以 ISRC 反查曲目(P4 resolver Layer 1 驗收用)",
+		Short: "Look up tracks by ISRC (P4 resolver Layer 1 acceptance)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := getProvider(cmd)
@@ -48,7 +48,7 @@ func newDebugLookupISRCCmd() *cobra.Command {
 				return friendlyErr(p.ID(), err)
 			}
 			if len(tracks) == 0 {
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s 沒有曲目符合 ISRC %s\n", p.DisplayName(), args[0])
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s has no track matching ISRC %s\n", p.DisplayName(), args[0])
 				return nil
 			}
 			tty := stdoutIsTTY(cmd)
@@ -73,11 +73,11 @@ func newDebugLookupISRCCmd() *cobra.Command {
 func newDebugGoogleClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "google-client",
-		Short: "印出內建的 Google client ID(release 注入檢查用;不印 secret)",
+		Short: "Print the built-in Google client ID (release injection check; never prints the secret)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if auth.BuiltinGoogleClientID == "" {
-				return errors.New("這顆 binary 沒有內建 Google client(go install / 自己 build 的都沒有):auth login google 會走 BYO 精靈")
+				return errors.New("this binary has no built-in Google client (go install and local builds never do): auth login google will use the BYO wizard")
 			}
 			if state, _ := cmd.Flags().GetBool("secret-state"); state {
 				if auth.BuiltinGoogleClientSecret == "" {
@@ -91,7 +91,7 @@ func newDebugGoogleClientCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("secret-state", false, "改印內建 secret 有沒有注入(set / unset),不印 secret 本身")
+	cmd.Flags().Bool("secret-state", false, "print whether the built-in secret was injected (set / unset) instead; never the secret itself")
 	return cmd
 }
 
@@ -100,25 +100,25 @@ func newDebugGoogleClientCmd() *cobra.Command {
 func newDebugAppleTokenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apple-token",
-		Short: "印出 keychain 裡的 Apple developer / user token(scripts/p0 用)",
+		Short: "Print the Apple developer / user token from the keychain (for scripts/p0)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			asUser, _ := cmd.Flags().GetBool("user")
 			if asUser {
 				tok, err := secret.Get(apple.KeyMusicUserToken)
 				if err != nil {
-					return errors.New("keychain 沒有 user token — 執行 capy auth login apple")
+					return errors.New("no user token in the keychain — run capy auth login apple")
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), tok)
 				return nil
 			}
 			dev, _, err := apple.DeveloperToken(time.Now())
 			if err != nil {
-				return fmt.Errorf("keychain 沒有可用的 developer token — 執行 capy auth login apple:%w", err)
+				return fmt.Errorf("no usable developer token in the keychain — run capy auth login apple: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), dev)
 			return nil
 		},
 	}
-	cmd.Flags().Bool("user", false, "印 user token(media-user-token)而非 developer token")
+	cmd.Flags().Bool("user", false, "print the user token (media-user-token) instead of the developer token")
 	return cmd
 }

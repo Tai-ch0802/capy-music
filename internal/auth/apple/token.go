@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -19,7 +20,7 @@ const (
 	KeyMusicUserToken = "apple.music_user_token"
 )
 
-var ErrDevTokenExpired = errors.New("developer token 已過期")
+var ErrDevTokenExpired = i18n.Errorf("apple.err.dev_token_expired")
 
 type storedDevToken struct {
 	Token string `json:"token"`

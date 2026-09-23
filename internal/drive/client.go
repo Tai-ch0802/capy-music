@@ -25,6 +25,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -37,9 +38,9 @@ const (
 
 var (
 	// ErrStorageQuota:403 storageQuotaExceeded。呼叫端可讀、可 dry-run,不可上傳。
-	ErrStorageQuota = errors.New("Google Drive 空間已滿,無法上傳(仍可讀取與 dry-run);清出空間後再試")
+	ErrStorageQuota = i18n.Errorf("drive.err.storage_quota")
 	// ErrAPINotEnabled:403 accessNotConfigured;包起來的 Google 訊息含啟用連結。
-	ErrAPINotEnabled = errors.New("Google Drive API 尚未在你的 Google Cloud 專案啟用")
+	ErrAPINotEnabled = i18n.Errorf("drive.err.api_not_enabled")
 
 	// Stderr:警告輸出(stderr 不污染 TSV)。測試替換點。
 	Stderr io.Writer = os.Stderr

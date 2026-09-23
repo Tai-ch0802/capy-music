@@ -12,11 +12,13 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // ErrInterrupted:使用者在檢視窗格裡按了 Ctrl-C。命令要跟著結束(exit 130,同 SIGINT),
 // 不可再往下問確認、寫入。
-var ErrInterrupted = errors.New("已中斷")
+var ErrInterrupted = i18n.Errorf("ui.err.interrupted")
 
 // TableOption:Table 的選項。
 type TableOption func(*tableConfig)
@@ -209,7 +211,7 @@ func atomicHeader(h string) bool {
 // keepHeader:最該保留寬度的欄,最後才縮 —— 曲目 / 清單的名字(UX 計畫 R2)。
 func keepHeader(h string) bool {
 	switch h {
-	case "曲名", "名稱", "TITLE", "NAME":
+	case "TITLE", "NAME":
 		return true
 	}
 	return false

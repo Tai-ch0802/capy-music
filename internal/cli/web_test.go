@@ -24,6 +24,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/provider/local"
@@ -228,7 +229,7 @@ func TestWebRunStreamsStdoutStderrTableAndExit(t *testing.T) {
 		t.Fatalf("要有 table 事件:%v", events)
 	}
 	hdr, _ := json.Marshal(tb["header"])
-	if string(hdr) != `["ID","曲名","藝人","專輯","時長"]` {
+	if string(hdr) != `["ID","TITLE","ARTISTS","ALBUM","DURATION"]` {
 		t.Errorf("table 標題就是 ui.Table 的 header 切片:%s", hdr)
 	}
 	rows := tb["rows"].([]any)
@@ -441,6 +442,64 @@ func TestWebCommandsListExcludesHiddenAndAutoFlag(t *testing.T) {
 	}
 	if names["auto"] || !names["client-id"] {
 		t.Errorf("Hidden flag --auto 不列、--client-id 要列:%v", names)
+	}
+}
+
+// TestWebLanguageFollowsConfig(決策 50):job 在建命令樹之前重讀 config 的 language;/api/commands 的說明從
+// Serve 前每個語系各算一份的清單裡照 config 挑,不在 Serve 後重建命令樹。
+func TestWebLanguageFollowsConfig(t *testing.T) {
+	setCLITestConfig(t)
+	withLanguage(t, i18n.Current())
+	_, c := startWeb(t)
+	short := func() string {
+		t.Helper()
+		resp := c.req(context.Background(), http.MethodGet, "/api/commands", nil, nil)
+		defer resp.Body.Close()
+		var d struct{ Commands []webCommand }
+		if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+			t.Fatal(err)
+		}
+		for _, wc := range d.Commands {
+			if wc.Path == "capy config set" {
+				return wc.Short
+			}
+		}
+		t.Fatal("要有 capy config set")
+		return ""
+	}
+	exitMsg := func(args ...string) string {
+		t.Helper()
+		_, events, _ := c.run(map[string]any{"args": args})
+		msg, _ := evExit(t, events)["message"].(string)
+		return msg
+	}
+	if got := short(); got != "寫入設定值(可設:default_provider、local_root、language)" {
+		t.Fatalf("沒設 language:測試二進位的預設是 zh-TW:%q", got)
+	}
+	if msg := exitMsg("config", "set", "language", "en"); msg != "" { // T3 的語言選單跑的就是這個命令
+		t.Fatalf("config set language en:%q", msg)
+	}
+	if got := short(); got != "Change a setting (settable: default_provider, local_root, language)" {
+		t.Fatalf("切成英文後 /api/commands 要是英文:%q", got)
+	}
+	if msg := exitMsg("config", "set", "theme", "dark"); msg != `Error: unknown setting "theme" (settable: default_provider, local_root, language)` {
+		t.Fatalf("下一個 job 就是英文:%q", msg)
+	}
+	if err := config.Save(&config.Config{Language: "zh-TW"}); err != nil { // 終端機那邊改回中文
+		t.Fatal(err)
+	}
+	if got := short(); !hasCJK(got) {
+		t.Fatalf("終端機改的 config 也要看得到:%q", got)
+	}
+	if msg := exitMsg("config", "set", "theme", "dark"); !strings.Contains(msg, "未知的設定") {
+		t.Fatalf("job 每次重讀 config:%q", msg)
+	}
+	if err := config.Save(&config.Config{Language: "klingon"}); err != nil {
+		t.Fatal(err)
+	}
+	_, events, _ := c.run(map[string]any{"args": []string{"config", "get", "language"}})
+	if stderr := evText(events, "stderr"); strings.Count(stderr, `"klingon"`) != 1 || evText(events, "stdout") != "klingon\n" {
+		t.Fatalf("不認得的值:job 的 stderr 提示一次、照預設語系跑:%q", stderr)
 	}
 }
 
@@ -1414,7 +1473,7 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(pl), `[]string{"ID", "名稱", "曲數", "擁有者"}`) || !strings.Contains(move, "[h.indexOf('ID'), h.indexOf('名稱'), h.indexOf('曲數')]") {
+	if !strings.Contains(string(pl), `[]string{"ID", "NAME", "TRACKS", "OWNER"}`) || !strings.Contains(move, "[h.indexOf('ID'), h.indexOf('NAME'), h.indexOf('TRACKS')]") {
 		t.Error("pl list 的欄名與 move.js 的 loadLists() 要一致")
 	}
 }

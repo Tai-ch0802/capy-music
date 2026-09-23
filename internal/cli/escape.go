@@ -17,6 +17,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -89,7 +90,7 @@ func fileRefOf(name string) (canon.FileRef, bool) {
 	return canon.FileRef{}, false
 }
 
-var errNothingLocal = errors.New("本機沒有任何 canonical 資料(沒有 state.db 或它是空的)")
+var errNothingLocal = i18n.Errorf("escape.err.nothing_local")
 
 // retainedHint:找得到升版時保留的舊版快取就講出來——三個命令互相指路、資料卻躺在旁邊沒人提,是最糟的體驗。
 func retainedHint() string {

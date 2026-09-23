@@ -14,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // ── job 與 SSE ──
@@ -33,10 +35,10 @@ type webJob struct {
 }
 
 var (
-	errWebCancelled  = errors.New("已取消")    // 使用者按中止 / 關分頁
-	errWebShutdown   = errors.New("伺服器關閉")  // SIGINT / SIGTERM
-	errPromptTimeout = errors.New("等待回答逾時") // T3b:job 級提示逾時
-	errSSEClosed     = errors.New("串流已關閉")
+	errWebCancelled  = i18n.Errorf("web.err.cancelled")      // 使用者按中止 / 關分頁
+	errWebShutdown   = i18n.Errorf("web.err.shutdown")       // SIGINT / SIGTERM
+	errPromptTimeout = i18n.Errorf("web.err.prompt_timeout") // T3b:job 級提示逾時
+	errSSEClosed     = i18n.Errorf("web.err.sse_closed")
 )
 
 // sseWriter:同一個 ResponseWriter 會被 handler goroutine 與(經 webGlobalStderr)面板輪詢 goroutine 寫,
@@ -217,7 +219,8 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusServiceUnavailable, webStaleMsg)
 		return
 	}
-	resetDefaultProvider() // 長駐行程要看到終端機改的 config.json
+	resetDefaultProvider()      // 長駐行程要看到終端機改的 config.json
+	langWarn := applyLanguage() // 同上;語系要在建命令樹之前定(決策 50)
 	root := newRootCmd()
 	path, ok := s.allowed(root, args)
 	if !ok {
@@ -255,6 +258,9 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	root.SetOut(&webStdout{webStream{sse, "stdout"}})
 	root.SetErr(&webStream{sse, "stderr"})
+	if langWarn != "" {
+		fmt.Fprintln(root.ErrOrStderr(), langWarn)
+	}
 	root.SetArgs(args)
 	err := root.ExecuteContext(jobCtx)
 	code, msg := ExitCode(err)

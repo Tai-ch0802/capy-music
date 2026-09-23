@@ -20,6 +20,7 @@ type Config struct {
 	GoogleEmail     string `json:"google_email,omitempty"`     // 目前登入的 Google 帳號(非機密;§5「登錯帳號」的唯一偵測手段,Q8 採 A)
 	DeviceID        string `json:"device_id,omitempty"`        // ULID,首次需要時產生;CAPY_CONFIG_DIR 換目錄 = 新裝置(不可沿用已刪的 install_id)
 	LocalRoot       string `json:"local_root,omitempty"`       // P6 決策 35:本機曲庫目錄(*.m3u8 + library.json);非機密
+	Language        string `json:"language,omitempty"`         // 決策 50:介面語系(BCP 47,如 en、zh-TW);空 = i18n.Default()
 }
 
 // Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。

@@ -18,6 +18,7 @@ import (
 	sqlite "modernc.org/sqlite" // 純 Go、無 cgo(spec §2)
 
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 const (
@@ -51,8 +52,8 @@ type Store struct {
 var Stderr io.Writer = os.Stderr
 
 var (
-	ErrNoDB           = errors.New("本機沒有 state.db")
-	ErrSchemaMismatch = errors.New("本機 state.db 的 schema 版本與這個 capy 不同")
+	ErrNoDB           = i18n.Errorf("store.err.no_db")
+	ErrSchemaMismatch = i18n.Errorf("store.err.schema_mismatch")
 )
 
 // OpenReadOnly:唯讀開法,給逃生口(export、drive init)用——不建檔、不自癒:壞檔不刪、版本不符不改名,任何不對就回錯、

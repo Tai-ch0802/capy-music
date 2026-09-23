@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -54,9 +55,9 @@ type GoogleClient struct {
 
 var (
 	// ErrGoogleScope:Google 回傳的授權少了 drive.appdata(使用者在同意畫面取消勾選)。不落地,提示重登。
-	ErrGoogleScope = errors.New("Google 授權缺 drive.appdata(同意畫面請勾選「查看及管理應用程式自己的設定資料」),請重新 capy auth login google")
+	ErrGoogleScope = i18n.Errorf("auth.err.google_scope")
 	// ErrGoogleGrant:refresh token 失效(invalid_grant)。訊息由 explainGoogleGrant 依 token 年齡補上最可能的原因。
-	ErrGoogleGrant = errors.New("Google refresh token 已失效")
+	ErrGoogleGrant = i18n.Errorf("auth.err.google_grant")
 )
 
 func googleOAuthConfig(c GoogleClient, redirectURL string) *oauth2.Config {
@@ -159,7 +160,7 @@ func emailFromIDToken(tok *oauth2.Token) string {
 
 // ErrGoogleClient:client id / secret 不符(invalid_client)。精靈允許 secret 留空、logout 會刪 secret、
 // Cloud Console 也能重新產生 secret——這三條路都會走到這裡,原始訊息完全看不出下一步。
-var ErrGoogleClient = errors.New("Google 不認這組 client id / secret(invalid_client)")
+var ErrGoogleClient = i18n.Errorf("auth.err.google_client")
 
 // explainGoogleClient:invalid_client → 講明下一步;其他錯誤原樣回傳。
 func explainGoogleClient(err error) error {

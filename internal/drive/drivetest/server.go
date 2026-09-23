@@ -145,15 +145,15 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	s.ListCalls++
 	q := r.URL.Query()
 	if q.Get("spaces") != "appDataFolder" {
-		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list 需要 spaces=appDataFolder")
+		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list needs spaces=appDataFolder")
 		return
 	}
 	if !strings.Contains(q.Get("fields"), "files(") {
-		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list 沒帶 fields=(真 Drive 會只回四個欄位)")
+		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list without fields= (the real Drive returns only four fields)")
 		return
 	}
 	if !strings.HasPrefix(q.Get("q"), "trashed = false") {
-		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list 沒帶 trashed = false(v3 預設會回垃圾桶裡的檔)")
+		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: list without trashed = false (v3 returns trashed files by default)")
 		return
 	}
 	match, err := parseQuery(q.Get("q"))
@@ -192,7 +192,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	name, _ := meta["name"].(string)
 	parents, _ := meta["parents"].([]any)
 	if name == "" || !slices.Contains(parents, any("appDataFolder")) {
-		writeErr(w, http.StatusBadRequest, "invalid", fmt.Sprintf("fake drive: create 需要 name 與 parents=[appDataFolder],得 %v", meta))
+		writeErr(w, http.StatusBadRequest, "invalid", fmt.Sprintf("fake drive: create needs name and parents=[appDataFolder], got %v", meta))
 		return
 	}
 	s.seq++
@@ -226,7 +226,7 @@ func (s *Server) update(w http.ResponseWriter, r *http.Request, id string) {
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request, id string) {
 	if r.URL.Query().Get("alt") != "media" {
-		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: 只支援 alt=media")
+		writeErr(w, http.StatusBadRequest, "invalid", "fake drive: only alt=media is supported")
 		return
 	}
 	f := s.find(id)
@@ -252,27 +252,27 @@ func (s *Server) del(w http.ResponseWriter, id string) {
 func parseUpload(r *http.Request) (map[string]any, []byte, error) {
 	q := r.URL.Query()
 	if q.Get("uploadType") != "multipart" || !strings.Contains(q.Get("fields"), "version") {
-		return nil, nil, fmt.Errorf("fake drive: upload 需要 uploadType=multipart 與含 version 的 fields=,得 %q", r.URL.RawQuery)
+		return nil, nil, fmt.Errorf("fake drive: upload needs uploadType=multipart and fields= including version, got %q", r.URL.RawQuery)
 	}
 	mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mt != "multipart/related" {
-		return nil, nil, fmt.Errorf("fake drive: 要 multipart/related,得 %q", r.Header.Get("Content-Type"))
+		return nil, nil, fmt.Errorf("fake drive: want multipart/related, got %q", r.Header.Get("Content-Type"))
 	}
 	mr := multipart.NewReader(r.Body, params["boundary"])
 	p1, err := mr.NextPart()
 	if err != nil {
-		return nil, nil, fmt.Errorf("fake drive: 缺 metadata 段:%w", err)
+		return nil, nil, fmt.Errorf("fake drive: missing metadata part: %w", err)
 	}
 	if ct := p1.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		return nil, nil, fmt.Errorf("fake drive: metadata 段要 application/json,得 %q", ct)
+		return nil, nil, fmt.Errorf("fake drive: metadata part must be application/json, got %q", ct)
 	}
 	var meta map[string]any
 	if err := json.NewDecoder(p1).Decode(&meta); err != nil {
-		return nil, nil, fmt.Errorf("fake drive: metadata 不是 JSON:%w", err)
+		return nil, nil, fmt.Errorf("fake drive: metadata is not JSON: %w", err)
 	}
 	p2, err := mr.NextPart()
 	if err != nil {
-		return nil, nil, fmt.Errorf("fake drive: 缺內容段:%w", err)
+		return nil, nil, fmt.Errorf("fake drive: missing content part: %w", err)
 	}
 	content, err := io.ReadAll(p2)
 	if err != nil {
@@ -316,14 +316,14 @@ func parseQuery(q string) (func(*file) bool, error) {
 			preds = append(preds, func(f *file) bool { return f.props[k] == v })
 			rest = rest[len(m[0]):]
 		} else {
-			return nil, fmt.Errorf("fake drive: 不支援的 q 語法:%q", rest)
+			return nil, fmt.Errorf("fake drive: unsupported q syntax: %q", rest)
 		}
 		if rest == "" {
 			break
 		}
 		var ok bool
 		if rest, ok = strings.CutPrefix(rest, " and "); !ok || rest == "" {
-			return nil, fmt.Errorf("fake drive: q 子句之間要 ' and ':%q", q)
+			return nil, fmt.Errorf("fake drive: q clauses must be joined by ' and ': %q", q)
 		}
 	}
 	return func(f *file) bool {
