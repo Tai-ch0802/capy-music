@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 const (
@@ -51,13 +53,13 @@ func RetryAfterSeconds(resp *http.Response, fallback int) int {
 // (不等待);否則印提示並等待(可取消)。沒有 Retry-After 時指數退避 1s、2s、4s(Drive 的 403 不帶標頭)。
 func Backoff(ctx context.Context, resp *http.Response, attempt int) error {
 	if attempt >= MaxRetries {
-		return &RateLimitError{Message: "rate limited,重試已達上限"}
+		return &RateLimitError{Message: i18n.T("provider.backoff.gave_up")}
 	}
 	secs := RetryAfterSeconds(resp, 1<<attempt)
 	if secs > int(MaxBackoff/time.Second) {
-		return &RateLimitError{Seconds: secs, Message: fmt.Sprintf("rate limited,伺服器要求等待 %d 秒(超過上限 %d 秒),請稍後再試", secs, int(MaxBackoff/time.Second))}
+		return &RateLimitError{Seconds: secs, Message: i18n.T("provider.backoff.too_long", "seconds", secs, "max", int(MaxBackoff/time.Second))}
 	}
 	d := time.Duration(secs) * time.Second
-	fmt.Fprintf(BackoffStderr, "rate limited,等待 %v 後重試…\n", d)
+	fmt.Fprintln(BackoffStderr, i18n.T("provider.backoff.waiting", "wait", d)) // 單行:web 的活動列只顯示 stderr 最後一行
 	return Wait(ctx, d)
 }

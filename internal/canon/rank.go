@@ -1,8 +1,10 @@
 package canon
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // rankDigits:base62,ASCII 序即字典序,所以 rank 直接用字串比較。
@@ -17,13 +19,13 @@ const rankDigits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 func RankBetween(a, b string) (string, error) {
 	for _, s := range []string{a, b} {
 		if strings.Trim(s, rankDigits) != "" {
-			return "", fmt.Errorf("rank 含非 base62 字元:%q", s)
+			return "", i18n.Errorf("canon.err.rank_not_base62", "rank", strconv.Quote(s))
 		}
 	}
 	a = strings.TrimRight(a, "0")
 	if b != "" {
 		if b = strings.TrimRight(b, "0"); b == "" || a >= b {
-			return "", fmt.Errorf("rank 順序錯或中間沒有空間:%q 與 %q", a, b)
+			return "", i18n.Errorf("canon.err.rank_no_gap", "a", strconv.Quote(a), "b", strconv.Quote(b))
 		}
 	}
 	n := len(rankDigits)

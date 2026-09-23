@@ -4,13 +4,13 @@ package apple
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -59,7 +59,7 @@ end tell`
 func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 	out, err := runOSA(stateScript)
 	if err != nil {
-		return nil, fmt.Errorf("osascript 失敗(Music.app 未安裝或未授權自動化?):%w", err)
+		return nil, i18n.Errorf("apple.player.err.osascript_failed", "err", err)
 	}
 	if out == "not running" {
 		return nil, ErrNotRunning
@@ -69,12 +69,12 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 	}
 	f := strings.Split(out, "\t")
 	if len(f) < 6 {
-		return nil, fmt.Errorf("osascript 輸出格式非預期:%q", out)
+		return nil, i18n.Errorf("apple.player.err.unexpected_output", "output", strconv.Quote(out))
 	}
 	dur, err1 := strconv.Atoi(f[4])
 	pos, err2 := strconv.Atoi(f[5])
 	if err1 != nil || err2 != nil {
-		return nil, fmt.Errorf("osascript 數值欄位無法解析:%q", out)
+		return nil, i18n.Errorf("apple.player.err.bad_number", "output", strconv.Quote(out))
 	}
 	tr := provider.Track{Title: f[1], Artists: []string{f[2]}, Album: f[3], DurationMS: dur}
 	return &provider.PlaybackState{
@@ -90,21 +90,21 @@ func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
 // 兩者何者可靠由附錄 C-4 真實驗收決定,之後再硬編。
 func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 	if req.PlaylistID != "" { // R4:不自創 music:// 清單 URL
-		return fmt.Errorf("Apple Music 暫不支援直接播放清單 — 用 capy pl show 取曲目後 play --id:%w", provider.ErrNotSupported)
+		return i18n.Errorf("apple.player.err.playlist_unsupported", "err", provider.ErrNotSupported)
 	}
 	if len(req.TrackIDs) == 0 {
 		_, err := runOSA(`tell application "Music" to play`)
 		return err
 	}
 	if p.c == nil {
-		return errors.New("apple provider 未初始化 client")
+		return i18n.Errorf("apple.player.err.no_client")
 	}
 	_, songURL, err := p.c.Song(ctx, p.storefront, req.TrackIDs[0]) // ponytail: 先播第一首;佇列多首待 Enqueue(P4+)
 	if err != nil {
 		return err
 	}
 	if songURL == "" {
-		return fmt.Errorf("Apple 未回傳歌曲 URL(id=%s)", req.TrackIDs[0])
+		return i18n.Errorf("apple.player.err.no_song_url", "id", req.TrackIDs[0])
 	}
 	u := strings.Replace(songURL, "https://", "music://", 1)
 	if os.Getenv("CAPY_APPLE_PLAY_MECHANISM") == "open" {

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -9,6 +8,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // 表格比終端機寬時的檢視窗格(alt screen):整張表以自然寬度排、每列一行,←/→(h/l)橫向、↑/↓(j/k)上下、
@@ -83,8 +84,8 @@ func (m pagerModel) View() tea.View {
 		top = m.body.YOffset() + 1
 		bottom = min(rows, m.body.YOffset()+m.body.Height())
 	}
-	status := fmt.Sprintf("第 %d–%d 列 / %d · 欄 %d–%d / %d · ←→ 橫向 ↑↓ 上下 g/G 頭尾 q 離開",
-		top, bottom, rows, x+1, min(m.longest, x+m.width), m.longest)
+	status := i18n.T("ui.pager.status", "top", top, "bottom", bottom, "rows", rows,
+		"col_from", x+1, "col_to", min(m.longest, x+m.width), "cols", m.longest)
 	v := tea.NewView(boldStyle.Render(ansi.Cut(m.header, x, x+m.width)) + "\n" +
 		m.body.View() + "\n" +
 		DefaultTheme.Mutedly(ansi.Truncate(status, m.width, "")))

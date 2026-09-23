@@ -5,9 +5,9 @@ package provider
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
@@ -232,31 +232,31 @@ func ApplyPlaylistOps(current []string, ops []PlaylistOp) (items []string, name 
 		switch op.Kind {
 		case OpAdd:
 			if op.Pos < 0 || op.Pos > len(items) {
-				return nil, "", fmt.Errorf("op %d add 位置 %d 越界(長度 %d)", i, op.Pos, len(items))
+				return nil, "", i18n.Errorf("provider.err.op_add_out_of_range", "op", i, "pos", op.Pos, "len", len(items))
 			}
 			items = slices.Insert(items, op.Pos, op.ProviderID)
 		case OpRemove:
 			if op.Pos < 0 || op.Pos >= len(items) {
-				return nil, "", fmt.Errorf("op %d remove 位置 %d 越界(長度 %d)", i, op.Pos, len(items))
+				return nil, "", i18n.Errorf("provider.err.op_remove_out_of_range", "op", i, "pos", op.Pos, "len", len(items))
 			}
 			if op.ProviderID != "" && items[op.Pos] != op.ProviderID {
-				return nil, "", fmt.Errorf("op %d remove 位置 %d 是 %s 不是 %s", i, op.Pos, items[op.Pos], op.ProviderID)
+				return nil, "", i18n.Errorf("provider.err.op_remove_mismatch", "op", i, "pos", op.Pos, "got", items[op.Pos], "want", op.ProviderID)
 			}
 			items = slices.Delete(items, op.Pos, op.Pos+1)
 		case OpMove:
 			if op.From < 0 || op.From >= len(items) || op.Pos < 0 || op.Pos >= len(items) {
-				return nil, "", fmt.Errorf("op %d move %d → %d 越界(長度 %d)", i, op.From, op.Pos, len(items))
+				return nil, "", i18n.Errorf("provider.err.op_move_out_of_range", "op", i, "from", op.From, "pos", op.Pos, "len", len(items))
 			}
 			id := items[op.From]
 			items = slices.Delete(items, op.From, op.From+1)
 			items = slices.Insert(items, op.Pos, id)
 		case OpRename:
 			if op.Name == "" { // "" 同時代表「沒 rename」,空名字會無聲消失;幾乎一定是呼叫端掉了 Name
-				return nil, "", fmt.Errorf("op %d rename 沒有 Name", i)
+				return nil, "", i18n.Errorf("provider.err.op_rename_no_name", "op", i)
 			}
 			name = op.Name
 		default:
-			return nil, "", fmt.Errorf("op %d 未知的 Kind %q", i, op.Kind)
+			return nil, "", i18n.Errorf("provider.err.op_unknown_kind", "op", i, "kind", strconv.Quote(op.Kind))
 		}
 	}
 	return items, name, nil
@@ -272,11 +272,10 @@ type PartialWriteError struct {
 }
 
 func (e *PartialWriteError) Error() string {
-	msg := fmt.Sprintf("清單 %s 寫到一半失敗:平台現在只有前 %d 首(目標 %d 首),重跑 push 補回其餘", e.PlaylistID, e.Written, e.Want)
 	if e.Renamed {
-		msg += ";名字已先改好"
+		return i18n.T("provider.err.partial_write_renamed", "playlist", e.PlaylistID, "count", e.Written, "want", e.Want, "err", e.Err)
 	}
-	return msg + ":" + e.Err.Error()
+	return i18n.T("provider.err.partial_write", "playlist", e.PlaylistID, "count", e.Written, "want", e.Want, "err", e.Err)
 }
 
 func (e *PartialWriteError) Unwrap() error { return e.Err }

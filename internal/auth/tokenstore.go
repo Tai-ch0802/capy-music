@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -55,7 +55,7 @@ func loadStored(key string) (storedToken, error) {
 		return st, err
 	}
 	if err := json.Unmarshal([]byte(raw), &st); err != nil {
-		return st, fmt.Errorf("keychain %s 內容不是有效的 token JSON(請重新 auth login):%w", key, err)
+		return st, i18n.Errorf("auth.err.token_json", "key", key, "err", err)
 	}
 	return st, nil
 }
@@ -73,7 +73,7 @@ func LoadToken(key string) (*oauth2.Token, error) {
 // issued_at:RT 與 keychain 內現有的相同就延用(Google 的 RT 不輪替,access token 卻每小時換),否則取現在。
 func SaveToken(key string, tok *oauth2.Token) error {
 	if tok.RefreshToken == "" {
-		return errors.New("token 沒有 refresh token,拒絕寫入 keychain")
+		return i18n.Errorf("auth.err.save_without_refresh_token")
 	}
 	st := storedToken{AccessToken: tok.AccessToken, TokenType: tok.TokenType, RefreshToken: tok.RefreshToken, Expiry: tok.Expiry, IssuedAt: now()}
 	if prev, err := loadStored(key); err == nil && prev.RefreshToken == st.RefreshToken {
@@ -113,7 +113,7 @@ var (
 // 對話框時,這邊的 capy search 看起來就只是當掉,使用者不會知道該去按「允許」。檔案鎖分不出持有者是
 // 卡在對話框還是單純正在換發 token,訊息兩種都要涵蓋。
 func lockFile(ctx context.Context, name string) (unlock func(), err error) {
-	return LockFile(ctx, name, "對方正在存取 keychain,可能停在授權對話框上——畫面上若有 keychain 對話框,按「允許」即可繼續")
+	return LockFile(ctx, name, i18n.T("auth.lock.keychain_notice"))
 }
 
 // LockFile 是 lockFile 的匯出版:notice 是等太久時提示裡「對方在做什麼」那句(pull.lock 的持有者不是在碰 keychain)。
@@ -134,18 +134,18 @@ func LockFile(ctx context.Context, name, notice string) (unlock func(), err erro
 		switch ok, err := tryFlock(f); {
 		case err != nil:
 			f.Close()
-			return nil, fmt.Errorf("取得鎖 %s:%w", name, err)
+			return nil, i18n.Errorf("auth.lock.err.acquire", "name", name, "err", err)
 		case ok:
 			return func() { _ = funlock(f); f.Close() }, nil
 		}
 		if !notified && time.Since(start) >= lockNoticeAfter {
 			notified = true
-			fmt.Fprintf(LockStderr, "等待另一個 capy 釋放 %s(%s);要放棄按 Ctrl-C。\n", name, notice)
+			fmt.Fprintln(LockStderr, i18n.T("auth.lock.waiting", "name", name, "notice", notice))
 		}
 		select {
 		case <-ctx.Done():
 			f.Close()
-			return nil, fmt.Errorf("另一個 capy 正持有 %s 鎖,等待中被中斷或逾時,請稍後再試:%w", name, ctx.Err())
+			return nil, i18n.Errorf("auth.lock.err.interrupted", "name", name, "err", ctx.Err())
 		case <-time.After(lockRetryInterval):
 		}
 	}
@@ -212,7 +212,7 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 		return cur, nil
 	}
 	if cur.RefreshToken == "" {
-		return nil, fmt.Errorf("keychain %s 內沒有 refresh token,請重新 auth login", s.key)
+		return nil, i18n.Errorf("auth.err.no_stored_refresh_token", "key", s.key)
 	}
 	// 送出前最後一次看取消:lockFile 拿得到沒人搶的鎖時不看 ctx(:113),之後 loadStored 也不吃 ctx,
 	// 已經取消的呼叫若走到這裡,不能因為下面的 WithoutCancel 而把 refresh 照樣送出去(review)。
@@ -230,7 +230,7 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	// AfterFunc 的 goroutine 裡讀可被替換的全域變數。
 	w := LockStderr
 	stopNote := context.AfterFunc(s.ctx, func() {
-		fmt.Fprintf(w, "正在換發 %s 的登入 token:請求已經送出,半路放棄會讓登入失效,等它回來(最多 %v)…\n", providerOf(s.key), refreshTimeout)
+		fmt.Fprintln(w, i18n.T("auth.refresh_in_flight", "provider", providerOf(s.key), "timeout", refreshTimeout))
 	})
 	defer stopNote()
 	// 只帶 RT 進去:oauth2 視為無效 token,立刻打 refresh。
@@ -259,7 +259,7 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 		if err != nil {
 			// 兩次都失敗:此刻舊 RT 在對方端已作廢、新 RT 只活在這個 return 就會丟掉的變數裡
 			// ——使用者是真的登出了,必須講明白並給下一步,不能只說「寫入失敗」。
-			return nil, fmt.Errorf("token 已 refresh 但寫不回 keychain,舊的 refresh token 此刻已失效、新的沒能存下來(等於已登出)— 請執行 capy auth login %s 重新登入:%w", providerOf(s.key), err)
+			return nil, i18n.Errorf("auth.err.refreshed_not_saved", "provider", providerOf(s.key), "err", err)
 		}
 	}
 	s.tok = tok

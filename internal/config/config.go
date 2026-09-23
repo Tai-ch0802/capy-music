@@ -4,10 +4,11 @@ package config
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 const dirName = "capy-music"
@@ -59,7 +60,7 @@ func Load() (*Config, error) {
 	}
 	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, fmt.Errorf("解析 %s:%w", p, err)
+		return nil, i18n.Errorf("config.err.parse", "path", p, "err", err)
 	}
 	return &c, nil
 }

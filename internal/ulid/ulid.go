@@ -5,10 +5,11 @@ package ulid
 
 import (
 	"crypto/rand"
-	"errors"
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -25,7 +26,7 @@ func New() string {
 		ms >>= 8
 	}
 	if _, err := rand.Read(b[6:]); err != nil {
-		panic("ulid: crypto/rand 失敗:" + err.Error())
+		panic(i18n.T("ulid.err.rand", "err", err))
 	}
 	n := new(big.Int).SetBytes(b[:])
 	out := make([]byte, 26)
@@ -40,19 +41,19 @@ func New() string {
 // Time 解出 ULID 的時戳(毫秒精度)。格式不對回錯。
 func Time(s string) (time.Time, error) {
 	if len(s) != 26 {
-		return time.Time{}, errors.New("ulid: 長度必須是 26")
+		return time.Time{}, i18n.Errorf("ulid.err.length")
 	}
 	n := new(big.Int)
 	for _, c := range strings.ToUpper(s) {
 		idx := strings.IndexRune(alphabet, c)
 		if idx < 0 {
-			return time.Time{}, errors.New("ulid: 含非 Crockford base32 字元")
+			return time.Time{}, i18n.Errorf("ulid.err.alphabet")
 		}
 		n.Lsh(n, 5)
 		n.Or(n, big.NewInt(int64(idx)))
 	}
 	if n.BitLen() > 128 {
-		return time.Time{}, errors.New("ulid: 超出 128 bit")
+		return time.Time{}, i18n.Errorf("ulid.err.overflow")
 	}
 	ms := new(big.Int).Rsh(n, 80).Int64()
 	return time.UnixMilli(ms), nil

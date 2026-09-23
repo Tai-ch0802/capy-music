@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -68,34 +69,34 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	}
 	defer lb.Close()
 	if lb.Port() != DefaultSpotifyPort {
-		return nil, fmt.Errorf("port 8888 被佔用 — Spotify dashboard 註冊的是固定 http://127.0.0.1:8888/callback,請先釋放 8888 再試")
+		return nil, i18n.Errorf("auth.spotify_oauth.err.port_busy")
 	}
 
 	conf := spotifyOAuthConfig(clientID, lb.BaseURL()+"/callback")
 	verifier := oauth2.GenerateVerifier()
 	lb.Start()
 	authURL := conf.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
-	fmt.Fprintf(LoginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
+	fmt.Fprintln(LoginStderr, i18n.T("auth.loopback.open_manually", "url", authURL))
 	if err := openBrowser(authURL); err != nil {
 		// SSH/headless 場景 browser.Open 必失敗——不中止,使用者可手動貼上面那行 URL 完成授權。
-		fmt.Fprintf(LoginStderr, "無法自動開瀏覽器:%v\n", err)
+		fmt.Fprintln(LoginStderr, i18n.T("auth.loopback.browser_failed", "err", err))
 	}
 	vals, err := lb.Wait(ctx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("180 秒內未收到授權回呼 — 若瀏覽器顯示 INVALID_CLIENT / Invalid redirect URI,請確認 dashboard 的 Redirect URI 是 http://127.0.0.1:8888/callback(完全相同);Client ID 可用 --client-id 重設")
+			return nil, i18n.Errorf("auth.spotify_oauth.err.timeout")
 		}
-		return nil, fmt.Errorf("等待授權回呼:%w", err)
+		return nil, i18n.Errorf("auth.loopback.err.wait", "err", err)
 	}
 	if e := vals.Get("error"); e != "" {
-		return nil, fmt.Errorf("授權被拒:%s", e)
+		return nil, i18n.Errorf("auth.loopback.err.denied", "reason", e)
 	}
 	tok, err := conf.Exchange(ctx, vals.Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
-		return nil, fmt.Errorf("token 交換失敗:%w", err)
+		return nil, i18n.Errorf("auth.loopback.err.exchange", "err", err)
 	}
 	if tok.RefreshToken == "" {
-		return nil, fmt.Errorf("Spotify 未回傳 refresh token")
+		return nil, i18n.Errorf("auth.spotify_oauth.err.no_refresh_token")
 	}
 	// 取鎖的位置刻意在 Exchange 之後、寫入之前:同一把鎖現在每個 provider 命令都會進(遷移),鎖在等
 	// 瀏覽器回呼那 180 秒會癱掉整台機器的 capy。不取鎖則有這個交錯:B(capy search)進鎖讀到舊鍵
@@ -106,7 +107,7 @@ func LoginSpotify(ctx context.Context, clientID string, openBrowser func(string)
 	}
 	defer unlock()
 	if err := SaveToken(KeySpotifyToken, tok); err != nil {
-		return nil, fmt.Errorf("寫入 keychain 失敗:%w", err)
+		return nil, i18n.Errorf("auth.err.keychain_write", "err", err)
 	}
 	_ = secret.Delete(KeySpotifyRefreshToken) // 重新登入等於升級:舊鍵不留(刪不掉也無妨,讀取一律以新鍵為準)
 	return tok, nil

@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -231,7 +232,7 @@ func (c *Client) SearchTracks(ctx context.Context, text string, limit int) ([]pr
 func (c *Client) LookupISRC(ctx context.Context, isrc string) ([]provider.Track, error) {
 	n := provider.NormalizeISRC(isrc)
 	if n == "" {
-		return nil, fmt.Errorf("%w:%q", provider.ErrBadISRC, isrc)
+		return nil, i18n.Errorf("spotify.err.bad_isrc", "err", provider.ErrBadISRC, "isrc", strconv.Quote(isrc))
 	}
 	return c.SearchTracks(ctx, "isrc:"+n, searchPageMax)
 }
@@ -242,7 +243,7 @@ func (c *Client) GetTrack(ctx context.Context, id string) (provider.Track, error
 	status, err := c.do(ctx, http.MethodGet, "/tracks/"+url.PathEscape(id), nil, nil, &t)
 	if err != nil {
 		if status == http.StatusNotFound {
-			return provider.Track{}, fmt.Errorf("%w:曲目 %s", provider.ErrNotFound, id)
+			return provider.Track{}, i18n.Errorf("spotify.err.track_not_found", "err", provider.ErrNotFound, "id", id)
 		}
 		return provider.Track{}, err
 	}
@@ -289,7 +290,7 @@ func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]prov
 	var ae *apiError
 	if errors.As(err, &ae) && ae.Status == http.StatusForbidden && a.Name != "" {
 		// 留下痕跡:403 也可能是 scope 被撤或地區限制,不能讓人永遠只看到「播了一些歌」。
-		fmt.Fprintf(provider.BackoffStderr, "Spotify:top-tracks 回 403(開發模式 app 拿不到),改用 artist:%q 搜尋近似\n", a.Name)
+		fmt.Fprintln(provider.BackoffStderr, i18n.T("spotify.top_tracks_fallback", "artist", strconv.Quote(a.Name)))
 		// 引號包起來就是字面詞組(AND/OR/NOT 與 artist: 這類語法在引號內不解析),只需去掉名稱裡自己的引號。
 		name := strings.ReplaceAll(a.Name, `"`, "")
 		ts, err := c.SearchTracks(ctx, `artist:"`+name+`"`, searchPageMax)
@@ -328,7 +329,7 @@ func mapPlayerErr(err error) error {
 			// 手機與部分喇叭不給遠端調音量。不映射成 ErrAuthExpired 那一族:403 在這裡不是授權問題,
 			// 訊息講錯會讓人白跑一次 auth login。包成 sentinel 讓呼叫端能 errors.Is,原始的
 			// *apiError 也留在鏈上(debug 要看 status / reason 時還在)。
-			return fmt.Errorf("%w(手機與部分喇叭會擋)— 請在該裝置上直接調:%w", provider.ErrVolumeNotAllowed, err)
+			return i18n.Errorf("spotify.err.volume_not_allowed", "not_allowed", provider.ErrVolumeNotAllowed, "err", err)
 		}
 	}
 	return err
@@ -480,7 +481,7 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.Play
 		return provider.PlaylistRef{}, err
 	}
 	if out.ID == "" {
-		return provider.PlaylistRef{}, errors.New("Spotify 建立清單的回應沒有 id")
+		return provider.PlaylistRef{}, i18n.Errorf("spotify.err.create_no_id")
 	}
 	return out.toRef(), nil
 }
@@ -503,7 +504,7 @@ func (c *Client) PlaylistItems(ctx context.Context, id string) ([]provider.Track
 				return nil, provider.ErrRestricted
 			}
 			if errors.As(err, &ae) && ae.Status == http.StatusNotFound { // 清單已刪:T8 用「不在清單列表」當 gone,這裡只是讓錯誤可辨認
-				return nil, fmt.Errorf("%w:清單 %s", provider.ErrNotFound, id)
+				return nil, i18n.Errorf("spotify.err.playlist_not_found", "err", provider.ErrNotFound, "id", id)
 			}
 			return nil, err
 		}
@@ -599,11 +600,11 @@ func trackURIs(want []string) ([]string, error) {
 	for i, tid := range want {
 		var ok bool
 		if uris[i], ok = pushableURI(tid); !ok {
-			bad = append(bad, fmt.Sprintf("第 %d 首 %q", i+1, tid))
+			bad = append(bad, i18n.T("spotify.unpushable_item", "n", i+1, "id", strconv.Quote(tid)))
 		}
 	}
 	if len(bad) > 0 {
-		return nil, fmt.Errorf("推不出去的曲目(local file 或空 id),整批不送:%s", strings.Join(bad, "、"))
+		return nil, i18n.Errorf("spotify.err.unpushable", "count", len(bad), "items", strings.Join(bad, i18n.T("sep.list")))
 	}
 	return uris, nil
 }
@@ -625,9 +626,9 @@ func writeErr(id string, err error) error {
 	var ae *apiError
 	switch {
 	case errors.As(err, &ae) && ae.Status == http.StatusForbidden:
-		return fmt.Errorf("Spotify 拒絕寫入清單 %s(只有自己的或協作的清單可以寫):%w", id, err)
+		return i18n.Errorf("spotify.err.write_forbidden", "id", id, "err", err)
 	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
-		return fmt.Errorf("Spotify 找不到清單 %s(或寫入端點不是 /items,見 spec §1.1):%w", id, err)
+		return i18n.Errorf("spotify.err.write_not_found", "id", id, "err", err)
 	}
 	return err
 }
