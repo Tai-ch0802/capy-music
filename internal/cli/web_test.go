@@ -1103,6 +1103,17 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(table, "Math.floor(ms / 1000)") || strings.Contains(table, "Math.round(ms") {
 		t.Error("時長要用整數除法,對齊 ui.FormatDuration")
 	}
+	// 原子欄同 ui.atomicHeader:REASON_CODE 是腳本比對的代碼,折成 candidat / e_assign 就不能複製(T2b 自審)。
+	if m := regexp.MustCompile(`const ATOMIC = /(.+)/;`).FindStringSubmatch(table); m == nil {
+		t.Error("table.js 找不到 ATOMIC")
+	} else {
+		atomic := regexp.MustCompile(m[1])
+		for h, want := range map[string]bool{"ID": true, "CID": true, "PROVIDER_ID": true, "REASON_CODE": true, "REASON": false, "TITLE": false} {
+			if atomic.MatchString(h) != want {
+				t.Errorf("table.js 的 ATOMIC 對 %s 要是 %v", h, want)
+			}
+		}
+	}
 	// 設計規格 §8:三個 secret flag 的值在回聲裡遮成 ***(伺服器 403 之外的第二層,值不留在 DOM)。
 	for _, f := range []string{"--developer-token", "--user-token", "--client-secret"} {
 		if !strings.Contains(console, f) {
@@ -1502,7 +1513,7 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 			t.Errorf("平台的能力變了,move.js 要是:%s", want)
 		}
 	}
-	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON"} {
+	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"} {
 		if !slices.Contains(syncHeader, col) || !strings.Contains(move, "'"+col+"'") {
 			t.Errorf("migrate 的表要有 %s 欄,move.js 的 tally() 也要認它", col)
 		}
@@ -1564,28 +1575,41 @@ func TestWebProgressEventsAreRealAndCLIStaysSilent(t *testing.T) {
 	}
 }
 
-// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩個中文字面認東西——「現在逐筆裁決?」(那一則確認
-// 旁邊要補白話)與 reason 開頭的「推到 」(這一首推得過去)。純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,
-// 所以兩邊一起釘(同 TestWebAccountPageKeysOnAuthStatusWording):CLI 改字,這裡就紅並指向 move.js。
+// TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩樣東西認列——「逐筆裁決」那一則確認(旁邊要補白話;
+// 認的是 REVIEW_MARKS 裡每個語系的片段)與 REASON_CODE 欄的 push(這一首推得過去;REASON 跟著語系,不能拿來判斷——Q52)。
+// 純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,所以兩邊一起釘(同 TestWebAccountPageKeysOnEnglishAuthStatus):
+// 用每個語系(英文單複數兩種)跑真的 migrate,第一個提示要被 REVIEW_MARKS 認出、最後確認不能被誤認;CLI 改了字,這裡就紅並指向 move.js。
+// Go 這半邊(migrateReason 推得過去 = "push")由 TestMigrateReasonCodes 與 migrate_test.go 的整列比對釘住。
 func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 	b, err := webUI.ReadFile("webui/js/pages/move.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := os.ReadFile("migrate.go")
-	if err != nil {
-		t.Fatal(err)
+	if src := string(b); !strings.Contains(src, "'REASON_CODE'") || !strings.Contains(src, "'push'") || strings.Contains(src, "PUSHABLE_MARK") { // 行為由 webui_console.mjs 的 tally 情境釘住
+		t.Error("move.js 的 tally() 要以 REASON_CODE 是不是 push 判斷搬得過去,不看 REASON 的字(會跟著語系變)")
 	}
-	for _, pair := range [][2]string{
-		{"const REVIEW_MARK = '現在逐筆裁決?';", "現在逐筆裁決?(否 = 先推有對應的"},
-		{"const PUSHABLE_MARK = '推到 ';", `fmt.Sprintf("推到 %s:%s(%s %d)"`},
-	} {
-		if !strings.Contains(string(b), pair[0]) {
-			t.Errorf("move.js 要有 %s", pair[0])
-		}
-		if !strings.Contains(string(src), pair[1]) {
-			t.Errorf("migrate.go 的原文變了(%q 不見了):move.js 的字面要跟著改", pair[1])
-		}
+	decl := regexp.MustCompile(`const REVIEW_MARKS = \[([^\]]*)\];`).FindStringSubmatch(string(b))
+	if decl == nil || !strings.Contains(string(b), "REVIEW_MARKS.some((m) => String(ev.title || '').includes(m))") {
+		t.Fatal("move.js 要以 REVIEW_MARKS 認「逐筆裁決」那一則提示")
+	}
+	var marks []string
+	for _, m := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(decl[1], -1) {
+		marks = append(marks, m[1])
+	}
+	matches := func(title string) bool {
+		return slices.ContainsFunc(marks, func(m string) bool { return strings.Contains(title, m) })
+	}
+	for _, c := range []struct {
+		lang      string
+		unmatched []string
+	}{{"zh-TW", []string{"n"}}, {"en", []string{"n"}}, {"en", []string{"n", "m"}}} {
+		t.Run(c.lang+"/"+strconv.Itoa(len(c.unmatched)), func(t *testing.T) {
+			withLanguage(t, c.lang)
+			prompts := migratePromptsDeclined(t, c.unmatched...)
+			if len(prompts) != 2 || !matches(prompts[0]) || matches(prompts[1]) {
+				t.Errorf("move.js 的 REVIEW_MARKS %q 要認得出逐筆裁決那一則、不能誤認最後確認:%q", marks, prompts)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,6 @@
-// table.js:ui.TableWriter 送來的整張表。原子欄(ID / CID / PID / ISRC / DEVICE / _ID 結尾)不折行、不截斷,同 ui.go 的規則;
+// table.js:ui.TableWriter 送來的整張表。原子欄(ID / CID / PID / ISRC / DEVICE / REASON_CODE / _ID 結尾)不折行、不截斷,同 ui.go 的規則;
 // 時長 / DURATION 是毫秒整數,轉 m:ss。
-const ATOMIC = /^(ID|CID|PID|ISRC|DEVICE)$|_ID$/;
+const ATOMIC = /^(ID|CID|PID|ISRC|DEVICE|REASON_CODE)$|_ID$/;
 
 function mmss(ms) {
   const s = Math.floor(ms / 1000); // 對齊 ui.FormatDuration 的整數除法:同一首歌在終端機與網頁要是同一個長度

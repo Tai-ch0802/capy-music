@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -84,7 +85,7 @@ func (s *canonState) absorb(updated map[string]canon.Track) {
 		tr := updated[cid]
 		if old, ok := s.tracks.Tracks[cid]; ok && len(tr.Conflicts) > len(old.Conflicts) {
 			c := tr.Conflicts[len(tr.Conflicts)-1]
-			fmt.Fprintf(s.stderr, "警告:ISRC 衝突 %s:%s 的 %s(%s)與既有 metadata 不符,已記進 tracks.json 的 conflicts(spec §6.2)\n", cid, c.Provider, c.Title, c.ProviderID)
+			fmt.Fprintln(s.stderr, i18n.T("push.warn.isrc_conflict", "cid", cid, "platform", c.Provider, "title", c.Title, "id", c.ProviderID))
 		}
 		s.tracks.Tracks[cid] = tr
 	}
@@ -148,10 +149,10 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			link := pl.Links[prov]
 			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單只跳過——不算 refused;明說要推這個平台才算錯(同下面寫入端的規矩)
 				if strict && only == prov {
-					return nil, nil, nil, nil, fmt.Errorf("%s 的 %s:%s 屬於裝置 %s,不是這台的本機清單(要在這台接手:capy pl link %s %s:<檔名>)", pl.Name, prov, link, deviceName(s, link), pl.Name, prov)
+					return nil, nil, nil, nil, i18n.Errorf("push.err.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "device", deviceName(s, link))
 				}
 				if strict { // 單獨 push 沒人說過;sync 的 pull 半邊已經說過一次,不重印
-					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s 屬於裝置 %s(要在這台接手:capy pl link %s %s:<檔名>)\n", pl.Name, prov, link, deviceName(s, link), pl.Name, prov)
+					fmt.Fprintln(stderr, i18n.T("push.skip.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "device", deviceName(s, link)))
 				}
 				continue
 			}
@@ -160,7 +161,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				if strict && only == prov { // 明說要推這個平台才算錯;--all / 沒指定時只跳過(三個平台現在都能寫,這條留給沒有寫入能力的 provider)
 					return nil, nil, nil, nil, err
 				}
-				fmt.Fprintf(stderr, "跳過 %s 的 %s:%v\n", pl.Name, prov, err)
+				fmt.Fprintln(stderr, i18n.T("push.skip.not_writable", "playlist", pl.Name, "platform", prov, "err", err))
 				continue
 			}
 			r, refs, err := pf.reader(prov)
@@ -172,20 +173,20 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 					refused = append(refused, msg)
 					return
 				}
-				fmt.Fprintf(stderr, "跳過 %s 的 %s 的 push 半邊:%s\n", pl.Name, prov, msg)
+				fmt.Fprintln(stderr, i18n.T("push.skip.push_half", "playlist", pl.Name, "platform", prov, "reason", msg))
 			}
 			ref, ok := refs[link]
 			if !ok {
-				refuse(fmt.Sprintf("%s 端找不到清單 %s(%s),先 capy pl pull %s(會取消連結)", prov, link, pl.Name, pl.Name))
+				refuse(i18n.T("push.refuse.playlist_missing", "platform", prov, "link", link, "playlist", pl.Name))
 				continue
 			}
 			if ref.Unwritable != "" { // 光看列表就知道寫不了(Apple 精選、協作清單):plan 階段列 refused——sync 只跳過那一格,cron 不會每輪 exit 1(PR #81 review)
-				refuse(fmt.Sprintf("%s 的 %s(%s)寫不了:%s", pl.Name, prov, link, ref.Unwritable))
+				refuse(i18n.T("push.refuse.unwritable", "playlist", pl.Name, "platform", prov, "link", link, "reason", ref.Unwritable))
 				continue
 			}
 			b, ok := merged[pl.PID][prov]
 			if !ok || b.Snapshot.ID != link { // 前提一
-				refuse(fmt.Sprintf("%s 的 %s 還沒 pull 過(沒有 base),先 capy pl pull %s", pl.Name, prov, pl.Name))
+				refuse(i18n.T("push.refuse.no_base", "playlist", pl.Name, "platform", prov))
 				continue
 			}
 			reused, seen := lives[liveKey{pl.PID, prov}]
@@ -199,19 +200,19 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				tracks, err := r.GetPlaylistItems(ctx, link)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
-					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s(開發模式 app 讀不到 Spotify 官方 / 他人的清單,也寫不了)\n", pl.Name, prov, link)
+					fmt.Fprintln(stderr, i18n.T("push.skip.restricted", "playlist", pl.Name, "platform", prov, "link", link))
 					continue
 				case errors.Is(err, provider.ErrNotFound):
 					tracks = nil
 				case err != nil:
-					return nil, nil, nil, nil, fmt.Errorf("讀取 %s 的 %s:%s:%w", pl.Name, prov, link, friendlyErr(prov, err))
+					return nil, nil, nil, nil, i18n.Errorf("push.err.read", "playlist", pl.Name, "platform", prov, "link", link, "err", friendlyErr(prov, err))
 				}
 				live = canon.Observed{ID: link, Name: ref.Name, Tracks: tracks}
 			}
 			tracks := live.Tracks
 			lcid, snap := observeLive(s, prov, live)
 			if !liveUnchanged(b.Snapshot, snap) { // 前提二
-				refuse(fmt.Sprintf("%s 在 %s 有未 pull 的變更,先 capy pl pull %s(或 capy pl sync)", pl.Name, prov, pl.Name))
+				refuse(i18n.T("push.refuse.unpulled", "playlist", pl.Name, "platform", prov))
 				continue
 			}
 			items := make([]canon.LiveItem, len(tracks))
@@ -242,11 +243,11 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 				}
 			}
 			if itemsChange && len(local) > 0 { // 計畫 Q22:整批取代加不回 local file,最小操作做好前拒絕;只改名不算
-				refuse(fmt.Sprintf("%s 在 %s 有 %d 首 local file(%s),整批取代會把它們弄丟,這個清單暫不支援 push", pl.Name, prov, len(local), strings.Join(local, "、")))
+				refuse(i18n.T("push.refuse.local_files", "playlist", pl.Name, "platform", prov, "count", len(local), "titles", strings.Join(local, i18n.T("sep.list"))))
 				continue
 			}
 			if removalBlocked(plan.removes, len(tracks)) {
-				blocked = append(blocked, fmt.Sprintf("%s 在 %s 要移除 %d 首(平台 %d 首),超過閾值", pl.Name, prov, plan.removes, len(tracks)))
+				blocked = append(blocked, i18n.T("push.blocked.threshold", "playlist", pl.Name, "platform", prov, "count", plan.removes, "total", len(tracks)))
 			}
 			if plan.want, plan.wantName, err = provider.ApplyPlaylistOps(plan.current, ops); err != nil {
 				return nil, nil, nil, nil, err
@@ -272,36 +273,36 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		}
 	}
 	work, ids := slices.Clone(lcid), slices.Clone(plan.current)
-	row := func(action string, pos int, cid, id, reason string) {
+	row := func(action string, pos int, cid, id, reason, code string) {
 		t := s.tracks.Tracks[cid]
-		rows = append(rows, []string{action, plan.prov, plan.pl.Name, strconv.Itoa(pos), cid, id, t.Title, strings.Join(t.Artists, ", "), reason})
+		rows = append(rows, []string{action, plan.prov, plan.pl.Name, strconv.Itoa(pos), cid, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 	}
 	for _, op := range plan.ops {
 		switch op.Kind {
 		case provider.OpRemove:
 			cid := work[op.Pos]
 			work, ids = slices.Delete(work, op.Pos, op.Pos+1), slices.Delete(ids, op.Pos, op.Pos+1)
-			row("remove", op.Pos, cid, op.ProviderID, "canonical 已移除")
+			row("remove", op.Pos, cid, op.ProviderID, i18n.T("push.reason.removed"), "removed_in_master")
 		case provider.OpMove:
 			cid, id := work[op.From], ids[op.From]
 			work = slices.Insert(slices.Delete(work, op.From, op.From+1), op.Pos, cid)
 			ids = slices.Insert(slices.Delete(ids, op.From, op.From+1), op.Pos, id)
-			row("move", op.Pos, cid, id, "canonical 換序")
+			row("move", op.Pos, cid, id, i18n.T("push.reason.moved"), "moved_in_master")
 		case provider.OpAdd:
 			cid := byID[op.ProviderID]
 			work, ids = slices.Insert(work, op.Pos, cid), slices.Insert(ids, op.Pos, op.ProviderID)
-			row("add", op.Pos, cid, op.ProviderID, "推到平台")
+			row("add", op.Pos, cid, op.ProviderID, i18n.T("push.reason.push"), "push")
 		case provider.OpRename:
-			rows = append(rows, []string{"rename", plan.prov, plan.pl.Name, "", "", "", op.Name, "", "canonical 改名:" + plan.liveName + " → " + op.Name})
+			rows = append(rows, []string{"rename", plan.prov, plan.pl.Name, "", "", "", op.Name, "", i18n.T("push.reason.renamed", "from", plan.liveName, "to", op.Name), "renamed_in_master"})
 		}
 	}
 	for _, sk := range skipped {
 		t := s.tracks.Tracks[sk.CID]
-		reason, id := sk.Reason, ""
+		reason, code, id := sk.Reason, sk.Code, ""
 		if m := t.Mappings[plan.prov]; m.ID != "" { // 有 mapping 但推不出去:resolve 修不了,提示也不會算它
-			reason, id = "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加", m.ID // ponytail: Pushable 只回 bool,理由三選一由使用者看平台判斷;第三個平台時讓 Pushable 回原因(P6 §2 A10)
+			reason, code, id = i18n.T("push.reason.unpushable"), "unpushable", m.ID // ponytail: Pushable 只回 bool,理由三選一由使用者看平台判斷;第三個平台時讓 Pushable 回原因(P6 §2 A10)
 		}
-		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason})
+		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 	}
 	return rows, work
 }
@@ -336,7 +337,7 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 		if op.Kind == provider.OpRename { // 平台沒改名就不能把 base 記成新名字(A13 的第二道防線:planPush 已不排 rename 給不支援的平台)
 			renamed = false
 		}
-		fmt.Fprintf(stderr, "手動:%s 的 %s 不支援 %s(位置 %d),請在平台上自己做\n", p.pl.Name, p.prov, op.Kind, op.Pos)
+		fmt.Fprintln(stderr, i18n.T("push.manual_op", "playlist", p.pl.Name, "platform", p.prov, "kind", op.Kind, "pos", op.Pos))
 	}
 	// 規則 7:成功或失敗都重讀 L′、base := L′。重讀也失敗時 base 記成「我們相信平台現在的樣子」(want 的前 written 首):
 	// 不然斷網時 PUT 已落地、base 還停在 L,下一次 pull 會把自己的半截寫入讀成使用者刪了歌。
@@ -353,13 +354,13 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 	case rerr == nil:
 		_, snap = observeLive(s, p.prov, canon.Observed{ID: p.link, Name: name, Tracks: after})
 		if werr == nil && !slices.Equal(snap.Items, p.want) {
-			fmt.Fprintf(stderr, "警告:%s 在 %s 套用後的內容與預期不同(平台拒收或改了順序),下次 push 會再對一次\n", p.pl.Name, p.prov)
+			fmt.Fprintln(stderr, i18n.T("push.warn.unexpected_result", "playlist", p.pl.Name, "platform", p.prov))
 		}
 	case written < 0:
-		fmt.Fprintf(stderr, "警告:重讀 %s 的 %s 失敗(%v);平台沒動,base 不變\n", p.pl.Name, p.prov, friendlyErr(p.prov, rerr))
+		fmt.Fprintln(stderr, i18n.T("push.warn.reread_failed_untouched", "playlist", p.pl.Name, "platform", p.prov, "err", friendlyErr(p.prov, rerr)))
 		return n, touched, false, werr
 	default:
-		fmt.Fprintf(stderr, "警告:重讀 %s 的 %s 失敗(%v);base 先記成已寫入的 %d 首,下次 pull 會校正\n", p.pl.Name, p.prov, friendlyErr(p.prov, rerr), written)
+		fmt.Fprintln(stderr, i18n.T("push.warn.reread_failed_written", "playlist", p.pl.Name, "platform", p.prov, "err", friendlyErr(p.prov, rerr), "count", written))
 		snap = canon.Snapshot{ID: p.link, Name: name, Items: slices.Clone(p.want[:written]), CIDs: slices.Clone(p.wantCIDs[:written])}
 	}
 	if !snapshotEqual(p.base, snap) {
@@ -376,21 +377,21 @@ func applyPlans(ctx context.Context, s *canonState, plans []*pushPlan, stderr io
 		applied, touched = applied+k, touched || hit
 		switch {
 		case isStale:
-			why := "於確認期間變了"
 			if err != nil {
-				why = "套用前重讀失敗:" + err.Error()
+				fmt.Fprintln(stderr, i18n.T("push.stale.reread_failed", "playlist", p.pl.Name, "platform", p.prov, "err", err))
+			} else {
+				fmt.Fprintln(stderr, i18n.T("push.stale.changed", "playlist", p.pl.Name, "platform", p.prov))
 			}
-			fmt.Fprintf(stderr, "%s 在 %s %s,這份不寫\n", p.pl.Name, p.prov, why)
-			stale = append(stale, p.pl.Name+" 在 "+p.prov)
+			stale = append(stale, i18n.T("push.stale.item", "playlist", p.pl.Name, "platform", p.prov))
 		case err != nil:
-			fmt.Fprintf(stderr, "寫入 %s 的 %s 失敗:%v\n", p.pl.Name, p.prov, err)
+			fmt.Fprintln(stderr, i18n.T("push.write_failed", "playlist", p.pl.Name, "platform", p.prov, "err", err))
 			if deferred == nil {
 				deferred = err
 			}
 		}
 	}
 	if deferred == nil && len(stale) > 0 {
-		deferred = &BlockedError{Msg: strings.Join(stale, "、") + " 在確認期間有變動,那幾份零寫入;先 capy pl pull 再 push"}
+		deferred = &BlockedError{Msg: i18n.T("push.err.stale", "count", len(stale), "items", strings.Join(stale, i18n.T("sep.list")))}
 	}
 	return applied, touched, deferred
 }
@@ -406,15 +407,15 @@ func finishPush(err error, applied int, touched bool, deferred error, next, next
 	case !touched:
 		return err
 	case errors.As(err, &ge):
-		driveMsg = "Drive 上的檔在這次執行期間變了(" + ge.Files + ")"
+		driveMsg = i18n.T("push.drive.guard", "files", ge.Files)
 	default:
-		driveMsg = "Drive 沒寫成:" + err.Error()
+		driveMsg = i18n.T("push.drive.failed", "err", err.Error())
 	}
-	switch {
+	switch { // 傳 .Error() 不傳 error:原本是 %v、不包起來,exit code 照舊是 1(deferred 可能是確認期間變了的 BlockedError)
 	case driveMsg != "" && deferred != nil:
-		return fmt.Errorf("%v;而且 %s——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),%s", deferred, driveMsg, nextAfterHalf)
+		return i18n.Errorf("push.err.half_and_drive", "err", deferred.Error(), "drive", driveMsg, "next", nextAfterHalf)
 	case driveMsg != "":
-		return fmt.Errorf("平台已寫入 %d 筆,但 %s(base 沒前進):%s", applied, driveMsg, next)
+		return i18n.Errorf("push.err.written_but_drive", "count", applied, "drive", driveMsg, "next", next)
 	}
 	return deferred
 }
@@ -424,29 +425,24 @@ func newPlPushCmd() *cobra.Command {
 	var prov string
 	cmd := &cobra.Command{
 		Use:   "push [name|pid]",
-		Short: "canonical → 平台:列出變更、確認後才寫(spec §6.5.2)",
-		Long: `canonical → 平台(spec §6.5.2)。鏡像 pl pull:變更集先印出(非 TTY 是無標題 TSV,欄位同 pull;action 多了 skip = C 有、平台沒有、
-又沒這個平台的 mapping,先 capy resolve),確認後才寫平台;寫完重讀平台現況記成 base,再寫 Drive(canonical 內容不變)。
-exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說已寫幾首,重跑 push 補回)、2 待套用、3 安全閥。
-兩個前提(--force 也不放行):本裝置 pull 過這個平台清單(不然會把平台刪光);平台沒有未 pull 的變更(不然會蓋掉你剛在平台改的)——
-先 capy pl pull 或 capy pl sync。含 local file 的 Spotify 清單暫不支援 push。刪除閾值同 pull(分母是平台曲數),--force 越過且只能配單一清單。
-「動了幾筆」看 stdout 行數時要扣掉 skip 列。`,
-		Args: cobra.MaximumNArgs(1),
+		Short: i18n.T("cmd.pl.push.short"),
+		Long:  i18n.T("cmd.pl.push.long"),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := needTarget(cmd, args, all, "推"); err != nil {
+			if err := needTarget(cmd, args, all, i18n.Errorf("pick.err.need_target.push")); err != nil {
 				return err
 			}
 			if prov != "" && !isProviderID(prov) {
-				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), prov)
+				return i18n.Errorf("push.err.bad_provider", "valid", strings.Join(providerIDs, "|"), "value", strconv.Quote(prov))
 			}
 			if force && all {
-				return errors.New("--force 只能配單一清單(capy pl push <name> --force),不能配 --all")
+				return i18n.Errorf("push.err.force_with_all")
 			}
 			ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 			var deferred error // ApplyOps 失敗 / 確認期間平台變了:base 要落地(COMMIT 要走),所以 fn 回 nil、這裡收尾再回錯
 			applied, touched := 0, false
 			err := withCanonical(ctx, stderr, func(s *canonState) error {
-				targets, err := pullTargets(s, args, all, prov, "推")
+				targets, err := pullTargets(s, args, all, prov, i18n.T("pull.pick.title.push"))
 				if err != nil {
 					return err
 				}
@@ -460,10 +456,10 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 					}
 				}
 				if len(refused) > 0 {
-					return &BlockedError{Msg: strings.Join(refused, ";")}
+					return &BlockedError{Msg: strings.Join(refused, i18n.T("sep.clause"))}
 				}
 				if len(blocked) > 0 && !force {
-					return &BlockedError{Msg: strings.Join(blocked, ";") + "。加 --force 越過(先用 --dry-run 看清楚要刪什麼)"}
+					return &BlockedError{Msg: i18n.T("changeset.blocked", "reasons", strings.Join(blocked, i18n.T("sep.clause")))}
 				}
 				resolveHint(s, targets, prov, stderr)
 				n := 0
@@ -471,7 +467,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 					n += len(p.ops)
 				}
 				if n == 0 {
-					fmt.Fprintln(stderr, "無變更")
+					fmt.Fprintln(stderr, i18n.T("changeset.no_changes"))
 					if dryRun {
 						return errSkipCommit
 					}
@@ -484,7 +480,7 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 					if !bothTTY(cmd) {
 						return &PendingError{N: n}
 					}
-					ok, err := confirmWrite(fmt.Sprintf("推送以上 %d 筆變更到平台?", n))
+					ok, err := confirmWrite(i18n.T("push.confirm", "count", n))
 					if err != nil {
 						return err
 					}
@@ -494,17 +490,17 @@ exit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說�
 				}
 				applied, touched, deferred = applyPlans(ctx, s, plans, stderr)
 				if applied > 0 {
-					fmt.Fprintf(stderr, "已推送 %d 筆變更\n", applied)
+					fmt.Fprintln(stderr, i18n.T("push.done", "count", applied))
 				}
 				return nil
 			})
-			return finishPush(err, applied, touched, deferred, "先 capy pl pull 再 capy pl push", "再 pull、再 push")
+			return finishPush(err, applied, touched, deferred, i18n.T("push.next"), i18n.T("push.next_after_half"))
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "推全部已連結的清單")
-	cmd.Flags().StringVar(&prov, "provider", "", "只推這個 provider 的連結(預設:清單連結的全部 provider)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出變更,不碰平台也不碰 Drive(有變更時 exit 2)")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用);不放行兩個前提")
-	cmd.Flags().BoolVar(&force, "force", false, "越過刪除閾值(>10 首,或 >30% 且 >3 首);只能配單一清單、不能配 --all;不放行兩個前提")
+	cmd.Flags().BoolVar(&all, "all", false, i18n.T("cmd.pl.push.flag.all"))
+	cmd.Flags().StringVar(&prov, "provider", "", i18n.T("cmd.pl.push.flag.provider"))
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("cmd.pl.push.flag.dry_run"))
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("cmd.pl.push.flag.yes"))
+	cmd.Flags().BoolVar(&force, "force", false, i18n.T("cmd.pl.push.flag.force"))
 	return cmd
 }

@@ -466,9 +466,9 @@ func TestPlLinkPullFlow(t *testing.T) {
 	if exitOf(t, err) != 2 {
 		t.Fatalf("待套用要 exit 2:%v", err)
 	}
-	want := "add\tspotify\t通勤\t0\t" + fakeCID("t1") + "\tt1\tsong-t1\tartist\t平台新增\nadd\tspotify\t通勤\t1\t" + fakeCID("t2") + "\tt2\tsong-t2\tartist\t平台新增\n"
+	want := "add\tspotify\t通勤\t0\t" + fakeCID("t1") + "\tt1\tsong-t1\tartist\t平台新增\tadded_on_platform\nadd\tspotify\t通勤\t1\t" + fakeCID("t2") + "\tt2\tsong-t2\tartist\t平台新增\tadded_on_platform\n"
 	if out != want {
-		t.Fatalf("TSV 欄位順序 action provider playlist pos cid provider_id title artists reason:\n%q\n%q", out, want)
+		t.Fatalf("TSV 欄位順序 action provider playlist pos cid provider_id title artists reason reason_code:\n%q\n%q", out, want)
 	}
 	if !sameFiles(files, driveFiles(t, dc)) {
 		t.Fatal("沒確認不可寫 Drive")

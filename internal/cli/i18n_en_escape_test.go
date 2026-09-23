@@ -20,7 +20,7 @@ func TestEnglishExportErrors(t *testing.T) {
 	withLanguage(t, "en")
 	setCLITestConfig(t)
 	keyring.MockInit()
-	const nothing = "there is no canonical data on this machine (state.db is missing or empty): nothing to export; run capy pl pull first"
+	const nothing = "there is no canonical data on this computer (state.db is missing or empty): nothing to export; run capy pl pull first"
 	if _, _, err := runPull(t, "export"); !errors.Is(err, errNothingLocal) || err.Error() != nothing {
 		t.Fatalf("%v", err)
 	}
@@ -37,10 +37,10 @@ func TestEnglishExportErrors(t *testing.T) {
 func TestEnglishDriveInit(t *testing.T) {
 	withLanguage(t, "en")
 	fs, dc, _ := pullWorld(t)
-	if _, _, err := runPull(t, "drive", "init"); err == nil || err.Error() != "only --from-local is supported for now (restores the files missing on Drive from this machine's state.db)" {
+	if _, _, err := runPull(t, "drive", "init"); err == nil || err.Error() != "only --from-local is supported for now (restores the files missing on Drive from this computer's state.db)" {
 		t.Fatalf("%v", err)
 	}
-	if _, _, err := runPull(t, "drive", "init", "--from-local", "--yes"); err == nil || err.Error() != "there is no canonical data on this machine (state.db is missing or empty): nothing to restore to Drive" {
+	if _, _, err := runPull(t, "drive", "init", "--from-local", "--yes"); err == nil || err.Error() != "there is no canonical data on this computer (state.db is missing or empty): nothing to restore to Drive" {
 		t.Fatalf("%v", err)
 	}
 	fs.set("p1", "commute", "a", "b")
@@ -54,7 +54,7 @@ func TestEnglishDriveInit(t *testing.T) {
 	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); errs != "Restored 1 file to the Drive appdata of tai@example.com; next, run capy pl pull --all\n" {
 		t.Fatalf("單數:%q", errs)
 	}
-	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); errs != "Drive already has every file this machine knows about; nothing to restore\n" {
+	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); errs != "Drive already has every file this computer knows about; nothing to restore\n" {
 		t.Fatalf("%q", errs)
 	}
 }
@@ -83,15 +83,15 @@ func TestEnglishDriveInitOtherDevicesAndLost(t *testing.T) {
 	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); errs != skipped+"Restored 4 files to the Drive appdata of tai@example.com; next, run capy pl pull --all\n" {
 		t.Fatalf("%q", errs)
 	}
-	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); errs != skipped+"Drive already has every file this machine knows about; nothing to restore. 1 file from another device is deliberately not uploaded\n" {
+	if _, errs := mustPull(t, "drive", "init", "--from-local", "--yes"); errs != skipped+"Drive already has every file this computer knows about; nothing to restore. 1 file from another device is deliberately not uploaded\n" {
 		t.Fatalf("%q", errs)
 	}
 	wipeDrive(t, dc)
 	if _, err := dc.Create(context.Background(), "manifest.json", canon.ManifestFile().Props, []byte(`{"schema_version":1,"devices":[],"playlists":["01LOSTLOSTLOSTLOSTLOSTLOST"]}`+"\n")); err != nil {
 		t.Fatal(err)
 	}
-	const lost = "the manifest on Drive lists pl__01LOSTLOSTLOSTLOSTLOSTLOST.json, but neither Drive nor this machine has that file: it can't be restored, and pl pull will keep exiting with 3. " +
-		"That playlist is lost (it's in neither place); the only way out is to clear the appdata in your Google Account settings (Manage apps → Delete hidden app data) and run capy drive init --from-local again (the manifest is rebuilt from this machine, without it)"
+	const lost = "the manifest on Drive lists pl__01LOSTLOSTLOSTLOSTLOSTLOST.json, but neither Drive nor this computer has that file: it can't be restored, and pl pull will keep exiting with 3. " +
+		"That playlist is lost (it's in neither place); the only way out is to clear the appdata in your Google Account settings (Manage apps → Delete hidden app data) and run capy drive init --from-local again (the manifest is rebuilt from this computer, without it)"
 	if _, _, err := runPull(t, "drive", "init", "--from-local", "--yes"); exitOf(t, err) != 1 || err.Error() != lost {
 		t.Fatalf("%v", err)
 	}
@@ -110,7 +110,7 @@ func TestEnglishEscapeHelp(t *testing.T) {
 	setCLITestConfig(t)
 	for args, wants := range map[string][]string{
 		"export --help":     {"Reads only the local state.db and never touches Drive", "capy export > backup.json never silently writes an empty file"},
-		"drive --help":      {"Maintenance commands for the Google Drive appdata", "Restore the files missing from the Drive appdata using this machine's state.db"},
+		"drive --help":      {"Maintenance commands for the Google Drive appdata", "Restore the files missing from the Drive appdata using this computer's state.db"},
 		"drive init --help": {"The way out after pl pull stops with exit 3", "currently the only mode", "exits 2 if there is anything to create", "skip the confirmation"},
 	} {
 		out, err := runCLI(t, strings.Fields(args)...)

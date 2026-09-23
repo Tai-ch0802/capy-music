@@ -12,10 +12,9 @@ const FACTS = ['免費', '開源(MIT)', '在你自己的電腦上執行', '不�
 const READ_ONLY = [];                    // 不能當目的地的平台(目前沒有;Apple 自決策 49 起可寫)
 const CAN_CREATE = ['spotify', 'apple']; // 能新建清單的平台;其餘(local)只能加進既有的
 const NO_LOGIN = ['local'];
-// 下面兩個字面是 migrate.go 的原文,精靈靠它們認出「逐筆裁決」那一則與「這一首推得過去」;
-// TestWebMoveWizardKeysOnMigrateWording 兩邊一起釘,CLI 改字測試就紅。
-const REVIEW_MARK = '現在逐筆裁決?';
-const PUSHABLE_MARK = '推到 ';
+// 下面是 migrate.confirm.review 在每個語系的原文片段(zh-TW / en),精靈靠它認出「逐筆裁決」那一則;「這一首推得過去」改看 REASON_CODE 欄(見 tally)。
+// TestWebMoveWizardKeysOnMigrateWording 用兩種語系跑真的 migrate 一起釘,CLI 改字測試就紅。ponytail: 比對文字;T3 的提示事件帶 key 之後改比 key。
+const REVIEW_MARKS = ['現在逐筆裁決?', 'Review now, one by one?'];
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => {
@@ -46,17 +45,18 @@ function capybara() {
   return s;
 }
 
-// 表的欄位:DIR ACTION PROVIDER PLAYLIST POS CID PROVIDER_ID TITLE ARTISTS REASON(TestWebMoveWizardKeysOnMigrateWording 釘住欄名)。
+// 表的欄位:DIR ACTION PROVIDER PLAYLIST POS CID PROVIDER_ID TITLE ARTISTS REASON REASON_CODE
+// (TestWebMoveWizardCapabilitiesAndHeadersMatchGo 釘住欄名)。REASON 跟著語系、只拿來顯示;判斷一律看 REASON_CODE。
 // 兩條路的列長得不一樣(migrate.go;review #68):「加進既有清單」接進去的每一首都是 migrate 列、ACTION 永遠是 add,
-// 推不出去只寫在 REASON;「新建清單」時正本既有的曲目是 push 列(add / skip),正本已連著來源時甚至一列 migrate 都沒有。
-// 所以兩種列都吃、以 CID 去重:沒搬到 = ACTION 是 skip,或 migrate 列的 REASON 不以「推到 」開頭;其餘都算搬了。
+// 推不出去只寫在原因欄;「新建清單」時正本既有的曲目是 push 列(add / skip),正本已連著來源時甚至一列 migrate 都沒有。
+// 所以兩種列都吃、以 CID 去重:沒搬到 = ACTION 是 skip,或 migrate 列的 REASON_CODE 不是 push;其餘都算搬了。
 export function tally(h, rows) {
   if (!h || !rows) return { moved: 0, missed: [] };
-  const [dir, action, cid, title, artists, reason] = ['DIR', 'ACTION', 'CID', 'TITLE', 'ARTISTS', 'REASON'].map((k) => h.indexOf(k));
+  const [dir, action, cid, title, artists, reason, code] = ['DIR', 'ACTION', 'CID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'].map((k) => h.indexOf(k));
   const songs = new Map();
   for (const r of rows) {
     if (r[dir] !== 'migrate' && r[dir] !== 'push') continue;
-    const miss = r[action] === 'skip' || (r[dir] === 'migrate' && !String(r[reason] || '').startsWith(PUSHABLE_MARK));
+    const miss = r[action] === 'skip' || (r[dir] === 'migrate' && r[code] !== 'push');
     const seen = songs.get(r[cid]);
     if (!seen) songs.set(r[cid], { title: r[title], artists: r[artists], reason: r[reason], miss });
     else if (miss && !seen.miss) Object.assign(seen, { miss, reason: r[reason] });
@@ -122,7 +122,7 @@ export function initMove(root, api, con, notice, providers) {
   // 伺服器問的話逐字照留(規格 §9),這裡只在旁邊補白話;不替使用者回答任何一則。
   const onPrompt = (ev, box) => {
     let help = '';
-    if (String(ev.title || '').includes(REVIEW_MARK)) {
+    if (REVIEW_MARKS.some((m) => String(ev.title || '').includes(m))) {
       help = '有幾首歌在目的地找不到完全一樣的。按「套用」可以一首一首挑;按「取消」就先搬找得到的,其餘之後可以再處理。這一步不會寫入任何東西。';
     } else if (ev.kind === 'confirm' && state.running && state.preview) {
       help = '這是最後一次確認:上面列的就是要搬的歌。按「套用」才會開始寫入;按「取消」什麼都不會改。';

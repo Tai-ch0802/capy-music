@@ -229,24 +229,26 @@ func TestTableTTYIDNeverShrinks(t *testing.T) {
 	}
 }
 
-// 原子欄(ID / *_ID / CID / PID / ISRC / DEVICE)在最寬的幾張表上也永遠不折;放不下時盡力縮,不會比
+// 原子欄(ID / *_ID / CID / PID / ISRC / DEVICE / REASON_CODE)在最寬的幾張表上也永遠不折;放不下時盡力縮,不會比
 // 自然寬度更糟(PR #51 review:resolve 在 80 欄不可以從 84 退化成 107)。上限用測試自己算的尺:
 // 原子欄自然寬 + 其餘欄 min(自然寬, 8) + 欄距。
 func TestTableTTYAtomicColumnsAndWideTables(t *testing.T) {
 	spotifyID := "3n3Ppam7vgaVa1iaRUc9Lp"
 	cid := "c_01H8XQZ4K7"
-	pull := []string{"ACTION", "PROVIDER", "PLAYLIST", "POS", "CID", "PROVIDER_ID", "TITLE", "ARTISTS", "REASON"}
-	pullRow := []string{"add", "spotify", "冬日暖調", "12", cid, spotifyID, "Mr. Brightside", "The Killers", "new in drive"}
+	pull := []string{"ACTION", "PROVIDER", "PLAYLIST", "POS", "CID", "PROVIDER_ID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"}
+	pullRow := []string{"add", "spotify", "冬日暖調", "12", cid, spotifyID, "Mr. Brightside", "The Killers", "new in drive", "added_on_platform"}
 	cases := []struct {
 		name   string
 		header []string
 		row    []string
 		atomic []int // 哪幾欄是原子欄(測試自己列,不問被測的函式)
 	}{
-		{"pull", pull, pullRow, []int{4, 5}},
-		{"sync", append([]string{"DIR"}, pull...), append([]string{"push"}, pullRow...), []int{5, 6}},
-		{"resolve", []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFIDENCE", "SOURCE", "TITLE", "ARTISTS", "REASON"},
-			[]string{"link", cid, "spotify", spotifyID, "0.98", "isrc", "Mr. Brightside", "The Killers", "isrc exact"}, []int{1, 3}},
+		{"pull", pull, pullRow, []int{4, 5, 9}},
+		{"sync", append([]string{"DIR"}, pull...), append([]string{"push"}, pullRow...), []int{5, 6, 10}},
+		{"resolve", []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFIDENCE", "SOURCE", "TITLE", "ARTISTS", "REASON", "REASON_CODE"},
+			[]string{"review", cid, "spotify", spotifyID, "0.98", "isrc", "Mr. Brightside", "The Killers", "candidate already taken", "candidate_assigned"}, []int{1, 3, 9}},
+		{"dedup", []string{"POS", "ID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"},
+			[]string{"3", spotifyID, "Mr. Brightside", "The Killers", "same ISRC as pos 0", "dup_isrc"}, []int{1, 5}},
 		{"debug", []string{"ID", "TITLE", "ARTISTS", "ALBUM", "DURATION", "ISRC"},
 			[]string{spotifyID, "Mr. Brightside", "The Killers", "Hot Fuss", "3:42", "USIR20400274"}, []int{0, 5}},
 		{"drive", []string{"ID", "NAME", "KIND", "PID", "DEVICE", "VER", "MODIFIED"},
@@ -292,7 +294,7 @@ func TestTableTTYAtomicColumnsAndWideTables(t *testing.T) {
 	row := []string{"add", "spotify", "上班路上聽的長清單名稱", "12", cid, spotifyID, "Mr. Brightside", "Sycco", "isrc"}
 	withWidth(t, 108) // 自然寬 116,超 8:REASON / ARTISTS 已短於下限,PLAYLIST 要吸收
 	buf := &bytes.Buffer{}
-	Table(buf, true, pull, [][]string{row})
+	Table(buf, true, pull[:9], [][]string{row}) // 不含 REASON_CODE:這裡量的是名字欄的縮放順序
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	if !strings.Contains(lines[1], "Mr. Brightside") || strings.Contains(lines[1], "上班路上聽的長清單名稱") {
 		t.Errorf("TITLE 要最後才縮、PLAYLIST 先折:%q", lines)

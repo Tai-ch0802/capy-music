@@ -152,12 +152,13 @@ func argsOrPicker(n int) cobra.PositionalArgs {
 }
 
 // needTarget:pl pull / push / sync 的參數檢查。清單名與 --all 互斥;兩個都沒給時,
-// 只有終端機能靠挑選器補,非 TTY 維持原本的錯誤。
-func needTarget(cmd *cobra.Command, args []string, all bool, verb string) error {
+// 只有終端機能靠挑選器補,非 TTY 維持原本的錯誤。need 是呼叫端的整句錯誤(pick.err.need_target.pull / .push / .sync):
+// 動詞拼進句子,別的語言的語序就翻不對。
+func needTarget(cmd *cobra.Command, args []string, all bool, need error) error {
 	bothGiven := all && len(args) == 1
 	neitherGiven := !all && len(args) == 0
 	if bothGiven || (neitherGiven && !isInteractive(cmd)) { // 都沒給時只有終端機能靠挑選器補
-		return i18n.Errorf("pick.err.need_target", "verb", verb) // verb 是呼叫端翻好的動詞(拉 / 推 / 同步)
+		return need
 	}
 	return nil
 }

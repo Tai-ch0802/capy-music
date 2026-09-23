@@ -58,7 +58,24 @@
   "auth.status.present": "存在",
   "auth.status.token_missing": "不存在(執行 capy auth login {provider})",
   "auth.status.valid_until": "有效至 {expiry}",
+  "canon.err.dirty_rank": "清單 {pid} 的 rank 資料髒了,不自動重排:{err}",
   "canon.err.schema_too_new": "Drive 上的檔案 schema 比這個 capy 新,請先 capy update",
+  "canon.reason.added_on_platform": "平台新增",
+  "canon.reason.moved_on_platform": "平台換序",
+  "canon.reason.no_mapping": "沒有這個平台的 mapping(或釘成不可得):capy resolve",
+  "canon.reason.playlist_gone": "平台端清單不存在(Q6:自動取消連結)",
+  "canon.reason.removed_on_platform": "平台已移除",
+  "canon.reason.renamed_on_platform": "平台改名:{from} → {to}",
+  "changeset.applied": {
+    "other": "已套用 {count} 筆變更"
+  },
+  "changeset.blocked": "{reasons}。加 --force 越過(先用 --dry-run 看清楚要刪什麼)",
+  "changeset.confirm.apply": "套用",
+  "changeset.confirm.cancel": "取消",
+  "changeset.no_changes": "無變更",
+  "changeset.pending": {
+    "other": "{count} 筆變更待套用:加 --yes 套用,或在終端機執行以確認"
+  },
   "cmd.auth.login.flag.client_id": "(spotify / google)你自建 app 的 Client ID(略過精靈);google 等同 CAPY_GOOGLE_CLIENT_ID",
   "cmd.auth.login.flag.client_secret": "(google)自建 client 的 secret;等同 CAPY_GOOGLE_CLIENT_SECRET。argv 可被 ps 看到,建議用環境變數",
   "cmd.auth.login.flag.developer_token": "(apple)developer token;等同 CAPY_APPLE_DEVELOPER_TOKEN。argv 可被 ps 看到,建議用環境變數",
@@ -83,12 +100,64 @@
   "cmd.export.short": "把本機 canonical 資料輸出到 stdout(Drive 檔的合併形式;逃生口,不依賴 Drive)",
   "cmd.history.clear.short": "清空最近紀錄(播放清單快取保留)",
   "cmd.history.short": "最近搜尋/播放紀錄(本機快取,供補全與挑選器)",
+  "cmd.migrate.flag.dry_run": "只列出要搬什麼,不建清單、不碰平台也不碰 Drive(有東西時 exit 2)",
+  "cmd.migrate.flag.from": "來源平台({ids});終端機裡不給會挑選",
+  "cmd.migrate.flag.to": "目標平台,或 <平台>:<既有清單 ID 或名稱>;只給平台 = 建一個跟來源同名的新清單(Spotify / Apple Music);終端機裡不給會挑選",
+  "cmd.migrate.flag.yes": "跳過確認(cron / 管線用);不當場裁決沒對到的曲目",
+  "cmd.migrate.long": "把 --from 平台的清單複製到 --to 平台,不用自己串 pl link / pull / resolve / push。--to 只給平台 = 在那裡建一個跟來源同名的私人清單\n(Spotify、Apple Music 都能建,local 不能);--to <平台>:<清單> = 加進既有清單。不帶參數且在終端機裡會逐段挑選(來源平台 → 清單 → 目標平台 → 既有清單或建新的);\n非 TTY 要給清單與 --from / --to。\n\n順序:目標原本的順序是前綴,來源的曲目依來源的順序接在後面;來源裡目標已經有的(同平台 id 或同 ISRC)略過,來源自己的重複也只留一份。\n永遠不動來源;對目標只做新增——目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 capy pl sync。\n每一首先用 ISRC 反查、再模糊比對(≥85 自動);沒對到的這次不推,表裡會說,終端機裡可以當場逐筆裁決。\n一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code;dir ∈ pull / migrate / push;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼)、一次確認;\n--dry-run 只列(有東西時 exit 2、不建清單);非 TTY 沒 --yes 也是 exit 2。確認之後才在目標平台建清單。\n完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要持續同步,結尾會給 pl link + pl sync 的命令。\nlocal 只能加進既有檔(--to local:<檔名>)。搬進 Apple Music 的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);Apple 只寫你自己建的清單,商店裡已下架的歌搬不過去:表裡可能照樣列出,寫完重讀時會警告。",
+  "cmd.migrate.short": "把一個平台的清單搬到另一個平台(新建或加進既有清單);順序不動、不刪來源、只新增",
+  "cmd.migrate.use": "[來源清單 ID 或名稱] --from <平台> --to <平台>[:<既有清單 ID 或名稱>]",
   "cmd.next.done": "⏭ 下一首",
   "cmd.next.short": "下一首",
   "cmd.pause.done": "⏸ 已暫停",
   "cmd.pause.short": "暫停播放",
+  "cmd.pl.dedup.args": "[name|pid | <provider>:<清單 ID 或名稱>]",
+  "cmd.pl.dedup.flag.dry_run": "只列出變更,不碰平台也不碰 Drive(有變更時 exit 2)",
+  "cmd.pl.dedup.flag.force": "越過刪除閾值(去重與 push 各算);去掉的份會在同一個指令裡推到清單連結的其他平台,先 --dry-run",
+  "cmd.pl.dedup.flag.provider": "只走這個 provider 的 pull / push 半邊(預設:清單連結的全部 provider);正本的去重不分平台",
+  "cmd.pl.dedup.flag.yes": "跳過確認(cron / 管線用)",
+  "cmd.pl.dedup.long": "重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首)。保留第一次出現的那份、拿掉後面的,剩下的相對順序一個都不動。\n\n<provider>:<清單 ID 或名稱>:直接讀平台清單、只報告(非 TTY 是無標題 TSV:pos id title artists reason reason_code;pos 從 0 起;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼);不碰 Drive、\n不需要連結;有沒有重複 exit code 都是 0。要由 capy 移除,把清單連到正本再用下面那種寫法。--yes / --force / --dry-run / --provider 配這種寫法是錯誤。\n\ncanonical 清單(name|pid;不帶參數且在終端機裡會開挑選器):pl sync 的一輪中間多一步——先 pull(平台現況吸進正本)、\n正本去重、再 push 把多出來的份從可寫的平台拿掉。一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code,\ndir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確認;exit code 同 pl sync(0 無變更或已套用、1 錯誤、2 待套用、3 安全閥)。\n正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 pl sync;--provider 沒選到或讀不到的平台這次沒檢查,stderr 會說)。\n刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),--force 越過;寫不了的平台還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。",
+  "cmd.pl.dedup.short": "去掉清單裡重複的曲目(同平台 id 或同 ISRC;保留第一份,其餘順序不動)",
+  "cmd.pl.link.flag.create": "在平台上建一個跟 canonical 清單同名的空清單再連結;此時第二個參數只給平台、不帶「:」(例如 spotify);Spotify 與 Apple Music 支援,local 不行",
+  "cmd.pl.link.short": "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link。不帶參數且在終端機裡會三段挑選)",
+  "cmd.pl.link.use": "link [name|pid] [provider]:[playlist ID|名稱](或 [provider] --create)",
+  "cmd.pl.list.short": "列出我的播放清單",
+  "cmd.pl.pull.flag.all": "拉全部已連結的清單",
+  "cmd.pl.pull.flag.dry_run": "只列出變更,不寫入(有變更時 exit 2)",
+  "cmd.pl.pull.flag.force": "越過刪除閾值(>10 首,或 >30% 且 >3 首);只能配單一清單、不能配 --all;不放行 Drive 不完整",
+  "cmd.pl.pull.flag.provider": "只拉這個 provider 的連結(預設:清單連結的全部 provider)",
+  "cmd.pl.pull.flag.yes": "跳過確認(cron / 管線用);不放行 Drive 不完整",
+  "cmd.pl.pull.long": "平台 → canonical → Drive(spec §6.1、§6.5)。變更集先印出(非 TTY 是無標題 TSV:action provider playlist pos cid provider_id title artists reason reason_code;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼),\n確認後才寫入;寫入順序 Drive 先、SQLite 後。exit code:0 無變更或已套用、1 錯誤、2 有待套用變更(--dry-run、非 TTY 沒 --yes、取消)、\n3 安全閥擋下(Drive 不完整;刪除 >10 首或 >30% 且 >3 首)。--yes 跳過確認、--force 才越過刪除閾值,兩者都不放行「Drive 不完整」。",
+  "cmd.pl.pull.short": "平台 → canonical → Drive:列出變更、確認後才寫(spec §6.1)",
+  "cmd.pl.push.flag.all": "推全部已連結的清單",
+  "cmd.pl.push.flag.dry_run": "只列出變更,不碰平台也不碰 Drive(有變更時 exit 2)",
+  "cmd.pl.push.flag.force": "越過刪除閾值(>10 首,或 >30% 且 >3 首);只能配單一清單、不能配 --all;不放行兩個前提",
+  "cmd.pl.push.flag.provider": "只推這個 provider 的連結(預設:清單連結的全部 provider)",
+  "cmd.pl.push.flag.yes": "跳過確認(cron / 管線用);不放行兩個前提",
+  "cmd.pl.push.long": "canonical → 平台(spec §6.5.2)。鏡像 pl pull:變更集先印出(非 TTY 是無標題 TSV,欄位同 pull;action 多了 skip = C 有、平台沒有、\n又沒這個平台的 mapping,先 capy resolve),確認後才寫平台;寫完重讀平台現況記成 base,再寫 Drive(canonical 內容不變)。\nexit code:0 無變更或已套用、1 錯誤(含平台寫到一半:訊息會說已寫幾首,重跑 push 補回)、2 待套用、3 安全閥。\n兩個前提(--force 也不放行):本裝置 pull 過這個平台清單(不然會把平台刪光);平台沒有未 pull 的變更(不然會蓋掉你剛在平台改的)——\n先 capy pl pull 或 capy pl sync。含 local file 的 Spotify 清單暫不支援 push。刪除閾值同 pull(分母是平台曲數),--force 越過且只能配單一清單。\n「動了幾筆」看 stdout 行數時要扣掉 skip 列。",
+  "cmd.pl.push.short": "canonical → 平台:列出變更、確認後才寫(spec §6.5.2)",
+  "cmd.pl.short": "播放清單",
+  "cmd.pl.show.short": "顯示清單內容(不帶參數且在終端機裡會開挑選器)",
+  "cmd.pl.sync.flag.all": "同步全部已連結的清單",
+  "cmd.pl.sync.flag.dry_run": "只列出整輪的變更,不碰平台也不碰 Drive(有變更時 exit 2)",
+  "cmd.pl.sync.flag.force": "越過刪除閾值(pull 與 push 各算);會連帶把這些刪除推到清單連結的其他平台,先 --dry-run;只能配單一清單、不能配 --all",
+  "cmd.pl.sync.flag.provider": "只走這個 provider 的一輪(預設:清單連結的全部 provider)",
+  "cmd.pl.sync.flag.yes": "跳過確認(cron / 管線用)",
+  "cmd.pl.sync.long": "同一把鎖裡每個清單先 pull 各平台(平台 → canonical)、再 push 各平台(canonical → 平台),--provider 只走一個平台。\n變更集一次印完(非 TTY 是無標題 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code;dir ∈ pull / push;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼),確認一次;\n--dry-run 的 push 半邊是用 pull 套用後的 canonical 投影的,看得到完整一輪。閾值對每個 (清單, 平台) 各算,exit code 同 pl pull / pl push。\npush 半邊直接用 pull 半邊剛讀到的平台清單,不再讀一次;寫完平台才寫 Drive,Drive 那邊沒寫成時訊息會講明平台已經改了。\n--provider 指到寫不了的平台(例如別台裝置的本機清單)時只 pull 不 push,stderr 會說;某個清單的某個平台推不了(含 local file)也一樣只跳過那一格的 push 半邊,\n不擋整輪(cron 的 sync --all 不會被一個清單綁死)。刪除閾值仍擋整輪;--force 放行時,pull 半邊吸收進來的刪除會在同一個指令裡\n推到這個清單連結的每一個平台——先 --dry-run 看清楚。",
+  "cmd.pl.sync.short": "先 pull 再 push 的一輪:一張表、一次確認(spec 決策 31)",
+  "cmd.pl.unlink.short": "取消 canonical 清單與平台清單的連結(canonical 內容不動;不帶參數且在終端機裡會兩段挑選)",
   "cmd.prev.done": "⏮ 上一首",
   "cmd.prev.short": "上一首",
+  "cmd.resolve.flag.dry_run": "只列出,不寫入(有可自動寫入的 mapping 時 exit 2;不能配 --review)",
+  "cmd.resolve.flag.provider": "只處理這個 provider(預設:清單連結的全部 provider)",
+  "cmd.resolve.flag.review": "在終端機逐筆裁決 review 佇列(非 TTY:印佇列、exit 2;不能配 --dry-run)",
+  "cmd.resolve.flag.yes": "跳過確認(cron / 管線用);--review 時也直接同意合併",
+  "cmd.resolve.long": "對每個已連結的 (清單, provider),找出 items 裡缺該 provider mapping 的曲目:先以 ISRC 反查(信心 95),沒有再用\n標題 + 藝人 + 時長模糊比對(0–100)。≥85 自動寫入(走 pl pull 同一套:pull.lock、Drive 不完整的閘、Drive 先 SQLite 後),\n其餘印成 review 佇列——候選已屬另一個 cid 的一律進佇列,合併只由人決定。\n非 TTY 輸出 TSV:action cid provider provider_id confidence source title artists reason reason_code(action ∈ map | review | conflict;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼)。\nexit code:0 無事可寫或已寫入(佇列有東西仍是 0)、1 錯誤、2 有待寫入的自動 mapping 但沒有確認(--dry-run、非 TTY 沒 --yes、取消)。\n--review 在終端機逐筆裁決(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有);非 TTY 只印佇列並以 exit 2 結束;\n裁決完才一起寫入,中途 Esc / Ctrl-C 整輪不寫入(含自動 mapping)並以 exit 2 結束。",
+  "cmd.resolve.pin.flag.yes": "id 已屬另一個 cid 時直接合併(非 TTY 沒給會以 exit 2 結束、零寫入)",
+  "cmd.resolve.pin.long": "釘選寫成 pinned / 信心 100 / source review,之後自動程序不再改它;帶 id 時先向平台讀那首曲目確認存在,並把它的 ISRC 加進\nalias set。id(或它的 ISRC)已屬另一個 cid = 兩者是同一錄音:確認後依決策 21 合併(勝者字典序小、清單 item 全部改指勝者);\n非 TTY 要 --yes,否則以 exit 2 結束、零寫入。",
+  "cmd.resolve.pin.short": "手動釘選某個 cid 在某平台的 id(none = 這個平台沒有這首);id 已屬另一個 cid 時把兩者合併",
+  "cmd.resolve.short": "把 canonical 曲目對應到各平台的 id(ISRC 反查 → 模糊比對;≥85 自動寫入,其餘列成 review 佇列)",
+  "cmd.resolve.use": "resolve [<清單名稱|ID>]",
   "cmd.root.flag.port": "--web 的 port(預設 0 = 動態;不可用 8888、80、443)",
   "cmd.root.flag.web": "在瀏覽器操作:只綁 127.0.0.1,啟動時印一次性網址",
   "cmd.root.short": "跨平台音樂 CLI:搜尋、播放遙控、播放清單同步",
@@ -112,7 +181,61 @@
   "config.language.unknown": "config.json 的 language {value} 不支援,先用 {default}(可用:{valid};capy config set language <代碼>)",
   "config.list.invalid": "(非法值,已忽略、視同 {default};可用 {valid})",
   "config.list.unset": "(未設,預設 {default})",
+  "dedup.blocked.threshold": {
+    "other": "{playlist} 要去除 {count} 份重複(共 {total} 首),超過閾值"
+  },
+  "dedup.confirm": {
+    "other": "套用以上 {count} 筆變更(去除 {dups} 份重複;pull {pulls} 筆到 Drive、push {pushes} 筆到平台)?"
+  },
+  "dedup.confirm_force": {
+    "other": "--force:刪除會傳播到這個清單連結的每一個平台。套用以上 {count} 筆變更(去除 {dups} 份重複;pull {pulls} 筆到 Drive、push {pushes} 筆到平台)?"
+  },
+  "dedup.err.report_only": "{platform}:{ref} 只報告、不改平台(--yes / --force / --dry-run / --provider 在這裡沒有意義);要由 capy 移除:capy pl link <名稱> {platform}:{ref},再 capy pl dedup <名稱>",
   "dedup.err.restricted_playlist": "無法讀取這個清單的內容 — 可能是追蹤的他人清單(Spotify 2026-02 起只提供 metadata,spec §1.1),也可能是授權不足;先跑 capy doctor 確認授權",
+  "dedup.manual_leftover": {
+    "other": "{platform}:{id} 還有 {count} 份重複(pos {positions}),這個平台目前寫不了或這次推不了,請在 app 裡手動刪除;正本不會再把它們加回來"
+  },
+  "dedup.next": "重跑 capy pl dedup 或 capy pl sync(pull 半邊會把平台上已拿掉的那份當平台變更吸收,不會重複)",
+  "dedup.next_after_half": "再重跑 capy pl dedup",
+  "dedup.no_changes": "無變更",
+  "dedup.none": "沒有重複",
+  "dedup.none.pull_pending": {
+    "other": "沒有重複(pull 半邊看到 {count} 筆平台變更,留給 capy pl sync)"
+  },
+  "dedup.none_checked": "正本與這次檢查的平台沒有重複",
+  "dedup.none_checked.pull_pending": {
+    "other": "正本與這次檢查的平台沒有重複(pull 半邊看到 {count} 筆平台變更,留給 capy pl sync)"
+  },
+  "dedup.pick_title": "選一個清單來去重",
+  "dedup.pull_changes": {
+    "other": "{count} 筆 pull 變更"
+  },
+  "dedup.pulled_only": {
+    "other": "已套用 {count} 筆 pull 變更(正本沒有要去除的份)"
+  },
+  "dedup.pushed": {
+    "other": "已推送 {count} 筆變更"
+  },
+  "dedup.reason.dup_id": "重複:與 pos {pos} 同 id",
+  "dedup.reason.dup_isrc": "重複:與 pos {pos} 同 ISRC {isrc}",
+  "dedup.reason.duplicate": "重複:與 pos {pos} 同一首,保留前面那份",
+  "dedup.removed": {
+    "other": "已去除 {count} 份重複"
+  },
+  "dedup.removed_and_pulled": {
+    "other": "已去除 {count} 份重複(另套用 {pulls})"
+  },
+  "dedup.report.label": "{platform}:{ref}({id})",
+  "dedup.report.link_hint": {
+    "other": "{count} 份重複;要由 capy 移除:capy pl link <名稱> {platform}:{id},再 capy pl dedup <名稱>"
+  },
+  "dedup.report.none": "{playlist} 沒有重複",
+  "dedup.report.read_only": {
+    "other": "{count} 份重複;{platform} 目前只讀,請照上表在 app 裡手動刪除(pos 從 0 起)"
+  },
+  "dedup.unchecked": {
+    "other": "{platforms} 這次沒檢查(--provider 沒選到、或讀不到),它上面有沒有重複不在這次的結論裡"
+  },
   "doctor.all_passed": "全部通過 🎉",
   "doctor.api.err.failed": "API 呼叫失敗:{err}",
   "doctor.api.ok.apple": "API 可達、token 有效",
@@ -211,9 +334,105 @@
   "history.cleared": {
     "other": "已清空最近紀錄({count} 筆)"
   },
+  "link.created_master": "建立 canonical 清單 {name}({pid})",
+  "link.created_platform": "在 {platform} 建立清單 {name}({id})",
+  "link.done": "已連結 {name}({pid})↔ {platform}:{id};接著 capy pl pull {name}",
+  "link.err.already_linked": "{name}({pid})已連結 {platform}:{id},先 capy pl unlink {name} {platform}",
+  "link.err.create_platform_only": "配 --create 時第二個參數只給平台({ids}),清單名稱跟著 canonical 清單:{arg}",
+  "link.err.no_pid": "找不到 pid {pid} 的 canonical 清單",
+  "link.err.not_listed": "{platform}:{id} 不在你的清單列表裡(capy pl list 看得到的才算):pull 會把不在列表裡的清單視為已刪除並自動取消連結,所以不可連結",
+  "link.err.same_name_many": "{platform} 上已經有 {count} 個叫「{name}」的清單({ids}):挑一個用 capy pl link {quoted} {platform}:<ID> 連",
+  "link.err.same_name_one": "{platform} 上已經有叫「{name}」的清單({id}):要連它就 capy pl link {quoted} {platform}:{id};真的要另建一個,先在 app 裡建好再用 {platform}:<ID> 連",
+  "link.err.taken": "{platform}:{id} 已連結到 canonical 清單 {name}({pid}),一個平台清單只能連一個",
+  "link.err.unreadable": "{platform} 清單 {id} 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不可連結",
+  "link.err.with_recovery": "{err};{recovery}",
+  "link.pick.create_new": "+ 在 {platform} 建一個新的空清單(名字跟著下一步選的清單)",
+  "link.pick.platform": "連到哪個平台?",
+  "link.recovery": "{platform} 上的空清單 {id} 已經建好,但連結沒寫進 Drive:用 capy pl link {quoted} {platform}:{id} 把它接回來",
+  "link.taken_over": "{name}({pid})原本連到裝置 {device} 的 {platform},已改為本機;那台之後會跳過這個清單",
+  "migrate.all_present": {
+    "other": "{src} 的 {count} 首都已在正本 {name}({pid})裡,無變更"
+  },
+  "migrate.all_present.pull_pending": {
+    "other": "(pull 半邊看到 {count} 筆平台變更,留給 capy pl sync)"
+  },
+  "migrate.canon.created": "建立 canonical 清單 {name}({pid})",
+  "migrate.canon.linked": "已連結 {name}({pid})↔ {end}",
+  "migrate.canon.reuse": "沿用既有的 canonical 清單 {name}({pid};連著 {links})",
+  "migrate.canon.reuse_linked": "沿用 {end} 連著的 canonical 清單 {name}({pid})",
+  "migrate.canon.reuse_unlinked": "沿用既有的 canonical 清單 {name}({pid};還沒連任何平台)",
+  "migrate.confirm.add": {
+    "other": "把 {src} 的 {count} 首加進 {dst}?"
+  },
+  "migrate.confirm.create": {
+    "other": "在 {platform} 建立清單「{name}」,把 {src} 的 {count} 首推過去?"
+  },
+  "migrate.confirm.create_follow": {
+    "other": "在 {platform} 建立清單「{name}」,把正本(連著 {src})的 {count} 首推過去?"
+  },
+  "migrate.confirm.create_with_existing": {
+    "other": "在 {platform} 建立清單「{name}」,把 {src} 的 {count} 首連同正本原有的 {existing} 首推過去?"
+  },
+  "migrate.confirm.review": {
+    "other": "{count} 首在 {platform} 沒有自動對應到,現在逐筆裁決?(否 = 先推有對應的,之後 capy resolve {name_arg} --provider {platform} --review)"
+  },
+  "migrate.confirm.unmapped": {
+    "other": "(其中 {count} 首在 {platform} 沒有對應,這次不推)"
+  },
+  "migrate.created": "在 {platform} 建立清單 {name}({id})",
+  "migrate.err.bad_from": "--from 為 {ids}:{value}",
+  "migrate.err.bad_to": "--to 為 <平台> 或 <平台>:<既有清單>,平台為 {ids}:{value}",
+  "migrate.err.blocked": "{blocked}。migrate 不越過刪除閾值:先 capy pl sync {name} 處理那邊的變更,再 migrate",
+  "migrate.err.cannot_create": "{platform} 不能建清單,只能加進既有的:--to {platform}:<清單 ID 或名稱>({err})",
+  "migrate.err.canon_linked_elsewhere": "同名的 canonical 清單 {name}({pid})已連結 {platform}:{linked},不是 {id}:先 capy pl unlink {name_arg} {platform}",
+  "migrate.err.canon_linked_other_source": "同名的 canonical 清單 {name}({pid})連著 {platform}:{linked},不是來源 {src}:要搬的是那一份就用它,不然先 capy pl unlink {name_arg} {platform}",
+  "migrate.err.canon_linked_to_target": "已經有叫「{name}」的 canonical 清單({pid})連著 {platform}:{id}:要加進那個清單就 --to {platform}:{id}",
+  "migrate.err.created_not_listed": "{platform} 端的清單列表看不到剛建的清單 {id},已取消連結",
+  "migrate.err.need_from_to": "--from 與 --to 必填(非終端機沒有挑選器):capy migrate <清單> --from apple --to spotify[:<既有清單>]",
+  "migrate.err.pending_non_add": "{name} 在 {platform} 有還沒同步的 {kind}(migrate 只做新增):先 capy pl sync {name_arg} --provider {platform},再 migrate",
+  "migrate.err.same_name_exists": "{platform} 上已經有叫「{name}」的清單({ids}):要加進它就 --to {platform}:{id};真的要另建一個,先在 app 裡建好再用 --to {platform}:<ID>",
+  "migrate.err.target_gone": "{platform} 端找不到清單 {id}(已取消連結),重跑一次",
+  "migrate.err.target_not_listed": "{platform}:{id} 不在你的清單列表裡(capy pl list 看得到的才算),不能當目標",
+  "migrate.err.target_read_only": "{platform} 目前只讀,不能當 migrate 的目標:{err}",
+  "migrate.err.target_unreadable": "{platform} 清單 {id} 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不能當目標",
+  "migrate.next.relink": "{platform} 上的清單 {created_name}({id})已經建好,但連結沒寫進 Drive:用 capy pl link {name_arg} {platform}:{id} 接回來,再 capy pl sync {name_arg} --provider {platform}",
+  "migrate.next.relink_after": "再 capy pl link {name_arg} {platform}:{id} 接回來並 capy pl sync {name_arg} --provider {platform}",
+  "migrate.next.rerun": "重跑 capy migrate {name_arg} --from {from} --to {platform}:{id}(已推到平台的曲目會當既有內容吸收,不會重複)",
+  "migrate.next.rerun_after": "再重跑 capy migrate",
+  "migrate.pick.create_new": "+ 在 {platform} 建一個跟來源同名的新清單",
+  "migrate.pick.from": "從哪個平台搬?",
+  "migrate.pick.to": "搬到哪個平台?",
+  "migrate.pushed": {
+    "other": "已推送 {count} 筆變更"
+  },
+  "migrate.reason.no_mapping": "{platform} 沒有對應,這次不推",
+  "migrate.reason.push": "推到 {platform}:{id}({source} {confidence})",
+  "migrate.reason.unpushable": "有 mapping 但推不出去(local file / library-only),只能在平台手動加",
+  "migrate.resolve_summary": "resolve:{mapped} 首自動對應到 {platform},{queued} 首要人裁決",
+  "migrate.review.cancelled": "已取消:這輪不寫入任何東西",
+  "migrate.reviewed": {
+    "other": "裁決 {count} 筆"
+  },
+  "migrate.source_empty": "{src} 是空的,沒有東西可搬",
+  "migrate.summary.appended": {
+    "other": "已把 {src} 的 {count} 首接進正本 {name}({pid},共 {total} 首),推了 {pushed} 首到 {dst}"
+  },
+  "migrate.summary.follow": {
+    "other": "正本 {name}({pid})連著 {src},以正本為準,推了 {count} 首到 {dst}"
+  },
+  "migrate.summary.follow_pulled": {
+    "other": "正本 {name}({pid})連著 {src},以正本為準、pull 了 {pulled} 筆來源變更,推了 {count} 首到 {dst}"
+  },
+  "migrate.summary.source_linked": "來源 {platform}:{id} 也連著這個正本(不是一次性複製):之後 capy pl sync {name_arg} 會讓兩邊都跟上正本",
+  "migrate.summary.source_unlinked": "來源沒有連結(一次性複製)。之後要跟著 {platform} 的變動:capy pl link {name_arg} {platform}:{id},再 capy pl sync {name_arg}",
+  "migrate.summary.unmapped": {
+    "other": "{count} 首在 {platform} 沒有對應、這次沒推:capy resolve {name_arg} --provider {platform} --review 裁決後,capy pl sync {name_arg} --provider {platform} 推過去"
+  },
   "pick.err.cancelled": "已取消",
   "pick.err.name_taken": "已經有這個清單了:{name}({pid})—— 回去選它,或換一個名字",
-  "pick.err.need_target": "指定一個清單(名稱或 pid),或用 --all {verb}全部已連結的清單",
+  "pick.err.need_target.pull": "指定一個清單(名稱或 pid),或用 --all 拉全部已連結的清單",
+  "pick.err.need_target.push": "指定一個清單(名稱或 pid),或用 --all 推全部已連結的清單",
+  "pick.err.need_target.sync": "指定一個清單(名稱或 pid),或用 --all 同步全部已連結的清單",
   "pick.err.no_playlists": "{platform} 上沒有任何清單",
   "pick.err.none_linked": "沒有已連結的清單 — 先 capy pl link <name> <provider>:<清單>",
   "pick.err.none_linked_to": "沒有連結 {platform} 的清單 — 先 capy pl link <name> {platform}:<清單>",
@@ -259,6 +478,10 @@
   "pick.title.filter_esc": "{title}(/ 過濾,Esc 取消)",
   "pick.title.link_target": "要連結哪個清單?",
   "pick.title.platform_playlist": "選一個 {platform} 上的清單",
+  "pl.err.bad_provider": "provider 為 {ids}:{value}",
+  "pl.err.not_found": "找不到名為 {name} 的清單 — 用 capy pl list 查看",
+  "pl.err.same_name": "有 {count} 個同名清單,請改用 ID:{ids}",
+  "pl.same_name_item": "{id}({owner})",
   "platform.cap.isrc_lookup": "ISRC 反查",
   "platform.cap.playback": "播放遙控(Apple Music 的播放只在 macOS 可用;其他平台請用 --provider spotify)",
   "platform.cap.playlist_create": "建立播放清單",
@@ -285,13 +508,186 @@
   "provider.err.player_not_running": "播放器未執行",
   "provider.err.restricted": "平台不提供此內容",
   "provider.err.volume_not_allowed": "這個裝置不允許遠端調整音量",
+  "pull.blocked.drive_incomplete": "Drive appdata 不完整,取不到:{files}。這不會被當成「使用者刪光了」,零寫入;--yes / --force 都不放行。若 Drive 真的被清空或登錯 Google 帳號(目前 {account}),出口是 capy drive init --from-local(只補 Drive 缺的檔;本機 state.db 是唯一剩下的一份,別刪)",
+  "pull.blocked.threshold": "{name} 在 {platform} 要移除 {removes} 首(可見 {visible} 首),超過閾值",
+  "pull.confirm": {
+    "other": "套用以上 {count} 筆變更到 Drive?"
+  },
+  "pull.device_name": "{name}({id})",
+  "pull.err.bad_provider": "provider 為 {ids}:{arg}",
+  "pull.err.drive_changed": "Drive 上的檔在這次執行期間變了({files});零寫入,重跑一次",
+  "pull.err.force_with_all": "--force 只能配單一清單(capy pl pull <name> --force),不能配 --all",
+  "pull.err.not_found": "找不到 canonical 清單 {arg} — 先 capy pl link {name} <provider>:<清單>",
+  "pull.err.not_linked": "{name}({pid})沒有連結任何平台清單 — 先 capy pl link",
+  "pull.err.provider_ref": "格式是 <provider>:<清單 ID 或名稱>,provider 為 {ids}:{arg}",
+  "pull.err.read_drive_file": "讀取 Drive 的 {name}:{err}",
+  "pull.err.read_playlist": "讀取 {name} 的 {platform}:{id}:{err}",
+  "pull.err.same_name": "有 {count} 個同名的 canonical 清單,請改用 pid:{pids}",
+  "pull.err.upload": "上傳 {name} 失敗(本機快取未動,下次 pull 重算):{err}",
+  "pull.guard.created": "{name} 被別台裝置建立",
+  "pull.guard.deleted": "{name} 被別台裝置刪除或換掉",
+  "pull.guard.duplicated": "{name} 多了一份(或另一份被改過)",
+  "pull.guard.modified": "{name} 被別台裝置改過",
+  "pull.healed": {
+    "other": "修復 {count} 筆清單項目的合併殘留({playlists};上次寫入中斷:tracks.json 已合併、清單還指著舊 cid),下次寫入時一併上傳"
+  },
+  "pull.hint.rename_unsupported": "提示:{name} 改名為 {new_name},但 {platform} 不支援改名,它那邊仍叫 {name}(要一致請自己在那邊改名再重新 capy pl link)",
+  "pull.pick.title.pull": "選一個清單來拉",
+  "pull.pick.title.push": "選一個清單來推",
+  "pull.pick.title.sync": "選一個清單來同步",
+  "pull.skip.foreign": "跳過 {name} 的 {platform}:{id} 屬於裝置 {device}(要在這台接手:capy pl link {name} {platform}:<檔名>)",
+  "pull.skip.restricted": "跳過 {name} 的 {platform}:{id}(開發模式 app 讀不到 Spotify 官方 / 他人的清單,不是清單消失)",
+  "pull.unknown_account": "未知帳號",
+  "pull.warn.cache_write": "警告:Drive 已更新,但本機快取寫入失敗(下次 pull 會重建):{err}",
+  "pull.warn.duplicate_files": "警告:Drive appdata 有 {count} 份 {name},採用最新的一份",
+  "pull.warn.gone": "警告:{platform} 端找不到清單 {id},{name} 將取消連結(Q6);canonical 內容不動",
+  "pull.warn.tracks": "警告:tracks.json {warning}",
+  "push.blocked.threshold": {
+    "other": "{playlist} 在 {platform} 要移除 {count} 首(平台 {total} 首),超過閾值"
+  },
+  "push.confirm": {
+    "other": "推送以上 {count} 筆變更到平台?"
+  },
+  "push.done": {
+    "other": "已推送 {count} 筆變更"
+  },
+  "push.drive.failed": "Drive 沒寫成:{err}",
+  "push.drive.guard": "Drive 上的檔在這次執行期間變了({files})",
+  "push.err.bad_provider": "provider 為 {valid}:{value}",
+  "push.err.force_with_all": "--force 只能配單一清單(capy pl push <name> --force),不能配 --all",
+  "push.err.foreign_link": "{playlist} 的 {platform}:{link} 屬於裝置 {device},不是這台的本機清單(要在這台接手:capy pl link {playlist} {platform}:<檔名>)",
+  "push.err.half_and_drive": "{err};而且 {drive}——base 沒前進:先 capy pl pull --dry-run 看清楚(平台上少的那截會被列成移除),{next}",
+  "push.err.read": "讀取 {playlist} 的 {platform}:{link}:{err}",
+  "push.err.stale": {
+    "other": "{items} 在確認期間有變動,那幾份零寫入;先 capy pl pull 再 push"
+  },
+  "push.err.written_but_drive": {
+    "other": "平台已寫入 {count} 筆,但 {drive}(base 沒前進):{next}"
+  },
+  "push.manual_op": "手動:{playlist} 的 {platform} 不支援 {kind}(位置 {pos}),請在平台上自己做",
+  "push.next": "先 capy pl pull 再 capy pl push",
+  "push.next_after_half": "再 pull、再 push",
+  "push.reason.moved": "canonical 換序",
+  "push.reason.push": "推到平台",
+  "push.reason.removed": "canonical 已移除",
+  "push.reason.renamed": "canonical 改名:{from} → {to}",
+  "push.reason.unpushable": "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加",
+  "push.refuse.local_files": {
+    "other": "{playlist} 在 {platform} 有 {count} 首 local file({titles}),整批取代會把它們弄丟,這個清單暫不支援 push"
+  },
+  "push.refuse.no_base": "{playlist} 的 {platform} 還沒 pull 過(沒有 base),先 capy pl pull {playlist}",
+  "push.refuse.playlist_missing": "{platform} 端找不到清單 {link}({playlist}),先 capy pl pull {playlist}(會取消連結)",
+  "push.refuse.unpulled": "{playlist} 在 {platform} 有未 pull 的變更,先 capy pl pull {playlist}(或 capy pl sync)",
+  "push.refuse.unwritable": "{playlist} 的 {platform}({link})寫不了:{reason}",
+  "push.skip.foreign_link": "跳過 {playlist} 的 {platform}:{link} 屬於裝置 {device}(要在這台接手:capy pl link {playlist} {platform}:<檔名>)",
+  "push.skip.not_writable": "跳過 {playlist} 的 {platform}:{err}",
+  "push.skip.push_half": "跳過 {playlist} 的 {platform} 的 push 半邊:{reason}",
+  "push.skip.restricted": "跳過 {playlist} 的 {platform}:{link}(開發模式 app 讀不到 Spotify 官方 / 他人的清單,也寫不了)",
+  "push.stale.changed": "{playlist} 在 {platform} 於確認期間變了,這份不寫",
+  "push.stale.item": "{playlist} 在 {platform}",
+  "push.stale.reread_failed": "{playlist} 在 {platform} 套用前重讀失敗:{err},這份不寫",
+  "push.warn.isrc_conflict": "警告:ISRC 衝突 {cid}:{platform} 的 {title}({id})與既有 metadata 不符,已記進 tracks.json 的 conflicts(spec §6.2)",
+  "push.warn.reread_failed_untouched": "警告:重讀 {playlist} 的 {platform} 失敗({err});平台沒動,base 不變",
+  "push.warn.reread_failed_written": {
+    "other": "警告:重讀 {playlist} 的 {platform} 失敗({err});base 先記成已寫入的 {count} 首,下次 pull 會校正"
+  },
+  "push.warn.unexpected_result": "警告:{playlist} 在 {platform} 套用後的內容與預期不同(平台拒收或改了順序),下次 push 會再對一次",
+  "push.write_failed": "寫入 {playlist} 的 {platform} 失敗:{err}",
+  "resolve.api_call_hint": {
+    "other": "這次 resolve 打了 {count} 次 API(超過 {limit}):未解開的 cid 每次都會重查;若已放進 cron 請回報,該加決策 24 延後的 negative cache 了"
+  },
+  "resolve.cancelled": {
+    "other": "已取消:這輪的 {count} 筆自動 mapping 與 {decisions}都不寫入"
+  },
+  "resolve.confirm_write": {
+    "other": "寫入以上 {count} 筆 mapping 到 Drive?"
+  },
+  "resolve.conflict_id": "{id}({title},{duration})",
+  "resolve.decision.kept": "釘住現有 mapping {id}",
+  "resolve.decision.pinned": "釘選 {id}",
+  "resolve.decision.pinned_merged": "釘選 {id},並與另一個 cid 合併為 {cid}",
+  "resolve.decision.pinned_none": "釘成不可得",
+  "resolve.decision.skipped": "略過",
+  "resolve.decision.skipped_no_mapping": "略過(合併後已沒有這個 provider 的 mapping)",
+  "resolve.decision.skipped_not_merged": "略過(未合併)",
+  "resolve.err.no_candidate_to_accept": "沒有候選可接受",
+  "resolve.err.no_cid": "tracks 沒有 cid {cid}",
+  "resolve.err.no_cid_pull": "tracks 沒有 cid {cid}(先 capy pl pull)",
+  "resolve.err.pin_unreadable": "{provider} 上讀不到曲目 {id}(id 打錯?):{err}",
+  "resolve.err.review_needs_tty": {
+    "other": "{count} 筆待人工裁決:--review 需要終端機(佇列已印出;腳本用 capy resolve pin <cid> <provider>:<id|none>)"
+  },
+  "resolve.err.review_with_dry_run": "--review 不能配 --dry-run(裁決一定寫入;先看佇列用 capy resolve --dry-run)",
+  "resolve.err.search_unsupported": "{provider} 不支援搜尋",
+  "resolve.err.unknown_decision": "未知的裁決 {kind}",
+  "resolve.err.unknown_provider": "不認得 provider {provider}({ids})",
+  "resolve.hint.unmapped": {
+    "other": "{count} 首尚未對應到 {provider},跑 capy resolve"
+  },
+  "resolve.no_auto_mappings": "沒有可自動寫入的 mapping",
+  "resolve.pin.confirm_merge": "合併這兩個 cid?",
+  "resolve.pin.done": "已釘選:{cid} 在 {provider} = {id}",
+  "resolve.pin.done_none": "已釘選:{cid} 在 {provider} 不可得",
+  "resolve.pin.merge_notice": "{provider}:{id} 已屬 cid {other}:釘選等於把 {cid} 與 {other} 合併(勝者字典序小、清單 item 全部改指勝者)",
+  "resolve.pin.merged": "已合併,勝者 {cid}",
+  "resolve.pin.unverified": "{provider} 不支援讀取單曲:未驗證 id,alias set 不更新",
+  "resolve.provider_skipped": "{provider} 這輪跳過:{err}",
+  "resolve.queued": {
+    "other": "{count} 筆待人工裁決:在終端機跑 capy resolve --review,或用 capy resolve pin"
+  },
+  "resolve.reason.candidate_assigned": "候選 {candidate} 這一輪已配給 cid {cid}",
+  "resolve.reason.candidate_taken": "候選 {candidate} 已屬 cid {cid}(合併只由人決定:capy resolve pin)",
+  "resolve.reason.fuzzy": "fuzzy {score} 分:{candidate}",
+  "resolve.reason.isrc": "ISRC 反查",
+  "resolve.reason.isrc_conflict": "同 ISRC 觀測到不同 id:{ids};--review 的 keep 釘住現有 mapping",
+  "resolve.reason.lookup_failed": "查詢失敗:{err}",
+  "resolve.reason.low_score": "{score} 分 < {threshold}:候選 {candidate}",
+  "resolve.reason.no_candidate": "找不到候選",
+  "resolve.review.confirm_merge": "{provider} 的這個 id 已屬 cid {other}:把 {cid} 與它合併(勝者字典序小、清單 item 全部改指勝者)?",
+  "resolve.review.opt.accept": "接受 {score} 分候選:{candidate}",
+  "resolve.review.opt.keep": "釘住現有 mapping {id}(人確認過,之後不再問)",
+  "resolve.review.opt.manual": "手動搜尋",
+  "resolve.review.opt.none": "這個平台沒有這首(釘成不可得)",
+  "resolve.review.opt.skip": "略過(下次再問)",
+  "resolve.review.pick_item": "{score} 分  {candidate}",
+  "resolve.review.pick_title": "選一首釘上(Esc 略過)",
+  "resolve.review.progress": "[{pos}/{total}] {title}:{result}",
+  "resolve.review.search_failed": "搜尋失敗,這筆先略過:{err}",
+  "resolve.review.search_query": "搜尋字串",
+  "resolve.review.title": "[{pos}/{total}] {title} — {artists}({duration})\n{provider}:{reason}",
+  "resolve.review_decisions": {
+    "other": "{count} 筆裁決"
+  },
+  "resolve.reviewed": {
+    "other": "裁決 {count} 筆"
+  },
+  "resolve.track": "{title} — {artists}({duration})",
+  "resolve.written": {
+    "other": "寫入 {count} 筆 mapping"
+  },
   "root.err.port_without_web": "--port 只能配 --web 使用",
   "root.err.signal": "收到訊號 {signal}",
+  "sep.clause": ";",
   "sep.list": "、",
   "sep.or": " 或 ",
   "store.err.no_db": "本機沒有 state.db",
   "store.err.schema_mismatch": "本機 state.db 的 schema 版本與這個 capy 不同",
+  "sync.confirm": {
+    "other": "套用以上 {count} 筆變更(pull {pulls} 筆到 Drive、push {pushes} 筆到平台)?"
+  },
+  "sync.confirm_force": "--force:刪除會傳播到這個清單連結的每一個平台。{prompt}",
+  "sync.done_pull": {
+    "other": "已套用 {count} 筆 pull 變更"
+  },
+  "sync.err.force_with_all": "--force 只能配單一清單(capy pl sync <name> --force),不能配 --all",
+  "sync.next": "重跑 capy pl sync(pull 半邊會把已推到平台的變更當平台變更再吸收一次,不會重複)",
+  "sync.next_after_half": "再重跑 capy pl sync",
   "ui.err.interrupted": "已中斷",
+  "unlink.done": "已取消連結 {name}({pid})↔ {platform}:{id}",
+  "unlink.err.not_found": "找不到 canonical 清單 {arg}",
+  "unlink.err.not_linked": "{name}({pid})沒有連結 {platform}",
+  "unlink.pick.platform": "取消哪一個平台的連結?",
+  "unlink.pick.playlist": "選一個要取消連結的清單",
   "update.dev.building": "main 最新 {sha}({date}),目前 {version};建置中(第一次會下載相依,約 20 秒)…",
   "update.dev.up_to_date": "已是最新:{version}(main {sha})",
   "update.err.checksum_mismatch": "SHA-256 校驗失敗(下載不完整,或 release 檔被換過):{got} ≠ {checksums} 裡的 {want}",
