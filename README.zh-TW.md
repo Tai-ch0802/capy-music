@@ -4,9 +4,9 @@
 
 跨平台音樂 CLI:搜尋、播放遙控、播放清單同步(Spotify、Apple Music;播放清單同步到你自己的 Google Drive)。開源、免費,**所有憑證都是你自己的(BYO)** —— 本專案不代持任何 token、不架任何服務。
 
-網站:<https://capy.taislife.work>(給一般使用者的介紹、[隱私權政策](https://capy.taislife.work/privacy)、[服務條款](https://capy.taislife.work/terms);原始檔在 [`site/`](site/);`/guide` 那一頁由 `docs/guide.html` 轉出來,改了指南之後跑 `go test ./site/ -run TestGuideOnSiteIsCurrent -update`;repo 接了 Cloudflare Workers Builds,合併進 main 之後確認線上有更新,沒有的話手動 `cd site && wrangler deploy`)。
+網站:<https://capy.taislife.work>(給一般使用者的介紹、[隱私權政策](https://capy.taislife.work/privacy)、[服務條款](https://capy.taislife.work/terms);原始檔在 [`site/`](site/);`/guide` 與 `/en/guide` 兩頁分別由 `docs/guide.html`、`docs/guide.en.html` 轉出來,改了任一份指南之後跑 `go test ./site/ -run TestGuideOnSiteIsCurrent -update`;repo 接了 Cloudflare Workers Builds,合併進 main 之後確認線上有更新,沒有的話手動 `cd site && wrangler deploy`)。
 
-完整的使用說明(含互動式介面、網頁介面、命令參考與三個平台的能力差異)在 <https://capy.taislife.work/guide>。原始檔是 `docs/guide.html`:單一檔案、不需要伺服器、不連任何外部資源,clone 下來離線也打得開(GitHub 對 repo 裡的 `.html` 只顯示原始碼)。
+完整的使用說明(含互動式介面、網頁介面、命令參考與三個平台的能力差異)在 <https://capy.taislife.work/guide>(英文版:<https://capy.taislife.work/en/guide>)。原始檔是 `docs/guide.html`(英文版 `docs/guide.en.html`):都是單一檔案、不需要伺服器、不連任何外部資源,clone 下來離線也打得開(GitHub 對 repo 裡的 `.html` 只顯示原始碼)。
 
 ## 安裝
 
@@ -50,7 +50,7 @@ capy 的預設語言是英文(之前的版本預設中文,升級上來會直接�
 capy config set language zh-TW    # 切回英文:capy config set language en
 ```
 
-網頁介面(`capy --web`)側欄最下面的語言選單改的是同一個設定(它就是替你跑這條命令,成功後整頁重新載入)。設定存在 `config.json` 的 `language`,目前支援 `en` 與 `zh-TW`;不會自動偵測作業系統的語言。cobra 自己的 `Usage:`、`Flags:` 等標題不翻;命令名、flag、TSV 欄名、`action` / `dir` 的值、`reason_code`、exit code、表頭與 `auth status --json` 的值在每個語系都一樣,腳本不必跟著改。想新增一個語言,步驟在 [`internal/i18n/README.md`](internal/i18n/README.md)。
+網頁介面(`capy --web`)側欄最下面的語言選單改的是同一個設定(它就是替你跑這條命令,成功後整頁重新載入)。設定存在 `config.json` 的 `language`,目前支援 `en` 與 `zh-TW`;不會自動偵測作業系統的語言。cobra 自己的文字在每個語系都是英文:說明的標題(`Usage:`、`Available Commands:`、`Flags:`)、結尾那行 `Use "capy [command] --help" …`、flag 說明後面的 `(default …)`、內建的 `help` 與 `completion` 命令的說明,以及 `-h, --help`、`-v, --version` 的說明;命令名、flag、TSV 欄名、`action` / `dir` 的值、`reason_code`、exit code、表頭與 `auth status --json` 的值在每個語系都一樣,腳本不必跟著改。想新增一個語言,步驟在 [`internal/i18n/README.md`](internal/i18n/README.md)。
 
 ## Spotify:自建 app(免費,約 2 分鐘)
 

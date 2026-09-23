@@ -48,8 +48,9 @@ languages; `zh-TW.json` is Traditional Chinese. The package only depends on the 
    `capy auth login apple` again), the risk is the user's, capy only
    shows how to copy them and never reads the browser, tracks added to a playlist *may* also be added to the user's
    library depending on their Apple Music settings (never "will"), and capy only writes to playlists the user
-   created. Add your tag to `TestAuthLoginAppleDisclosureInEveryLanguage` and a case for it in
-   `checkAppleDisclosure` (`internal/cli/i18n_en_auth_test.go`); that test only checks the languages it lists.
+   created. Add a case for your tag in `checkAppleDisclosure` (`internal/cli/i18n_en_auth_test.go`):
+   `TestAuthLoginAppleDisclosureInEveryLanguage` runs every language in `i18n.Supported()` and fails for one
+   that has no case.
 4. Keep the web UI's lock-notice rewrite working: `auth.lock.waiting` must contain the lock file name and
    `" Ctrl-C"` with the space in front (the web UI swaps that for `web.lock.stop`), and `auth.refresh_in_flight`
    must contain neither, so it isn't rewritten (`internal/auth/tokenstore_test.go` checks every language).

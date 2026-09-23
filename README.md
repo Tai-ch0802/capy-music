@@ -4,9 +4,9 @@
 
 A cross-platform music CLI: search, playback control and playlist sync (Spotify and Apple Music; playlists sync to your own Google Drive). Open source and free, and **every credential is your own (BYO)** — this project holds no tokens for you and runs no service.
 
-Website: <https://capy.taislife.work/en/> (an introduction for general users, the [privacy policy](https://capy.taislife.work/en/privacy) and the [terms of service](https://capy.taislife.work/en/terms); the source is in [`site/`](site/). The `/guide` page is generated from `docs/guide.html`: after editing the guide, run `go test ./site/ -run TestGuideOnSiteIsCurrent -update`. The repo is connected to Cloudflare Workers Builds; after merging into main, check that the live site has updated, and if it hasn't, deploy by hand with `cd site && wrangler deploy`.)
+Website: <https://capy.taislife.work/en/> (an introduction for general users, the [privacy policy](https://capy.taislife.work/en/privacy) and the [terms of service](https://capy.taislife.work/en/terms); the source is in [`site/`](site/). The `/guide` and `/en/guide` pages are generated from `docs/guide.html` and `docs/guide.en.html`: after editing either guide, run `go test ./site/ -run TestGuideOnSiteIsCurrent -update`. The repo is connected to Cloudflare Workers Builds; after merging into main, check that the live site has updated, and if it hasn't, deploy by hand with `cd site && wrangler deploy`.)
 
-The full user guide (interactive mode, the web UI, a command reference and what each of the three platforms can do) is at <https://capy.taislife.work/en/guide> (繁體中文: <https://capy.taislife.work/guide>). The Chinese source is `docs/guide.html`: a single file that needs no server and loads no external resources, so it opens offline from a clone too (GitHub only shows the source of `.html` files in a repo).
+The full user guide (interactive mode, the web UI, a command reference and what each of the three platforms can do) is at <https://capy.taislife.work/en/guide> (繁體中文: <https://capy.taislife.work/guide>). The sources are `docs/guide.en.html` (English) and `docs/guide.html` (Chinese): each is a single file that needs no server and loads no external resources, so it opens offline from a clone too (GitHub only shows the source of `.html` files in a repo).
 
 ## Install
 
@@ -50,7 +50,7 @@ capy's interface is in English by default (earlier versions were Chinese-only, s
 capy config set language zh-TW    # back to English: capy config set language en
 ```
 
-The language menu at the bottom of the web UI's sidebar (`capy --web`) changes the same setting: it runs this command for you and reloads the page when it succeeds. The setting is `language` in `config.json`; `en` and `zh-TW` are supported for now, and capy doesn't detect your operating system's language. Cobra's own headings (`Usage:`, `Flags:`) aren't translated. Command names, flags, TSV column names, `action` / `dir` values, `reason_code`, exit codes, table headers and the values in `auth status --json` are the same in every language, so scripts don't need to change. To add a language, see [`internal/i18n/README.md`](internal/i18n/README.md).
+The language menu at the bottom of the web UI's sidebar (`capy --web`) changes the same setting: it runs this command for you and reloads the page when it succeeds. The setting is `language` in `config.json`; `en` and `zh-TW` are supported for now, and capy doesn't detect your operating system's language. Cobra's own text stays in English in every language: the help headings (`Usage:`, `Available Commands:`, `Flags:`), the closing `Use "capy [command] --help" …` line, the `(default …)` after a flag's description, the built-in `help` and `completion` commands' descriptions, and the descriptions of `-h, --help` and `-v, --version`. Command names, flags, TSV column names, `action` / `dir` values, `reason_code`, exit codes, table headers and the values in `auth status --json` are the same in every language, so scripts don't need to change. To add a language, see [`internal/i18n/README.md`](internal/i18n/README.md).
 
 ## Spotify: create your own app (free, about 2 minutes)
 

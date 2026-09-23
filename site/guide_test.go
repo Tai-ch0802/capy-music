@@ -17,20 +17,20 @@ var update = flag.Bool("update", false, "用 docs/guide.html 與 docs/guide.en.h
 // guideSite:一份指南掛上網站時各自不同的部分。中文在 /guide、英文在 /en/guide(Q53);兩份共用 /guide.css,
 // 所以兩個 <style> 區塊(連同行內 margin-top 用到的值)必須一模一樣,TestGuideOnSiteIsCurrent 會比。
 type guideSite struct {
-	src, out, desc, canonical, home, navLabel string
+	src, out, desc, canonical, home, navLabel, hreflang string
 }
 
 var guides = []guideSite{
 	{"guide.html", "guide.html", "capy 的完整使用說明:安裝、連接帳號、互動式介面、網頁介面、命令參考,以及 Spotify、Apple Music、本機曲庫的能力差異。",
-		"https://capy.taislife.work/guide", "/", "網站"},
+		"https://capy.taislife.work/guide", "/", "網站", "zh-Hant"},
 	{"guide.en.html", "en/guide.html", "The complete capy user guide: installing, connecting your accounts, interactive mode, the web UI, the command reference, and what Spotify, Apple Music and the Local library can each do.",
-		"https://capy.taislife.work/en/guide", "/en/", "Site"},
+		"https://capy.taislife.work/en/guide", "/en/", "Site", "en"},
 }
 
 // guideForSite:把 repo 裡那份單檔的使用指南(docs/guide.html)變成能掛在品牌網站上的樣子。
 // 網站的 CSP 是 default-src 'none'; style-src 'self'——不准 inline style、不准任何 script(隱私權政策 §8 與每一頁的頁尾
 // 都這樣承諾)。所以:<style> 搬成 /guide.css;<script>(只是讓開頭的水豚動起來)整段拿掉,第一幀本來就寫在 HTML 裡;
-// 再補上回首頁的連結、favicon 與 canonical。docs/guide.html 本身不動:它仍然是離線打得開的單一檔案,Artifact 也用它。
+// 再補上回首頁的連結、favicon、canonical 與兩種語言的 alternate。docs/guide.html 本身不動:它仍然是離線打得開的單一檔案,Artifact 也用它。
 // 英文版 docs/guide.en.html 走同一條轉換,只換 guideSite 裡的那幾樣。
 func guideForSite(src string, g guideSite) (html, css string, err error) {
 	style := regexp.MustCompile(`(?s)<style>\n?(.*?)</style>\n?`)
@@ -44,9 +44,15 @@ func guideForSite(src string, g guideSite) (html, css string, err error) {
 .site-back a { color: var(--muted); text-decoration: none; }
 .site-back a:hover { color: var(--accent); }
 `
+	// 跟網站其他雙語頁一樣宣告兩種語言的網址;x-default 跟其他頁一樣指中文版(guides[0])。
+	alt := ""
+	for _, o := range guides {
+		alt += `<link rel="alternate" hreflang="` + o.hreflang + `" href="` + o.canonical + `">` + "\n"
+	}
+	alt += `<link rel="alternate" hreflang="x-default" href="` + guides[0].canonical + `">` + "\n"
 	html = style.ReplaceAllLiteralString(src, `<meta name="description" content="`+g.desc+`">
 <link rel="canonical" href="`+g.canonical+`">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+`+alt+`<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/guide.css">
 `)
 	html = regexp.MustCompile(`(?s)<script>.*?</script>\n?`).ReplaceAllString(html, "")
@@ -104,6 +110,16 @@ func TestGuideOnSiteIsCurrent(t *testing.T) {
 			t.Fatal(err)
 		}
 		// 兩份共用 /guide.css:比的是產生出來的 CSS,所以只有一份用到的 margin-top 值也會在這裡紅,不會讓另一頁安靜地少一段間距。
+		// 兩頁都要宣告兩種語言的網址(寫死網址當尺,不拿 guides 自己比)。
+		for _, link := range []string{
+			`<link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/guide">`,
+			`<link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/guide">`,
+			`<link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/guide">`,
+		} {
+			if !strings.Contains(html, link) {
+				t.Errorf("site/public/%s 少了 %s:跟網站其他雙語頁一樣要宣告另一種語言的網址", g.out, link)
+			}
+		}
 		if prev, ok := want["guide.css"]; ok && css != prev {
 			t.Fatalf("docs/%s 的 <style> 區塊(或行內 margin-top 用到的值)跟 docs/guide.html 不一樣:兩份指南共用 /guide.css,兩邊要改成一模一樣", g.src)
 		}
