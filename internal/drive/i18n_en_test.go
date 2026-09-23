@@ -38,7 +38,7 @@ func TestDriveMessagesEnglish(t *testing.T) {
 	if _, err := c.Find(ctx, "manifest.json", props); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Warning: Drive appdata has 2 copies of manifest.json; using the newest (" + newer.ModifiedTime.Format(time.RFC3339) + ")\n"; stderr.String() != want {
+	if want := "Warning: the Drive appdata has 2 copies of manifest.json; using the newest one (" + newer.ModifiedTime.Format(time.RFC3339) + ")\n"; stderr.String() != want {
 		t.Errorf("got %q\nwant %q", stderr.String(), want)
 	}
 

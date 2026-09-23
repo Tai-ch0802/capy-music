@@ -53,7 +53,7 @@ func TestSpotifyErrorsEnglish(t *testing.T) {
 
 	add := []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "b", Pos: 1}}
 	fc, _ := writeServer(t, http.StatusForbidden, 0)
-	if _, err := fc.ApplyOps(ctx, "p1", []string{"a"}, add); err == nil || err.Error() != "Spotify refused to write playlist p1 (only your own playlists and collaborative playlists can be written): spotify API 403  nope" {
+	if _, err := fc.ApplyOps(ctx, "p1", []string{"a"}, add); err == nil || err.Error() != "Spotify refused to write to playlist p1 (only your own playlists and collaborative playlists can be written to): spotify API 403  nope" {
 		t.Errorf("403: %v", err)
 	}
 	nc, _ := writeServer(t, http.StatusNotFound, 0)

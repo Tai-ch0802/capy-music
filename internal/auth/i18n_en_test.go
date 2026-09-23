@@ -49,7 +49,7 @@ func TestEnglishLockNoticeAndInterrupt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	_, err = lockFile(ctx, "t.lock")
-	if want := "another capy is holding the t.lock lock and the wait was interrupted or timed out; try again later: context deadline exceeded"; err == nil || err.Error() != want {
+	if want := "another capy is holding t.lock and the wait was interrupted or timed out; try again later: context deadline exceeded"; err == nil || err.Error() != want {
 		t.Errorf("err = %v\nwant %s", err, want)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {

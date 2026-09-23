@@ -77,6 +77,8 @@ func TestCatalogsMatchSource(t *testing.T) {
 			switch {
 			case !ok:
 				t.Errorf("%s.json 缺 %q(不確定怎麼翻就先抄英文)", code, key)
+			case m.text == "" && m.plural == nil:
+				t.Errorf("%s.json 的 %q 是空字串:不確定怎麼翻就先抄英文(空譯文會讓訊息消失,有些檢查靠它非空,例如 Apple 的不可寫原因)", code, key)
 			case (m.plural == nil) != (sm.plural == nil):
 				t.Errorf("%s.json 的 %q:en 是%s訊息,這裡要一樣", code, key, map[bool]string{true: "一般", false: "複數"}[sm.plural == nil])
 			case !maps.Equal(placeholders(m), placeholders(sm)):
@@ -252,7 +254,7 @@ func stripComments(src, ext string) string {
 			if c == '\\' && i+1 < len(src) {
 				i++
 				b.WriteByte(src[i])
-			} else if c == quote {
+			} else if c == quote || (c == '\n' && quote != '`') { // '…' 與 "…" 不能跨行:正規表示式裡的引號只會錯位到行尾
 				quote = 0
 			}
 		case c == '\'' || c == '"' || c == '`':
@@ -376,6 +378,7 @@ func TestStripComments(t *testing.T) {
 		{"<p>字</p><!-- 註解 --><b>", ".html", "<p>字</p><b>"},
 		{"a { content: '字'; } /* 註解 */", ".css", "a { content: '字'; } "},
 		{"url(http://x) // 不是註解", ".css", "url(http://x) // 不是註解"},
+		{"r = /\"/g;\n// 註解\nx", ".js", "r = /\"/g;\n\nx"}, // 正規表示式裡的引號:錯位到行尾為止,下一行的註解照樣剝掉
 	} {
 		if got := stripComments(tc.src, tc.ext); got != tc.want {
 			t.Errorf("%s %q:得 %q,要 %q", tc.ext, tc.src, got, tc.want)

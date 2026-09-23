@@ -68,7 +68,7 @@ func TestEnglishApplyOpsRefusals(t *testing.T) {
 	f, p = writeWorld(t, true)
 	f.name, f.entries = "Commute", []fakeEntry{{ID: "a.1", Catalog: "c1"}}
 	_, err = p.ApplyOps(ctx, "p.1", []string{"c1"}, []provider.PlaylistOp{add("c9", 0)})
-	check("a. rows", err, `Apple playlist "Commute" (p.1) isn't a collaborative playlist, yet its row ids start with a. (for example a.1): as of 2026-09-22 such rows had only been seen in collaborative playlists, where replacing the tracks returns 500, so capy isn't writing this time; please report this`)
+	check("a. rows", err, `Apple playlist "Commute" (p.1) isn't a collaborative playlist, yet its row ids start with "a." (for example a.1): as of 2026-09-22 such rows had only been seen in collaborative playlists, where replacing the tracks returns 500, so capy isn't writing this time; please report this`)
 
 	_, p = writeWorld(t, true, "c1", "c2")
 	_, err = p.ApplyOps(ctx, "p.1", []string{"c1"}, []provider.PlaylistOp{add("c9", 0)})
@@ -81,7 +81,7 @@ func TestEnglishApplyOpsRefusals(t *testing.T) {
 	f, p = writeWorld(t, true, "c1")
 	f.failAt, f.failMsg = 1, "Unable to update tracks"
 	_, err = p.ApplyOps(ctx, "p.1", []string{"c1"}, []provider.PlaylistOp{add("c2", 1)})
-	check("500 Unable to update", err, "Apple refused to modify playlist p.1 (500 Unable to update tracks): it isn't a playlist you created (an Apple-curated playlist, Favorite Songs or Purchased Music), or it's a collaborative playlist (row ids start with a.; tested 2026-09-22): apple API 500 Unable to update tracks ")
+	check("500 Unable to update", err, "Apple refused to modify playlist p.1 (500 Unable to update tracks): it isn't a playlist you created (an Apple-curated playlist, Favorite Songs or Purchased Music), or it's a collaborative playlist (row ids start with \"a.\"; tested 2026-09-22): apple API 500 Unable to update tracks ")
 }
 
 func TestEnglishCreatePlaylistMessages(t *testing.T) {
