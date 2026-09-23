@@ -35,6 +35,7 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 .rail__more[open] > summary::after { content: ' ▾'; }
 .rail__more > summary:hover { color: var(--text); }
 .rail__meta { margin-top: auto; padding: .75rem .75rem 0; font-size: var(--t-12); color: var(--muted); }
+.rail select.rail__lang { margin: .5rem .75rem 0; min-width: 0; height: 32px; font-size: var(--t-12); } /* 語言選單(蓋過後面的 .in / select.in);窄畫面 rail__meta 會藏起來,它不跟著藏 */
 
 /* ── main ── */
 .main { grid-area: main; overflow: auto; padding: 2rem; }

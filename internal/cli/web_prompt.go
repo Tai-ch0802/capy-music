@@ -28,7 +28,8 @@ var webPromptTimeout = 5 * time.Minute
 var webAuthPromptTimeout = 30 * time.Minute
 
 type webPrompt struct {
-	Kind        string     `json:"kind"` // confirm | select | input | form
+	Kind        string     `json:"kind"`          // confirm | select | input | form
+	Key         string     `json:"key,omitempty"` // Title 那句話的 i18n key(目前只有 confirmWrite 帶):頁面認提示比對它,不比對跟著語系的文字
 	Title       string     `json:"title"`
 	Note        *webNote   `json:"note,omitempty"`
 	Options     []string   `json:"options,omitempty"`
@@ -268,8 +269,8 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 
 // webConfirmWrite:按「取消」回 (false, nil)(pull.go → PendingError exit 2,同終端機選取消);
 // 關掉 / 逾時 / ctx 取消回 (false, huh.ErrUserAborted)(pull.go 原樣 return → exit 1;reviewLoop 當「不同意合併」)。
-func (s *webServer) webConfirmWrite(prompt string) (bool, error) {
-	a, err := s.ask(webPrompt{Kind: "confirm", Title: prompt, Affirmative: i18n.T("changeset.confirm.apply"), Negative: i18n.T("changeset.confirm.cancel"), Default: false})
+func (s *webServer) webConfirmWrite(key, prompt string) (bool, error) {
+	a, err := s.ask(webPrompt{Kind: "confirm", Key: key, Title: prompt, Affirmative: i18n.T("changeset.confirm.apply"), Negative: i18n.T("changeset.confirm.cancel"), Default: false})
 	if err != nil || a.Cancel {
 		return false, huh.ErrUserAborted
 	}

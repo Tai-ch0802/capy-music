@@ -5,16 +5,18 @@
 import { el, btn, providerName, emptyState } from './common.js';
 import { parseStatus, stateOf } from './account.js';
 import { renderTable } from '../table.js';
-import { STAGES, CANCELLED_MSG } from '../console.js';
+import { stages, cancelledMsg } from '../console.js';
 
 // 首頁的每一句主張都要查得到出處(決策 48):MIT LICENSE、憑證只進鑰匙圈、migrate 只新增不刪來源、順序不動(決策 38)。
-const FACTS = ['免費', '開源(MIT)', '在你自己的電腦上執行', '不刪來源,只新增'];
+// 使用者看得到的字一律是函式、用到時才算(i18n.js 開頭的載入順序鐵則)。
+const factTexts = () => ['免費', '開源(MIT)', '在你自己的電腦上執行', '不刪來源,只新增'];
 const READ_ONLY = [];                    // 不能當目的地的平台(目前沒有;Apple 自決策 49 起可寫)
 const CAN_CREATE = ['spotify', 'apple']; // 能新建清單的平台;其餘(local)只能加進既有的
 const NO_LOGIN = ['local'];
 // 下面是 migrate.confirm.review 在每個語系的原文片段(zh-TW / en),精靈靠它認出「逐筆裁決」那一則;「這一首推得過去」改看 REASON_CODE 欄(見 tally)。
-// TestWebMoveWizardKeysOnMigrateWording 用兩種語系跑真的 migrate 一起釘,CLI 改字測試就紅。ponytail: 比對文字;T3 的提示事件帶 key 之後改比 key。
-const REVIEW_MARKS = ['現在逐筆裁決?', 'Review now, one by one?'];
+// TestWebMoveWizardKeysOnMigrateWording 用兩種語系跑真的 migrate 一起釘,CLI 改字測試就紅。ponytail: 比對文字;提示事件已經帶 key(ev.key === 'migrate.confirm.review',
+// TestWebMigrateReviewPromptCarriesKey 釘住),搬這一頁的字時改比 key、拿掉這份片段。
+const reviewMarks = () => ['現在逐筆裁決?', 'Review now, one by one?'];
 
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs) => {
@@ -87,7 +89,7 @@ export function initMove(root, api, con, notice, providers) {
   intro.appendChild(el('p', 'hero__sub',
     'capy 讀出你在一個平台的播放清單,在另一個平台找到同樣的歌,照原本的順序放好。它在你自己的電腦上執行,你的帳號不經過任何人的伺服器。'));
   const facts = el('ul', 'facts');
-  for (const f of FACTS) facts.appendChild(el('li', 'fact', f));
+  for (const f of factTexts()) facts.appendChild(el('li', 'fact', f));
   intro.appendChild(facts);
   const route = el('div', 'route');
   route.setAttribute('role', 'img');
@@ -122,7 +124,7 @@ export function initMove(root, api, con, notice, providers) {
   // 伺服器問的話逐字照留(規格 §9),這裡只在旁邊補白話;不替使用者回答任何一則。
   const onPrompt = (ev, box) => {
     let help = '';
-    if (REVIEW_MARKS.some((m) => String(ev.title || '').includes(m))) {
+    if (reviewMarks().some((m) => String(ev.title || '').includes(m))) {
       help = '有幾首歌在目的地找不到完全一樣的。按「套用」可以一首一首挑;按「取消」就先搬找得到的,其餘之後可以再處理。這一步不會寫入任何東西。';
     } else if (ev.kind === 'confirm' && state.running && state.preview) {
       help = '這是最後一次確認:上面列的就是要搬的歌。按「套用」才會開始寫入;按「取消」什麼都不會改。';
@@ -240,7 +242,7 @@ export function initMove(root, api, con, notice, providers) {
   const liveBar = el('progress', 'bar');
   function paintProgress() {
     const p = state.progress;
-    const name = p ? STAGES[p.stage] || p.stage : '';
+    const name = p ? stages()[p.stage] || p.stage : '';
     liveStage.textContent = !p ? '正在準備…' : name + (p.total > 0 ? ` ${p.done} / ${p.total}` : '…');
     liveBar.hidden = !(p && p.total > 0);
     if (!liveBar.hidden) { liveBar.max = p.total; liveBar.value = p.done; liveBar.setAttribute('aria-label', name); }
@@ -436,7 +438,7 @@ export function initMove(root, api, con, notice, providers) {
       // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
       // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。
       // 「已中止」(底部的中止鈕)另外說:中止前可能已經開始寫入,但再搬一次不會重複。
-      const stopped = r.msg === CANCELLED_MSG;
+      const stopped = r.msg === cancelledMsg();
       const quit = stopped || r.code === 2 || (r.code === 1 && ['dismissed', 'timeout'].includes(state.closedBy));
       live.appendChild(el('p', quit ? 'wiz__stage' : 'page__warn',
         !quit ? (r.msg || '沒有完成。').replace(/^Error: /, '')

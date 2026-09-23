@@ -256,7 +256,7 @@ func TestResolveReviewDecisionsViaSeam(t *testing.T) {
 		return reviewDecision{kind: "accept", cand: it.cand}
 	})
 	origConfirm := confirmWrite
-	confirmWrite = func(string) (bool, error) { return false, nil }
+	confirmWrite = func(string, string) (bool, error) { return false, nil }
 	t.Cleanup(func() { confirmWrite = origConfirm })
 	// a 釘成不可得後不在佇列;把 a 的釘選拿掉再讓它進佇列:直接改 Drive
 	tr := driveTracks(t, dc)
@@ -589,7 +589,7 @@ func TestResolveReviewMergeConfirmAbortIsDecline(t *testing.T) {
 		return reviewDecision{kind: "accept", cand: it.cand}
 	})
 	origConfirm := confirmWrite
-	confirmWrite = func(string) (bool, error) { return false, huh.ErrUserAborted }
+	confirmWrite = func(string, string) (bool, error) { return false, huh.ErrUserAborted }
 	t.Cleanup(func() { confirmWrite = origConfirm })
 	before := driveFiles(t, dc)
 	_, errs := mustPull(t, "resolve", "--review")

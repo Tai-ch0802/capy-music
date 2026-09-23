@@ -20,7 +20,7 @@ func stubMigrateTTY(t *testing.T, answer bool) *[]string {
 	origTTY, origConfirm := migrateIsTTY, confirmWrite
 	prompts := &[]string{}
 	migrateIsTTY = func(*cobra.Command) bool { return true }
-	confirmWrite = func(p string) (bool, error) { *prompts = append(*prompts, p); return answer, nil }
+	confirmWrite = func(_, p string) (bool, error) { *prompts = append(*prompts, p); return answer, nil }
 	t.Cleanup(func() { migrateIsTTY, confirmWrite = origTTY, origConfirm })
 	return prompts
 }

@@ -480,7 +480,7 @@ func newPlPushCmd() *cobra.Command {
 					if !bothTTY(cmd) {
 						return &PendingError{N: n}
 					}
-					ok, err := confirmWrite(i18n.T("push.confirm", "count", n))
+					ok, err := confirmWrite("push.confirm", i18n.T("push.confirm", "count", n))
 					if err != nil {
 						return err
 					}

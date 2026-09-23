@@ -148,6 +148,44 @@ func Set(code string) bool {
 // Current 回傳目前語系代碼。
 func Current() string { return cur.Load().tag.String() }
 
+// Messages 回傳 lang 目錄裡 want 選中的 key 的原始值(網頁的 /api/i18n 用,可直接 JSON 編碼):一般訊息是字串,
+// 複數訊息是「CLDR 類別名稱 → 字串」。lang 缺的 key 逐個退回英文;lang 不支援就整份英文。
+// 只讀嵌入的目錄、不動目前語系:直達端點在 runMu 外呼叫它。
+func Messages(lang string, want func(key string) bool) map[string]any {
+	l := locales[lang]
+	out := map[string]any{}
+	for key, m := range locales[Source].msgs {
+		if !want(key) {
+			continue
+		}
+		if l != nil {
+			if lm, ok := l.msgs[key]; ok {
+				m = lm
+			}
+		}
+		if m.plural == nil {
+			out[key] = m.text
+			continue
+		}
+		ps := make(map[string]string, len(m.plural))
+		for name, f := range forms {
+			if s, ok := m.plural[f]; ok {
+				ps[name] = s
+			}
+		}
+		out[key] = ps
+	}
+	return out
+}
+
+// LocaleName 回傳語系用自己的語言寫的名稱(目錄裡的 lang.name:English、繁體中文),給語言選單;不支援的代碼原樣回傳。
+func LocaleName(code string) string {
+	if l := locales[code]; l != nil && l.msgs["lang.name"].text != "" {
+		return l.msgs["lang.name"].text
+	}
+	return code
+}
+
 // T 翻譯 key。args 是成對的「佔位符名稱, 值」:T("x.done", "count", n, "name", s) 填 {count} 與 {name}。
 // 目前語系缺 key 退回英文,英文也缺就回 key 本身(守門測試會先抓到)。
 // key 與佔位符名稱一律寫字串字面,守門測試才能靜態檢查;複數訊息依名為 count 的整數選類別。

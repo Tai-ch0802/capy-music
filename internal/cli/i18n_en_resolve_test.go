@@ -152,7 +152,7 @@ func TestEnglishResolveReviewMergeDecline(t *testing.T) {
 	})
 	var asked string
 	origConfirm := confirmWrite
-	confirmWrite = func(q string) (bool, error) { asked = q; return false, nil }
+	confirmWrite = func(_, q string) (bool, error) { asked = q; return false, nil }
 	t.Cleanup(func() { confirmWrite = origConfirm })
 	_, errs := mustPull(t, "resolve", "--review")
 	wantQ := "This apple id already belongs to cid " + fakeCID("a") + ": merge " + fakeCID("b") + " with it? (The lexicographically smaller cid wins and every playlist item is repointed to it)"

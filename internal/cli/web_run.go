@@ -269,7 +269,13 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	if webNowInvalidatedBy(path) { // 帳號 / 預設平台變了:快取的 PlaybackController 不再有效
 		s.dropNow()
 	}
-	_ = sse.event(map[string]any{"type": "exit", "code": code, "message": msg, "reason": webExitReason(jobCtx, err)})
+	reason := webExitReason(jobCtx, err)
+	// 取消本身(「已取消」、Get …: context canceled)不是訊息:頁面看 reason 就知道(計畫 §2.4 第 5 點),
+	// 不必比對跟著語系變的文字。取消時剛好撞上的別的錯誤照送。
+	if reason == "cancelled" && (errors.Is(err, errWebCancelled) || errors.Is(err, context.Canceled)) {
+		msg = ""
+	}
+	_ = sse.event(map[string]any{"type": "exit", "code": code, "message": msg, "reason": reason})
 }
 
 // webExitReason:命令回 nil 就是做完了,即使中止 / 關分頁在它做完之後才落下(或落在不吃取消的那一段,

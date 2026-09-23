@@ -1,5 +1,7 @@
 // app.js:token 引導、/api/commands、命令列;命令的串流與區塊在 console.js。
 import { Console } from './console.js';
+import { loadI18n, applyStatic } from './i18n.js';
+import { languageMenu } from './lang.js';
 import { Player } from './player.js';
 import { initISRC } from './pages/isrc.js';
 import { initSearch } from './pages/search.js';
@@ -52,16 +54,20 @@ export function notice(text) {
 }
 
 bootToken();
+// 目錄要在任何畫面算字之前到(i18n.js 開頭的載入順序鐵則)。讀不到也照樣往下:t() 回 key 本身,錯誤由 loadCommands 說。
+await loadI18n(api);
+applyStatic();
 const con = new Console(document.getElementById('console'), api, notice);
+languageMenu(document.getElementById('lang'), con);
 const input = document.getElementById('cmd');
 const runBtn = document.getElementById('run');
-const BUSY_HINT = '還有事情在跑:等它結束,或按底部的「中止」';
+const busyHint = () => '還有事情在跑:等它結束,或按底部的「中止」';
 
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
 // 執行中命令列照樣可以打字(設計規格 §5 / §10):Enter 只說明、不排隊、不並行,打好的那一行留著。
 // 執行狀態列與中止鈕由 Console.run 管,頁面按鈕發起的命令也一樣。
 async function submit() {
-  if (con.running) { notice(BUSY_HINT); return; }
+  if (con.running) { notice(busyHint()); return; }
   if (document.body.hasAttribute('data-stale')) { notice('binary 已更新,這個 capy --web 仍是舊版,請重啟'); return; }
   const line = input.value.trim();
   input.value = '';
@@ -84,7 +90,7 @@ input.addEventListener('keydown', (ev) => {
   submit();
 });
 runBtn.addEventListener('click', submit);
-document.addEventListener('capy:busy', () => notice(BUSY_HINT)); // 頁面按鈕在執行中被按(common.js btn)
+document.addEventListener('capy:busy', () => notice(busyHint())); // 頁面按鈕在執行中被按(common.js btn)
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
 // ── 路由:八頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–8;
 // 預設落在搬家(決策 45),後三頁收在「進階」。

@@ -49,7 +49,7 @@ func TestBothTTYAndClientIDWizardAreSeams(t *testing.T) {
 	origBoth, origConfirm := bothTTY, confirmWrite
 	bothTTY = func(*cobra.Command) bool { return true }
 	asked := ""
-	confirmWrite = func(prompt string) (bool, error) { asked = prompt; return false, nil }
+	confirmWrite = func(_, prompt string) (bool, error) { asked = prompt; return false, nil }
 	t.Cleanup(func() { bothTTY, confirmWrite = origBoth, origConfirm })
 
 	// review / migrate 兩個閘委派到 bothTTY(review #57):覆寫一處就全對齊,不是複製函式值。
@@ -66,7 +66,7 @@ func TestBothTTYAndClientIDWizardAreSeams(t *testing.T) {
 	if !sameFiles(before, driveFiles(t, dc)) {
 		t.Fatal("取消不可寫 Drive")
 	}
-	confirmWrite = func(string) (bool, error) { return true, nil }
+	confirmWrite = func(string, string) (bool, error) { return true, nil }
 	if _, _, err := runPull(t, "pl", "pull", "通勤"); err != nil {
 		t.Fatalf("確認後要套用:%v", err)
 	}

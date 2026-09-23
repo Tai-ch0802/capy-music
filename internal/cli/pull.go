@@ -676,8 +676,9 @@ func newPlUnlinkCmd() *cobra.Command {
 // ---- pl pull ----
 
 // 寫入 Drive 前的確認提示,pl pull 與 drive init 共用;測試替換點(同 confirmAppleDisclosure 慣例),
-// 只在 stdin 與 stdout 都是 TTY 時才會被呼叫。
-var confirmWrite = func(prompt string) (bool, error) {
+// 只在 stdin 與 stdout 都是 TTY 時才會被呼叫。key 是 prompt 那句話的 i18n key(組合句取最外層那句):終端機用不到,
+// web 的提示事件帶著它,頁面比對 key 而不是跟著語系變的文字(計畫 §2.4)。
+var confirmWrite = func(key, prompt string) (bool, error) {
 	ok := false
 	err := newForm(huh.NewGroup(
 		huh.NewConfirm().Title(prompt).Affirmative(i18n.T("changeset.confirm.apply")).Negative(i18n.T("changeset.confirm.cancel")).Value(&ok),
@@ -749,7 +750,7 @@ func newPlPullCmd() *cobra.Command {
 					if !bothTTY(cmd) {
 						return &PendingError{N: len(rows)}
 					}
-					ok, err := confirmWrite(i18n.T("pull.confirm", "count", len(rows)))
+					ok, err := confirmWrite("pull.confirm", i18n.T("pull.confirm", "count", len(rows)))
 					if err != nil {
 						return err
 					}

@@ -37,9 +37,10 @@ function isCancelled([code, , reason]) {
 }
 
 // progress 事件的階段 → 白話(決策 47)。進度條只吃伺服器送來的 done / total;沒有事件就不畫,不編百分比。
-export const STAGES = { read: '讀取來源清單', match: '比對歌曲', write: '寫入目的地' };
-// 使用者自己中止時,交給頁面 onExit 的訊息。頁面要認它就 import 這個常數,不要各自抄一份字面(review #69)。
-export const CANCELLED_MSG = '已中止';
+// 兩個都是函式、用到時才算:模組頂層不可以算使用者看得到的字(i18n.js 開頭的載入順序鐵則)。
+export const stages = () => ({ read: '讀取來源清單', match: '比對歌曲', write: '寫入目的地' });
+// 使用者自己中止時,交給頁面 onExit 的訊息。頁面要認它就 import 這個函式,不要各自抄一份字面(review #69)。
+export const cancelledMsg = () => '已中止';
 
 // 播放控制(quiet)跑超過這麼久才亮執行狀態列:按一下暫停不該整條 dock 閃一下,
 // 但卡住(等 token 鎖沒有上限、在等系統對話框)時一定要看得到在等什麼、也要按得到中止(review #65 第 1 點)。
@@ -190,7 +191,7 @@ export class Console {
     let ex = this.ex || [1, '串流在 exit 之前就結束了', 'disconnected'];
     // 使用者自己中止的:頁面拿到的是「已中止」,不是一串「Get …: context canceled」(完整原文留在主控台)。
     // exit 0 = 命令其實做完了(中止落在不吃取消的那一段,例如 osascript),照「完成」算。
-    if (isCancelled(ex)) ex = [ex[0], CANCELLED_MSG, ex[2]];
+    if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]];
     if (!quiet || this.barShown) this.announce(shown, ex); // 按一下暫停不必念「完成:pause」
     // 頁面的 onExit 與等著的自動讀取可能立刻接著跑下一個命令(它會清掉命令列上方那行):
     // 收尾的那句話放在它們之後說,不然從別頁看的人連一眼都看不到。
@@ -229,7 +230,9 @@ export class Console {
     this.stopBtn.removeAttribute('aria-disabled');
     this.stopBtn.textContent = '中止';
     document.body.dataset.slot = '';
-    document.querySelectorAll('[data-run]').forEach((x) => x.setAttribute('aria-disabled', 'true'));
+    // <select data-run>(語言選單)沒有 click 可以擋,換值就會送命令:直接停用。
+    // ponytail: 停用會讓焦點離開它;換語言成功就重新載入,只有失敗那次焦點回不去。
+    document.querySelectorAll('[data-run]').forEach((x) => { x.setAttribute('aria-disabled', 'true'); if (x.tagName === 'SELECT') x.disabled = true; });
   }
 
   // 執行狀態列:一般命令點下去的當下就亮(不等伺服器回 start),播放控制過了 QUIET_MS 才亮;
@@ -252,7 +255,7 @@ export class Console {
     delete document.body.dataset.busy;
     delete document.body.dataset.slot;
     document.querySelectorAll('[data-pending]').forEach((x) => { delete x.dataset.pending; });
-    document.querySelectorAll('[data-run]').forEach((x) => x.removeAttribute('aria-disabled'));
+    document.querySelectorAll('[data-run]').forEach((x) => { x.removeAttribute('aria-disabled'); if (x.tagName === 'SELECT') x.disabled = false; });
   }
 
   // 計時是頁面自己算的(伺服器沒有進度事件,也不該編一個百分比);這一格 aria-hidden,不會每秒播報。
@@ -275,14 +278,14 @@ export class Console {
     const counted = ev.total > 0;
     this.barProg.hidden = !counted;
     if (counted) { this.barProg.max = ev.total; this.barProg.value = ev.done; }
-    this.lastAct = (STAGES[ev.stage] || ev.stage) + (counted ? ` ${ev.done} / ${ev.total}` : '');
+    this.lastAct = (stages()[ev.stage] || ev.stage) +(counted ? ` ${ev.done} / ${ev.total}` : '');
     if (!this.stopping && !this.armed && !this.openPrompt) this.barAct.textContent = this.lastAct;
   }
 
   // 結束的那一句給螢幕閱讀器(role=status)。
   announce(shown, ex) {
     const [code, , reason] = ex;
-    const done = isCancelled(ex) ? CANCELLED_MSG : reason === 'refused' ? '未執行' : (code === 0 ? '完成' : `結束(exit ${code})`);
+    const done = isCancelled(ex) ? cancelledMsg() :reason === 'refused' ? '未執行' : (code === 0 ? '完成' : `結束(exit ${code})`);
     this.lastDone = `${done}:${shown}`;
     this.barSR.textContent = this.lastDone;
   }

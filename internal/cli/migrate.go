@@ -284,7 +284,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			fmt.Fprintln(stderr, i18n.T("migrate.resolve_summary", "mapped", mapped, "platform", dst.prov, "queued", queued))
 		}
 		if queued > 0 && !yes && !dryRun && migrateIsTTY(cmd) {
-			ok, err := confirmWrite(i18n.T("migrate.confirm.review", "count", queued, "platform", dst.prov, "name_arg", strconv.Quote(pl.Name)))
+			ok, err := confirmWrite("migrate.confirm.review", i18n.T("migrate.confirm.review", "count", queued, "platform", dst.prov, "name_arg", strconv.Quote(pl.Name)))
 			if err != nil {
 				return err
 			}
@@ -353,21 +353,21 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			if !migrateIsTTY(cmd) {
 				return &PendingError{N: n}
 			}
-			var prompt string
+			var key, prompt string
 			switch {
 			case dst.id != "":
-				prompt = i18n.T("migrate.confirm.add", "src", src, "count", len(added), "dst", dst)
+				key, prompt = "migrate.confirm.add", i18n.T("migrate.confirm.add", "src", src, "count", len(added), "dst", dst)
 			case follow:
-				prompt = i18n.T("migrate.confirm.create_follow", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(pl.Items))
+				key, prompt = "migrate.confirm.create_follow", i18n.T("migrate.confirm.create_follow", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(pl.Items))
 			case existing > 0:
-				prompt = i18n.T("migrate.confirm.create_with_existing", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(added), "existing", existing)
+				key, prompt = "migrate.confirm.create_with_existing", i18n.T("migrate.confirm.create_with_existing", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(added), "existing", existing)
 			default:
-				prompt = i18n.T("migrate.confirm.create", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(added))
+				key, prompt = "migrate.confirm.create", i18n.T("migrate.confirm.create", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(added))
 			}
-			if unmapped > 0 {
+			if unmapped > 0 { // 附加的半句不換 key:這一則提示是哪一種,看前面那句
 				prompt += i18n.T("migrate.confirm.unmapped", "count", unmapped, "platform", dst.prov)
 			}
-			ok, err := confirmWrite(prompt)
+			ok, err := confirmWrite(key, prompt)
 			if err != nil {
 				return err
 			}

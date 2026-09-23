@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -115,10 +116,11 @@ func TestCatalogsMatchSource(t *testing.T) {
 // ── 掃程式碼 ──
 
 type callSite struct {
-	pos   string
-	key   string // "" = 第一個參數不是字串字面
-	names []string
-	bad   string // 參數形狀不對的原因
+	pos     string
+	key     string // "" = 第一個參數不是字串字面
+	names   []string
+	bad     string // 參數形狀不對的原因
+	dynamic bool   // 網頁的 t(key, params):第二個參數是變數而不是物件字面,佔位符到執行時才知道,不查
 }
 
 type goScan struct {
@@ -152,10 +154,16 @@ func scanRepo() (goScan, error) {
 			if err != nil {
 				return err
 			}
-			for _, line := range strings.Split(stripComments(string(b), ext), "\n") {
+			rel := filepath.ToSlash(rel0)
+			src := stripComments(string(b), ext)
+			for _, line := range strings.Split(src, "\n") {
 				if hasCJK(line) {
-					s.cjk[filepath.ToSlash(rel0)]++
+					s.cjk[rel]++
 				}
+			}
+			// 呼叫點:JS 的 t()、HTML 的 data-i18n*。i18n.js 自己不算(同 Go 的 i18n 套件:t 在裡面拿變數當 key)。
+			if ext != ".css" && rel != "internal/cli/webui/js/i18n.js" {
+				s.calls = append(s.calls, scanWeb(rel, src, ext)...)
 			}
 			return nil
 		}
@@ -227,9 +235,11 @@ func scanRepo() (goScan, error) {
 }
 
 // stripComments:拿掉 JS / CSS 的 // 與 /* */、HTML 的 <!-- -->;字串('…' "…" `…`)裡的不算註解。
+// 區塊註解裡的換行留著:呼叫點的行號才對得上原檔。
 // ponytail: 不分辨 JS 的除號與正規表示式字面;正規表示式裡有引號的極少數情況會讓字串狀態錯位,T3 真遇到再換 tokenizer。
 func stripComments(src, ext string) string {
 	var b strings.Builder
+	newlines := func(s string) { b.WriteString(strings.Repeat("\n", strings.Count(s, "\n"))) }
 	if ext == ".html" {
 		for {
 			i := strings.Index(src, "<!--")
@@ -242,6 +252,7 @@ func stripComments(src, ext string) string {
 			if j < 0 {
 				return b.String()
 			}
+			newlines(src[i : i+j])
 			src = src[i+j+3:]
 		}
 	}
@@ -270,12 +281,93 @@ func stripComments(src, ext string) string {
 			if j < 0 {
 				return b.String()
 			}
+			newlines(src[i : i+2+j])
 			i += j + 3
 		default:
 			b.WriteByte(c)
 		}
 	}
 	return b.String()
+}
+
+var (
+	webCallRE = regexp.MustCompile(`(?:^|[^\w$.])t\(`) // t( 前面不是識別字元或 .:x.t(、split(、at( 都不算
+	webAttrRE = regexp.MustCompile(`\sdata-i18n(?:-aria-label|-placeholder|-title)?="([^"]*)"`)
+	webNameRE = regexp.MustCompile(`^(?:([A-Za-z_$][\w$]*)|'([^']*)'|"([^"]*)")\s*(:|$)`)
+)
+
+// scanWeb:網頁前端的呼叫點(src 已拿掉註解)。JS 是 t('key') / t("key", { a, b: v }):第二個參數是物件字面就取它的屬性名稱
+// 當佔位符;沒有第二個參數 = 沒給佔位符(同 Go 的 T("key"));是別的運算式(變數)就不查佔位符。
+// HTML 是 data-i18n / data-i18n-aria-label / data-i18n-placeholder / data-i18n-title:靜態文字,不能帶佔位符。
+func scanWeb(rel, src, ext string) []callSite {
+	var out []callSite
+	pos := func(i int) string { return rel + ":" + strconv.Itoa(1+strings.Count(src[:i], "\n")) }
+	if ext == ".html" {
+		for _, m := range webAttrRE.FindAllStringSubmatchIndex(src, -1) {
+			out = append(out, callSite{pos: pos(m[0]), key: src[m[2]:m[3]]})
+		}
+		return out
+	}
+	const space = " \t\r\n"
+	for _, m := range webCallRE.FindAllStringIndex(src, -1) {
+		c := callSite{pos: pos(m[1])}
+		rest := strings.TrimLeft(src[m[1]:], space)
+		if rest != "" && (rest[0] == '\'' || rest[0] == '"') {
+			if end := strings.IndexByte(rest[1:], rest[0]); end >= 0 {
+				c.key, rest = rest[1:1+end], strings.TrimLeft(rest[2+end:], space)
+			}
+		}
+		if c.key != "" && strings.HasPrefix(rest, ",") {
+			switch rest = strings.TrimLeft(rest[1:], space); {
+			case strings.HasPrefix(rest, "{"):
+				c.names, c.bad = objectNames(rest)
+			case !strings.HasPrefix(rest, ")"): // t('k',) 的結尾逗號不算第二個參數
+				c.dynamic = true
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// objectNames:s 開頭的物件字面 {…} 的屬性名稱(簡寫 {a} 與 a: v 都算)。只在最外層的逗號切開:值裡的字串、括號、
+// 巢狀物件不影響。
+// ponytail: 樣板字串 `…${…}…` 的 ${} 裡再套引號會讓引號狀態錯位;真遇到再換 tokenizer。
+func objectNames(s string) (names []string, bad string) {
+	var parts []string
+	depth, quote, start := 0, byte(0), 1
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case quote != 0:
+			if c == '\\' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"' || c == '`':
+			quote = c
+		case c == '{' || c == '(' || c == '[':
+			depth++
+		case c == ',' && depth == 1:
+			parts, start = append(parts, s[start:i]), i+1
+		case c == '}' || c == ')' || c == ']':
+			if depth--; depth > 0 {
+				continue
+			}
+			for _, p := range append(parts, s[start:i]) {
+				m := webNameRE.FindStringSubmatch(strings.TrimSpace(p))
+				switch {
+				case strings.TrimSpace(p) == "": // 結尾逗號
+				case m == nil:
+					return nil, "佔位符名稱要寫在呼叫點(不可用 ...展開或 [算出來的名稱])"
+				default:
+					names = append(names, m[1]+m[2]+m[3])
+				}
+			}
+			return names, ""
+		}
+	}
+	return nil, "物件字面沒有結尾"
 }
 
 func hasCJK(s string) bool {
@@ -309,6 +401,7 @@ func TestCodeKeysExistInCatalog(t *testing.T) {
 			t.Errorf("%s:en.json 沒有 %q", c.pos, c.key)
 		case c.bad != "":
 			t.Errorf("%s:%s", c.pos, c.bad)
+		case c.dynamic:
 		default:
 			got := map[string]bool{}
 			for _, n := range c.names {
@@ -322,7 +415,7 @@ func TestCodeKeysExistInCatalog(t *testing.T) {
 }
 
 func TestNoUnusedKeys(t *testing.T) {
-	used := map[string]bool{}
+	used := map[string]bool{"lang.name": true} // LocaleName 拿語系代碼查它(不經 T),給網頁的語言選單
 	for _, c := range scan(t).calls {
 		used[c.key] = true
 	}
@@ -379,9 +472,44 @@ func TestStripComments(t *testing.T) {
 		{"a { content: '字'; } /* 註解 */", ".css", "a { content: '字'; } "},
 		{"url(http://x) // 不是註解", ".css", "url(http://x) // 不是註解"},
 		{"r = /\"/g;\n// 註解\nx", ".js", "r = /\"/g;\n\nx"}, // 正規表示式裡的引號:錯位到行尾為止,下一行的註解照樣剝掉
+		{"a /* 一\n二 */ b", ".js", "a \n b"},                // 區塊註解的換行留著:行號對得上原檔
+		{"<p>\n<!-- 一\n二 -->\n</p>", ".html", "<p>\n\n\n</p>"},
 	} {
 		if got := stripComments(tc.src, tc.ext); got != tc.want {
 			t.Errorf("%s %q:得 %q,要 %q", tc.ext, tc.src, got, tc.want)
+		}
+	}
+}
+
+func TestScanWeb(t *testing.T) {
+	for _, tc := range []struct {
+		src, ext string
+		want     []callSite // pos 只比行號部分
+	}{
+		{"t('webui.a')", ".js", []callSite{{pos: "1", key: "webui.a"}}},
+		{`x = t("webui.a", { count, name: n })`, ".js", []callSite{{pos: "1", key: "webui.a", names: []string{"count", "name"}}}},
+		{"x\ny(t(\n  'webui.a',\n  { 'q': 1, n: f(a, b), s: xs.join(', '), o: { z: 1 }, },\n))", ".js", // 值裡的逗號、括號、巢狀物件不切
+			[]callSite{{pos: "2", key: "webui.a", names: []string{"q", "n", "s", "o"}}}},
+		{"t('webui.a', params)", ".js", []callSite{{pos: "1", key: "webui.a", dynamic: true}}},
+		{"t('webui.a',)", ".js", []callSite{{pos: "1", key: "webui.a"}}},
+		{"t(key)", ".js", []callSite{{pos: "1"}}},                                           // key 不是字面:TestCodeKeysExistInCatalog 會報
+		{"t(`webui.a`)", ".js", []callSite{{pos: "1"}}},                                     // 樣板字串也不算字面
+		{"t('webui.a', { ...p })", ".js", []callSite{{pos: "1", key: "webui.a", bad: "x"}}}, // 展開:佔位符看不出來
+		{"t('webui.a', { [k]: 1 })", ".js", []callSite{{pos: "1", key: "webui.a", bad: "x"}}},
+		{"x.t('a'); s.split('a'); a.at(1); rotate(1); set('a'); $t('a'); _t('a')", ".js", nil}, // 不是 t( 的呼叫
+		{`<span data-i18n="webui.a"></span><input data-i18n-placeholder="webui.b">` + "\n" + `<b data-i18n-aria-label="webui.c" data-i18n-title="webui.d">`, ".html",
+			[]callSite{{pos: "1", key: "webui.a"}, {pos: "1", key: "webui.b"}, {pos: "2", key: "webui.c"}, {pos: "2", key: "webui.d"}}},
+		{`<p data-x="webui.a">`, ".html", nil},
+	} {
+		got := scanWeb("f", tc.src, tc.ext)
+		for i := range got {
+			got[i].pos = strings.TrimPrefix(got[i].pos, "f:")
+			if got[i].bad != "" {
+				got[i].bad = "x"
+			}
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s %q:\n得 %+v\n要 %+v", tc.ext, tc.src, got, tc.want)
 		}
 	}
 }

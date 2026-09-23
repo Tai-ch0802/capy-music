@@ -17,6 +17,11 @@ languages; `zh-TW.json` is Traditional Chinese. The package only depends on the 
   `i18n.T("config.err.not_dir", "key", k, "path", p)`. Never build a key at runtime, and never pass a translated
   string to `fmt` as a format string.
 - **Package-level errors** use `i18n.Errorf(key)`: the message is translated when it is printed, not at init.
+- **Web UI** (`internal/cli/webui`) keys are `webui.<page>.<name>`. JS calls `t('webui.move.title', { count, name })`
+  from `js/i18n.js` (key and placeholder names as literals, same static checks as Go); static HTML uses
+  `data-i18n`, `data-i18n-aria-label`, `data-i18n-placeholder` or `data-i18n-title`. `GET /api/i18n` serves every
+  `webui.*` key plus the few shared keys listed in `webSharedKeys` (`internal/cli/web.go`). No module may compute
+  user-facing text at import time: `t()` throws before the catalog has loaded (see the top of `js/i18n.js`).
 - **A value may own its surrounding spacing** when it is spliced into other text: `sep.or` is `" or "` in English
   and `" 或 "` in Chinese; `web.lock.stop` replaces `" Ctrl-C"` *including* the space, so English writes `" Stop"`
   and Chinese writes `「中止」` with none (full-width brackets carry their own spacing). Keep those spaces when you
@@ -25,7 +30,8 @@ languages; `zh-TW.json` is Traditional Chinese. The package only depends on the 
 ## Adding a language
 
 1. Copy `en.json` to `<tag>.json`, where `<tag>` is the canonical BCP 47 tag (`ja`, `zh-CN`, `pt-BR`).
-2. Translate. Anything you are unsure about can stay in English.
+2. Translate. Anything you are unsure about can stay in English. Set `lang.name` to the language's own name
+   (`日本語`, `Português (Brasil)`): the web UI's language menu shows it.
 3. Run `go test ./internal/i18n/`. It lists missing or extra keys, placeholder mismatches, and the plural categories
    your language needs.
 4. Done: `capy config set language <tag>` and the web UI's language menu pick the new file up automatically.

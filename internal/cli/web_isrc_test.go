@@ -178,7 +178,7 @@ func TestWebISRCMergedCIDRedirectsAndHitsAliasSet(t *testing.T) {
 		return reviewDecision{kind: "accept", cand: it.cand}
 	})
 	origConfirm := confirmWrite
-	confirmWrite = func(string) (bool, error) { return true, nil } // 同意合併
+	confirmWrite = func(string, string) (bool, error) { return true, nil } // 同意合併
 	t.Cleanup(func() { confirmWrite = origConfirm })
 	mustPull(t, "resolve", "--review")
 

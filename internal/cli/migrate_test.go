@@ -280,7 +280,7 @@ func TestMigrateOffersReviewInTTYAndCancelCreatesNothing(t *testing.T) {
 	var prompts []string
 	answer := true
 	migrateIsTTY = func(*cobra.Command) bool { return true }
-	confirmWrite = func(p string) (bool, error) { prompts = append(prompts, p); return answer, nil }
+	confirmWrite = func(_, p string) (bool, error) { prompts = append(prompts, p); return answer, nil }
 	reviewPrompt = func(it resolveItem, pos, total int, search func(string) ([]provider.Track, error)) (reviewDecision, error) {
 		return reviewDecision{kind: "none"}, nil
 	}

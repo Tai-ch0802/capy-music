@@ -1,6 +1,7 @@
 // webui_console.mjs:在 node 裡跑真的 console.js(TestWebConsoleBehaviour 把它與 console.js / table.js 複製到暫存目錄)。
 // 字串契約證明不了時序:這裡用最小的 DOM 替身與假的 /api/run,釘住執行狀態列、中止與「一次一個」的行為。
 // 任何一條不成立就印出來並以 1 結束。
+import { readFileSync, readdirSync } from 'node:fs';
 
 const pages = { hidden: false };
 function mk(tag = 'div') {
@@ -26,7 +27,7 @@ function mk(tag = 'div') {
     contains(x) { for (let n = x; n; n = n.parentNode) if (n === this) return true; return false; },
     get lastElementChild() { return this.children[this.children.length - 1] || null; },
     querySelector(sel) { return find(this, sel); },
-    querySelectorAll() { return []; },
+    querySelectorAll(sel) { return findAll(this, sel); },
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return this.attrs[k] ?? null; },
     removeAttribute(k) { delete this.attrs[k]; },
@@ -63,20 +64,39 @@ function find(root, sel) {
   };
   return walk(root);
 }
+// findAll:只認以逗號分開的 '[attr]'(applyStatic 的 data-i18n*、Console 的 [data-run] / [data-pending]),其餘回 []。
+// 屬性看 setAttribute 設的,data-* 也看 dataset(btn() 用 dataset.run 標)。
+function findAll(root, sel) {
+  const names = sel.split(',').map((s) => /^\[([\w-]+)\]$/.exec(s.trim())?.[1]);
+  if (names.some((n) => !n)) return [];
+  const has = (e, n) => (e.attrs && n in e.attrs) || (n.startsWith('data-') && e.dataset && camel(n.slice(5)) in e.dataset);
+  const out = [];
+  const walk = (e) => { for (const c of e.children || []) { if (names.some((n) => has(c, n))) out.push(c); walk(c); } };
+  walk(root);
+  return out;
+}
 const ids = {};
 globalThis.document = {
   body: mk('body'),
+  documentElement: { lang: '' },
   activeElement: null,
   getElementById(id) { return (ids[id] ||= mk()); },
   createElement: mk,
   createTextNode: (t) => ({ textContent: t, children: [] }),
-  querySelectorAll() { return []; },
+  querySelectorAll(sel) { return findAll(this.body, sel); },
 };
 globalThis.sessionStorage = { getItem() { return null; }, setItem() {} };
-globalThis.location = { hash: '' };
+let reloads = 0;
+globalThis.location = { hash: '', reload() { reloads++; } };
 globalThis.CSS = { escape: (s) => s };
 
+// 載入順序的鐵則(i18n.js 開頭):先 import 每個模組、再載目錄。哪個模組在頂層就叫 t(),import 當下就丟例外、這裡就紅。
+const { loadI18n, t, applyStatic, languages, currentLang } = await import('./i18n.mjs');
+let early = null;
+try { t('webui.lang.label'); } catch (e) { early = e; }
 const { Console, maskSecrets } = await import('./console.mjs');
+const { languageMenu } = await import('./lang.mjs');
+for (const f of readdirSync('./pages')) await import(`./pages/${f}`);
 
 // ── 假的伺服器:/api/run 回 SSE(start → [gate] → events),cancel 端點記下來 ──
 const calls = [];
@@ -86,8 +106,10 @@ const cancels = [];
 let script = {};
 const sse = (evs) => evs.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
 const done = { type: 'exit', code: 0, message: '', reason: 'done' };
+let i18nFile = './i18n.json'; // TestWebConsoleBehaviour 寫進來的真目錄(zh-TW;i18n-en.json 是英文)
 const api = {
   async fetch(path, init) {
+    if (path === '/api/i18n') return new Response(readFileSync(i18nFile), { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (path === '/api/run') {
       const sent = JSON.parse(init.body);
       bodies.push(sent);
@@ -129,12 +151,14 @@ const gate = () => {
 };
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
+const failures = [];
+const check = (ok, msg) => { if (!ok) failures.push(msg); };
+check(early !== null, 'loadI18n() 之前叫 t() 要丟例外:不然模組頂層算字的陷阱不會被抓到');
+check(await loadI18n(api) === true && currentLang() === 'zh-TW' && globalThis.document.documentElement.lang === 'zh-TW', `真目錄要載得進來(zh-TW):${currentLang()}`);
 const notices = [];
 const root = mk();
 const con = new Console(root, api, (t) => notices.push(t));
 const allByClass = (e, cls, out = []) => { for (const c of e.children || []) { if (c.classList?.contains(cls)) out.push(c); allByClass(c, cls, out); } return out; };
-const failures = [];
-const check = (ok, msg) => { if (!ok) failures.push(msg); };
 // 一組情境丟例外(例如舊版沒有某個方法)只算那一組失敗,其餘照跑,才看得出哪幾條不成立。
 const scenario = async (name, fn) => {
   try { await fn(); } catch (e) { failures.push(`情境 ${name} 丟出例外:${e.message}`); }
@@ -447,6 +471,62 @@ await scenario('10', async () => {
     const text = exits[exits.length - 1]?.textContent;
     check(text === '· exit 1 · 已取消', `取消時「${message}」只是在重複已取消,不該印出來:「${text}」`);
   }
+});
+
+// 11. 語言選單(決策 50):選項來自 /api/i18n;換語言走一般的命令路徑、只送這四個 args,exit 0 才重新載入;
+//     有命令在跑時停用;沒換成就回到目前的語言。
+await scenario('11', async () => {
+  reset();
+  const before = reloads;
+  const sel = mk('select');
+  sel.setAttribute('data-run', '');
+  globalThis.document.body.appendChild(sel);
+  languageMenu(sel, con);
+  const opts = sel.children.map((o) => `${o.value}=${o.textContent}`).join(' ');
+  check(opts === 'en=English zh-TW=繁體中文' && sel.value === 'zh-TW', `選項是 value = 代碼、字 = 語系自己的名稱,預設選目前語系:${opts} / ${sel.value}`);
+  const [g, release] = gate();
+  script = { x: { gate: g } };
+  const p = con.run('x');
+  await tick(5);
+  check(sel.disabled === true, '有命令在跑時語言選單要停用');
+  release();
+  await p;
+  check(sel.disabled === false, '命令結束後語言選單要恢復');
+  bodies.length = 0;
+  sel.value = 'en';
+  await sel.l.change();
+  check(JSON.stringify(bodies) === JSON.stringify([{ args: ['config', 'set', 'language', 'en'] }]), `換語言只送 config set language <代碼>:${JSON.stringify(bodies)}`);
+  check(reloads === before + 1, '換成功(exit 0)要重新載入整頁');
+  script = { 'config set language en': { events: [{ type: 'exit', code: 1, message: 'Error: x', reason: 'done' }] } };
+  sel.value = 'en';
+  await sel.l.change();
+  check(reloads === before + 1 && sel.value === 'zh-TW', `沒換成不重新載入、選單回到目前的語言:${sel.value}`);
+  sel.remove();
+});
+
+// 12. t() 與 applyStatic:一趟替換、複數依 Intl.PluralRules、缺 key 回 key;最後換回真目錄(英文 → 中文都載得進來)。
+await scenario('12', async () => {
+  const fake = (d) => ({ fetch: async () => new Response(JSON.stringify(d), { status: 200 }) });
+  await loadI18n(fake({ lang: 'en', supported: [], messages: { a: 'A {x} {y}', p: { one: '{count} track', other: '{count} tracks' }, l: 'L', h: 'H' } }));
+  check(t('a', { x: '{y}', y: 'z' }) === 'A {y} z', `值裡的 {y} 不可以再被換:${t('a', { x: '{y}', y: 'z' })}`);
+  check(t('a', { x: 1 }) === 'A 1 {y}', '沒給的佔位符原樣留著');
+  check(t('p', { count: 1 }) === '1 track' && t('p', { count: 0 }) === '0 tracks' && t('p', { count: 21 }) === '21 tracks', '英文的單複數');
+  check(t('nope') === 'nope', '缺 key 回 key 本身');
+  const box = mk();
+  const span = mk('span'); span.setAttribute('data-i18n', 'l');
+  const inp = mk('input'); inp.setAttribute('data-i18n-placeholder', 'h'); inp.setAttribute('data-i18n-aria-label', 'l'); inp.setAttribute('data-i18n-title', 'h');
+  box.append(span, inp);
+  applyStatic(box);
+  check(span.textContent === 'L' && inp.getAttribute('placeholder') === 'H' && inp.getAttribute('aria-label') === 'L' && inp.getAttribute('title') === 'H',
+    `applyStatic 填文字與三個屬性:${span.textContent} ${JSON.stringify(inp.attrs)}`);
+  await loadI18n(fake({ lang: 'zh-TW', supported: [], messages: { p: { other: '{count} 首' } } }));
+  check(t('p', { count: 1 }) === '1 首', '中文只有 other');
+  i18nFile = './i18n-en.json';
+  await loadI18n(api);
+  check(t('webui.lang.label') === 'Language' && globalThis.document.documentElement.lang === 'en', `英文的真目錄:${t('webui.lang.label')}`);
+  i18nFile = './i18n.json';
+  await loadI18n(api);
+  check(t('webui.lang.label') === '語言' && languages().length === 2, `換回中文的真目錄:${t('webui.lang.label')}`);
 });
 
 if (failures.length) {

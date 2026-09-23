@@ -297,7 +297,7 @@ func TestEnglishPushSyncConfirmPrompts(t *testing.T) {
 	t.Cleanup(func() { bothTTY, confirmWrite = origTTY, origConfirm })
 	bothTTY = func(*cobra.Command) bool { return true }
 	var asked []string
-	confirmWrite = func(p string) (bool, error) { asked = append(asked, p); return false, nil }
+	confirmWrite = func(_, p string) (bool, error) { asked = append(asked, p); return false, nil }
 
 	fs.set("p1", "Commute", "a", "b", "c", "x") // 平台多一首:sync 只有 pull 半邊
 	runPull(t, "pl", "sync", "Commute")

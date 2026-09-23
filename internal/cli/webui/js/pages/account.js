@@ -2,7 +2,8 @@
 // 不可收合);web 不自動擷取任何 token、不開瀏覽器抓 cookie、--auto 在伺服器端 403。
 import { el, btn, providerName, emptyState, pageHead } from './common.js';
 
-const PROVIDERS = [
+// 函式、用到時才算:模組頂層不可以算使用者看得到的字(i18n.js 開頭的載入順序鐵則)。
+const providerRows = () => [
   { id: 'spotify', label: providerName('spotify') },
   { id: 'apple', label: providerName('apple') },
   { id: 'google', label: `${providerName('google')}(保管你的清單)` },
@@ -73,7 +74,7 @@ export function initAccount(root, api, con, notice) {
       out.appendChild(emptyState('讀不到帳號狀態。按「重新整理」再試一次。'));
       return;
     }
-    for (const p of PROVIDERS) {
+    for (const p of providerRows()) {
       const lines = parsed[p.id];
       const st = stateOf(p.id, lines);
       const row = el('div', 'acct');

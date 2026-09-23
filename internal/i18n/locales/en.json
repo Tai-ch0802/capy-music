@@ -160,6 +160,7 @@
   "cmd.auth.login.short": "Log in to a platform (Spotify: your own app + PKCE; Apple: a web token you copy yourself; Google: for Drive sync)",
   "cmd.auth.logout.short": "Log out of a platform (deletes its credentials from the keychain; client_id stays in the config; for google, the BYO client secret is deleted too)",
   "cmd.auth.short": "Account authorization",
+  "cmd.auth.status.flag.json": "print JSON for scripts (states, expiry times, where the client comes from); never includes any token",
   "cmd.auth.status.short": "Show each platform's authorization status (offline check; use capy doctor to verify online)",
   "cmd.config.get.short": "Print a setting (an empty line if unset)",
   "cmd.config.list.short": "List all settings (key\tvalue when not a TTY)",
@@ -453,6 +454,7 @@
     "one": "Cleared {count} recent entry",
     "other": "Cleared {count} recent entries"
   },
+  "lang.name": "English",
   "link.created_master": "Created master copy {name} ({pid})",
   "link.created_platform": "Created playlist {name} ({id}) on {platform}",
   "link.done": "Linked {name} ({pid}) ↔ {platform}:{id}; next, run capy pl pull {name}",
@@ -1045,5 +1047,7 @@
   "webprompt.err.stale_answer": "no prompt is waiting, or the id doesn't match (late answers are rejected)",
   "webprompt.err.unknown_kind": "unknown prompt kind",
   "webprompt.google_secret_body": "Config still has a Google client ID ({client_id}), but its secret isn't in the keychain (capy auth logout google deletes it).\nPaste the secret, or leave it empty to try without one (acceptance check G-0 will settle whether a Desktop client must send a secret).",
-  "webprompt.review.pick_title": "Pick a track to pin (close to skip)"
+  "webprompt.review.pick_title": "Pick a track to pin (close to skip)",
+  "webui.lang.label": "Language",
+  "webui.lang.switching": "Switch the interface language"
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -350,7 +351,7 @@ func maskClientID(id string) string {
 }
 
 func newAuthStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: i18n.T("cmd.auth.status.short"),
 		Args:  cobra.NoArgs,
@@ -360,6 +361,11 @@ func newAuthStatusCmd() *cobra.Command {
 				return err
 			}
 			w := cmd.OutOrStdout()
+			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				return enc.Encode(authStatusOf(cfg))
+			}
 			fmt.Fprintln(w, "spotify:")
 			if cfg.SpotifyClientID != "" {
 				fmt.Fprintf(w, "  client_id: %s\n", maskClientID(cfg.SpotifyClientID))
@@ -421,6 +427,94 @@ func newAuthStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Bool("json", false, i18n.T("cmd.auth.status.flag.json"))
+	return cmd
+}
+
+// authStatus:auth status --json 的形狀——給腳本與網頁帳號頁的契約(README「給腳本讀的登入狀態」):欄位只增不改,
+// 列舉值是固定的英文、不翻譯。只有「有沒有、何時到期、從哪來」這類事實,**絕不含任何 token / secret 的值**,
+// client ID 也只給列舉(同文字版只露頭尾)。時間一律 UTC 的 RFC 3339。
+type authStatus struct {
+	Spotify struct {
+		State    string `json:"state"`     // ok | missing | keychain_error(refresh token)
+		ClientID string `json:"client_id"` // set | missing | malformed
+	} `json:"spotify"`
+	Google struct {
+		State             string `json:"state"`                         // ok | missing | keychain_error
+		Client            string `json:"client"`                        // config(自建)| builtin(release 內建)| none
+		AccessTokenExpiry string `json:"access_token_expiry,omitempty"` // 存著的 access token 何時到期(會自動換發,不是登入的期限)
+		Email             string `json:"email,omitempty"`
+		DeviceID          string `json:"device_id,omitempty"`
+	} `json:"google"`
+	Apple struct {
+		State                string `json:"state"`           // 兩個 token 合起來:keychain_error > expired > missing > ok
+		DeveloperToken       string `json:"developer_token"` // ok | missing | expired | keychain_error
+		DeveloperTokenExpiry string `json:"developer_token_expiry,omitempty"`
+		UserToken            string `json:"user_token"` // ok | missing | keychain_error
+		Storefront           string `json:"storefront,omitempty"`
+	} `json:"apple"`
+}
+
+// keychainState:讀 keychain 的結果 → ok / missing / keychain_error。
+func keychainState(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, secret.ErrNotFound):
+		return "missing"
+	}
+	return "keychain_error"
+}
+
+// authStatusOf:跟文字版讀同樣的來源(文字版的輸出一個字都不動,所以不共用它的程式碼)。
+func authStatusOf(cfg *config.Config) authStatus {
+	var st authStatus
+	st.Spotify.State = keychainState(auth.SpotifyStored())
+	switch {
+	case cfg.SpotifyClientID == "":
+		st.Spotify.ClientID = "missing"
+	case clientIDRe.MatchString(cfg.SpotifyClientID):
+		st.Spotify.ClientID = "set"
+	default:
+		st.Spotify.ClientID = "malformed"
+	}
+
+	switch {
+	case cfg.GoogleClientID != "":
+		st.Google.Client = "config"
+	case auth.BuiltinGoogleClientID != "":
+		st.Google.Client = "builtin"
+	default:
+		st.Google.Client = "none"
+	}
+	tok, err := auth.GoogleStored()
+	if st.Google.State = keychainState(err); err == nil && !tok.Expiry.IsZero() {
+		st.Google.AccessTokenExpiry = tok.Expiry.UTC().Format(time.RFC3339)
+	}
+	st.Google.Email, st.Google.DeviceID = cfg.GoogleEmail, cfg.DeviceID
+
+	a := &st.Apple
+	_, exp, err := apple.DeveloperToken(time.Now())
+	if a.DeveloperToken = keychainState(err); errors.Is(err, apple.ErrDevTokenExpired) {
+		a.DeveloperToken = "expired"
+	}
+	if a.DeveloperToken == "ok" || a.DeveloperToken == "expired" {
+		a.DeveloperTokenExpiry = exp.UTC().Format(time.RFC3339)
+	}
+	_, err = secret.Get(apple.KeyMusicUserToken)
+	a.UserToken = keychainState(err)
+	switch {
+	case a.DeveloperToken == "keychain_error" || a.UserToken == "keychain_error":
+		a.State = "keychain_error"
+	case a.DeveloperToken == "expired":
+		a.State = "expired"
+	case a.DeveloperToken == "ok" && a.UserToken == "ok":
+		a.State = "ok"
+	default:
+		a.State = "missing"
+	}
+	a.Storefront = cfg.AppleStorefront
+	return st
 }
 
 func newAuthLogoutCmd() *cobra.Command {

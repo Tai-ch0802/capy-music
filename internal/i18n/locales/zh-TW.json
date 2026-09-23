@@ -158,6 +158,7 @@
   "cmd.auth.login.short": "登入平台(Spotify:自己的 app + PKCE;Apple:自抓 web token;Google:Drive 同步用)",
   "cmd.auth.logout.short": "登出平台(刪除 keychain 憑證;client_id 保留在 config;google 的 BYO client secret 一併刪除)",
   "cmd.auth.short": "帳號授權",
+  "cmd.auth.status.flag.json": "輸出給腳本讀的 JSON(狀態、到期時間、client 從哪來);不含任何 token 的值",
   "cmd.auth.status.short": "顯示各平台授權狀態(離線檢查;線上驗證用 capy doctor)",
   "cmd.config.get.short": "印出設定值(未設印空行)",
   "cmd.config.list.short": "列出所有設定(非 TTY 為 key\tvalue)",
@@ -429,6 +430,7 @@
   "history.cleared": {
     "other": "已清空最近紀錄({count} 筆)"
   },
+  "lang.name": "繁體中文",
   "link.created_master": "建立 canonical 清單 {name}({pid})",
   "link.created_platform": "在 {platform} 建立清單 {name}({id})",
   "link.done": "已連結 {name}({pid})↔ {platform}:{id};接著 capy pl pull {name}",
@@ -979,5 +981,7 @@
   "webprompt.err.stale_answer": "沒有等待中的提示,或 id 不符(遲到的答案不收)",
   "webprompt.err.unknown_kind": "未知的提示種類",
   "webprompt.google_secret_body": "client id {client_id} 還在 config,但 secret 不在 keychain(capy auth logout google 會刪掉它)。\n貼上 secret;留空則試試看不帶 secret(Desktop client 是否必須帶 secret 由 G-0 驗收決定)。",
-  "webprompt.review.pick_title": "選一首釘上(關掉 = 略過)"
+  "webprompt.review.pick_title": "選一首釘上(關掉 = 略過)",
+  "webui.lang.label": "語言",
+  "webui.lang.switching": "切換介面語言"
 }

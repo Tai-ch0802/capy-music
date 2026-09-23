@@ -1231,8 +1231,8 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// 精靈認「使用者自己中止」靠 console.js 匯出的常數,不自己抄一份字面(review #69):不然有人改了說法,
 	// 這裡會安靜地把中止畫成紅字錯誤。
-	if !strings.Contains(move, "const stopped = r.msg === CANCELLED_MSG;") || strings.Contains(move, "'已中止'") {
-		t.Error("move.js 要用 console.js 的 CANCELLED_MSG")
+	if !strings.Contains(move, "const stopped = r.msg === cancelledMsg();") || strings.Contains(move, "'已中止'") {
+		t.Error("move.js 要用 console.js 的 cancelledMsg()")
 	}
 	// 搬家頁的水豚跟終端機那隻同一個構圖:側面(一隻眼睛),由後往前是耳朵 → 眼睛 → 鼻孔(2026-09-20 重畫;
 	// 舊版的正面圓臉 + 兩個鼻孔是豬。ASCII 那隻由 TestCapybaraIsASideProfile 守)。
@@ -1342,7 +1342,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(console, "if (this.stopping) this.cancel()") {
 		t.Error("start 事件到達時,若已經按過中止要立刻送 cancel")
 	}
-	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], CANCELLED_MSG, ex[2]]") || !strings.Contains(console, "export const CANCELLED_MSG = '已中止';") {
+	if !strings.Contains(run, "if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]]") || !strings.Contains(console, "export const cancelledMsg = () => '已中止';") {
 		t.Error("中止的命令交給頁面的訊息要是「已中止」,不是 context canceled 那串內部錯誤")
 	}
 	// 中止中的按鈕不可以用 disabled:disabled 會把焦點丟到 body,鍵盤使用者失去位置、收尾也交不回命令列。
@@ -1576,9 +1576,9 @@ func TestWebProgressEventsAreRealAndCLIStaysSilent(t *testing.T) {
 }
 
 // TestWebMoveWizardKeysOnMigrateWording:搬家精靈靠 migrate 的兩樣東西認列——「逐筆裁決」那一則確認(旁邊要補白話;
-// 認的是 REVIEW_MARKS 裡每個語系的片段)與 REASON_CODE 欄的 push(這一首推得過去;REASON 跟著語系,不能拿來判斷——Q52)。
+// 認的是 reviewMarks() 裡每個語系的片段)與 REASON_CODE 欄的 push(這一首推得過去;REASON 跟著語系,不能拿來判斷——Q52)。
 // 純文字契約的測試只保證 CLI 自己不變、不保證網頁跟得上,所以兩邊一起釘(同 TestWebAccountPageKeysOnEnglishAuthStatus):
-// 用每個語系(英文單複數兩種)跑真的 migrate,第一個提示要被 REVIEW_MARKS 認出、最後確認不能被誤認;CLI 改了字,這裡就紅並指向 move.js。
+// 用每個語系(英文單複數兩種)跑真的 migrate,第一個提示要被 reviewMarks() 認出、最後確認不能被誤認;CLI 改了字,這裡就紅並指向 move.js。
 // Go 這半邊(migrateReason 推得過去 = "push")由 TestMigrateReasonCodes 與 migrate_test.go 的整列比對釘住。
 func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 	b, err := webUI.ReadFile("webui/js/pages/move.js")
@@ -1588,9 +1588,9 @@ func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 	if src := string(b); !strings.Contains(src, "'REASON_CODE'") || !strings.Contains(src, "'push'") || strings.Contains(src, "PUSHABLE_MARK") { // 行為由 webui_console.mjs 的 tally 情境釘住
 		t.Error("move.js 的 tally() 要以 REASON_CODE 是不是 push 判斷搬得過去,不看 REASON 的字(會跟著語系變)")
 	}
-	decl := regexp.MustCompile(`const REVIEW_MARKS = \[([^\]]*)\];`).FindStringSubmatch(string(b))
-	if decl == nil || !strings.Contains(string(b), "REVIEW_MARKS.some((m) => String(ev.title || '').includes(m))") {
-		t.Fatal("move.js 要以 REVIEW_MARKS 認「逐筆裁決」那一則提示")
+	decl := regexp.MustCompile(`const reviewMarks = \(\) => \[([^\]]*)\];`).FindStringSubmatch(string(b))
+	if decl == nil || !strings.Contains(string(b), "reviewMarks().some((m) => String(ev.title || '').includes(m))") {
+		t.Fatal("move.js 要以 reviewMarks() 認「逐筆裁決」那一則提示")
 	}
 	var marks []string
 	for _, m := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(decl[1], -1) {
@@ -1607,7 +1607,7 @@ func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 			withLanguage(t, c.lang)
 			prompts := migratePromptsDeclined(t, c.unmatched...)
 			if len(prompts) != 2 || !matches(prompts[0]) || matches(prompts[1]) {
-				t.Errorf("move.js 的 REVIEW_MARKS %q 要認得出逐筆裁決那一則、不能誤認最後確認:%q", marks, prompts)
+				t.Errorf("move.js 的 reviewMarks() %q 要認得出逐筆裁決那一則、不能誤認最後確認:%q", marks, prompts)
 			}
 		})
 	}
@@ -1675,6 +1675,16 @@ func TestWebConsoleBehaviour(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "harness.mjs"), harness, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// 真的目錄:假 api 的 /api/i18n 回 i18n.json(zh-TW,既有斷言用的語系);i18n-en.json 給語言切換的情境。
+	for name, lang := range map[string]string{"i18n.json": "zh-TW", "i18n-en.json": "en"} {
+		b, err := json.Marshal(webI18n(lang))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
