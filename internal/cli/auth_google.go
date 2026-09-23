@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 	"github.com/Tai-ch0802/capy-music/internal/ulid"
 )
@@ -30,7 +30,7 @@ type googleClientSource string
 
 const (
 	googleFromFlags   googleClientSource = "flag/env"
-	googleFromWizard  googleClientSource = "精靈"
+	googleFromWizard  googleClientSource = "wizard" // 印出時翻(googleSourceLabel);其餘三個是機器字,原樣印
 	googleFromConfig  googleClientSource = "config"
 	googleFromBuiltin googleClientSource = "builtin"
 )
@@ -50,31 +50,26 @@ func resolveGoogleClient(cmd *cobra.Command, cfg *config.Config) (auth.GoogleCli
 	}
 	if sec != "" { // 只給 secret:配 config 裡的 client id;沒有就報錯,不能靜默丟掉使用者給的東西
 		if cfg.GoogleClientID == "" {
-			return auth.GoogleClient{}, "", errors.New("給了 client secret 但沒有 client ID(--client-id / CAPY_GOOGLE_CLIENT_ID,或先登入過一次讓它進 config)")
+			return auth.GoogleClient{}, "", i18n.Errorf("google.err.secret_without_id")
 		}
 		return auth.GoogleClient{ID: cfg.GoogleClientID, Secret: strings.TrimSpace(sec)}, googleFromFlags, nil
 	}
 	return googleClientFromConfig(cfg)
 }
 
-const googleGuide = `建立你自己的 Google OAuth client(免費,約 5 分鐘)——這個 binary 沒有內建 client(go install 建的都沒有):
-  1. https://console.cloud.google.com → 建立專案 → API 和服務 → 啟用「Google Drive API」
-  2. Google Auth platform → Branding:填 app 名稱與 support email;Audience 選 External
-  3. Data Access:只加這三個 scope —— openid、userinfo.email、drive.appdata(多加 Gmail 之類會觸發資安評估)
-  4. 建立 OAuth client:類型選「桌面應用程式(Desktop app)」;secret 只在建立當下顯示一次,立刻複製
-  5. ⚠️ Audience 按「Publish app」切到 In production —— 停在 Testing 的話 refresh token 7 天就過期,你會莫名被登出
-  6. 把 Client ID 與 Client secret 貼到下面`
+// googleGuide:BYO 精靈的說明原文;huh 表單、web 提示橋與非 TTY 的錯誤共用。用的時候才翻(語系在建樹前才設)。
+func googleGuide() string { return i18n.T("google.guide") }
 
 func runGoogleClientWizard() (id, sec string, err error) {
 	form := newForm(huh.NewGroup(
-		huh.NewNote().Title("Google Drive 同步:先建自己的 OAuth client").Description(googleGuide),
-		huh.NewInput().Title("Client ID(結尾通常是 .apps.googleusercontent.com)").Value(&id).Validate(func(s string) error {
+		huh.NewNote().Title(i18n.T("google.wizard.title")).Description(googleGuide()),
+		huh.NewInput().Title(i18n.T("google.wizard.client_id")).Value(&id).Validate(func(s string) error {
 			if strings.TrimSpace(s) == "" {
-				return errors.New("必填")
+				return i18n.Errorf("google.wizard.required")
 			}
 			return nil
 		}),
-		huh.NewInput().Title("Client secret(可留空試試看;G-0 驗收會確定 Desktop client 要不要)").EchoMode(huh.EchoModePassword).Value(&sec),
+		huh.NewInput().Title(i18n.T("google.wizard.client_secret")).EchoMode(huh.EchoModePassword).Value(&sec),
 	))
 	if err := form.Run(); err != nil {
 		return "", "", err
@@ -87,7 +82,7 @@ func runGoogleClientWizard() (id, sec string, err error) {
 func runGoogleSecretPrompt(clientID string) (string, error) {
 	var sec string
 	form := newForm(huh.NewGroup(
-		huh.NewNote().Title("找不到這個 client 的 secret").Description("client id "+maskGoogleClientID(clientID)+" 還在 config,但 secret 不在 keychain(capy auth logout google 會刪掉它)。\n貼上 secret;直接 Enter 留空則試試看不帶 secret(Desktop client 是否必須帶 secret 由 G-0 驗收決定)。"),
+		huh.NewNote().Title(i18n.T("google.secret_prompt.title")).Description(i18n.T("google.secret_prompt.body", "client_id", maskGoogleClientID(clientID))),
 		huh.NewInput().Title("Client secret").EchoMode(huh.EchoModePassword).Value(&sec),
 	))
 	if err := form.Run(); err != nil {
@@ -107,7 +102,7 @@ func googleLogin(cmd *cobra.Command) error {
 	}
 	if client.ID == "" {
 		if !stdinIsTTY() {
-			return errors.New("這個 binary 沒有內建 Google client(go install 建的都沒有),非互動環境請給 --client-id / --client-secret 或 CAPY_GOOGLE_CLIENT_ID / CAPY_GOOGLE_CLIENT_SECRET。\n" + googleGuide)
+			return i18n.Errorf("google.err.no_client", "guide", googleGuide())
 		}
 		id, sec, err := googleWizard()
 		if err != nil {
@@ -122,7 +117,7 @@ func googleLogin(cmd *cobra.Command) error {
 		}
 		client.Secret = sec
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成 Google 授權…(180s 內;請勾選全部三個權限)")
+	fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("google.login.waiting"))
 	ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
 	defer cancel()
 	_, email, err := googleLoginFn(ctx, client, openBrowser)
@@ -131,12 +126,11 @@ func googleLogin(cmd *cobra.Command) error {
 	}
 	// 授權成功後才落地 client 與帳號資訊(失敗不留半殘 config)。BYO 的 secret 只進 keychain;內建的不落地。
 	// 這三個寫入沒有交易性:token 已在 keychain,之後任何一步失敗都要講明「授權其實已成功」,否則使用者會以為要重登。
-	const authOK = "Google 授權已成功、token 已入 keychain,但"
 	if !client.Builtin {
 		cfg.GoogleClientID = client.ID
 		if client.Secret != "" {
 			if err := secret.Set(auth.KeyGoogleClientSecret, client.Secret); err != nil {
-				return fmt.Errorf("%s寫入 keychain 的 google.client_secret 失敗(下次 login 用 --client-secret 補):%w", authOK, err)
+				return i18n.Errorf("google.err.save_secret", "err", err)
 			}
 		}
 	}
@@ -145,21 +139,28 @@ func googleLogin(cmd *cobra.Command) error {
 		cfg.DeviceID = ulid.New()
 	}
 	if err := config.Save(cfg); err != nil {
-		return fmt.Errorf("%s寫 config 失敗(client id / email / device_id 沒落地,修好後重跑 login 即可):%w", authOK, err)
+		return i18n.Errorf("google.err.save_config", "err", err)
 	}
 	who := email
 	if who == "" {
-		who = "(id_token 沒有 email)"
+		who = i18n.T("google.login.no_email")
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "✅ Google 授權完成:%s(client 來源:%s;token 已入 keychain)\n", who, source)
+	fmt.Fprintln(cmd.OutOrStdout(), i18n.T("google.login.done", "who", who, "source", googleSourceLabel(source)))
 	return nil
+}
+
+func googleSourceLabel(s googleClientSource) string {
+	if s == googleFromWizard {
+		return i18n.T("google.source.wizard")
+	}
+	return string(s)
 }
 
 // maskGoogleClientID:顯示 .apps.googleusercontent.com 前的頭 6 碼。
 func maskGoogleClientID(id string) string {
 	base := strings.TrimSuffix(id, ".apps.googleusercontent.com")
 	if len(base) <= 6 {
-		return "已設定"
+		return i18n.T("google.client_id.set")
 	}
-	return "已設定(" + base[:6] + "…)"
+	return i18n.T("google.client_id.set_prefix", "prefix", base[:6])
 }

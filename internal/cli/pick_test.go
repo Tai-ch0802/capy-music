@@ -44,16 +44,23 @@ func TestFormFilterHelpSaysCancel(t *testing.T) {
 	for i := range opts {
 		opts[i] = huh.NewOption(fmt.Sprintf("清單 %d", i), i)
 	}
-	f := newForm(huh.NewGroup(huh.NewSelect[int]().Options(opts...).Filtering(true)))
-	f.Init()
-	f.Update(tea.KeyPressMsg{Code: '/', Text: "/"}) // 進過濾:SetFilter 這時才會出現在 help 行
-	v := ansi.Strip(f.View())                       // help 行的鍵與說明各自上色,要先剝掉跳脫碼才比得到
-	if !strings.Contains(v, "esc cancel") || strings.Contains(v, "set filter") {
-		t.Fatalf("過濾中的 help 行要說 esc cancel:%q", v)
-	}
-	f.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if f.State != huh.StateAborted {
-		t.Error("過濾中按 Esc 也要中止表單")
+	// help 說明走語系目錄(計畫 Q56):兩個語系都驗,zh-TW 是「esc 取消」、不可出現「確定過濾」
+	for _, tc := range []struct{ lang, want, not string }{
+		{"en", "esc cancel", "set filter"},
+		{"zh-TW", "esc 取消", "確定過濾"},
+	} {
+		withLanguage(t, tc.lang)
+		f := newForm(huh.NewGroup(huh.NewSelect[int]().Options(opts...).Filtering(true)))
+		f.Init()
+		f.Update(tea.KeyPressMsg{Code: '/', Text: "/"}) // 進過濾:SetFilter 這時才會出現在 help 行
+		v := ansi.Strip(f.View())                       // help 行的鍵與說明各自上色,要先剝掉跳脫碼才比得到
+		if !strings.Contains(v, tc.want) || strings.Contains(v, tc.not) {
+			t.Fatalf("%s:過濾中的 help 行要說 %s:%q", tc.lang, tc.want, v)
+		}
+		f.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if f.State != huh.StateAborted {
+			t.Errorf("%s:過濾中按 Esc 也要中止表單", tc.lang)
+		}
 	}
 }
 

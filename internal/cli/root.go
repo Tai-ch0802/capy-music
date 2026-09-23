@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -19,7 +20,7 @@ var version = "dev"
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "capy",
-		Short:         "跨平台音樂 CLI:搜尋、播放遙控、播放清單同步",
+		Short:         i18n.T("cmd.root.short"),
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true, // main 負責印錯與 exit code(歧義 = 2,見 AmbiguousError)
@@ -32,7 +33,7 @@ func newRootCmd() *cobra.Command {
 			web, _ := cmd.Flags().GetBool("web")
 			port, _ := cmd.Flags().GetInt("port")
 			if cmd.Flags().Changed("port") && !web {
-				return errors.New("--port 只能配 --web 使用")
+				return i18n.Errorf("root.err.port_without_web")
 			}
 			if web { // 在 !isInteractive 分流之前:非 TTY 啟動(launchd / nohup)也能開,只印網址不開瀏覽器
 				return runWeb(cmd, port)
@@ -44,8 +45,8 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	providerFlag(cmd)
-	cmd.Flags().Bool("web", false, "在瀏覽器操作:只綁 127.0.0.1,啟動時印一次性網址")
-	cmd.Flags().Int("port", 0, "--web 的 port(預設 0 = 動態;不可用 8888、80、443)")
+	cmd.Flags().Bool("web", false, i18n.T("cmd.root.flag.web"))
+	cmd.Flags().Int("port", 0, i18n.T("cmd.root.flag.port"))
 	cmd.AddCommand(newDebugCmd())
 	cmd.AddCommand(newAuthCmd())
 	cmd.AddCommand(newSearchCmd())
@@ -53,9 +54,9 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newPlCmd())
 	cmd.AddCommand(newMigrateCmd())
 	cmd.AddCommand(
-		simpleCtl("pause", "暫停播放", "⏸ 已暫停", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Pause(ctx) }),
-		simpleCtl("next", "下一首", "⏭ 下一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Next(ctx) }),
-		simpleCtl("prev", "上一首", "⏮ 上一首", func(ctx context.Context, pc provider.PlaybackController) error { return pc.Prev(ctx) }),
+		simpleCtl("pause", i18n.T("cmd.pause.short"), i18n.T("cmd.pause.done"), func(ctx context.Context, pc provider.PlaybackController) error { return pc.Pause(ctx) }),
+		simpleCtl("next", i18n.T("cmd.next.short"), i18n.T("cmd.next.done"), func(ctx context.Context, pc provider.PlaybackController) error { return pc.Next(ctx) }),
+		simpleCtl("prev", i18n.T("cmd.prev.short"), i18n.T("cmd.prev.done"), func(ctx context.Context, pc provider.PlaybackController) error { return pc.Prev(ctx) }),
 	)
 	cmd.AddCommand(newSeekCmd(), newVolCmd())
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
@@ -82,7 +83,7 @@ type SignalError struct {
 	Err error
 }
 
-func (e *SignalError) Error() string { return "收到訊號 " + e.Sig.String() }
+func (e *SignalError) Error() string { return i18n.T("root.err.signal", "signal", e.Sig.String()) }
 func (e *SignalError) Unwrap() error { return e.Err } // 錯誤鏈不斷:errors.Is(err, context.Canceled) 在 Execute 的呼叫端照樣成立
 
 // executeSignalled:不用 signal.NotifyContext——它的 ctx.Err() 只有 context.Canceled,分不出是哪個訊號;

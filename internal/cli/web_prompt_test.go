@@ -391,7 +391,7 @@ func TestWebAppleWizardDisclosureCannotBeSkipped(t *testing.T) {
 
 	ev := c.runInteractive(map[string]any{"args": []string{"auth", "login", "apple"}}, func(n int, _ string, p map[string]any) *promptReply {
 		note, _ := p["note"].(map[string]any)
-		if n != 1 || p["kind"] != "confirm" || note == nil || note["body"] != appleDisclosure || p["default"] != false || p["negative"] != "取消" {
+		if n != 1 || p["kind"] != "confirm" || note == nil || note["body"] != appleDisclosure() || p["default"] != false || p["negative"] != "取消" {
 			t.Errorf("第 %d 題要是揭露、預設取消:%v", n, p)
 		}
 		return reply(false)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -31,10 +33,10 @@ func runChecks(ctx context.Context, w io.Writer, checks []check) (failed int) {
 		detail, err := c.fn(ctx)
 		if err != nil {
 			failed++
-			fmt.Fprintf(w, "❌ %s:%v\n", c.name, err)
+			fmt.Fprintln(w, i18n.T("doctor.line.fail", "name", c.name, "err", err)) // 整行一則:英文冒號後要空格
 			continue
 		}
-		fmt.Fprintf(w, "✅ %s:%s\n", c.name, detail)
+		fmt.Fprintln(w, i18n.T("doctor.line.ok", "name", c.name, "detail", detail))
 	}
 	return failed
 }
@@ -42,31 +44,31 @@ func runChecks(ctx context.Context, w io.Writer, checks []check) (failed int) {
 func checkConfig(ctx context.Context) (string, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return "", fmt.Errorf("讀取失敗:%w", err)
+		return "", i18n.Errorf("doctor.config.err.read", "err", err)
 	}
 	if cfg.SpotifyClientID == "" {
-		return "", errors.New("未設定 Spotify Client ID — 執行 capy auth login spotify")
+		return "", i18n.Errorf("doctor.config.err.no_client_id")
 	}
 	if !clientIDRe.MatchString(cfg.SpotifyClientID) {
-		return "", fmt.Errorf("Client ID 格式錯誤(應為 32 位十六進位):%q", cfg.SpotifyClientID)
+		return "", i18n.Errorf("doctor.config.err.bad_client_id", "id", strconv.Quote(cfg.SpotifyClientID))
 	}
-	return "client ID 格式正確", nil
+	return i18n.T("doctor.config.ok"), nil
 }
 
 func checkKeychain(ctx context.Context) (string, error) {
 	const probe = "doctor.probe"
 	if err := secret.Set(probe, "ok"); err != nil {
-		return "", fmt.Errorf("寫入失敗(keychain 不可用?):%w", err)
+		return "", i18n.Errorf("doctor.keychain.err.write", "err", err)
 	}
 	v, err := secret.Get(probe)
 	_ = secret.Delete(probe)
 	if err != nil {
-		return "", fmt.Errorf("讀回失敗:%w", err)
+		return "", i18n.Errorf("doctor.keychain.err.read", "err", err)
 	}
 	if v != "ok" {
-		return "", fmt.Errorf("讀回值不符(得到 %q)— keychain 可能被其他程式覆寫", v)
+		return "", i18n.Errorf("doctor.keychain.err.mismatch", "value", strconv.Quote(v))
 	}
-	return "讀寫正常", nil
+	return i18n.T("doctor.keychain.ok"), nil
 }
 
 // portHint:查誰佔用 8888 的指令,windows 與其他平台(macOS/Linux)不同。
@@ -80,48 +82,48 @@ func portHint(goos string) string {
 func checkPort8888(ctx context.Context) (string, error) {
 	lb, err := auth.NewLoopback(auth.DefaultSpotifyPort, "probe")
 	if err != nil {
-		return "", fmt.Errorf("無法建立 listener:%w", err)
+		return "", i18n.Errorf("doctor.port.err.listen", "err", err)
 	}
 	defer lb.Close()
 	if lb.Port() != auth.DefaultSpotifyPort {
-		return "", fmt.Errorf("8888 被其他程序佔用 — auth login 會失敗,請先釋放(%s)", portHint(runtime.GOOS))
+		return "", i18n.Errorf("doctor.port.err.in_use", "hint", portHint(runtime.GOOS))
 	}
-	return "8888 可用", nil
+	return i18n.T("doctor.port.ok"), nil
 }
 
 // checkRefreshToken:「沒有」與「讀不到 / 內容毀損」是不同的病、不同的下一步,不能都印成「沒有」。
 func checkRefreshToken(ctx context.Context) (string, error) {
 	switch err := auth.SpotifyStored(); {
 	case err == nil:
-		return "keychain 存在", nil
+		return i18n.T("doctor.in_keychain"), nil
 	case errors.Is(err, secret.ErrNotFound):
-		return "", errors.New("keychain 沒有 refresh token — 執行 capy auth login spotify")
+		return "", i18n.Errorf("doctor.refresh_token.err.missing")
 	default:
-		return "", fmt.Errorf("讀取 keychain 失敗(可能被拒絕存取、已鎖定或內容毀損):%w", err)
+		return "", i18n.Errorf("doctor.refresh_token.err.read", "err", err)
 	}
 }
 
 func checkTokenRefresh(ctx context.Context) (string, error) {
 	cfg, err := config.Load()
 	if err != nil || cfg.SpotifyClientID == "" {
-		return "", errors.New("需要先通過設定檔檢查")
+		return "", i18n.Errorf("doctor.token_refresh.err.needs_config")
 	}
 	ts, err := auth.SpotifyTokenSource(ctx, cfg.SpotifyClientID)
 	switch {
 	case err == nil:
 	case errors.Is(err, secret.ErrNotFound):
-		return "", errors.New("需要先通過 refresh token 檢查")
+		return "", i18n.Errorf("doctor.token_refresh.err.needs_refresh_token")
 	default:
 		// JSON 毀損、keychain 讀不到、等鎖被中斷、遷移失敗都會走到這。一律印「需要先通過 refresh token
 		// 檢查」的話,會緊接在上一項的 ✅ 後面自相矛盾,而且真正的原因被吞掉。
-		return "", fmt.Errorf("無法建立 token source(keychain 內容毀損、被拒絕存取,或另一個 capy 正持有鎖):%w", err)
+		return "", i18n.Errorf("doctor.token_refresh.err.token_source", "err", err)
 	}
 	// 這一項就是要明確驗「refresh token 還活著」,所以強制換發;結果會寫回 keychain,
 	// 後面的 ⑥ Spotify API 直接用這顆新 token,一次 doctor 只輪替一次(issue #3)。
 	if _, err := ts.Refresh(); err != nil {
-		return "", fmt.Errorf("換發失敗(token 可能已被撤銷,重跑 capy auth login spotify):%w", err)
+		return "", i18n.Errorf("doctor.token_refresh.err.refresh", "err", err)
 	}
-	return "access token 換發成功(輪替已依硬約束覆寫)", nil
+	return i18n.T("doctor.token_refresh.ok"), nil
 }
 
 func checkAPI(ctx context.Context) (string, error) {
@@ -130,23 +132,23 @@ func checkAPI(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if err := p.Health(ctx); err != nil {
-		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr("spotify", err))
+		return "", i18n.Errorf("doctor.api.err.failed", "err", friendlyErr("spotify", err))
 	}
-	return "API 可達、授權有效", nil
+	return i18n.T("doctor.api.ok.spotify"), nil
 }
 
 func checkAppleDevToken(ctx context.Context) (string, error) {
 	_, exp, err := apple.DeveloperToken(time.Now())
 	switch {
 	case err == nil:
-		return fmt.Sprintf("有效至 %s", exp.Format(time.RFC3339)), nil
+		return i18n.T("doctor.apple.dev_token.ok", "expiry", exp.Format(time.RFC3339)), nil
 	case errors.Is(err, apple.ErrDevTokenExpired):
-		return "", fmt.Errorf("已於 %s 過期 — 重新執行 capy auth login apple", exp.Format(time.RFC3339))
+		return "", i18n.Errorf("doctor.apple.dev_token.err.expired", "expiry", exp.Format(time.RFC3339))
 	default:
 		if errors.Is(err, secret.ErrNotFound) {
-			return "", errors.New("keychain 沒有 developer token — 執行 capy auth login apple")
+			return "", i18n.Errorf("doctor.apple.dev_token.err.missing")
 		}
-		return "", fmt.Errorf("讀取 keychain 失敗(可能被拒絕存取或已鎖定):%w", err)
+		return "", i18n.Errorf("doctor.apple.err.keychain_read", "err", err)
 	}
 }
 
@@ -154,18 +156,18 @@ func checkAppleUserToken(ctx context.Context) (string, error) {
 	_, err := secret.Get(apple.KeyMusicUserToken)
 	switch {
 	case err == nil:
-		return "keychain 存在", nil
+		return i18n.T("doctor.in_keychain"), nil
 	case errors.Is(err, secret.ErrNotFound):
-		return "", errors.New("keychain 沒有 Music User Token — 執行 capy auth login apple")
+		return "", i18n.Errorf("doctor.apple.user_token.err.missing")
 	default:
-		return "", fmt.Errorf("讀取 keychain 失敗(可能被拒絕存取或已鎖定):%w", err)
+		return "", i18n.Errorf("doctor.apple.err.keychain_read", "err", err)
 	}
 }
 
 func checkAppleStorefront(ctx context.Context) (string, error) {
 	cfg, err := config.Load()
 	if err != nil || cfg.AppleStorefront == "" {
-		return "", errors.New("未設定 — 重新執行 capy auth login apple")
+		return "", i18n.Errorf("doctor.apple.storefront.err.unset")
 	}
 	return cfg.AppleStorefront, nil
 }
@@ -176,9 +178,9 @@ func checkAppleAPI(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if err := p.Health(ctx); err != nil {
-		return "", fmt.Errorf("API 呼叫失敗:%w", friendlyErr("apple", err))
+		return "", i18n.Errorf("doctor.api.err.failed", "err", friendlyErr("apple", err))
 	}
-	return "API 可達、token 有效", nil
+	return i18n.T("doctor.api.ok.apple"), nil
 }
 
 func appleChecks() []check {
@@ -196,11 +198,11 @@ func appleChecks() []check {
 
 func spotifyChecks() []check {
 	return []check{
-		{"設定檔", checkConfig},
+		{i18n.T("doctor.check.config"), checkConfig},
 		{"Keychain", checkKeychain},
 		{"Port 8888", checkPort8888},
 		{"Refresh token", checkRefreshToken},
-		{"Token 換發", checkTokenRefresh},
+		{i18n.T("doctor.check.token_refresh"), checkTokenRefresh},
 		{"Spotify API", checkAPI},
 	}
 }
@@ -208,17 +210,17 @@ func spotifyChecks() []check {
 // localChecks(P6):沒有憑證、沒有網路——只看 local_root 與 library.json(計畫 §2 A8)。
 func localChecks() []check {
 	return []check{
-		{"local_root 設定", func(context.Context) (string, error) {
+		{i18n.T("doctor.check.local_root"), func(context.Context) (string, error) {
 			cfg, err := config.Load()
 			if err != nil {
 				return "", err
 			}
 			if cfg.LocalRoot == "" {
-				return "", errors.New("未設定 — capy config set local_root <目錄>")
+				return "", i18n.Errorf("doctor.local_root.err.unset")
 			}
 			return cfg.LocalRoot, nil
 		}},
-		{"目錄與 library.json", func(ctx context.Context) (string, error) {
+		{i18n.T("doctor.check.local_library"), func(ctx context.Context) (string, error) {
 			p, err := newLocalProvider()
 			if err != nil {
 				return "", err
@@ -234,14 +236,14 @@ func localChecks() []check {
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("%d 個清單檔", len(refs)), nil
+			return i18n.T("doctor.local_library.ok", "count", len(refs)), nil
 		}},
 	}
 }
 
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "doctor", Short: "診斷設定與連線(BYO 問題一站排除)", Args: cobra.NoArgs,
+		Use: "doctor", Short: i18n.T("cmd.doctor.short"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			provider, _ := cmd.Flags().GetString(flagProvider)
 			var checks []check
@@ -253,12 +255,12 @@ func newDoctorCmd() *cobra.Command {
 			case "local":
 				checks = localChecks()
 			default:
-				return fmt.Errorf("未知的 provider %q(可用:%s)", provider, strings.Join(providerIDs, "、"))
+				return i18n.Errorf("doctor.err.unknown_provider", "provider", strconv.Quote(provider), "valid", strings.Join(providerIDs, i18n.T("sep.list")))
 			}
 			if failed := runChecks(cmd.Context(), cmd.OutOrStdout(), checks); failed > 0 {
-				return fmt.Errorf("%d 項檢查未通過", failed)
+				return i18n.Errorf("doctor.err.failed", "count", failed)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "全部通過 🎉")
+			fmt.Fprintln(cmd.OutOrStdout(), i18n.T("doctor.all_passed"))
 			return nil
 		},
 	}

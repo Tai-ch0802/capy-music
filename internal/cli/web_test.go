@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zalando/go-keyring"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
@@ -957,19 +959,55 @@ func TestWebAccountPageKeysOnAuthStatusWording(t *testing.T) {
 			t.Errorf("account.js 沒有認 %q", lit)
 		}
 	}
-	src, err := os.ReadFile("auth.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	gsrc, err := os.ReadFile("auth_google.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	both := string(src) + string(gsrc)
-	for _, lit := range []string{"refresh token: keychain 存在", "token: keychain 存在", "讀取 keychain 失敗"} {
-		if !strings.Contains(both, lit) {
+	// 這三個字面搬進了語系目錄(決策 50),不在 auth.go 原始碼裡了:改看 auth status 真的印出來的。
+	setCLITestConfig(t)
+	t.Cleanup(keyring.MockInit)                                                              // 連同下面種的 token 一起清掉
+	_, _ = fakeLoginOK(t, "")(context.Background(), "", nil)                                 // spotify refresh token
+	_, _, _ = fakeGoogleLogin(t, "", "", "")(context.Background(), auth.GoogleClient{}, nil) // google token
+	loggedIn, _ := runCLI(t, "auth", "status")
+	keyring.MockInitWithError(errors.New("locked"))
+	broken, _ := runCLI(t, "auth", "status")
+	// "\n  token:" 是 google 那一行(兩格縮排);只寫 "token:" 的話 spotify 的 refresh token 那行就滿足了,google 那行沒被釘住。
+	for _, lit := range []string{"refresh token: keychain 存在", "\n  token: keychain 存在", "讀取 keychain 失敗"} {
+		if !strings.Contains(loggedIn+broken, lit) {
 			t.Errorf("auth status 不再印 %q,帳號頁的判斷會靜默失效", lit)
 		}
+	}
+}
+
+// TestWebAccountPageKeysOnEnglishAuthStatus:language = en 時 auth status 的值是英文(決策 50),帳號頁一樣要認得;
+// 只有 zh-TW 的話,切成英文後每個已登入的帳號都會顯示成未登入。T3 改成讀 auth status --json 之前,兩種字面都要在 account.js。
+func TestWebAccountPageKeysOnEnglishAuthStatus(t *testing.T) {
+	b, err := webUI.ReadFile("webui/js/pages/account.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := string(b)
+	withLanguage(t, "en")
+	setupAppleTokens(t)
+	apple, _ := runCLI(t, "auth", "status")
+	t.Cleanup(keyring.MockInit)
+	_, _ = fakeLoginOK(t, "")(context.Background(), "", nil)
+	_, _, _ = fakeGoogleLogin(t, "", "", "")(context.Background(), auth.GoogleClient{}, nil)
+	loggedIn, _ := runCLI(t, "auth", "status")
+	keyring.MockInitWithError(errors.New("locked"))
+	broken, _ := runCLI(t, "auth", "status")
+	for _, c := range []struct{ out, lit string }{
+		{apple, "developer token: valid until "},
+		{apple, "user token: present"},
+		{loggedIn, "refresh token: in the keychain"},
+		{loggedIn, "\n  token: in the keychain"},
+		{broken, "couldn't read the keychain"},
+	} {
+		if !strings.Contains(c.out, c.lit) {
+			t.Errorf("英文的 auth status 不再印 %q:%q", c.lit, c.out)
+		}
+		if !strings.Contains(account, strings.TrimPrefix(c.lit, "\n  ")) {
+			t.Errorf("account.js 沒有認英文的 %q", c.lit)
+		}
+	}
+	if !strings.Contains(account, "developer token: expired at ") || !strings.Contains(i18n.T("auth.status.dev_token_expired", "expiry", "x"), "expired at ") {
+		t.Error("過期的 Apple token 在英文也要認得出來")
 	}
 }
 
