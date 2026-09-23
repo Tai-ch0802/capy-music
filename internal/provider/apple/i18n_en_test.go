@@ -96,10 +96,10 @@ func TestEnglishCreatePlaylistMessages(t *testing.T) {
 	f, p := writeWorld(t, true)
 	f.listLag = 99
 	_, err := p.CreatePlaylist(context.Background(), "Road Trip")
-	if want := `Apple created the playlist "Road Trip" (p.new), but it still wasn't in the playlist list after 1s (iCloud sync delay); link it later with capy pl link <name> apple:p.new`; err == nil || err.Error() != want {
+	if want := `Apple created the playlist "Road Trip" (p.new), but it still wasn't in your playlists after 1s (iCloud sync delay); link it later with capy pl link <name> apple:p.new`; err == nil || err.Error() != want {
 		t.Errorf("逾時:\n got %v\nwant %s", err, want)
 	}
-	if want := "Waiting for Apple to add the new playlist p.new to the playlist list (usually a few seconds)…\n"; said.String() != want {
+	if want := "Waiting for Apple to add the new playlist p.new to your playlists (usually a few seconds)…\n"; said.String() != want {
 		t.Errorf("等待提示:%q", said.String())
 	}
 
@@ -115,7 +115,7 @@ func TestEnglishCreatePlaylistMessages(t *testing.T) {
 	f, p = writeWorld(t, true)
 	f.listLag = 99
 	_, err = p.CreatePlaylist(context.Background(), "Road Trip")
-	if want := `Apple created the playlist "Road Trip" (p.new), but waiting for it to appear in the list was interrupted (context canceled); link it later with capy pl link <name> apple:p.new`; err == nil || err.Error() != want || !errors.Is(err, context.Canceled) {
+	if want := `Apple created the playlist "Road Trip" (p.new), but waiting for it to appear in your playlists was interrupted (context canceled); link it later with capy pl link <name> apple:p.new`; err == nil || err.Error() != want || !errors.Is(err, context.Canceled) {
 		t.Errorf("中斷:\n got %v\nwant %s", err, want)
 	}
 }
@@ -134,11 +134,15 @@ func TestEnglishClientErrors(t *testing.T) {
 		{"401", func() error { _, err := status(401).Storefront(ctx); return err }(), "developer token is invalid (401): authorization expired"},
 		{"403", func() error { _, err := status(403).Storefront(ctx); return err }(), "Music User Token is invalid or the subscription has lapsed (403): authorization expired"},
 		{"preflight 403", func() error { _, err := status(403).Preflight(ctx); return err }(), "developer token or Origin was rejected (403): authorization expired"},
-		{"429", func() error { _, err := status(429).Storefront(ctx); return err }(), "apple API 429 rate limited the Apple web token's quota is shared by every web player; try again in about an hour"},
+		{"429", func() error { _, err := status(429).Storefront(ctx); return err }(), "apple API 429 rate limited (the Apple web token's quota is shared by every web player; try again in about an hour)"},
 		{"no storefront", func() error {
 			_, err := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"data":[]}`)) }).Storefront(ctx)
 			return err
 		}(), "Apple returned no storefront"},
+		{"create no id", func() error {
+			_, err := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"data":[]}`)) }).CreatePlaylist(ctx, "Road Trip")
+			return err
+		}(), "Apple's response to creating the playlist had no id"},
 		{"bad ISRC", func() error { _, err := status(200).SongsByISRC(ctx, "tw", "nope"); return err }(), `invalid ISRC (must be 12 letters or digits): "nope"`},
 		{"track 404", func() error { _, err := status(404).GetSong(ctx, "tw", "42"); return err }(), "not found: track 42"},
 		{"tracks 404", func() error { _, err := status(404).LibraryPlaylistTracks(ctx, "p.1"); return err }(), "the playlist is empty or doesn't exist: not found"},

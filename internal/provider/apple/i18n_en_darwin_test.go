@@ -19,7 +19,7 @@ func TestEnglishPlayerErrors(t *testing.T) {
 	orig := runOSA
 	t.Cleanup(func() { runOSA = orig })
 	runOSA = func(string) (string, error) { return "", errors.New("exit status 1") }
-	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != "osascript failed (is Music.app not installed, or is automation not allowed?): exit status 1" {
+	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != "osascript failed (Music.app not installed, or automation not allowed?): exit status 1" {
 		t.Errorf("osascript 失敗:%v", err)
 	}
 	runOSA = func(string) (string, error) { return "playing\tx", nil }
@@ -37,7 +37,7 @@ func TestEnglishPlayerErrors(t *testing.T) {
 
 	scripts := stubOSA(t, "")
 	err := (&Provider{}).Play(ctx, provider.PlayRequest{PlaylistID: "p.1"})
-	if !errors.Is(err, provider.ErrNotSupported) || err.Error() != "Apple Music can't play a playlist directly yet — list its tracks with capy pl show, then use play --id: this platform doesn't support this operation" {
+	if !errors.Is(err, provider.ErrNotSupported) || err.Error() != "capy can't start an Apple Music playlist yet — list its tracks with capy pl show, then use play --id: this platform doesn't support this operation" {
 		t.Errorf("清單播放:%v", err)
 	}
 	if err := (&Provider{}).Play(ctx, provider.PlayRequest{TrackIDs: []string{"s1"}}); err == nil || err.Error() != "apple provider has no client" {

@@ -55,7 +55,7 @@ func TestEnglishLockNoticeAndInterrupt(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("要包住 ctx 的錯誤:%v", err)
 	}
-	if got, want := buf.String(), "Waiting for another capy to release t.lock (it's accessing the keychain and may be waiting on an authorization dialog — if a keychain dialog is on screen, click Allow to continue); press Ctrl-C to give up.\n"; got != want {
+	if got, want := buf.String(), "Waiting for another capy to release t.lock (the holder is accessing the keychain and may be waiting on an authorization dialog — if a keychain dialog is on screen, click Allow to continue); press Ctrl-C to give up.\n"; got != want {
 		t.Errorf("notice:\n got %q\nwant %q", got, want)
 	}
 }

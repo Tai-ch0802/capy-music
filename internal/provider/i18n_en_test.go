@@ -34,7 +34,7 @@ func TestBackoffMessagesEnglish(t *testing.T) {
 		t.Errorf("waiting = %q", got)
 	}
 	var rl *RateLimitError
-	if err := Backoff(context.Background(), resp429("90"), 0); !errors.As(err, &rl) || err.Error() != "rate limited: the server asked to wait 90 s, over the 60 s limit; try again later" {
+	if err := Backoff(context.Background(), resp429("90"), 0); !errors.As(err, &rl) || err.Error() != "rate limited: the server asked to wait 90s, which is over the 60s limit; try again later" {
 		t.Errorf("too long = %v", err)
 	}
 	if err := Backoff(context.Background(), resp429("1"), MaxRetries); err == nil || err.Error() != "rate limited, retry limit reached" {

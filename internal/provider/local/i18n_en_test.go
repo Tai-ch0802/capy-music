@@ -52,7 +52,7 @@ func TestLocalErrorsEnglish(t *testing.T) {
 		{errOf(p.GetTrack(ctx, "nope.mp3")), "nope.mp3 is in neither library.json nor local_root: not found"},
 		{errOf(p.GetPlaylistItems(ctx, dev+"/nope.m3u8")), "playlist nope.m3u8 doesn't exist: not found"},
 		{errOf(p.GetPlaylistItems(ctx, "01OTHERDEVICE0000000000000/x.m3u8")), "01OTHERDEVICE0000000000000/x.m3u8 belongs to another device: not found"},
-		{errOf(p.ApplyOps(ctx, dev+"/library.json", nil, []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "a.mp3"}})), "playlist library.json is not a playlist file under local_root: not found"},
+		{errOf(p.ApplyOps(ctx, dev+"/library.json", nil, []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "a.mp3"}})), "playlist library.json is outside local_root or isn't a playlist file: not found"},
 	} {
 		if c.err == nil || c.err.Error() != c.want || !errors.Is(c.err, provider.ErrNotFound) {
 			t.Errorf("got %v\nwant %q (and ErrNotFound)", c.err, c.want)
