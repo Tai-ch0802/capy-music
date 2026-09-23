@@ -60,8 +60,8 @@ languages; `zh-TW.json` is Traditional Chinese. The package only depends on the 
    tests only cover `en` and `zh-TW`), and `capy --web` (`GET /api/i18n` serves the new file; `<html lang>` and the
    plural rules follow the tag).
 
-The README, the user guide (`docs/guide.html`, `/guide` on the website) and the website itself are translated
-separately. They are optional: a language can ship in the program without them.
+The README (`README.md`, with `README.zh-TW.md`), the user guide (`docs/guide.en.html` at `/en/guide`, `docs/guide.html`
+at `/guide` on the website) and the website itself are translated separately; start from the English files. They are optional: a language can ship in the program without them.
 
 ## Glossary
 

@@ -1252,7 +1252,7 @@
   "webui.move.truths.apple_library.title": "Songs moved to Apple Music don't necessarily join your library",
   "webui.move.truths.drive.text": "capy has no server. You can delete that data at any time.",
   "webui.move.truths.drive.title": "Your playlists' master copies are in your Google Drive",
-  "webui.move.truths.local.text": "M3U playlists on this computer can move to Spotify at no extra cost, because nothing costs anything to begin with.",
+  "webui.move.truths.local.text": "M3U playlists on this computer can move to Spotify or Apple Music at no extra cost, because nothing costs anything to begin with.",
   "webui.move.truths.local.title": "Playlists on your disk can move too",
   "webui.move.truths.no_delete.text": "The source playlist isn't changed; at the destination, capy only adds, never removes or reorders.",
   "webui.move.truths.no_delete.title": "Nothing of yours is deleted",

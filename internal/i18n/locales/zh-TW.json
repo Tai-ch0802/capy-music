@@ -1181,7 +1181,7 @@
   "webui.move.truths.apple_library.title": "搬進 Apple Music 的歌不一定進資料庫",
   "webui.move.truths.drive.text": "capy 沒有伺服器。你隨時可以把那份資料清掉。",
   "webui.move.truths.drive.title": "清單的正本在你的 Google Drive",
-  "webui.move.truths.local.text": "本機的 M3U 播放清單可以搬到 Spotify,不另外收費——因為本來就沒有收費。",
+  "webui.move.truths.local.text": "本機的 M3U 播放清單可以搬到 Spotify 或 Apple Music,不另外收費——因為本來就沒有收費。",
   "webui.move.truths.local.title": "硬碟裡的歌單也可以搬",
   "webui.move.truths.no_delete.text": "來源的清單不會被更動;對目的地只新增,不移除、不重排。",
   "webui.move.truths.no_delete.title": "不會刪你的東西",
