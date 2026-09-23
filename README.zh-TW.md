@@ -50,7 +50,7 @@ capy 的預設語言是英文(之前的版本預設中文,升級上來會直接�
 capy config set language zh-TW    # 切回英文:capy config set language en
 ```
 
-網頁介面(`capy --web`)側欄最下面的語言選單改的是同一個設定(它就是替你跑這條命令,成功後整頁重新載入)。設定存在 `config.json` 的 `language`,目前支援 `en` 與 `zh-TW`;不會自動偵測作業系統的語言。cobra 自己的文字在每個語系都是英文:說明的標題(`Usage:`、`Available Commands:`、`Flags:`)、結尾那行 `Use "capy [command] --help" …`、flag 說明後面的 `(default …)`、內建的 `help` 與 `completion` 命令的說明,以及 `-h, --help`、`-v, --version` 的說明;命令名、flag、TSV 欄名、`action` / `dir` 的值、`reason_code`、exit code、表頭與 `auth status --json` 的值在每個語系都一樣,腳本不必跟著改。想新增一個語言,步驟在 [`internal/i18n/README.md`](internal/i18n/README.md)。
+網頁介面(`capy --web`)側欄最下面的語言選單改的是同一個設定(它就是替你跑這條命令,成功後整頁重新載入)。設定存在 `config.json` 的 `language`,目前支援 `en` 與 `zh-TW`;不會自動偵測作業系統的語言。cobra 自己的文字在每個語系都是英文:說明的標題(`Usage:`、`Available Commands:`、`Flags:`)、結尾那行 `Use "capy [command] --help" …`、flag 說明後面的 `(default …)`、內建的 `help` 與 `completion` 命令的說明,`-h, --help`、`-v, --version` 的說明,以及 cobra 自己的參數與 flag 錯誤(`unknown command …`、`unknown flag: …`、`accepts 1 arg(s), received 0`);命令名、flag、TSV 欄名、`action` / `dir` 的值、`reason_code`、exit code、表頭與 `auth status --json` 的值在每個語系都一樣,腳本不必跟著改。想新增一個語言,步驟在 [`internal/i18n/README.md`](internal/i18n/README.md)。
 
 ## Spotify:自建 app(免費,約 2 分鐘)
 
