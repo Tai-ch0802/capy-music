@@ -106,17 +106,14 @@ func TestEnglishWebHTTPErrors(t *testing.T) {
 	}
 }
 
+// 順序跟 TestWebRunRejectsConcurrent409AndDeniedCallDoesNotHoldMutex 一樣(hook 先裝、409 先驗):
+// 先跑一個 job 再裝 hook 的版本在 Windows -race 上等 job 結束逾時(PR #89 CI)。
 func TestEnglishWebBusyAndWatch(t *testing.T) {
 	fs, _, _ := pullWorld(t)
 	webEnglish(t)
-	_, c := startWeb(t)
-	_, events, _ := c.run(map[string]any{"args": []string{"now", "--watch"}})
-	if msg := evExit(t, events)["message"]; msg != "Error: in the web UI, watch the playback panel on the page; for a one-off check, use capy now" {
-		t.Errorf("now --watch:%q", msg)
-	}
-
 	entered, release := blockingHook(t, fs)
 	defer release()
+	_, c := startWeb(t)
 	done := make(chan struct{})
 	go func() { defer close(done); c.run(map[string]any{"args": []string{"search", "x"}}) }()
 	waitFor(t, "job 進 hook", entered)
@@ -125,6 +122,11 @@ func TestEnglishWebBusyAndWatch(t *testing.T) {
 	}
 	release()
 	waitFor(t, "job 結束", done)
+
+	_, events, _ := c.run(map[string]any{"args": []string{"now", "--watch"}})
+	if msg := evExit(t, events)["message"]; msg != "Error: in the web UI, watch the playback panel on the page; for a one-off check, use capy now" {
+		t.Errorf("now --watch:%q", msg)
+	}
 }
 
 // TestEnglishWebLockNotice:改寫只認檔名與「Ctrl-C」(任何語系都不翻),不比對 auth 的措辭——

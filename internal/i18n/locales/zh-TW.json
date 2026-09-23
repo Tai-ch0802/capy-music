@@ -840,5 +840,6 @@
   "webprompt.err.no_job_prompt": "web 提示只能在命令執行中出現(沒有目前 job)",
   "webprompt.err.stale_answer": "沒有等待中的提示,或 id 不符(遲到的答案不收)",
   "webprompt.err.unknown_kind": "未知的提示種類",
+  "webprompt.google_secret_body": "client id {client_id} 還在 config,但 secret 不在 keychain(capy auth logout google 會刪掉它)。\n貼上 secret;留空則試試看不帶 secret(Desktop client 是否必須帶 secret 由 G-0 驗收決定)。",
   "webprompt.review.pick_title": "選一首釘上(關掉 = 略過)"
 }

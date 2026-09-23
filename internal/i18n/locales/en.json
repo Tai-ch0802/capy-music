@@ -903,5 +903,6 @@
   "webprompt.err.no_job_prompt": "web prompts can only appear while a command is running (no current job)",
   "webprompt.err.stale_answer": "no prompt is waiting, or the id doesn't match (late answers are rejected)",
   "webprompt.err.unknown_kind": "unknown prompt kind",
+  "webprompt.google_secret_body": "Config still has a Google client ID ({client_id}), but its secret isn't in the keychain (capy auth logout google deletes it).\nPaste the secret, or leave it empty to try without one (acceptance check G-0 will settle whether a Desktop client must send a secret).",
   "webprompt.review.pick_title": "Pick a track to pin (close to skip)"
 }

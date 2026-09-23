@@ -217,7 +217,7 @@ func TestWebGoogleSecretPromptEnglish(t *testing.T) {
 		note, _ := p["note"].(map[string]any)
 		body, _ := note["body"].(string)
 		if noteTitle(p) != "No secret found for this client" || !strings.HasPrefix(body, "Config still has a Google client ID (") ||
-			!strings.Contains(body, "just press Enter to try without one") || hasCJK(body) {
+			!strings.Contains(body, "leave it empty to try without one") || strings.Contains(body, "Enter") || hasCJK(body) { // 網頁按送出鈕,不講 Enter
 			t.Errorf("第 %d 題:%v", n, p)
 		}
 		return reply(map[string]any{"client_secret": "re-pasted"})

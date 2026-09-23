@@ -438,7 +438,7 @@ func (s *webServer) webGoogleWizard() (id, sec string, err error) {
 
 func (s *webServer) webGoogleSecretPrompt(clientID string) (string, error) {
 	a, err := s.ask(webPrompt{Kind: "form", Title: "Client secret",
-		Note:   &webNote{Title: i18n.T("google.secret_prompt.title"), Body: i18n.T("google.secret_prompt.body", "client_id", maskGoogleClientID(clientID))},
+		Note:   &webNote{Title: i18n.T("google.secret_prompt.title"), Body: i18n.T("webprompt.google_secret_body", "client_id", maskGoogleClientID(clientID))}, // 網頁是按送出鈕,不講 Enter(CLI 那句講)
 		Fields: []webField{{Name: "client_secret", Label: "Client secret", Secret: true}}})
 	if err != nil || a.Cancel {
 		return "", huh.ErrUserAborted
