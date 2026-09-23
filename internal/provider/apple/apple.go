@@ -3,7 +3,6 @@ package apple
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -118,7 +117,7 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	if itemsChanged {
 		for i, tid := range want {
 			if tid == "" {
-				return nil, fmt.Errorf("第 %d 首的 id 為空,整批不送", i+1)
+				return nil, i18n.Errorf("apple.err.empty_track_id", "pos", i+1)
 			}
 		}
 	}
@@ -129,7 +128,7 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		return nil, writeErr(id, err)
 	}
 	if reason := unwritableReason(&info.CanEdit, info.HasCollaboration); reason != "" { // 第二道防線:plan 階段的 PlaylistRef.Unwritable 已擋過一次
-		return nil, fmt.Errorf("Apple 清單「%s」(%s)寫不了:%s", info.Name, id, reason)
+		return nil, i18n.Errorf("apple.err.unwritable", "name", info.Name, "id", id, "reason", reason)
 	}
 	n := len(current)
 	appendOnly := itemsChanged && len(want) > n && slices.Equal(want[:n], current)
@@ -153,10 +152,10 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		// a. 列 2026-09-22 只在協作清單看過(其他自建清單全是 i. 列),而協作清單上面已經擋掉;非協作卻是 a. 列是沒看過的情況——
 		// 永久狀態先於暫時狀態(併發不一致)報,不然使用者白跑一輪 pull 才看到真正擋住他的原因(PR #81 review)。
 		if i := slices.IndexFunc(entries, func(e libraryEntry) bool { return strings.HasPrefix(e.ID, "a.") }); i >= 0 {
-			return nil, fmt.Errorf("Apple 清單「%s」(%s)不是協作清單,列 id 卻是 a.(例如 %s):這種列 2026-09-22 只在協作清單看過、整批取代對它回 500,capy 這次不寫;請回報這個情況", info.Name, id, entries[i].ID)
+			return nil, i18n.Errorf("apple.err.unexpected_a_rows", "name", info.Name, "id", id, "entry", entries[i].ID)
 		}
 		if !slices.Equal(live, current) {
-			return nil, fmt.Errorf("Apple 清單 %s 在讀取之後已經變了,這次不寫(先 capy pl pull 再推)", id)
+			return nil, i18n.Errorf("apple.err.changed_since_read", "id", id)
 		}
 		refs = make([]trackRef, len(want))
 		for i, tid := range want {

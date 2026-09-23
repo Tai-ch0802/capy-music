@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -91,7 +92,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			if resp.Header.Get("Retry-After") == "" {
 				// amp-api 的 429 不帶 Retry-After,而且窗口是滾動約一小時、配額是所有網頁播放器共用的(計畫 2026-09-22 §1.2 第 3 點):
 				// 1 / 2 / 4 秒重試等於白等,還會延長被限流的時間——直接失敗、把原因講清楚。有 Retry-After 才照它等。
-				return resp.StatusCode, &apiError{Status: resp.StatusCode, Title: "rate limited", Detail: "Apple 網頁 token 的配額是所有網頁播放器共用的,約一小時後再試"}
+				return resp.StatusCode, &apiError{Status: resp.StatusCode, Title: "rate limited", Detail: i18n.T("apple.client.rate_limited_shared")}
 			}
 			if err := provider.Backoff(ctx, resp, attempt); err != nil {
 				var rl *provider.RateLimitError
@@ -104,11 +105,11 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			resp.Body.Close()
-			return resp.StatusCode, fmt.Errorf("developer token 無效(401):%w", provider.ErrAuthExpired)
+			return resp.StatusCode, i18n.Errorf("apple.client.err.dev_token_invalid", "err", provider.ErrAuthExpired)
 		}
 		if resp.StatusCode == http.StatusForbidden {
 			resp.Body.Close()
-			return resp.StatusCode, fmt.Errorf("Music User Token 無效或訂閱失效(403):%w", provider.ErrAuthExpired)
+			return resp.StatusCode, i18n.Errorf("apple.client.err.user_token_invalid", "err", provider.ErrAuthExpired)
 		}
 		if resp.StatusCode >= 400 {
 			var eb struct {
@@ -147,7 +148,7 @@ func (c *Client) Preflight(ctx context.Context) (bool, error) {
 	case status == http.StatusNotFound:
 		return false, nil
 	case status == http.StatusForbidden: // 沒帶 MUT,403 只可能是 developer token / Origin
-		return false, fmt.Errorf("developer token 或 Origin 被拒(403):%w", provider.ErrAuthExpired)
+		return false, i18n.Errorf("apple.client.err.preflight_forbidden", "err", provider.ErrAuthExpired)
 	}
 	return false, err
 }
@@ -212,7 +213,7 @@ func (c *Client) Storefront(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if len(resp.Data) == 0 {
-		return "", errors.New("Apple 未回傳 storefront")
+		return "", i18n.Errorf("apple.client.err.no_storefront")
 	}
 	return resp.Data[0].ID, nil
 }
@@ -250,7 +251,7 @@ func (c *Client) SearchSongs(ctx context.Context, storefront, term string, limit
 func (c *Client) SongsByISRC(ctx context.Context, storefront, isrc string) ([]provider.Track, error) {
 	n := provider.NormalizeISRC(isrc)
 	if n == "" {
-		return nil, fmt.Errorf("%w:%q", provider.ErrBadISRC, isrc)
+		return nil, i18n.Errorf("apple.client.err.bad_isrc", "err", provider.ErrBadISRC, "isrc", strconv.Quote(isrc))
 	}
 	var resp struct {
 		Data []songJSON `json:"data"`
@@ -270,7 +271,7 @@ func (c *Client) GetSong(ctx context.Context, storefront, id string) (provider.T
 	t, _, err := c.Song(ctx, storefront, id)
 	var ae *apiError
 	if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
-		return provider.Track{}, fmt.Errorf("%w:曲目 %s", provider.ErrNotFound, id)
+		return provider.Track{}, i18n.Errorf("apple.client.err.track_not_found", "err", provider.ErrNotFound, "id", id)
 	}
 	return t, err
 }
@@ -411,7 +412,7 @@ func (c *Client) libraryPlaylistEntries(ctx context.Context, id string) ([]libra
 		status, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id)+"/tracks", q, nil, &resp)
 		if err != nil {
 			if status == http.StatusNotFound { // Apple 對空清單或不存在的清單可能回 404
-				return nil, fmt.Errorf("清單為空或不存在:%w", provider.ErrNotFound)
+				return nil, i18n.Errorf("apple.client.err.playlist_empty_or_missing", "err", provider.ErrNotFound)
 			}
 			return nil, err
 		}
@@ -468,7 +469,7 @@ func (c *Client) Playlist(ctx context.Context, id string) (playlistInfo, error) 
 	}
 	status, err := c.do(ctx, http.MethodGet, "/me/library/playlists/"+url.PathEscape(id), nil, nil, &resp)
 	if status == http.StatusNotFound || (err == nil && len(resp.Data) == 0) {
-		return playlistInfo{}, fmt.Errorf("%w:清單 %s", provider.ErrNotFound, id)
+		return playlistInfo{}, i18n.Errorf("apple.client.err.playlist_not_found", "err", provider.ErrNotFound, "id", id)
 	}
 	if err != nil {
 		return playlistInfo{}, err
@@ -484,9 +485,9 @@ func (c *Client) Playlist(ctx context.Context, id string) (playlistInfo, error) 
 func unwritableReason(canEdit *bool, collab bool) string {
 	switch {
 	case canEdit != nil && !*canEdit:
-		return "不是你自己建的清單(Apple 精選、喜好歌曲、已購買的音樂),Apple 不讓寫"
+		return i18n.T("apple.unwritable.not_editable")
 	case collab:
-		return "協作清單:Apple 對它的整批取代回 500(2026-09-22 實測),capy 目前不寫;請在 Apple Music app 裡手動,或先複製成一般清單再連結(未實測,通常可以)"
+		return i18n.T("apple.unwritable.collaborative")
 	}
 	return ""
 }
@@ -564,13 +565,12 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.Play
 		return provider.PlaylistRef{}, err
 	}
 	if len(resp.Data) == 0 || resp.Data[0].ID == "" {
-		return provider.PlaylistRef{}, errors.New("Apple 建立清單的回應沒有 id")
+		return provider.PlaylistRef{}, i18n.Errorf("apple.client.err.create_no_id")
 	}
 	ref := provider.PlaylistRef{ID: resp.Data[0].ID, Name: resp.Data[0].Attributes.Name, Total: -1}
 	if ref.Name == "" {
 		ref.Name = name
 	}
-	recover := fmt.Sprintf("稍後用 capy pl link <名稱> apple:%s 接上", ref.ID)
 	var total time.Duration
 	for _, d := range createPollDelays {
 		total += d
@@ -578,19 +578,19 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string) (provider.Play
 	for attempt := 0; ; attempt++ {
 		pls, err := c.LibraryPlaylists(ctx)
 		if err != nil {
-			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但查清單列表失敗(%w);%s", ref.Name, ref.ID, err, recover)
+			return ref, i18n.Errorf("apple.client.err.create_list_failed", "name", ref.Name, "id", ref.ID, "err", err)
 		}
 		if slices.ContainsFunc(pls, func(p provider.PlaylistRef) bool { return p.ID == ref.ID }) {
 			return ref, nil
 		}
 		if attempt >= len(createPollDelays) {
-			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),但 %v 內還沒出現在清單列表(iCloud 傳播延遲);%s", ref.Name, ref.ID, total, recover)
+			return ref, i18n.Errorf("apple.client.err.create_not_listed", "name", ref.Name, "id", ref.ID, "wait", total)
 		}
 		if attempt == 0 { // 最長 30 秒的安靜等待要有一句話;走 BackoffStderr 接縫,web 模式也看得到(stderr 不污染 TSV)
-			fmt.Fprintf(provider.BackoffStderr, "等待 Apple 把新清單 %s 放進清單列表(通常幾秒)…\n", ref.ID)
+			fmt.Fprintln(provider.BackoffStderr, i18n.T("apple.client.create.waiting", "id", ref.ID))
 		}
 		if err := provider.Wait(ctx, createPollDelays[attempt]); err != nil {
-			return ref, fmt.Errorf("Apple 已建立清單「%s」(%s),等待它出現在列表時被中斷(%w);%s", ref.Name, ref.ID, err, recover)
+			return ref, i18n.Errorf("apple.client.err.create_interrupted", "name", ref.Name, "id", ref.ID, "err", err)
 		}
 	}
 }
@@ -600,9 +600,9 @@ func writeErr(id string, err error) error {
 	var ae *apiError
 	switch {
 	case errors.As(err, &ae) && ae.Status == http.StatusInternalServerError && strings.Contains(ae.Title+" "+ae.Detail, "Unable to update"):
-		return fmt.Errorf("Apple 拒絕修改清單 %s(500 Unable to update tracks):不是你自己建的清單(Apple 精選、喜好歌曲、已購買的音樂),或是協作清單(列 id 是 a.;2026-09-22 實測):%w", id, err)
+		return i18n.Errorf("apple.client.err.write_refused", "id", id, "err", err)
 	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
-		return fmt.Errorf("%w:Apple 找不到清單 %s(%v)", provider.ErrNotFound, id, err)
+		return i18n.Errorf("apple.client.err.write_not_found", "err", provider.ErrNotFound, "id", id, "detail", err.Error()) // detail 只給字串:原本是 %v、不包住 apiError
 	}
 	return err
 }

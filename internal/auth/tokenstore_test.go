@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -435,6 +436,23 @@ func TestLockNoticeKeepsWebContract(t *testing.T) {
 			unlock()
 			if out := buf.String(); !strings.Contains(out, name) || !strings.Contains(out, " Ctrl-C") {
 				t.Errorf("%s 的 %s 等鎖提示要原樣帶鎖檔名與 \" Ctrl-C\"(webLockStderr 靠這兩個改寫):%q", lang, name, out)
+			}
+		}
+	}
+}
+
+// auth.refresh_in_flight 也寫進 LockStderr:webLockStderr 看到 " Ctrl-C" 或 <key>.token.lock 就改寫成等鎖那句。
+// 每個語系的這句都不能碰到那兩個(正則同 internal/cli/web.go 的 webTokenLockName;cli 引用 auth,這裡不能反過來引)。
+func TestRefreshNoticeAvoidsWebLockRewrite(t *testing.T) {
+	orig := i18n.Current()
+	t.Cleanup(func() { i18n.Set(orig) })
+	tokenLock := regexp.MustCompile(`[A-Za-z0-9_.-]+\.token\.lock`)
+	for _, lang := range i18n.Supported() {
+		i18n.Set(lang)
+		for _, key := range []string{"spotify.token", "google.token"} {
+			s := i18n.T("auth.refresh_in_flight", "provider", providerOf(key), "timeout", refreshTimeout)
+			if strings.Contains(s, " Ctrl-C") || tokenLock.MatchString(s) {
+				t.Errorf("%s 的換發提示會被 webLockStderr 改寫:%q", lang, s)
 			}
 		}
 	}

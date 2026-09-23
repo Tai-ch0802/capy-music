@@ -6,9 +6,8 @@ package canon
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,7 +187,7 @@ func (m *Mapping) UnmarshalJSON(b []byte) error {
 	switch r.Source {
 	case SourceObserved, SourceISRC, SourceFuzzy, SourceReview:
 	default:
-		return fmt.Errorf("mapping 的 source 未知:%q(只認 observed / isrc / fuzzy / review)", r.Source)
+		return i18n.Errorf("canon.err.unknown_source", "source", strconv.Quote(r.Source))
 	}
 	*m = Mapping(r)
 	return nil
@@ -337,10 +336,10 @@ func CheckSchema(b []byte) error {
 		return err
 	}
 	if head.SchemaVersion == 0 {
-		return errors.New("檔案缺 schema_version")
+		return i18n.Errorf("canon.err.missing_schema_version")
 	}
 	if head.SchemaVersion > SchemaVersion {
-		return fmt.Errorf("%w(檔案 %d,支援 %d)", ErrSchemaTooNew, head.SchemaVersion, SchemaVersion)
+		return i18n.Errorf("canon.err.schema_too_new_detail", "err", ErrSchemaTooNew, "file", head.SchemaVersion, "supported", SchemaVersion)
 	}
 	return nil
 }

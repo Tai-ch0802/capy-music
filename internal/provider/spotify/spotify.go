@@ -2,9 +2,9 @@ package spotify
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -92,7 +92,7 @@ func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
 func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 	if req.PlaylistID != "" {
 		if len(req.TrackIDs) > 0 {
-			return errors.New("PlaylistID 與 TrackIDs 擇一")
+			return i18n.Errorf("spotify.err.playlist_or_tracks")
 		}
 		return p.c.PlayContext(ctx, "spotify:playlist:"+req.PlaylistID, req.DeviceID)
 	}

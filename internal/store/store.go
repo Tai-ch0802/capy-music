@@ -68,7 +68,7 @@ func OpenReadOnly(busyTimeout time.Duration) (*Store, error) {
 
 func OpenReadOnlyAt(path string, busyTimeout time.Duration) (*Store, error) {
 	if strings.Contains(path, "?") {
-		return nil, fmt.Errorf("db 路徑不可含 ?(CAPY_CONFIG_DIR 換一個目錄):%s", path)
+		return nil, i18n.Errorf("store.err.path_question_mark", "path", path)
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNoDB
@@ -77,16 +77,16 @@ func OpenReadOnlyAt(path string, busyTimeout time.Duration) (*Store, error) {
 	}
 	s, err := open(path, busyTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("開啟 %s:%w", path, err)
+		return nil, i18n.Errorf("store.err.open", "path", path, "err", err)
 	}
 	var v int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
 		s.Close()
-		return nil, fmt.Errorf("讀取 %s:%w", path, err)
+		return nil, i18n.Errorf("store.err.read", "path", path, "err", err)
 	}
 	if v != schemaVersion {
 		s.Close()
-		return nil, fmt.Errorf("%w:檔案是 v%d、這個 capy 支援 v%d;要匯出請用當時版本的 capy binary", ErrSchemaMismatch, v, schemaVersion)
+		return nil, i18n.Errorf("store.err.schema_mismatch_detail", "err", ErrSchemaMismatch, "file", v, "supported", schemaVersion)
 	}
 	return s, nil
 }
@@ -117,7 +117,7 @@ func Open(busyTimeout time.Duration) (*Store, error) {
 // ponytail: 路徑含 ? 直接拒絕——driver 在第一個 ? 切開 DSN,會把 db 靜默開到別的檔;真要支援再改 file: URI 加跳脫。
 func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 	if strings.Contains(path, "?") {
-		return nil, fmt.Errorf("db 路徑不可含 ?(CAPY_CONFIG_DIR 換一個目錄):%s", path)
+		return nil, i18n.Errorf("store.err.path_question_mark", "path", path)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 	}
 	if _, err := s.db.Exec(schema + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion)); err != nil {
 		s.Close()
-		return nil, fmt.Errorf("建 schema:%w", err)
+		return nil, i18n.Errorf("store.err.create_schema", "err", err)
 	}
 	return s, nil
 }
@@ -207,8 +207,7 @@ func (s *Store) retire(version int) error {
 			return err
 		}
 	}
-	fmt.Fprintf(Stderr, "本機快取 schema 從 v%d 變成 v%d:舊檔保留為 %s,快取會在下一次 pull 從 Drive 重建。"+
-		"這版 capy 不讀舊檔;若 pull 說 Drive 不完整,救援是用上一版 capy binary(GitHub Releases)把舊檔改回 %s 後跑 capy drive init --from-local,再更新回來。確定不需要再自行刪除\n", version, schemaVersion, kept, fileName)
+	fmt.Fprintln(Stderr, i18n.T("store.notice.retired", "from", version, "to", schemaVersion, "kept", kept, "file", fileName))
 	return nil
 }
 

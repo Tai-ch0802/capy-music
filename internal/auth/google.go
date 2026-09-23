@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,30 +93,30 @@ func LoginGoogle(ctx context.Context, c GoogleClient, openBrowser func(string) e
 	verifier := oauth2.GenerateVerifier()
 	lb.Start()
 	authURL := conf.AuthCodeURL(state, googleAuthOptions(verifier)...)
-	fmt.Fprintf(LoginStderr, "若瀏覽器未自動開啟,請手動前往:\n  %s\n", authURL)
+	fmt.Fprintln(LoginStderr, i18n.T("auth.loopback.open_manually", "url", authURL))
 	if err := openBrowser(authURL); err != nil {
-		fmt.Fprintf(LoginStderr, "無法自動開瀏覽器:%v\n", err)
+		fmt.Fprintln(LoginStderr, i18n.T("auth.loopback.browser_failed", "err", err))
 	}
 	vals, err := lb.Wait(ctx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, "", fmt.Errorf("180 秒內未收到授權回呼 — 若瀏覽器顯示 redirect_uri_mismatch,請確認 Cloud Console 建的是「桌面應用程式(Desktop app)」類型的 OAuth client,不是 Web;顯示 access_denied 則是同意畫面被取消")
+			return nil, "", i18n.Errorf("auth.google.err.timeout")
 		}
-		return nil, "", fmt.Errorf("等待授權回呼:%w", err)
+		return nil, "", i18n.Errorf("auth.loopback.err.wait", "err", err)
 	}
 	if e := vals.Get("error"); e != "" {
-		return nil, "", fmt.Errorf("授權被拒:%s", e)
+		return nil, "", i18n.Errorf("auth.loopback.err.denied", "reason", e)
 	}
 	tok, err := conf.Exchange(ctx, vals.Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
-		return nil, "", fmt.Errorf("token 交換失敗:%w", explainGoogleClient(err))
+		return nil, "", i18n.Errorf("auth.loopback.err.exchange", "err", explainGoogleClient(err))
 	}
 	if tok.RefreshToken == "" {
-		return nil, "", errors.New("Google 未回傳 refresh token(通常是缺 access_type=offline / prompt=consent;若你曾撤銷過存取,請到 https://myaccount.google.com/permissions 移除 capy 後重登)")
+		return nil, "", i18n.Errorf("auth.google.err.no_refresh_token")
 	}
 	// downscope 拒絕:使用者可以在同意畫面取消個別 scope;少了 drive.appdata 這個 token 對本工具沒用,不落地。
 	if scope, _ := tok.Extra("scope").(string); !hasScope(scope, GoogleScopes[2]) {
-		return nil, "", fmt.Errorf("%w(實際取得:%q)", ErrGoogleScope, scope)
+		return nil, "", i18n.Errorf("auth.google.err.scope_granted", "err", ErrGoogleScope, "scope", strconv.Quote(scope))
 	}
 	email := emailFromIDToken(tok)
 	unlock, err := lockFile(ctx, KeyGoogleToken+".lock")
@@ -124,7 +125,7 @@ func LoginGoogle(ctx context.Context, c GoogleClient, openBrowser func(string) e
 	}
 	defer unlock()
 	if err := SaveToken(KeyGoogleToken, tok); err != nil { // storedToken 沒有 id_token 欄位:不落地
-		return nil, "", fmt.Errorf("寫入 keychain 失敗:%w", err)
+		return nil, "", i18n.Errorf("auth.err.keychain_write", "err", err)
 	}
 	return tok, email, nil
 }
@@ -168,7 +169,7 @@ func explainGoogleClient(err error) error {
 	if !errors.As(err, &re) || re.ErrorCode != "invalid_client" {
 		return err
 	}
-	return fmt.Errorf("%w:Desktop client 換 token 需要 secret——請用 --client-secret / CAPY_GOOGLE_CLIENT_SECRET 重新提供(logout 會刪掉 keychain 裡的 secret;若在 Cloud Console 重新產生過,舊的已作廢)。原始錯誤:%s", ErrGoogleClient, re.ErrorDescription)
+	return i18n.Errorf("auth.google.err.client_hint", "err", ErrGoogleClient, "detail", re.ErrorDescription)
 }
 
 // explainGoogleGrant:invalid_grant 依 refresh token 年齡歸因(invalid_client 交給 explainGoogleClient)。Testing 狀態的 client 發的 RT 7 天過期,
@@ -179,13 +180,12 @@ func explainGoogleGrant(err error, issuedAt time.Time) error {
 		return explainGoogleClient(err)
 	}
 	if !issuedAt.IsZero() && now().Sub(issuedAt) < 8*24*time.Hour {
-		return fmt.Errorf("%w(發放才 %s):最常見原因是 Google Cloud Console 的 OAuth 同意畫面停在 Testing——Testing 狀態的 refresh token 7 天就過期,請到 Google Auth platform → Audience 按 Publish app,再重新 capy auth login google。其他可能:你在 https://myaccount.google.com/permissions 撤銷了 capy、或同一 client 超過 100 顆 token(最舊的被淘汰)。原始錯誤:%s", ErrGoogleGrant, now().Sub(issuedAt).Round(time.Hour), re.ErrorDescription)
+		return i18n.Errorf("auth.google.err.grant_recent", "err", ErrGoogleGrant, "age", now().Sub(issuedAt).Round(time.Hour), "detail", re.ErrorDescription)
 	}
-	when := "" // 掛鉤是 provider-neutral 的:舊格式或別的 provider 可能沒有 issued_at,零值不要印成 0001-01-01
-	if !issuedAt.IsZero() {
-		when = "(發放於 " + issuedAt.Format("2006-01-02") + ")"
+	if issuedAt.IsZero() { // 掛鉤是 provider-neutral 的:舊格式或別的 provider 可能沒有 issued_at,零值不要印成 0001-01-01
+		return i18n.Errorf("auth.google.err.grant_old", "err", ErrGoogleGrant, "detail", re.ErrorDescription)
 	}
-	return fmt.Errorf("%w%s:可能是 6 個月未使用被 Google 回收、或你撤銷了存取——重新 capy auth login google。原始錯誤:%s", ErrGoogleGrant, when, re.ErrorDescription)
+	return i18n.Errorf("auth.google.err.grant_old_dated", "err", ErrGoogleGrant, "date", issuedAt.Format("2006-01-02"), "detail", re.ErrorDescription)
 }
 
 // GoogleTokenSource:keychain 為後盾的 token source(跨程序檔案鎖,與 Spotify 同一套)。

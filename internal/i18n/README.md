@@ -40,7 +40,7 @@ Use one English term per concept so messages stay consistent.
 | 清單、播放清單 | playlist | |
 | 平台 | platform | Spotify, Apple Music, local library |
 | 本機 | this computer | "this computer's state.db"; not "this machine" |
-| 本機曲庫 | local library | M3U playlists plus `library.json` on this computer |
+| 本機曲庫 | local library | M3U playlists plus `library.json` on this computer; as the platform's display name (next to Spotify and Apple Music) it's capitalized: `Local library` |
 | 資料庫(Apple Music) | library | "your Apple Music library" |
 | 連結 | link | a master copy linked to a playlist on a platform |
 | 對應(名詞) | mapping | a track's id on each platform; REASON texts say "no mapping" for 沒有對應 |

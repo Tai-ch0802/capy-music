@@ -77,6 +77,8 @@ func TestCatalogsMatchSource(t *testing.T) {
 			switch {
 			case !ok:
 				t.Errorf("%s.json 缺 %q(不確定怎麼翻就先抄英文)", code, key)
+			case m.text == "" && m.plural == nil:
+				t.Errorf("%s.json 的 %q 是空字串:不確定怎麼翻就先抄英文(空譯文會讓訊息消失,有些檢查靠它非空,例如 Apple 的不可寫原因)", code, key)
 			case (m.plural == nil) != (sm.plural == nil):
 				t.Errorf("%s.json 的 %q:en 是%s訊息,這裡要一樣", code, key, map[bool]string{true: "一般", false: "複數"}[sm.plural == nil])
 			case !maps.Equal(placeholders(m), placeholders(sm)):
@@ -141,6 +143,19 @@ func scanRepo() (goScan, error) {
 		if d.IsDir() {
 			if p != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
 				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel0, _ := filepath.Rel(root, p)
+		if ext := filepath.Ext(p); strings.HasPrefix(filepath.ToSlash(rel0), "internal/cli/webui/") && (ext == ".js" || ext == ".html" || ext == ".css") {
+			b, err := os.ReadFile(p) // 網頁前端:註解以外的中日韓字元一行算一個(計畫 §2.5;T3 搬進目錄)
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(stripComments(string(b), ext), "\n") {
+				if hasCJK(line) {
+					s.cjk[filepath.ToSlash(rel0)]++
+				}
 			}
 			return nil
 		}
@@ -209,6 +224,58 @@ func scanRepo() (goScan, error) {
 		return nil
 	})
 	return s, err
+}
+
+// stripComments:拿掉 JS / CSS 的 // 與 /* */、HTML 的 <!-- -->;字串('…' "…" `…`)裡的不算註解。
+// ponytail: 不分辨 JS 的除號與正規表示式字面;正規表示式裡有引號的極少數情況會讓字串狀態錯位,T3 真遇到再換 tokenizer。
+func stripComments(src, ext string) string {
+	var b strings.Builder
+	if ext == ".html" {
+		for {
+			i := strings.Index(src, "<!--")
+			if i < 0 {
+				b.WriteString(src)
+				return b.String()
+			}
+			b.WriteString(src[:i])
+			j := strings.Index(src[i:], "-->")
+			if j < 0 {
+				return b.String()
+			}
+			src = src[i+j+3:]
+		}
+	}
+	var quote byte
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		switch {
+		case quote != 0:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(src) {
+				i++
+				b.WriteByte(src[i])
+			} else if c == quote || (c == '\n' && quote != '`') { // '…' 與 "…" 不能跨行:正規表示式裡的引號只會錯位到行尾
+				quote = 0
+			}
+		case c == '\'' || c == '"' || c == '`':
+			quote = c
+			b.WriteByte(c)
+		case c == '/' && i+1 < len(src) && src[i+1] == '/' && ext == ".js":
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			b.WriteByte('\n')
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			j := strings.Index(src[i+2:], "*/")
+			if j < 0 {
+				return b.String()
+			}
+			i += j + 3
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 func hasCJK(s string) bool {
@@ -299,6 +366,23 @@ func TestDefaultIsEnglishOnceMigrated(t *testing.T) {
 	}
 	if len(cjkAllowlist) == 0 && productionDefault != Source {
 		t.Fatalf("CJK 白名單已清空,productionDefault 要改成 %q", Source)
+	}
+}
+
+func TestStripComments(t *testing.T) {
+	for _, tc := range []struct{ src, ext, want string }{
+		{"a // 註解\nb", ".js", "a \nb"},
+		{"x /* 註解 */ y", ".js", "x  y"},
+		{"u = 'http://中'; // 註解", ".js", "u = 'http://中'; \n"},
+		{"s = \"不是 /* 註解 */\"", ".js", "s = \"不是 /* 註解 */\""},
+		{"<p>字</p><!-- 註解 --><b>", ".html", "<p>字</p><b>"},
+		{"a { content: '字'; } /* 註解 */", ".css", "a { content: '字'; } "},
+		{"url(http://x) // 不是註解", ".css", "url(http://x) // 不是註解"},
+		{"r = /\"/g;\n// 註解\nx", ".js", "r = /\"/g;\n\nx"}, // 正規表示式裡的引號:錯位到行尾為止,下一行的註解照樣剝掉
+	} {
+		if got := stripComments(tc.src, tc.ext); got != tc.want {
+			t.Errorf("%s %q:得 %q,要 %q", tc.ext, tc.src, got, tc.want)
+		}
 	}
 }
 

@@ -1,10 +1,10 @@
 package canon
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -25,7 +25,7 @@ func NewIdentity(tracks map[string]Track, merged map[string]string) *Identity {
 	id := &Identity{byMapping: map[string]string{}, byISRC: map[string]string{}, merged: merged}
 	claim := func(index map[string]string, key, cid, what string) {
 		if prev, ok := index[key]; ok {
-			id.warnings = append(id.warnings, fmt.Sprintf("%s 同時屬於 %s 與 %s,採用 %s", what, prev, cid, prev))
+			id.warnings = append(id.warnings, i18n.T("canon.warn.multi_owner", "what", what, "first", prev, "second", cid))
 			return
 		}
 		index[key] = cid
@@ -46,7 +46,7 @@ func NewIdentity(tracks map[string]Track, merged map[string]string) *Identity {
 	if tracks != nil { // 懸空墓碑(勝者不在 tracks;Merge 不會產出,手改的檔會):Redirect 會安靜回一個死 cid,至少要出聲
 		for _, loser := range slices.Sorted(maps.Keys(merged)) {
 			if _, alive := tracks[merged[loser]]; !alive {
-				id.warnings = append(id.warnings, fmt.Sprintf("合併墓碑 %s → %s 的勝者不在 tracks 裡", loser, merged[loser]))
+				id.warnings = append(id.warnings, i18n.T("canon.warn.dangling_merge", "loser", loser, "survivor", merged[loser]))
 			}
 		}
 	}
@@ -111,11 +111,11 @@ func Merge(tr *Tracks, playlists map[string]*Playlist, a, b string) (survivor st
 	id := NewIdentity(nil, tr.Merged)
 	a, b = id.Redirect(a), id.Redirect(b)
 	if a == b {
-		return "", fmt.Errorf("%s 已經是同一個 cid", a)
+		return "", i18n.Errorf("canon.err.merge_same_cid", "cid", a)
 	}
 	for _, cid := range []string{a, b} {
 		if _, ok := tr.Tracks[cid]; !ok {
-			return "", fmt.Errorf("tracks 沒有 %s", cid)
+			return "", i18n.Errorf("canon.err.merge_missing_track", "cid", cid)
 		}
 	}
 	survivor, loser := min(a, b), max(a, b)

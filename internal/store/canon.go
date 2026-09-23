@@ -3,10 +3,10 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"sort"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // Canonical 是 Drive 上全部 canon 檔的一份快照:Hydrate 整批寫入、Dump 整批讀出。
@@ -135,7 +135,7 @@ func (s *Store) Dump() (Canonical, error) {
 		}
 		t, ok := c.Tracks.Tracks[cid]
 		if !ok {
-			return fmt.Errorf("isrcs 有 tracks 沒有的 cid %s(db 不一致,刪掉重建)", cid)
+			return i18n.Errorf("store.err.orphan_isrc", "cid", cid)
 		}
 		t.ISRC = append(t.ISRC, isrc)
 		c.Tracks.Tracks[cid] = t
@@ -151,7 +151,7 @@ func (s *Store) Dump() (Canonical, error) {
 		}
 		t, ok := c.Tracks.Tracks[cid]
 		if !ok {
-			return fmt.Errorf("mappings 有 tracks 沒有的 cid %s(db 不一致,刪掉重建)", cid)
+			return i18n.Errorf("store.err.orphan_mapping", "cid", cid)
 		}
 		t.Mappings[prov] = m
 		return nil
@@ -164,7 +164,7 @@ func (s *Store) Dump() (Canonical, error) {
 			return err
 		}
 		if _, ok := c.Tracks.Tracks[survivor]; !ok { // 敗者本來就不該在 tracks,勝者一定要在(Merge 維持的不變量,這裡是第二道證人)
-			return fmt.Errorf("merged 的 into_cid %s 不在 tracks 裡(db 不一致,刪掉重建)", survivor)
+			return i18n.Errorf("store.err.orphan_merged", "cid", survivor)
 		}
 		c.Tracks.Merged[loser] = survivor
 		return nil
@@ -193,7 +193,7 @@ func (s *Store) Dump() (Canonical, error) {
 		}
 		p, ok := byPID[pid]
 		if !ok {
-			return fmt.Errorf("playlist_items 有 playlists 沒有的 pid %s(db 不一致,刪掉重建)", pid)
+			return i18n.Errorf("store.err.orphan_item", "pid", pid)
 		}
 		p.Items = append(p.Items, it)
 		return nil
@@ -207,7 +207,7 @@ func (s *Store) Dump() (Canonical, error) {
 		}
 		p, ok := byPID[pid]
 		if !ok {
-			return fmt.Errorf("playlist_links 有 playlists 沒有的 pid %s(db 不一致,刪掉重建)", pid)
+			return i18n.Errorf("store.err.orphan_link", "pid", pid)
 		}
 		p.Links[prov] = id
 		return nil
@@ -249,7 +249,7 @@ func (s *Store) Dump() (Canonical, error) {
 		b.Snapshot.Items, b.Snapshot.CIDs = nonNil(b.Snapshot.Items), nonNil(b.Snapshot.CIDs)
 		d, ok := byDev[dev]
 		if !ok {
-			return fmt.Errorf("device_base 有 devices 沒有的裝置 %s(db 不一致,刪掉重建)", dev)
+			return i18n.Errorf("store.err.orphan_base", "device", dev)
 		}
 		if d.Base[pid] == nil {
 			d.Base[pid] = map[string]canon.Base{}

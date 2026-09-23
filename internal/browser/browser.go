@@ -2,9 +2,10 @@
 package browser
 
 import (
-	"fmt"
 	"os/exec"
 	"runtime"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // command 拆成純函式方便測試。
@@ -15,7 +16,7 @@ func command(goos, url string) (name string, args []string, err error) {
 	case "windows":
 		return "rundll32", []string{"url.dll,FileProtocolHandler", url}, nil
 	default:
-		return "", nil, fmt.Errorf("不支援的平台 %s(目前僅支援 macOS 與 Windows)", goos)
+		return "", nil, i18n.Errorf("browser.err.unsupported_os", "os", goos)
 	}
 }
 

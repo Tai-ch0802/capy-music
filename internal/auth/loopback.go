@@ -7,26 +7,35 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // DefaultSpotifyPort 是 Spotify dashboard 註冊的固定 redirect port(spec §4.2)。
 const DefaultSpotifyPort = 8888
 
-const successHTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
-<title>capy — 授權完成</title></head>
+// callbackHTML:回呼頁(使用者的瀏覽器看得到)。只有純 HTML + 一行 window.close(),不載入任何外部資源。
+// 參數依序:lang、標題、圖示、標題、內文、結尾的 script(沒有就空字串)。
+const callbackHTML = `<!doctype html><html lang="%s"><head><meta charset="utf-8">
+<title>capy — %s</title></head>
 <body style="font-family:system-ui;text-align:center;padding-top:4rem">
-<h1>✅ 授權完成</h1><p>可以關閉這個分頁,回到終端機。</p>
-<script>window.close()</script></body></html>`
+<h1>%s %s</h1><p>%s</p>
+%s</body></html>`
 
-const deniedHTML = `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
-<title>capy — 授權未完成</title></head>
-<body style="font-family:system-ui;text-align:center;padding-top:4rem">
-<h1>❌ 授權未完成</h1><p>你拒絕了授權或發生錯誤。可以關閉這個分頁,回到終端機重試。</p>
-</body></html>`
+// callbackPage 在回呼當下才翻(語系在建命令樹前才設定);譯文照樣跳脫,目錄裡的字不會變成標籤。
+func callbackPage(denied bool) string {
+	icon, title, body, script := "✅", i18n.T("auth.loopback.page.success_title"), i18n.T("auth.loopback.page.success_body"), "<script>window.close()</script>"
+	if denied {
+		icon, title, body, script = "❌", i18n.T("auth.loopback.page.denied_title"), i18n.T("auth.loopback.page.denied_body"), ""
+	}
+	title, body = html.EscapeString(title), html.EscapeString(body)
+	return fmt.Sprintf(callbackHTML, i18n.Current(), title, icon, title, body, script)
+}
 
 // NewState 產生 32 bytes CSPRNG 的 base64url state(CSRF 防護)。
 func NewState() (string, error) {
@@ -75,11 +84,7 @@ func (l *Loopback) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if q.Get("error") != "" {
-		io.WriteString(w, deniedHTML)
-	} else {
-		io.WriteString(w, successHTML)
-	}
+	io.WriteString(w, callbackPage(q.Get("error") != ""))
 	_ = http.NewResponseController(w).Flush() // Deliver 會解鎖 Wait→Close;先把回應送出去
 	l.Deliver(q)
 }

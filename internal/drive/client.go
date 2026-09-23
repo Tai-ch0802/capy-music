@@ -138,7 +138,7 @@ func (c *Client) Find(ctx context.Context, name string, props map[string]string)
 	}
 	newest := Newest(fs)
 	if len(fs) > 1 {
-		fmt.Fprintf(Stderr, "警告:Drive appdata 有 %d 份 %s,採用最新的一份(%s)\n", len(fs), name, newest.ModifiedTime.Format(time.RFC3339))
+		fmt.Fprintln(Stderr, i18n.T("drive.warn.duplicates", "count", len(fs), "name", name, "time", newest.ModifiedTime.Format(time.RFC3339)))
 	}
 	return &newest, nil
 }
@@ -169,7 +169,7 @@ func (c *Client) Create(ctx context.Context, name string, props map[string]strin
 // 只改 metadata 的路(PATCH {base}/files/{id},不走 upload)等 T7 真的需要再加 UpdateMeta。
 func (c *Client) Update(ctx context.Context, id string, props map[string]string, content []byte) (*File, error) {
 	if len(content) == 0 {
-		return nil, errors.New("drive.Update 需要內容:空內容會把 Drive 上的檔清空")
+		return nil, i18n.Errorf("drive.err.empty_update")
 	}
 	meta := map[string]any{}
 	if props != nil {
@@ -270,7 +270,7 @@ func (c *Client) do(ctx context.Context, method, u, contentType string, body []b
 		apiErr := readAPIError(resp)
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
-			return nil, fmt.Errorf("%w:%v", provider.ErrAuthExpired, apiErr)
+			return nil, i18n.Errorf("drive.err.detail", "err", provider.ErrAuthExpired, "detail", apiErr.Error()) // 字串:*APIError 不進錯誤鏈(同原本的 %v)
 		case resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusForbidden && retryReasons[apiErr.Reason]):
 			if err := provider.Backoff(ctx, resp, attempt); err != nil {
 				var rl *provider.RateLimitError
@@ -281,12 +281,12 @@ func (c *Client) do(ctx context.Context, method, u, contentType string, body []b
 			}
 			continue
 		case resp.StatusCode == http.StatusForbidden && apiErr.Reason == "storageQuotaExceeded":
-			return nil, fmt.Errorf("%w:%s", ErrStorageQuota, apiErr.Message)
+			return nil, i18n.Errorf("drive.err.detail", "err", ErrStorageQuota, "detail", apiErr.Message)
 		case resp.StatusCode == http.StatusForbidden && apiErr.Reason == "accessNotConfigured":
-			return nil, fmt.Errorf("%w:%s", ErrAPINotEnabled, apiErr.Message)
+			return nil, i18n.Errorf("drive.err.detail", "err", ErrAPINotEnabled, "detail", apiErr.Message)
 		case resp.StatusCode == http.StatusForbidden && apiErr.Reason == "insufficientPermissions":
 			// 登入時的 scope 檢查(auth.ErrGoogleScope)擋不到事後部分撤銷或 BYO 改 client scope:token 還在、refresh 照過,只有 Drive 回 403。
-			return nil, fmt.Errorf("%w:Drive 授權缺 drive.appdata scope(%s),重新登入時記得勾「查看及管理應用程式自己的設定資料」", provider.ErrAuthExpired, apiErr.Message)
+			return nil, i18n.Errorf("drive.err.missing_scope", "err", provider.ErrAuthExpired, "detail", apiErr.Message)
 		}
 		return nil, apiErr
 	}
@@ -302,7 +302,7 @@ func transportErr(err error) error {
 	}
 	var rerr *oauth2.RetrieveError
 	if errors.As(inner, &rerr) || errors.Is(inner, auth.ErrGoogleGrant) || errors.Is(inner, auth.ErrGoogleClient) {
-		return fmt.Errorf("%w:%w", provider.ErrAuthExpired, inner) // 兩個 %w:哨兵與原鏈都要留
+		return i18n.Errorf("drive.err.detail", "err", provider.ErrAuthExpired, "detail", inner) // 兩個 error 都包:哨兵與原鏈都要留
 	}
 	return err // 純網路錯誤保留 URL,dial 失敗時知道是打哪裡
 }

@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -25,6 +24,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -68,7 +68,7 @@ func New(root, deviceID string) *Provider {
 }
 
 func (p *Provider) ID() string          { return "local" }
-func (p *Provider) DisplayName() string { return "本機曲庫" }
+func (p *Provider) DisplayName() string { return i18n.T("local.display_name") }
 func (p *Provider) Root() string        { return p.root }
 
 func (p *Provider) Caps() provider.Capability {
@@ -81,13 +81,13 @@ func (p *Provider) Caps() provider.Capability {
 func (p *Provider) Health(ctx context.Context) error {
 	st, err := os.Stat(p.root)
 	if err != nil {
-		return fmt.Errorf("local_root %s:%w", p.root, err)
+		return i18n.Errorf("local.err.root", "path", p.root, "err", err)
 	}
 	if !st.IsDir() {
-		return fmt.Errorf("local_root %s 不是目錄", p.root)
+		return i18n.Errorf("local.err.root_not_dir", "path", p.root)
 	}
 	if _, err := os.ReadDir(p.root); err != nil {
-		return fmt.Errorf("local_root %s:%w", p.root, err)
+		return i18n.Errorf("local.err.root", "path", p.root, "err", err)
 	}
 	_, err = p.library()
 	return err
@@ -102,7 +102,7 @@ func (p *Provider) idOf(rel string) string { return p.deviceID + "/" + rel }
 // relOf:本機 playlist id → 檔名;foreign 回 ErrNotFound(呼叫端本來就該先問 Foreign)。
 func (p *Provider) relOf(id string) (string, error) {
 	if p.Foreign(id) {
-		return "", fmt.Errorf("%s 屬於別台裝置:%w", id, provider.ErrNotFound)
+		return "", i18n.Errorf("local.err.foreign", "id", id, "err", provider.ErrNotFound)
 	}
 	return strings.TrimPrefix(id, p.deviceID+"/"), nil
 }
@@ -170,21 +170,21 @@ func LoadLibrary(file string) (*Library, error) {
 		return &Library{SchemaVersion: LibrarySchemaVersion, Tracks: map[string]LibraryTrack{}}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("讀取 %s:%w", file, err)
+		return nil, i18n.Errorf("local.err.read_library", "path", file, "err", err)
 	}
 	var lib Library
 	if err := json.Unmarshal(b, &lib); err != nil {
-		return nil, fmt.Errorf("%s 不是合法的 JSON:%w", file, err)
+		return nil, i18n.Errorf("local.err.library_bad_json", "path", file, "err", err)
 	}
 	if lib.SchemaVersion > LibrarySchemaVersion {
-		return nil, fmt.Errorf("%s 的 schema_version %d 比這版 capy 認得的 %d 新,請更新 capy", file, lib.SchemaVersion, LibrarySchemaVersion)
+		return nil, i18n.Errorf("local.err.library_schema_too_new", "path", file, "version", lib.SchemaVersion, "max", LibrarySchemaVersion)
 	}
 	out := &Library{SchemaVersion: LibrarySchemaVersion, Tracks: make(map[string]LibraryTrack, len(lib.Tracks))}
 	seen := map[string]string{} // 正規化後的鍵 → 原鍵:撞到就報錯(map 迭代順序隨機,不能讓「哪筆勝出」每次不同)
 	for _, k := range sortedKeys(lib.Tracks) {
 		n := NormalizePath(k)
 		if prev, dup := seen[n]; dup {
-			return nil, fmt.Errorf("%s:%q 與 %q 正規化後是同一個路徑 %q,留一個", file, prev, k, n)
+			return nil, i18n.Errorf("local.err.library_dup_key", "path", file, "a", strconv.Quote(prev), "b", strconv.Quote(k), "normalized", strconv.Quote(n))
 		}
 		seen[n] = k
 		out.Tracks[n] = lib.Tracks[k]
@@ -196,7 +196,7 @@ func LoadLibrary(file string) (*Library, error) {
 func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
 	ents, err := os.ReadDir(p.root)
 	if err != nil {
-		return nil, fmt.Errorf("local_root %s:%w", p.root, err)
+		return nil, i18n.Errorf("local.err.root", "path", p.root, "err", err)
 	}
 	var refs []provider.PlaylistRef
 	for _, e := range ents {
@@ -236,9 +236,9 @@ func (p *Provider) readM3U(name string) (items []m3uItem, lines []string, err er
 	f, err := os.Open(p.fsPath(name))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil, fmt.Errorf("清單 %s 不存在:%w", name, provider.ErrNotFound)
+			return nil, nil, i18n.Errorf("local.err.playlist_missing", "name", name, "err", provider.ErrNotFound)
 		}
-		return nil, nil, fmt.Errorf("讀取清單 %s:%w", name, err)
+		return nil, nil, i18n.Errorf("local.err.read_playlist", "name", name, "err", err)
 	}
 	defer f.Close()
 	dir := path.Dir(name)
@@ -269,7 +269,7 @@ func (p *Provider) readM3U(name string) (items []m3uItem, lines []string, err er
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, nil, fmt.Errorf("讀取清單 %s:%w", name, err)
+		return nil, nil, i18n.Errorf("local.err.read_playlist", "name", name, "err", err)
 	}
 	return items, lines, nil
 }
@@ -374,7 +374,7 @@ func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, err
 			return p.track(lib, rel, "", 0), nil
 		}
 	}
-	return provider.Track{}, fmt.Errorf("曲庫與 local_root 都沒有 %s:%w", rel, provider.ErrNotFound)
+	return provider.Track{}, i18n.Errorf("local.err.track_missing", "path", rel, "err", provider.ErrNotFound)
 }
 
 // Pushable:本機的 id、而且曲庫有或檔案在 root 底下(同 GetTrack 的認定);foreign 一律 false(決策 36)。
@@ -424,7 +424,7 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		return nil, err
 	}
 	if !underRoot(name) || !isPlaylistFile(name) { // 唯一會覆寫使用者磁碟檔案的路徑:id 是 Drive 同步來的資料,不假設它乾淨(PR #38 review:../ 能覆寫 root 外的檔、library.json 會被寫成 M3U)
-		return nil, fmt.Errorf("清單 %s 不在 local_root 底下或不是清單檔:%w", name, provider.ErrNotFound)
+		return nil, i18n.Errorf("local.err.not_playlist_file", "name", name, "err", provider.ErrNotFound)
 	}
 	var doable []provider.PlaylistOp
 	for _, op := range ops {
@@ -445,7 +445,7 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	st, err := os.Stat(target)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("清單 %s 不存在:%w", name, provider.ErrNotFound)
+			return nil, i18n.Errorf("local.err.playlist_missing", "name", name, "err", provider.ErrNotFound)
 		}
 		return nil, err
 	}
@@ -456,7 +456,7 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	b.WriteString("#EXTM3U\n")
 	for _, line := range p.diskNames(want) { // track id 就是路徑(不帶 device);推不出去的(檔不在這台)Pushable 已經擋在 add 之前,配對上的原樣寫回
 		if strings.ContainsAny(line, "\r\n") {
-			return nil, fmt.Errorf("%q 含換行,M3U 沒有跳脫機制,整批不寫", line)
+			return nil, i18n.Errorf("local.err.newline", "path", strconv.Quote(line))
 		}
 		if !isAbsAny(line) && strings.HasPrefix(line, "#") {
 			line = "./" + line // 不然下一輪被讀成註解:那首無聲消失,再被當成使用者刪了歌推到別的平台
@@ -485,7 +485,7 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 		return nil, err
 	}
 	if err := os.Rename(tmp.Name(), target); err != nil {
-		return nil, fmt.Errorf("寫入清單 %s:%w", name, err)
+		return nil, i18n.Errorf("local.err.write_playlist", "name", name, "err", err)
 	}
 	return skipped, nil
 }

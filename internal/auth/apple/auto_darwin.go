@@ -5,9 +5,10 @@ package apple
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // runOSA:測試替換點(與 provider/apple 的 StubOSAForTest 各自獨立,不跨包戳)。
@@ -63,19 +64,19 @@ func AutoWebTokens() (WebTokens, error) {
 	for _, b := range browserScripts {
 		out, err := runOSA(b.script)
 		if err != nil {
-			reasons = append(reasons, b.name+":"+err.Error())
+			reasons = append(reasons, i18n.T("apple.auto.reason", "browser", b.name, "reason", err))
 			continue
 		}
 		if out == "" {
-			reasons = append(reasons, b.name+":沒開或沒有 music.apple.com 分頁")
+			reasons = append(reasons, i18n.T("apple.auto.reason", "browser", b.name, "reason", i18n.T("apple.auto.no_tab")))
 			continue
 		}
 		var v struct{ D, U string }
 		if json.Unmarshal([]byte(out), &v) != nil || v.D == "" || v.U == "" {
-			reasons = append(reasons, b.name+":頁面沒有回傳兩個 token(未登入?)")
+			reasons = append(reasons, i18n.T("apple.auto.reason", "browser", b.name, "reason", i18n.T("apple.auto.no_tokens")))
 			continue
 		}
 		return WebTokens{Developer: v.D, User: v.U}, nil
 	}
-	return WebTokens{}, fmt.Errorf("自動擷取失敗(%s)。前提:已登入的 music.apple.com 分頁開著,且瀏覽器允許來自 Apple 事件的 JavaScript(Safari:開發選單;Chrome:View → Developer)", strings.Join(reasons, ";"))
+	return WebTokens{}, i18n.Errorf("apple.err.auto_failed", "reasons", strings.Join(reasons, i18n.T("sep.clause")))
 }

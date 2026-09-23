@@ -6,8 +6,6 @@ package apple
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -40,21 +38,21 @@ func NormalizeDevToken(s string) string {
 func JWTExp(tok string) (time.Time, error) {
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
-		return time.Time{}, errors.New("不是 JWT(應為 eyJ 開頭、以 . 分成三段)")
+		return time.Time{}, i18n.Errorf("apple.err.jwt.not_jwt")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
 	if err != nil {
-		return time.Time{}, fmt.Errorf("JWT payload 不是 base64url:%w", err)
+		return time.Time{}, i18n.Errorf("apple.err.jwt.payload_base64", "err", err)
 	}
 	var p struct {
 		Exp json.Number `json:"exp"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return time.Time{}, fmt.Errorf("JWT payload 不是 JSON:%w", err)
+		return time.Time{}, i18n.Errorf("apple.err.jwt.payload_json", "err", err)
 	}
 	f, err := p.Exp.Float64()
 	if err != nil || f <= 0 {
-		return time.Time{}, errors.New("JWT 沒有 exp")
+		return time.Time{}, i18n.Errorf("apple.err.jwt.no_exp")
 	}
 	return time.Unix(int64(f), 0), nil
 }
@@ -62,7 +60,7 @@ func JWTExp(tok string) (time.Time, error) {
 func SaveDeveloperToken(tok string, exp time.Time) error {
 	raw, _ := json.Marshal(storedDevToken{Token: tok, Exp: exp.Unix()})
 	if err := secret.Set(KeyDeveloperToken, string(raw)); err != nil {
-		return fmt.Errorf("寫入 keychain 失敗:%w", err)
+		return i18n.Errorf("auth.err.keychain_write", "err", err)
 	}
 	return nil
 }
