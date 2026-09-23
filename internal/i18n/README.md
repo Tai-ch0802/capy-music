@@ -17,6 +17,10 @@ languages; `zh-TW.json` is Traditional Chinese. The package only depends on the 
   `i18n.T("config.err.not_dir", "key", k, "path", p)`. Never build a key at runtime, and never pass a translated
   string to `fmt` as a format string.
 - **Package-level errors** use `i18n.Errorf(key)`: the message is translated when it is printed, not at init.
+- **A value may own its surrounding spacing** when it is spliced into other text: `sep.or` is `" or "` in English
+  and `" 或 "` in Chinese; `web.lock.stop` replaces `" Ctrl-C"` *including* the space, so English writes `" Stop"`
+  and Chinese writes `「中止」` with none (full-width brackets carry their own spacing). Keep those spaces when you
+  translate; the tests pin the composed result.
 
 ## Adding a language
 

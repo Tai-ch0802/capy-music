@@ -3,7 +3,7 @@ package i18n
 // cjkAllowlist:還有中文字串沒搬進語系目錄的檔(計畫 §4 的 T2a–T2d 逐區搬)。**只准縮小**:搬完一個檔就拿掉它,
 // TestNoCJKOutsideCatalog 會抓「已經搬完卻還列著」與「沒列卻有中文」;清空之後 productionDefault 要改成 en。
 // cjkAllowlistLen 釘住目前的長度:拿掉檔的 PR 要一起調小,白名單不准變長(TestCJKAllowlistOnlyShrinks)。
-const cjkAllowlistLen = 34
+const cjkAllowlistLen = 24
 
 var cjkAllowlist = []string{
 	"internal/auth/apple/auto_darwin.go",
@@ -16,16 +16,6 @@ var cjkAllowlist = []string{
 	"internal/canon/canon.go",
 	"internal/canon/identity.go",
 	"internal/canon/rank.go",
-	"internal/cli/play_resolve.go",
-	"internal/cli/player.go",
-	"internal/cli/search.go",
-	"internal/cli/tui.go",
-	"internal/cli/tui_menu.go",
-	"internal/cli/watch.go",
-	"internal/cli/web.go",
-	"internal/cli/web_api.go",
-	"internal/cli/web_prompt.go",
-	"internal/cli/web_run.go",
 	"internal/config/config.go",
 	"internal/drive/client.go",
 	"internal/provider/apple/apple.go",

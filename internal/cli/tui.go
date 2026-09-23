@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -217,7 +217,7 @@ func (m tuiModel) execResult(msg tuiExecMsg) tea.Cmd {
 	if c := ee.ExitCode(); c == 2 || c == 3 || c == 130 { // 130 = 在檢視窗格 / now --watch 裡按 Ctrl-C 離開,也不是壞掉
 		mark = "· "
 	}
-	return m.println(tuiSeg{fmt.Sprintf("%s%s 結束碼 %d", mark, head, ee.ExitCode()), m.theme.Mutedly})
+	return m.println(tuiSeg{mark + i18n.T("tui.exit_code", "cmd", head, "code", ee.ExitCode()), m.theme.Mutedly})
 }
 
 func (m tuiModel) viewWidth() int {
@@ -294,7 +294,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wasAlive && !m.alive() {
 			// 視窗縮到放不下常駐的水豚:定格。freeze 先把牠印進捲動區、畫面才變矮——推東西進捲動區之後縮才清得乾淨(見 View)。
 			// 定格是單向的,所以交代一句:不然使用者只是手滑縮了一下視窗,牠就再也不動了,也不知道為什麼(review #73)。
-			return m.freezeNoting("視窗放不下常駐的水豚,牠先定格了;重開 capy 牠就回來。")
+			return m.freezeNoting(i18n.T("tui.frozen_note"))
 		}
 		return m, nil
 	case tuiFrameMsg:
@@ -354,7 +354,7 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
 		pr := m.printErr(msg.err) // printErr 是指標 receiver,先叫再 return:
-		m.errShort = "剛才那個操作失敗了(詳見上方)"
+		m.errShort = i18n.T("tui.status.ctl_failed")
 		return m, tea.Batch(pr, tick()) // 寫在 return 的運算式裡,m 有沒有帶到更新是規格未定義的
 	}
 	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
@@ -365,15 +365,15 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	var rl *provider.RateLimitError
 	switch {
 	case errors.Is(msg.err, provider.ErrPlayerNotRunning):
-		m.st, m.errShort, m.fails, m.lastErr = nil, "播放器未執行", 0, msg.err.Error()
+		m.st, m.errShort, m.fails, m.lastErr = nil, i18n.T("tui.status.player_not_running"), 0, msg.err.Error()
 		return m, tick()
 	case errors.As(msg.err, &rl):
-		m.errShort, m.fails, m.lastErr = "限流中,等待重試", 0, msg.err.Error()
+		m.errShort, m.fails, m.lastErr = i18n.T("tui.status.rate_limited"), 0, msg.err.Error()
 		return m, tick()
 	}
 	if msg.err != nil {
 		m.fails++
-		m.errShort = "讀不到播放狀態(r 重試)"
+		m.errShort = i18n.T("tui.status.state_unavailable")
 		// 整段錯誤推進捲動區(第一次、或內容變了才印),狀態列只留短版:
 		// 前一版把整段留在畫面上,osascript 那種長訊息會一直佔著看不到別的。
 		pr := m.printErr(msg.err) // 指標 receiver:一定要在 return 之前叫
@@ -491,7 +491,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 				return m, nil
 			}
 			if m.exe == "" {
-				return m, m.println(tuiSeg{"✗ 找不到 capy 自己的執行檔,命令列停用", m.theme.Mutedly})
+				return m, m.println(tuiSeg{"✗ " + i18n.T("tui.err.no_executable"), m.theme.Mutedly})
 			}
 			// 只在記憶體裡:存檔要決定寫哪、要不要清,是另一個決定。
 			// 連續重複的不記:↑ 翻出來再送出一次,不該讓下一次要多按幾下才走得回去。
@@ -544,7 +544,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		return m.recall(d), textinput.Blink
 	case "?": // 完整鍵位推進捲動區,不佔底部的行數
 		m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
-		return m, m.printBlock(tuiKeymap, m.theme.Mutedly)
+		return m, m.printBlock(tuiKeymap(), m.theme.Mutedly)
 	}
 	if m.pc == nil {
 		return m, nil
@@ -736,15 +736,15 @@ func (m tuiModel) intro() string {
 func (m tuiModel) statusLine(w int) string {
 	t := m.theme
 	if m.pc == nil {
-		return tuiJoin(w, tuiSeg{"  沒有播放遙控:" + errText(m.pcErr, "這個平台不支援"), t.Mutedly})
+		return tuiJoin(w, tuiSeg{"  " + i18n.T("tui.status.no_playback", "reason", errText(m.pcErr, i18n.T("tui.status.unsupported"))), t.Mutedly})
 	}
 	short := m.errShort
 	if m.stalled {
-		short = "已停止輪詢(r 重試)"
+		short = i18n.T("tui.status.stalled")
 	}
 	if m.st == nil || m.st.Track == nil {
 		if short == "" {
-			short = "沒有播放內容"
+			short = i18n.T("tui.status.nothing_playing")
 		}
 		return tuiJoin(w, tuiSeg{"  " + short, t.Mutedly})
 	}
@@ -758,7 +758,7 @@ func (m tuiModel) statusLine(w int) string {
 		tail += " · " + st.Device.Name
 	}
 	if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,+/- 也才有可見的回饋
-		tail += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
+		tail += " · " + i18n.T("tui.status.volume", "pct", st.Device.VolumePct)
 	}
 	if short != "" { // 有曲目也可能同時有狀況(限流最典型):接在後面,不要蓋掉曲目
 		tail += " · " + short
@@ -772,9 +772,9 @@ func (m tuiModel) statusLine(w int) string {
 }
 
 // tuiPlaceholder:挑最長的、放得下的那句提示。textinput 不會把 placeholder 收得比它自己短,
-// 放不下就整行撐出終端機外 —— 底部從四行變五行。窄到連最短的都放不下就不放。
+// 放不下就整行撐出終端機外 —— 底部從四行變五行。窄到連最短的都放不下就不放。寬度照當下語系的譯文量,不寫死。
 func tuiPlaceholder(w int) string {
-	for _, s := range []string{"輸入 capy 子命令,例如 pl list", "capy 子命令", "pl list"} {
+	for _, s := range []string{i18n.T("tui.placeholder.long"), i18n.T("tui.placeholder.short"), "pl list"} {
 		if tuiWidth(s)+4 <= w { // +4:提示符 "> " 與右邊的餘裕
 			return s
 		}
@@ -783,30 +783,23 @@ func tuiPlaceholder(w int) string {
 }
 
 // tuiKeymap:? 印進捲動區的完整鍵位。底部只放最常用的幾個,其餘查這裡。
-const tuiKeymap = `按鍵:
-  space 播放/暫停    n / p 下一首 / 上一首
-  <- / ->  +-10 秒   + / -  音量 +-5
-  /      命令選單    上 / 下  翻這次打過的命令
-  r      停擺後重新連上        ?  這張表
-  q      離開(輸入中用 Ctrl-C)
-
-命令選單(輸入行以 / 開頭時):上 / 下 選,Tab / Enter 把命令帶進輸入行,Esc 收起。
-打到完整命令(可接參數,例如 /pl show 冬日暖調)選單就收起,Enter 直接執行,/ 不必刪。`
+// 是函式不是常數:語系在建命令樹之前才定,package 層級的值在那之前就算好了。
+func tuiKeymap() string { return i18n.T("tui.keymap") }
 
 func (m tuiModel) hints() string {
 	if _, ok := m.menu(); ok {
-		return "↑↓ 選 · Tab/⏎ 補齊 · Esc 收起"
+		return i18n.T("tui.hint.menu")
 	}
 	if m.typing {
-		return "↑↓ 歷史 · Enter 執行 · Esc 清空 · Ctrl-C 離開"
+		return i18n.T("tui.hint.typing")
 	}
 	if m.pc == nil {
-		return "/ 命令 · ? 按鍵 · q 離開"
+		return i18n.T("tui.hint.no_playback")
 	}
 	if m.stalled {
-		return "r 重新連上 · / 命令 · ? 按鍵 · q 離開"
+		return i18n.T("tui.hint.stalled")
 	}
-	return "space 播放/暫停 · ←→ ±10 秒 · / 命令 · ? 按鍵 · q 離開"
+	return i18n.T("tui.hint.playing")
 }
 
 func errText(err error, fallback string) string {

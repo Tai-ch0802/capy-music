@@ -41,7 +41,7 @@ func completeFromCache(cmd *cobra.Command, toComplete string, playlists, recent 
 	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
-// recentDesc:最近紀錄候選的說明。刻意不借 play_resolve.go 的 typeNames(挑選器的標籤):整句各自翻,英文才通順。
+// recentDesc:最近紀錄候選的說明。刻意不借 play_resolve.go 的 typeName()(挑選器的標籤):整句各自翻,英文才通順。
 func recentDesc(typ string) string {
 	switch typ {
 	case cache.TypePlaylist:

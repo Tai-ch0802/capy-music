@@ -2,11 +2,12 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -24,7 +25,7 @@ type candidate struct {
 type AmbiguousError struct{ Candidates []candidate }
 
 func (e *AmbiguousError) Error() string {
-	return fmt.Sprintf("有 %d 個候選;用 --type track|artist|playlist 或前綴 artist: / pl: / track: 指定,或在終端機執行以開啟挑選器", len(e.Candidates))
+	return i18n.T("play.err.ambiguous", "count", len(e.Candidates))
 }
 
 var playPrefixes = map[string]string{"artist:": cache.TypeArtist, "pl:": cache.TypePlaylist, "playlist:": cache.TypePlaylist, "track:": cache.TypeTrack}
@@ -35,7 +36,7 @@ func parsePlayQuery(args []string, typ string) (string, string, error) {
 	for pre, t := range playPrefixes {
 		if strings.HasPrefix(strings.ToLower(q), pre) {
 			if typ != "" && typ != t {
-				return "", "", fmt.Errorf("前綴 %s 與 --type %s 衝突", pre, typ)
+				return "", "", i18n.Errorf("play.err.prefix_type_conflict", "prefix", pre, "type", typ)
 			}
 			return strings.TrimSpace(q[len(pre):]), t, nil
 		}
@@ -44,7 +45,7 @@ func parsePlayQuery(args []string, typ string) (string, string, error) {
 	case "", cache.TypeTrack, cache.TypeArtist, cache.TypePlaylist:
 		return q, typ, nil
 	}
-	return "", "", fmt.Errorf("--type 只能是 track、artist、playlist,得到 %q", typ)
+	return "", "", i18n.Errorf("play.err.bad_type", "value", strconv.Quote(typ))
 }
 
 // playSources:解析用的資料來源,讓規則可以離線測。artists 為 nil = provider 不支援藝人搜尋。
@@ -57,10 +58,10 @@ type playSources struct {
 const resolveLimit = 5
 
 func plCandidate(p cache.Playlist) candidate {
-	return candidate{Type: cache.TypePlaylist, ID: p.ID, Label: p.Name, Detail: fmt.Sprintf("%d 首", p.Total), Total: p.Total}
+	return candidate{Type: cache.TypePlaylist, ID: p.ID, Label: p.Name, Detail: i18n.T("play.candidate.tracks", "count", p.Total), Total: p.Total}
 }
 func artistCandidate(a provider.Artist) candidate {
-	return candidate{Type: cache.TypeArtist, ID: a.ProviderID, Label: a.Name, Detail: "熱門歌曲"}
+	return candidate{Type: cache.TypeArtist, ID: a.ProviderID, Label: a.Name, Detail: i18n.T("play.candidate.top_tracks")}
 }
 func trackCandidate(t provider.Track) candidate {
 	return candidate{Type: cache.TypeTrack, ID: t.ProviderID, Label: t.Title, Detail: strings.Join(t.Artists, ", ") + " · " + t.Album}
@@ -103,7 +104,7 @@ func relevant(text, q string) bool {
 //	       → b. 藝人名完全相符 → c. 曲名完全相符 → d. 全部候選恰一 → 否則歧義。
 func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidate, []candidate, error) {
 	if q == "" {
-		return nil, nil, errors.New("缺搜尋詞")
+		return nil, nil, i18n.Errorf("play.err.missing_query")
 	}
 	var pls []candidate
 	if typ == "" || typ == cache.TypePlaylist {
@@ -202,10 +203,19 @@ func filterRelevant(rawArtists []provider.Artist, rawTracks []provider.Track, q 
 	return artists, tracks
 }
 
-var typeNames = map[string]string{cache.TypePlaylist: "清單", cache.TypeArtist: "藝人", cache.TypeTrack: "曲目", cache.TypeQuery: "搜尋"}
+// typeName:挑選器標籤的類型標記,用的時候才翻。挑選器只會拿到清單 / 藝人 / 曲目三種(cacheCandidates 跳過 query)。
+func typeName(t string) string {
+	switch t {
+	case cache.TypePlaylist:
+		return i18n.T("play.type.playlist")
+	case cache.TypeArtist:
+		return i18n.T("play.type.artist")
+	}
+	return i18n.T("play.type.track")
+}
 
 func pickerLabel(c candidate) string {
-	return fmt.Sprintf("[%s] %s — %s%s", typeNames[c.Type], c.Label, c.Detail, c.Note)
+	return fmt.Sprintf("[%s] %s — %s%s", typeName(c.Type), c.Label, c.Detail, c.Note)
 }
 
 // runPlayPicker:TTY 挑選器(/ 進入過濾;Esc / Ctrl-C 取消,鍵位在 newForm)。測試替換點。
@@ -214,7 +224,7 @@ var runPlayPicker = func(cands []candidate) (*candidate, error) {
 	for i, c := range cands {
 		labels[i] = pickerLabel(c)
 	}
-	i, err := pickOne("選一個播放", labels)
+	i, err := pickOne(i18n.T("play.picker.title"), labels)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +251,11 @@ func cacheCandidates(c *cache.Cache, providerID, q string) []candidate {
 		if r.Provider != providerID || r.Type == cache.TypeQuery {
 			continue
 		}
-		add(candidate{Type: r.Type, ID: r.ID, Label: r.Label, Detail: r.Detail})
+		detail := r.Detail // cache.json 裡的是存的當下的語系:藝人那句在這裡重翻;曲目的「藝人 · 專輯」是資料
+		if r.Type == cache.TypeArtist {
+			detail = i18n.T("play.candidate.top_tracks")
+		} // ponytail: 清單那句(N 首)不重翻——清單快取裡有的那份先進 seen;只有快取已沒有的舊清單會帶存的當下的語系
+		add(candidate{Type: r.Type, ID: r.ID, Label: r.Label, Detail: detail})
 	}
 	return out
 }

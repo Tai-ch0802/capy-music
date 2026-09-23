@@ -19,6 +19,7 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -404,6 +405,38 @@ func TestLockFileWarnsOnceWhileWaiting(t *testing.T) {
 	}
 	if !strings.Contains(out, "允許") {
 		t.Errorf("提醒要告訴使用者對話框按「允許」:%q", out)
+	}
+}
+
+// 等鎖提示是 web 模式的 webLockStderr(internal/cli/web.go)改寫的對象:它只認鎖檔名與 " Ctrl-C"。
+// 這句提示搬進語系目錄(T2d)之後,任何一個語系漏了其中一個,網頁上就照樣叫人按 Ctrl-C——每個語系都要釘住。
+func TestLockNoticeKeepsWebContract(t *testing.T) {
+	setTokenTest(t)
+	orig := i18n.Current()
+	t.Cleanup(func() { i18n.Set(orig) })
+	origW, origAfter, origRetry := LockStderr, lockNoticeAfter, lockRetryInterval
+	t.Cleanup(func() { LockStderr, lockNoticeAfter, lockRetryInterval = origW, origAfter, origRetry })
+	lockNoticeAfter, lockRetryInterval = 10*time.Millisecond, 5*time.Millisecond
+	for _, lang := range i18n.Supported() {
+		i18n.Set(lang)
+		for _, name := range []string{"spotify.token.lock", "pull.lock"} {
+			var buf strings.Builder
+			LockStderr = &buf
+			unlock, err := LockFile(context.Background(), name, "x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			if u, err := LockFile(ctx, name, "x"); err == nil {
+				u()
+				t.Fatalf("%s:鎖仍被持有,不該取得", name)
+			}
+			cancel()
+			unlock()
+			if out := buf.String(); !strings.Contains(out, name) || !strings.Contains(out, " Ctrl-C") {
+				t.Errorf("%s 的 %s 等鎖提示要原樣帶鎖檔名與 \" Ctrl-C\"(webLockStderr 靠這兩個改寫):%q", lang, name, out)
+			}
+		}
 	}
 }
 

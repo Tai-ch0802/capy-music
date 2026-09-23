@@ -15,13 +15,13 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -121,13 +121,13 @@ func newWebServer(ctx context.Context) (*webServer, error) {
 func runWeb(cmd *cobra.Command, port int) error {
 	switch port {
 	case 8888:
-		return errors.New("--port 8888 是 Spotify 授權回呼的固定 port,請換一個")
+		return i18n.Errorf("web.err.port_8888")
 	case 80, 443: // 瀏覽器會把預設埠號從 Host / Origin 拿掉,逐字比對必然不符 → 每個請求都 421,頁面完全打不開
-		return errors.New("--port 80 / 443 不能用:瀏覽器會把預設埠號從 Host 標頭拿掉,每個請求都會被擋下")
+		return i18n.Errorf("web.err.port_default")
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		return fmt.Errorf("綁定 127.0.0.1:%d 失敗:%w", port, err)
+		return i18n.Errorf("web.err.listen", "port", port, "err", err)
 	}
 	s, err := newWebServer(cmd.Context())
 	if err != nil {
@@ -141,10 +141,10 @@ func runWeb(cmd *cobra.Command, port int) error {
 	restore := installWebSeams(s)
 	defer restore()
 	url := "http://" + s.hostport + "/#t=" + s.token
-	fmt.Fprintf(cmd.OutOrStdout(), "capy --web 已啟動:%s\n(只綁 127.0.0.1;這個行程結束網址就失效;Ctrl-C 結束)\n", url)
+	fmt.Fprintln(cmd.OutOrStdout(), i18n.T("web.started", "url", url))
 	if stdoutIsTTY(cmd) {
 		if err := webOpenURL(url); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "無法自動開瀏覽器:%v\n", err)
+			fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("web.open_browser_failed", "err", err))
 		}
 	}
 	return s.serve(ln)
@@ -173,7 +173,9 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("POST /api/run", s.api(s.handleRun))
 	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.api(s.handleCancel))
 	mux.HandleFunc("POST /api/jobs/{job}/answer", s.api(s.handleAnswer))
-	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, _ *http.Request) { httpErr(w, http.StatusNotFound, "沒有這個端點") }))
+	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, _ *http.Request) {
+		httpErr(w, http.StatusNotFound, i18n.T("web.err.no_endpoint"))
+	}))
 	mux.Handle("/", s.page(s.static))
 	return mux
 }
@@ -182,15 +184,15 @@ func (s *webServer) handler() http.Handler {
 // 永不回 Access-Control-*。
 func (s *webServer) guard(w http.ResponseWriter, r *http.Request) bool {
 	if r.Host != s.hostport {
-		http.Error(w, "Host 必須是 "+s.hostport, http.StatusMisdirectedRequest)
+		http.Error(w, i18n.T("web.err.bad_host", "host", s.hostport), http.StatusMisdirectedRequest)
 		return false
 	}
 	if o := r.Header.Get("Origin"); o != "" && o != "http://"+s.hostport {
-		http.Error(w, "Origin 不是這個頁面", http.StatusForbidden)
+		http.Error(w, i18n.T("web.err.bad_origin"), http.StatusForbidden)
 		return false
 	}
 	if sfs := r.Header.Get("Sec-Fetch-Site"); sfs != "" && sfs != "same-origin" && sfs != "none" {
-		http.Error(w, "跨站請求", http.StatusForbidden)
+		http.Error(w, i18n.T("web.err.cross_site"), http.StatusForbidden)
 		return false
 	}
 	h := w.Header()
@@ -207,7 +209,7 @@ func (s *webServer) api(h http.HandlerFunc) http.HandlerFunc {
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Capy-Token")), []byte(s.token)) != 1 {
-			httpErr(w, http.StatusUnauthorized, "token 不對或已失效:回到啟動 capy --web 時印的網址")
+			httpErr(w, http.StatusUnauthorized, i18n.T("web.err.bad_token"))
 			return
 		}
 		h(w, r)
@@ -266,7 +268,7 @@ func installWebSeams(s *webServer) (restore func()) {
 	restorePrompts := installWebPromptSeams(s)
 	runTUI = func(cmd *cobra.Command) error { return cmd.Help() }
 	runWatch = func(*cobra.Command, provider.Provider, provider.PlaybackController) error {
-		return errors.New("web 模式請看頁面上的播放狀態面板;單次用 capy now")
+		return i18n.Errorf("web.err.no_watch")
 	}
 	// 真實進度(P8 決策 47):送給當下的 job;沒有 job(或串流已關)就丟掉——進度不是輸出,不退回 stderr。
 	reportProgress = func(stage string, done, total int) {
@@ -299,21 +301,26 @@ func (g *webGlobalStderr) Write(p []byte) (int, error) {
 }
 
 // webLockStderr:LockFile 的「等待另一個 capy 釋放 …;要放棄按 Ctrl-C」在 web 會落進當下 job。
-// <key>.token.lock:等的可能是同一行程的面板 / ISRC 頁在換發 token(review #56 第 1 點),整句改寫;
+// <key>.token.lock:等的可能是同一行程的面板 / ISRC 頁在換發 token(review #56 第 1 點),檔名之前的半句改寫;
 // pull.lock:等的真的是另一個 capy 行程(終端機 / cron),原文是對的,只把 Ctrl-C 換成頁面上有的鈕(dock 的「中止」)。
+// 不比對 auth 的措辭(它跟著語系):只認檔名與「Ctrl-C」這兩個任何語系都不翻的字(README 的慣例)。
+//
+// 給 internal/auth/tokenstore.go 的契約(T2d 把那句等鎖提示搬進語系目錄時,每個語系都要守):
+//   - 傳給 LockFile 的鎖檔名原樣出現(spotify.token.lock、pull.lock;token 鎖靠 webTokenLockName 認),
+//     token 鎖的整句從檔名那裡開始保留、前半句換成 web.lock.token;
+//   - 按鍵寫成 " Ctrl-C"(半形空白 + Ctrl-C,連同空白換成 web.lock.stop;譯文自己帶要不要空白,見 README)。
+//
+// 違反了不會報錯、只是網頁上照樣叫人按 Ctrl-C——auth 的 TestLockNoticeKeepsWebContract 在每個語系釘住這兩點。
 type webLockStderr struct{ w io.Writer }
 
-var webLockNotice = strings.NewReplacer(
-	"等待另一個 capy 釋放 ", "等待 token 鎖釋放(另一個 capy,或本頁面的播放面板 / ISRC 頁正在換發 token):",
-	";要放棄按 Ctrl-C", ";要放棄按「中止」",
-)
+// webTokenLockName:等的是 <key>.token.lock(Spotify / Google 的 TokenSource);pull.lock 不符。
+var webTokenLockName = regexp.MustCompile(`[A-Za-z0-9_.-]+\.token\.lock`)
 
 func (l *webLockStderr) Write(p []byte) (int, error) {
-	s := string(p)
-	if strings.Contains(s, ".token.lock") {
-		s = webLockNotice.Replace(s)
-	} else {
-		s = strings.ReplaceAll(s, ";要放棄按 Ctrl-C", ";要放棄按「中止」")
+	// web.lock.stop 自帶前面的空白(en " Stop"、zh 「中止」不要空白),所以連 Ctrl-C 前的空白一起換掉。
+	s := strings.ReplaceAll(string(p), " Ctrl-C", i18n.T("web.lock.stop"))
+	if loc := webTokenLockName.FindStringIndex(s); loc != nil {
+		s = i18n.T("web.lock.token", "rest", s[loc[0]:])
 	}
 	if _, err := io.WriteString(l.w, s); err != nil {
 		return 0, err

@@ -13,6 +13,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
@@ -27,11 +28,11 @@ func newSpotifyProvider(ctx context.Context) (*spotify.Provider, error) {
 		return nil, err
 	}
 	if cfg.SpotifyClientID == "" {
-		return nil, errors.New("尚未設定 Spotify — 先執行 capy auth login spotify")
+		return nil, i18n.Errorf("platform.err.spotify_not_configured")
 	}
 	ts, err := auth.SpotifyTokenSource(ctx, cfg.SpotifyClientID)
 	if errors.Is(err, secret.ErrNotFound) {
-		return nil, errors.New("尚未登入 Spotify — 先執行 capy auth login spotify")
+		return nil, i18n.Errorf("platform.err.spotify_not_logged_in")
 	}
 	if err != nil {
 		return nil, err
@@ -66,7 +67,7 @@ func trackRows(tracks []provider.Track, tty bool) [][]string {
 func newSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query...>",
-		Short: "搜尋曲目",
+		Short: i18n.T("cmd.search.short"),
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limit, _ := cmd.Flags().GetInt("limit")
@@ -91,7 +92,7 @@ func newSearchCmd() *cobra.Command {
 			return ui.Table(cmd.OutOrStdout(), tty, trackHeader, trackRows(tracks, tty))
 		},
 	}
-	cmd.Flags().Int("limit", 10, "結果數(單次 API 上限 10,超過自動分頁)")
+	cmd.Flags().Int("limit", 10, i18n.T("cmd.search.flag.limit"))
 	providerFlag(cmd)
 	return cmd
 }
