@@ -1,97 +1,109 @@
+**English** | [繁體中文](README.zh-TW.md)
+
 # capy-music
 
-跨平台音樂 CLI:搜尋、播放遙控、播放清單同步(Spotify、Apple Music;播放清單同步到你自己的 Google Drive)。開源、免費,**所有憑證都是你自己的(BYO)** —— 本專案不代持任何 token、不架任何服務。
+A cross-platform music CLI: search, playback control and playlist sync (Spotify and Apple Music; playlists sync to your own Google Drive). Open source and free, and **every credential is your own (BYO)** — this project holds no tokens for you and runs no service.
 
-網站:<https://capy.taislife.work>(給一般使用者的介紹、[隱私權政策](https://capy.taislife.work/privacy)、[服務條款](https://capy.taislife.work/terms);原始檔在 [`site/`](site/);`/guide` 那一頁由 `docs/guide.html` 轉出來,改了指南之後跑 `go test ./site/ -run TestGuideOnSiteIsCurrent -update`;repo 接了 Cloudflare Workers Builds,合併進 main 之後確認線上有更新,沒有的話手動 `cd site && wrangler deploy`)。
+Website: <https://capy.taislife.work/en/> (an introduction for general users, the [privacy policy](https://capy.taislife.work/en/privacy) and the [terms of service](https://capy.taislife.work/en/terms); the source is in [`site/`](site/). The `/guide` and `/en/guide` pages are generated from `docs/guide.html` and `docs/guide.en.html`: after editing either guide, run `go test ./site/ -run TestGuideOnSiteIsCurrent -update`. The repo is connected to Cloudflare Workers Builds; after merging into main, check that the live site has updated, and if it hasn't, deploy by hand with `cd site && wrangler deploy`.)
 
-完整的使用說明(含互動式介面、網頁介面、命令參考與三個平台的能力差異)在 <https://capy.taislife.work/guide>。原始檔是 `docs/guide.html`:單一檔案、不需要伺服器、不連任何外部資源,clone 下來離線也打得開(GitHub 對 repo 裡的 `.html` 只顯示原始碼)。
+The full user guide (interactive mode, the web UI, a command reference and what each of the three platforms can do) is at <https://capy.taislife.work/en/guide> (繁體中文: <https://capy.taislife.work/guide>). The sources are `docs/guide.en.html` (English) and `docs/guide.html` (Chinese): each is a single file that needs no server and loads no external resources, so it opens offline from a clone too (GitHub only shows the source of `.html` files in a repo).
 
-## 安裝
+## Install
 
-### A. 從 GitHub Releases 下載(macOS / Windows;Google 登入零設定)
+### A. Download from GitHub Releases (macOS / Windows; Google login needs no setup)
 
-到 [Releases](https://github.com/Tai-ch0802/capy-music/releases) 下載對應的檔,解開後把 `capy`(Windows 是 `capy.exe`)放進 PATH:
+Download the file for your platform from [Releases](https://github.com/Tai-ch0802/capy-music/releases), unpack it and put `capy` (`capy.exe` on Windows) on your PATH:
 
-| 平台 | 檔名 |
+| Platform | File |
 |---|---|
-| macOS Apple Silicon | `capy_<版本>_darwin_arm64.tar.gz` |
-| macOS Intel | `capy_<版本>_darwin_amd64.tar.gz` |
-| Windows x64 | `capy_<版本>_windows_amd64.zip` |
-| Windows ARM64 | `capy_<版本>_windows_arm64.zip` |
+| macOS Apple Silicon | `capy_<version>_darwin_arm64.tar.gz` |
+| macOS Intel | `capy_<version>_darwin_amd64.tar.gz` |
+| Windows x64 | `capy_<version>_windows_amd64.zip` |
+| Windows ARM64 | `capy_<version>_windows_arm64.zip` |
 
-- **macOS**:binary 沒有 Apple 簽章。用瀏覽器下載的檔會被 Gatekeeper 擋(「無法打開,因為無法驗證開發者」),解開後跑一次 `xattr -d com.apple.quarantine capy` 即可;用 `curl -L -O <網址>` 下載的檔不會被標記。
-- **Windows**:SmartScreen 第一次會警告「未知的發行者」,「其他資訊 → 仍要執行」一次即可。
-- `checksums.txt` 是每個檔的 SHA-256:對得上代表下載完整,**不代表**來源經過簽章(本專案沒有簽章)。
+- **macOS**: the binary isn't signed by Apple. Gatekeeper blocks files downloaded with a browser ("cannot be opened because the developer cannot be verified"); after unpacking, run `xattr -d com.apple.quarantine capy` once. Files downloaded with `curl -L -O <url>` aren't flagged.
+- **Windows**: SmartScreen warns about an "unknown publisher" the first time; choose "More info → Run anyway" once.
+- `checksums.txt` has each file's SHA-256: a match means the download is complete, **not** that the source is signed (this project doesn't sign anything).
 
-Releases 的 binary 內建專案自己的 Google OAuth client:`capy auth login google` 直接開瀏覽器授權,不用建任何東西。
+Release binaries include the project's own Google OAuth client: `capy auth login google` opens the browser for authorization straight away, with nothing to create.
 
-### B. `go install`(需要 Go;Google 登入走 BYO)
+### B. `go install` (needs Go; Google login is BYO)
 
 ```bash
 go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 ```
 
-從原始碼建的 binary(`go install`、自己 `go build`、`capy update --dev`)**沒有內建 Google client**:`capy auth login google` 會用精靈引導你建自己的 OAuth client(見下方 Google 一節)。Homebrew / Scoop / winget 不在計畫內。
+Binaries built from source (`go install`, your own `go build`, `capy update --dev`) **have no built-in Google client**: `capy auth login google` runs a wizard that walks you through creating your own OAuth client (see the Google section below). Homebrew / Scoop / winget aren't planned.
 
-### 更新
+### Updating
 
-- `capy update`:問 GitHub Releases 最新正式版,下載本平台的檔、用 `checksums.txt` 做 SHA-256 校驗、跑一次新 binary 的 `--version` 確認能動,才覆蓋目前這顆;任何一步失敗,舊的原封不動。從 dev 版執行會換成正式版(之後 Google 登入就有內建 client)。
-- `capy update --dev`:抓 main 分支最新 commit、用 `go install` 重建並覆蓋(需要 Go toolchain,第一次約 20 秒)。
+- `capy update`: asks GitHub Releases for the latest release, downloads this platform's file, verifies its SHA-256 against `checksums.txt` and runs the new binary's `--version` to make sure it works, and only then replaces the current binary; if any step fails, the old one is left untouched. Run from a dev build, it switches you to the release (which then has the built-in Google client).
+- `capy update --dev`: fetches the latest commit on the main branch, rebuilds it with `go install` and replaces the current binary (needs the Go toolchain; about 20 seconds the first time).
 
-更新前先跑一次 `capy pl pull --dry-run`:exit 3(Drive 不完整)就先別更新。本機快取 `state.db` 的 schema 升版時舊檔會保留為 `state.db.v<舊版>`,但新版 capy 不讀它;而 `pl pull` 擋下「Drive 不完整」時給的出口 `capy drive init --from-local` 讀的是新的空快取——兩邊都沒資料。真的撞上了:從 Releases 拿上一版 binary,把 `state.db.v<舊版>` 改回 `state.db`,用舊版跑 `capy drive init --from-local` 把 Drive 補齊(新版讀得懂舊 schema 的 Drive 檔),再更新回來。不確定就先 `capy export > backup.json`。
+Before updating, run `capy pl pull --dry-run` once: if it exits 3 (Drive incomplete), don't update yet. When the schema of the local cache `state.db` changes, the old file is kept as `state.db.v<old version>`, but the new capy doesn't read it; and the way out that `pl pull` offers when it stops on "Drive incomplete", `capy drive init --from-local`, reads the new, empty cache — so neither side has your data. If you do hit this: get the previous binary from Releases, rename `state.db.v<old version>` back to `state.db`, run `capy drive init --from-local` with the old binary to fill in Drive (the new version understands Drive files written with the old schema), then update again. If in doubt, run `capy export > backup.json` first.
 
-## Spotify:自建 app(免費,約 2 分鐘)
+## Language
 
-Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用你自己的 app:
-
-1. 開 https://developer.spotify.com/dashboard → Create app(名稱隨意)
-2. Redirect URI 填入(完全照抄,**不可用 localhost**):`http://127.0.0.1:8888/callback`
-3. 勾選 Web API → Save → 複製 Client ID
-4. 執行 `capy auth login spotify`(精靈會引導;非互動環境用 `--client-id`)
-
-需要 Spotify Premium(遙控播放與 Development Mode 皆要求)。
-
-## Apple Music:複製你自己的 web token
-
-> ⚠️ **非 Apple 官方支援。** 這組 token 屬於 Apple 網頁播放器,Apple 可能隨時更換(屆時重跑一次 `capy auth login apple` 即可)。以第三方工具存取 Apple Music 的服務條款風險由你自行承擔;本工具只指導,**不會自動擷取**你的瀏覽器資料。
-
-1. 瀏覽器開 https://music.apple.com 並登入
-2. 開 DevTools → Network,篩選 `amp-api`,點任一請求 → Request Headers
-3. 複製 `authorization`(`Bearer eyJ…`)與 `media-user-token` 兩個值
-4. 執行 `capy auth login apple`,依精靈貼上(非互動環境用 `CAPY_APPLE_DEVELOPER_TOKEN` / `CAPY_APPLE_USER_TOKEN` 環境變數並加 `--i-understand`)
-
-需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app);搜尋與播放清單在 macOS / Windows 皆可用。寫入播放清單(建清單、加歌、移除、換序、改名)只對你自己建的清單;加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你在 Apple Music 裡的設定——這是 Apple 的行為,capy 不另外加;2026-09-23 實測的帳號,清單裡本來就有很多歌不在資料庫,capy 加進清單的歌也沒有進資料庫。
-
-## 本機曲庫(local,選用):M3U 清單 + library.json
+capy's interface is in English by default (earlier versions were Chinese-only, so upgrading switches you to English). To switch to Traditional Chinese:
 
 ```bash
-capy config set local_root ~/Music/capy      # 裡面放 *.m3u8(或 .m3u)清單與 library.json
-capy pl list --provider local
-capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶這台裝置的 id
+capy config set language zh-TW    # back to English: capy config set language en
 ```
 
-`library.json` 由你自己維護(capy 不讀音訊 tag):`{"schema_version": 1, "tracks": {"相對路徑": {"title", "artists": [], "album", "duration_ms", "isrc"}}}`;清單裡每一行是相對於清單檔的路徑,`#EXTINF` 只在曲庫沒有那首時當備援標題。有 `isrc` 的曲目才會跟 Spotify / Apple 自動對上,沒有的靠 `capy resolve` 的模糊比對(local 這邊的搜尋是曲庫內比對,不用網路)。
+The language menu at the bottom of the web UI's sidebar (`capy --web`) changes the same setting: it runs this command for you and reloads the page when it succeeds. The setting is `language` in `config.json`; `en` and `zh-TW` are supported for now, and capy doesn't detect your operating system's language. Cobra's own text stays in English in every language: the help headings (`Usage:`, `Available Commands:`, `Flags:`), the closing `Use "capy [command] --help" …` line, the `(default …)` after a flag's description, the built-in `help` and `completion` commands' descriptions, the descriptions of `-h, --help` and `-v, --version`, and cobra's own argument and flag errors (`unknown command …`, `unknown flag: …`, `accepts 1 arg(s), received 0`). Command names, flags, TSV column names, `action` / `dir` values, `reason_code`, exit codes, table headers and the values in `auth status --json` are the same in every language, so scripts don't need to change. To add a language, see [`internal/i18n/README.md`](internal/i18n/README.md).
 
-**本機曲庫綁裝置**:連結記的是「這台裝置的這個檔」,別台裝置的 `pl pull / push / sync` 會跳過它(stderr 會說是哪台的),不會把連結刪掉;一個清單同時只能連一台裝置的 M3U——想換一台主導(或重灌之後)就在那台重跑 `capy pl link`,它會接管並說明原本是哪台。`pl push` / `pl sync` 寫回 M3U 是**整檔重寫**(`#EXTM3U` + 每行一個路徑):別的工具寫在裡面的 `#EXTINF` 與註解會被丟掉;清單改名不會寫回檔名(檔名就是它的 id,改了等於另一個清單——要改名請自己改檔名再 `pl link`)。
+## Spotify: create your own app (free, about 2 minutes)
 
-## Google Drive 同步(選用):登入 Google
+Spotify's developer policy limits each app to 5 users, so you use your own app:
 
-`capy auth login google` 之後,播放清單會同步到你 Google Drive 的應用程式資料夾(其他 app 與你自己都看不到內容,只佔你的 Drive 空間)。只索取三個權限:`openid`、`userinfo.email`、`drive.appdata`。每個權限用來做什麼、資料存在哪裡、怎麼撤銷與刪除,寫在[隱私權政策](https://capy.taislife.work/privacy)——也就是 Google 授權畫面上連過去的那一頁。
+1. Open https://developer.spotify.com/dashboard → Create app (any name)
+2. Add this Redirect URI, copied exactly (**not localhost**): `http://127.0.0.1:8888/callback`
+3. Check Web API → Save → copy the Client ID
+4. Run `capy auth login spotify` (the wizard guides you; in non-interactive environments use `--client-id`)
 
-- **從 GitHub Releases 下載的 binary**:內建專案自己的 Google client,直接執行 `capy auth login google` 就好。
-- **`go install` 或自己 build 的**:沒有內建 client,`auth login google` 的精靈會引導你建自己的(免費,約 5 分鐘):
-  1. https://console.cloud.google.com → 建立專案 → API 和服務 → 啟用「Google Drive API」
-  2. Google Auth platform → Branding:填 app 名稱與 support email;Audience 選 External
-  3. Data Access:只加這三個 scope —— `openid`、`userinfo.email`、`drive.appdata`(多加 Gmail 之類會觸發資安評估)
-  4. 建立 OAuth client:類型選「桌面應用程式(Desktop app)」;secret 只在建立當下顯示一次,立刻複製
-  5. ⚠️ Audience 按「Publish app」切到 In production —— 停在 Testing 的話 refresh token 7 天就過期,你會莫名被登出
-  6. 把 Client ID 與 Client secret 貼進精靈。非互動環境用 `--client-id` / `--client-secret` 或 `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`。
+Requires Spotify Premium (both remote playback control and Development Mode require it).
 
-不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。
+## Apple Music: copy your own web token
 
-## 登入狀態給腳本讀:`capy auth status --json`
+> ⚠️ **Not officially supported by Apple.** These tokens belong to Apple's web player, and Apple may change them at any time, which stops them working (when that happens, run `capy auth login apple` again). Using a third-party tool to access Apple Music is at your own risk under Apple's terms of service. capy only guides you and **never extracts** anything from your browser.
 
-`capy auth status` 是給人看的(跟著語系);腳本請用 `--json`。欄位只增不改,列舉值是固定的英文、**永不翻譯**;時間是 UTC 的 RFC 3339;沒有值的欄位不印。**輸出絕不含任何 token 或 secret 的值**,client ID 也只給來源(`internal/cli/auth_status_json_test.go` 把每一種憑證種成哨兵值、斷言它們不出現)。
+1. Open https://music.apple.com in a browser and sign in
+2. Open DevTools → Network, filter by `amp-api`, click any request → Request Headers
+3. Copy two values: `authorization` (`Bearer eyJ…`) and `media-user-token`
+4. Run `capy auth login apple` and paste them when the wizard asks (in non-interactive environments, use the `CAPY_APPLE_DEVELOPER_TOKEN` / `CAPY_APPLE_USER_TOKEN` environment variables and add `--i-understand`)
+
+Requires an Apple Music subscription. Playback control works only on macOS (through the Music app); search and playlists work on both macOS and Windows. capy can create playlists, and it only edits (adds, removes and reorders tracks, renames) playlists you created yourself. Whether tracks added to a playlist are also added to your Apple Music library depends on your settings in Apple Music — that's Apple's behavior, and capy doesn't add them separately. On the account tested on 2026-09-23, the playlists already had many songs that weren't in the library, and the songs capy added to playlists didn't go into the library either.
+
+## Local library (optional): M3U playlists + library.json
+
+```bash
+capy config set local_root ~/Music/capy      # holds your *.m3u8 (or .m3u) playlists and library.json
+capy pl list --provider local
+capy pl link Commute local:Commute.m3u8      # just the file name; the link id carries this device's id
+```
+
+You maintain `library.json` yourself (capy doesn't read audio tags): `{"schema_version": 1, "tracks": {"relative/path": {"title", "artists": [], "album", "duration_ms", "isrc"}}}`. Each line of a playlist is a path relative to the playlist file, and `#EXTINF` is used as a fallback title only when the library doesn't have that track. Only tracks with an `isrc` are matched to Spotify / Apple automatically; the rest rely on `capy resolve`'s fuzzy matching (on the local side, search matches within the library and doesn't use the network).
+
+**The local library is tied to a device**: a link records "this file on this device". `pl pull / push / sync` on other devices skip it (stderr says which device it belongs to) and don't delete the link. A playlist can be linked to only one device's M3U at a time — to let another device lead (or after reinstalling), run `capy pl link` again on that device; it takes over and tells you which device had it before. `pl push` / `pl sync` write back to the M3U by **rewriting the whole file** (`#EXTM3U` plus one path per line): `#EXTINF` lines and comments written by other tools are dropped. Renaming the playlist isn't written back to the file name (the file name is its id, and changing it makes it a different playlist — to rename it, rename the file yourself and run `pl link` again).
+
+## Google Drive sync (optional): log in to Google
+
+After `capy auth login google`, your playlists sync to the app data folder in your Google Drive (neither other apps nor you can see what's in it; it only uses your Drive storage). capy asks for only three permissions: `openid`, `userinfo.email` and `drive.appdata`. What each one is used for, where the data is stored, and how to revoke access and delete the data are in the [privacy policy](https://capy.taislife.work/en/privacy) — the English version of the page Google's consent screen links to.
+
+- **Binaries downloaded from GitHub Releases** include the project's own Google client: just run `capy auth login google`.
+- **`go install` or your own build** has no built-in client, and the `auth login google` wizard walks you through creating your own (free, about 5 minutes):
+  1. https://console.cloud.google.com → create a project → APIs & Services → enable "Google Drive API"
+  2. Google Auth platform → Branding: fill in the app name and support email; set Audience to External
+  3. Data Access: add only these three scopes — `openid`, `userinfo.email`, `drive.appdata` (adding Gmail or similar triggers a security assessment)
+  4. Create an OAuth client of type "Desktop app"; the secret is shown only once, when you create it, so copy it right away
+  5. ⚠️ Under Audience, click "Publish app" to switch to In production — if it stays in Testing, the refresh token expires after 7 days and you get logged out for no obvious reason
+  6. Paste the Client ID and Client secret into the wizard. In non-interactive environments, use `--client-id` / `--client-secret` or `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`.
+
+Either way, `--client-id` / `--client-secret` always override the built-in values. Your own client's secret goes only into the OS keychain. `capy auth status` shows the email of the Google account you're logged in with and this device's `device_id`; `capy auth logout google` deletes the token and your own client's secret.
+
+## Login status for scripts: `capy auth status --json`
+
+`capy auth status` is for people (it follows the interface language); scripts should use `--json`. Fields are only ever added, never changed; enum values are fixed English strings and **never translated**; times are UTC in RFC 3339; fields without a value are left out. **The output never contains the value of any token or secret**, and the client ID is reported only by status or source (`internal/cli/auth_status_json_test.go` seeds every kind of credential with sentinel values and asserts that none of them appear).
 
 ```json
 {
@@ -101,218 +113,220 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 }
 ```
 
-| 欄位 | 值 |
+| Field | Values |
 |---|---|
-| `spotify.state` | `ok` 已登入 / `missing` 沒登入 / `keychain_error` 讀不到 keychain(要處理,不是沒登入) |
-| `spotify.client_id` | `set` / `missing` / `malformed`(config 裡的不是 32 碼十六進位) |
+| `spotify.state` | `ok` logged in / `missing` not logged in / `keychain_error` the keychain can't be read (needs fixing; it doesn't mean logged out) |
+| `spotify.client_id` | `set` / `missing` / `malformed` (the value in the config isn't 32 hex characters) |
 | `google.state` | `ok` / `missing` / `keychain_error` |
-| `google.client` | `config` 自建 client / `builtin` release 內建 / `none` 還沒有 |
-| `google.access_token_expiry` | 存著的 access token 何時到期;capy 會自己換發,**不是登入的期限** |
-| `google.email`、`google.device_id` | 登入的 Google 帳號、這台裝置的 id |
-| `apple.state` | 兩個 token 合起來:`keychain_error` > `expired` > `missing` > `ok`(依序取第一個成立的) |
-| `apple.developer_token` | `ok` / `missing` / `expired` / `keychain_error`;`developer_token_expiry` 在 `ok` 與 `expired` 時給 |
+| `google.client` | `config` your own client / `builtin` built into the release / `none` no client yet |
+| `google.access_token_expiry` | when the stored access token expires; capy renews it by itself, so this is **not when your login expires** |
+| `google.email`, `google.device_id` | the Google account you're logged in with, and this device's id |
+| `apple.state` | both tokens combined: `keychain_error` > `expired` > `missing` > `ok` (the first one that applies) |
+| `apple.developer_token` | `ok` / `missing` / `expired` / `keychain_error`; `developer_token_expiry` is given when it's `ok` or `expired` |
 | `apple.user_token` | `ok` / `missing` / `keychain_error` |
-| `apple.storefront` | 例如 `tw` |
+| `apple.storefront` | e.g. `tw` |
 
-## 常用命令
+## Common commands
 
 ```
-capy search 派對動物 [--provider apple]
-capy play 派對動物                      # 統一搜尋:曲目、藝人熱門歌曲、我的播放清單;歧義時開挑選器
-capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify 開發模式 app 拿不到 top-tracks,退回依熱門度排序的搜尋);清單名完全相符 = 播清單(先 capy pl list 一次)
-capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
-capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
-capy                    # 直接打 capy(在終端機裡)= 互動式介面;pipe / cron 下仍是印 help
-capy --web              # 在瀏覽器操作:只綁 127.0.0.1、啟動時印一次性網址;所有命令都能在頁面上跑
+capy search yellow [--provider apple]
+capy play yellow                        # unified search: tracks, artists' top tracks, my playlists; opens a picker when ambiguous
+capy play coldplay / capy play Commute  # artist = play their top tracks (Spotify Development Mode apps can't get top-tracks, so capy falls back to a search sorted by popularity); exact playlist name = play the playlist (run capy pl list once first)
+capy play --type track yellow           # for scripts: deterministic, always plays the first result; the prefixes artist: / pl: / track: do the same
+capy play --pick                        # open the picker right away (playlists and recent items from the local cache)
+capy                    # plain capy (in a terminal) = interactive mode; under a pipe / cron it still prints help
+capy --web              # use capy from your browser: binds to 127.0.0.1 only and prints a one-time URL at startup; every command can run on the page
 capy pause / next / prev / now / devices
-capy seek 1:23          # 跳到曲目內的位置;也吃 h:mm:ss(1:05:30)與純秒數(83)
-capy vol 40             # 音量 0-100
-capy pl list / capy pl show <名稱|ID>
-capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
-capy pl link 通勤 spotify --create          # 在 Spotify / Apple Music 建一個跟 canonical 同名的私人空清單再連上(local 不行);複製清單見下方
-capy pl unlink 通勤 spotify
-capy pl show / link / unlink / pull / push / sync / dedup   # 不帶清單名且在終端機裡 = 開挑選器(link 三段,第二段也能選在 Spotify / Apple Music 建新的空清單;unlink 兩段);pipe / cron 維持原本的參數錯誤
-capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
-capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # canonical → 平台(Spotify、Apple Music、本機曲庫);要先 pull 過、平台沒有未 pull 的變更
-capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
-capy pl dedup 通勤 [--dry-run] [--yes] [--force]   # 去掉正本裡重複的曲目(同平台 id 或同 ISRC;保留第一份、順序不動),再推到可寫的平台;沒有重複就零寫入
-capy pl dedup apple:冬日暖調                     # 直接讀平台清單、只報告哪幾首重複(不碰 Drive、不需要連結);要由 capy 去掉就用上一行的寫法
-capy migrate 公路旅行 --from spotify --to apple[:既有清單] [--dry-run] [--yes]   # 把清單搬到另一個平台(兩個方向都行;新建或加進既有;順序不動、只新增、不動來源);見下方「跨平台複製清單」
-capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
-capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
-capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個平台沒有這首;id 已屬另一 cid 時合併(非 TTY 要 --yes)
-capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
-capy drive init --from-local [--dry-run] [--yes]   # 逃生口:Drive 空 / 部分遺失時用本機 state.db 補回缺的檔
+capy seek 1:23          # jump to a position in the track; also accepts h:mm:ss (1:05:30) and plain seconds (83)
+capy vol 40             # volume 0-100
+capy pl list / capy pl show <name|ID>
+capy pl link Commute spotify:<playlist ID or name>   # link a master copy (created if it doesn't exist) to a platform playlist; only explicit links count, no automatic name matching
+capy pl link Commute spotify --create                # create an empty private playlist with the master copy's name on Spotify / Apple Music, then link it (not for local); for copying playlists, see below
+capy pl unlink Commute spotify
+capy pl show / link / unlink / pull / push / sync / dedup   # with no playlist name in a terminal = open a picker (link in three steps, and the second step can also create a new empty playlist on Spotify / Apple Music; unlink in two); under a pipe / cron you still get the usual argument error
+capy pl pull Commute [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # platform → master copy → Drive; changes are listed first and written only after you confirm (log in with capy auth login google first)
+capy pl push Commute [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # master copy → platforms (Spotify, Apple Music, local library); needs an earlier pull and no unpulled changes on the platform
+capy pl sync Commute [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # one round of pull, then push: one table, one confirmation; this is the one for cron
+capy pl dedup Commute [--dry-run] [--yes] [--force]   # remove duplicate tracks from the master copy (same platform id or same ISRC; keeps the first copy, order unchanged), then push to the writable platforms; writes nothing when there are no duplicates
+capy pl dedup apple:Chill                            # read the platform playlist directly and only report which tracks are duplicated (doesn't touch Drive, needs no link); to have capy remove them, use the form above
+capy migrate Roadtrip --from spotify --to apple[:existing-playlist] [--dry-run] [--yes]   # move a playlist to another platform (either direction; new, or into an existing one; order unchanged, only adds, source untouched); see "Copy a playlist across platforms" below
+capy resolve [Commute] [--provider apple] [--dry-run] [--yes]   # map tracks to their ids on each platform: ISRC lookup → fuzzy match; ≥85 is written automatically, the rest go to the review queue
+capy resolve --review                     # review the queue item by item in a terminal (accept / skip / search manually / pin as unavailable / keep the current one)
+capy resolve pin <cid> apple:<id|none> [--yes]   # pinning for scripts; none = this platform doesn't have the track; merges when the id already belongs to another cid (needs --yes without a TTY)
+capy export > backup.json                 # escape hatch: this computer's canonical data (the Drive files merged into one), without depending on Drive
+capy drive init --from-local [--dry-run] [--yes]   # escape hatch: when Drive is empty or partly lost, restore the missing files from this computer's state.db
 capy doctor [--provider apple]
-capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
-capy update [--dev]                      # 見上方「更新」
+capy config set default_provider apple   # no need to pass --provider every time after this; also config get / list
+capy config set language zh-TW           # interface language (default en); see "Language" above
+capy update [--dev]                      # see "Updating" above
 ```
 
-### 互動式介面
+### Interactive mode
 
-在終端機直接執行 `capy`(不帶任何參數)會開互動式介面。終端機夠大(至少 30 行高)時水豚常駐在畫面底部、一直動(偶爾眨眼、撥耳朵,隔一陣子吃一根牧草;打 `/` 開選單時牠先讓位);終端機比較小的話,牠開場動個三秒左右(按任何鍵可以跳過)就定格印進捲動區。不想要任何動畫(螢幕閱讀器、SSH 連線很慢、要錄畫面)就設 `CAPY_MOTION=never`:水豚直接定格,之後一格都不動。
-除了水豚,TUI 只管**底部四行**:分隔線、現在在播什麼、輸入行、按鍵提示。
+Running `capy` in a terminal with no arguments opens interactive mode. When the terminal is big enough (at least 30 rows tall), the capybara stays at the bottom of the screen and keeps moving (blinking now and then, flicking its ears, and eating a stalk of hay every so often; it steps aside when you open the menu with `/`). In a smaller terminal it plays for about three seconds at the start (press any key to skip) and then freezes into the scrollback. If you don't want any animation (screen readers, slow SSH connections, screen recordings), set `CAPY_MOTION=never`: the capybara is drawn still and never moves.
+Apart from the capybara, the TUI only manages the **bottom four lines**: a divider, what's playing, the input line and key hints.
 
 ```
 -------------------------------------------------------------------------------
-  ▶ 派對動物 · 1:23 / 4:09 · MacBook Pro · 音量 60
-> pl sync 冬日暖調
-  space 播放/暫停 · ←→ ±10 秒 · / 命令 · ? 按鍵 · q 離開
+  ▶ Yellow · 1:23 / 4:09 · MacBook Pro · volume 60
+> pl sync Chill
+  space play/pause · ←→ ±10 s · / commands · ? keys · q quit
 ```
 
-命令的回音、錯誤與非零結束碼都推進**捲動區**,永久留著、可以往回捲、可以複製——上面那一大片
-全部是終端機自己的捲動區,TUI 不會重繪它。按 `?` 把完整鍵位也印進去。
+Command echoes, errors and non-zero exit codes go into the **scrollback**, where they stay: you can scroll back and copy them. Everything above those four lines is the terminal's own scrollback, and the TUI never redraws it. Press `?` to print the full key list there too.
 
-按 `/` 開命令選單:打字即時過濾,`↑↓` 選,`Tab` 或 `⏎` 把命令**帶進輸入行**讓你補參數,`Esc` 收起。
-打到完整命令(例如 `/pl show 冬日暖調`)選單就收起,`⏎` 直接執行——開頭的 `/` 會自動拿掉。
-選單向上長、壓在捲動區前面,不插進歷程。清單直接來自 cobra 的命令樹,不會跟實作走鏢。
-`↑↓` 在選單沒開時翻這次 session 打過的命令(只在記憶體裡,離開就沒了)。
+Press `/` to open the command menu: type to filter, `↑↓` to select, `Tab` or `⏎` to **put the command on the input line** so you can add arguments, `Esc` to close it.
+Once you've typed a complete command (e.g. `/pl show Chill`), the menu closes and `⏎` runs it — the leading `/` is removed for you.
+The menu grows upward, drawn over the scrollback, and isn't inserted into the history. Its list comes straight from cobra's command tree, so it can't drift from the implementation.
+When the menu isn't open, `↑↓` steps through the commands you typed this session (kept in memory only; gone when you quit).
 
-輸入的命令**不是在同一個行程裡跑**,而是重新執行 `capy` 自己——所以每個子命令完整保有它原本的行為
-(表格、挑選器、確認提示)。清單名有空白時用雙引號:`pl show "上班 通勤"`。
+Commands you type **don't run in the same process**: capy runs itself again, so each subcommand keeps all its usual behavior
+(tables, pickers, confirmation prompts). Put playlist names with spaces in double quotes: `pl show "Morning Commute"`.
 
-還沒登入也可以開:狀態區會說明原因,你可以直接在那行輸入 `auth login spotify`。
+You can open it before logging in: the status area explains what's missing, and you can type `auth login spotify` right on that line.
 
-`capy --provider apple` 開的介面會把 `--provider` 一起帶給你在那行輸入的子命令(只對吃這個參數的命令加),
-所以整個畫面是同一個平台。
+Interactive mode opened with `capy --provider apple` passes `--provider` on to the subcommands you type on that line (only to commands that accept it),
+so the whole screen stays on one platform.
 
-顏色是冷冽的 geek 綠(`internal/ui/theme.go` 的 `GeekGreen`);換色的接縫就是那個 `Theme` struct,
-之後開放切換時從那裡加。
+The color is a cool geek green (`GeekGreen` in `internal/ui/theme.go`); the seam for changing colors is that `Theme` struct,
+which is where switching will be added later.
 
 
-所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,放不下時儲存格**換行、不截斷**(ID 欄永遠完整,曲名最後才縮);比終端機還寬時會先開一個**檢視窗格**(每列一行,`←→` 橫向、`↑↓` 上下、`g`/`G` 頭尾、`q` 離開;`Ctrl-C` 是中止,命令以 exit 130 結束、不再往下問),離開後表格以換行的形式留在捲動區。帶 `--yes` 的命令不開窗格;`CAPY_PAGER=never` 一律不開(script / expect、CI 給了 pty 那種「有 TTY 但沒有人」的情況)。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
+Without a TTY (pipe / cron), every command prints plain-text TSV that you can `cut -f` directly. When `play` gets an ambiguous query without a TTY, it exits 2 and prints the candidates (`type\tid\tlabel\tdetail`) — it doesn't play and doesn't ask — so scripts should use `--type` or a prefix. In a terminal, tables are aligned by display width, and cells that don't fit **wrap instead of being truncated** (the ID column is always complete, and titles shrink last). When a table is wider than the terminal, a **pager** opens first (one row per line; `←→` scroll sideways, `↑↓` up and down, `g`/`G` first/last, `q` quit; `Ctrl-C` aborts: the command exits 130 and asks nothing further), and after you leave it the table stays in the scrollback in wrapped form. Commands run with `--yes` don't open the pager; `CAPY_PAGER=never` never opens it (for script / expect, or CI that provides a pty — "a TTY but no person"). The config directory can be overridden with `CAPY_CONFIG_DIR`.
 
-被 SIGINT / SIGTERM 結束的命令以 exit `130` / `143` 結束(shell 慣例 128+n),`capy now --watch; echo $?` 分得出「被砍」跟「做完」:互動式介面、`now --watch` 按 `q` / `Esc` 離開是 `0`,按 Ctrl-C 離開是 `130`(在那兩個畫面裡 Ctrl-C 是按鍵不是訊號,但結束碼跟真的 SIGINT、跟檢視窗格一致),被 `kill` 是 `143`;`capy --web` 本來就是用 Ctrl-C 結束的,所以它正常收掉是 130(launchd / `kill` 是 143);其餘命令中途被砍時 stderr 的訊息照舊、只是結束碼從 1 變成 130 / 143。這是 capy 自己以 130 / 143 結束(`$?` 同被訊號殺掉,但對 `waitpid` 來說是正常結束);用 launchd 之類的 supervisor 跑 `capy --web` 時,它收掉的結束碼不是 0,別把「非 0 就重啟」開在它身上。命令自己已經有話要說的不被蓋掉——下面的 exit `2` / `3`,以及「平台寫到一半」那種 exit `1`(訊息會說已寫幾首)。
+A command ended by SIGINT / SIGTERM exits `130` / `143` (the shell convention 128+n), so `capy now --watch; echo $?` can tell "killed" from "finished". In interactive mode and `now --watch`, leaving with `q` / `Esc` is `0` and with Ctrl-C is `130` (in those two screens Ctrl-C is a key press, not a signal, but the exit code matches a real SIGINT and the pager), and being `kill`ed is `143`. `capy --web` is meant to be stopped with Ctrl-C, so its normal shutdown is 130 (launchd / `kill` gives 143). Other commands interrupted midway print the same stderr message as before; only the exit code changes from 1 to 130 / 143. capy exits with 130 / 143 by itself (`$?` looks the same as being killed by the signal, but to `waitpid` it's a normal exit), so when you run `capy --web` under a supervisor such as launchd, its shutdown exit code isn't 0 — don't set "restart on non-zero" on it. Exit codes a command already uses to say something aren't overridden: exit `2` / `3` below, and the exit `1` for "the platform was partly written" (the message says how many tracks were written).
 
-`capy pl pull` 的 exit code 是對外契約(cron 靠它):`0` 無變更或已成功套用、`1` 錯誤、`2` 有待套用的變更(`--dry-run`、非 TTY 沒給 `--yes`、在終端機取消)、`3` 安全閥擋下(Drive appdata 不完整;或單一清單要刪 >10 首、或 >30% 且 >3 首)。`--yes` 只跳過確認、`--force` 只越過刪除閾值且只能配單一清單(`capy pl pull <名稱> --force`,不能配 `--all`:安全閥一次只解除一個清單),兩者都不放行「Drive 不完整」——那條的出口是 `capy drive init --from-local`。變更集在非 TTY 下是無標題 TSV:`action provider playlist pos cid provider_id title artists reason reason_code`(`reason` 給人看、跟著語系;腳本請看 `reason_code`,它是固定的代碼,例如 `added_on_platform`、`removed_on_platform`,完整的表見[下方](#reason_code-代碼表));「這次動了幾筆」看行數,不佔 exit code。寫入順序固定 Drive 先、本機 `state.db` 後;`state.db` 只是快取,刪掉後下一次 pull 會從 Drive 重建。
+The exit codes of `capy pl pull` are an external contract (cron relies on them): `0` no changes, or applied successfully; `1` error; `2` changes pending (`--dry-run`, no TTY without `--yes`, or cancelled in the terminal); `3` stopped by a safety check (the Drive appdata is incomplete, or a single playlist would lose >10 tracks, or >30% and >3 tracks). `--yes` only skips the confirmation; `--force` only overrides the removal threshold and works only with a single playlist (`capy pl pull <name> --force`, not with `--all`: the safety check is lifted for one playlist at a time). Neither lets "Drive incomplete" through — the way out of that one is `capy drive init --from-local`. Without a TTY the change set is headerless TSV: `action provider playlist pos cid provider_id title artists reason reason_code` (`reason` is for people and follows the interface language; scripts should read `reason_code`, a fixed code such as `added_on_platform` or `removed_on_platform` — the full table is [below](#reason_code-table)). "How many changes this time" is the number of lines, not the exit code. Writes always go to Drive first, then to the local `state.db`; `state.db` is only a cache, and if you delete it, the next pull rebuilds it from Drive.
 
-`capy pl push` 是反方向(canonical → 平台),形狀與 exit code 同 `pl pull`,多兩個 `--yes` / `--force` 都不放行的前提:這台裝置對那個平台清單 pull 過(不然會把平台清單刪光),而且平台上沒有還沒 pull 的變更(不然會蓋掉你剛在平台改的)——先 `capy pl pull`。變更集的 `action` 多了 `skip`(canonical 有、平台沒有、又沒有這個平台的 id:先 `capy resolve`),它不是變更,數行數時要扣掉。寫入 Spotify 是整批取代(前 100 首一次、其後每批 100),所以平台端的「加入時間」會重設;含 local file 的 Spotify 清單暫不支援 push(local file 加不回去)。寫到一半失敗會以 exit 1 結束並講明已寫幾首,重跑一次補回其餘;確認之後寫入之前平台又變了(手機同時在加歌)那份不寫、exit 3。寫入 Apple Music:只加歌走 Apple 文件化的新增端點(每批 100、接在尾端);有移除或換序時是整批取代(網頁播放器自己用的端點,Apple 沒有正式承諾);改名只改名字、描述保留。只有你自己建的清單能寫——Apple 精選、喜好歌曲、已購買的音樂會擋下、零寫入;**協作播放清單**目前 capy 完全不寫(Apple 對它的整批取代回 500):push / sync 在列變更時就跳過那一格並說明,明說 `--provider apple` 要推它是 exit 3;請在 app 裡手動,或先複製成一般清單再連結(未實測,通常可以);加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定。移除與換序同樣是整批取代:清單順序一定照正本;Mac 的 Music app 能顯示每首歌加進清單的「加入日期」,它會不會因此被重設還沒驗證(Spotify 的加入時間會,見上)。Apple 商店裡已經下架的歌,加歌請求照樣成功但實際上不會加入;capy 寫完會重讀,內容和預期不同時會警告。
+`capy pl push` goes the other way (master copy → platforms), with the same shape and exit codes as `pl pull`, plus two preconditions that neither `--yes` nor `--force` overrides: this device has pulled that platform playlist before (otherwise the platform playlist could be wiped), and the platform has no changes that haven't been pulled (otherwise it would overwrite what you just changed on the platform) — run `capy pl pull` first. The change set's `action` adds `skip` (in the master copy but not on the platform, and there's no id for this platform: run `capy resolve` first); it isn't a change, so leave it out when counting lines. Writing to Spotify replaces the whole playlist (the first 100 tracks in one request, then batches of 100), so the platform's "date added" is reset; Spotify playlists containing local files can't be pushed yet (local files can't be added back). If a write fails partway, capy exits 1 and says how many tracks were written; run it again to write the rest. If the platform changes after you confirm but before capy writes (your phone adding songs at the same moment), that playlist isn't written and capy exits 3. Writing to Apple Music: when the changes only add tracks, capy uses Apple's documented add endpoint (batches of 100, appended at the end); when there are removals or reorders, it replaces the whole playlist (through an endpoint Apple's web player itself uses, which Apple makes no official commitment to); a rename changes only the name and keeps the description. Only playlists you created yourself can be written — Apple-curated playlists, Favorite Songs and Purchased Music are refused with zero writes. capy currently doesn't write **collaborative playlists** at all (Apple answers a whole-playlist replace on them with a 500): push / sync skip that cell when listing changes and say why, and explicitly pushing one with `--provider apple` exits 3; edit it by hand in the app, or copy it to a regular playlist first and link that (untested; it usually works). Whether tracks added to a playlist are also added to your Apple Music library depends on your Apple Music settings. Removals and reorders also replace the whole playlist, so the order always follows the master copy. The Music app on a Mac can show when each song was added to a playlist ("Date Added"); whether that gets reset as a result isn't verified yet (Spotify's date added is, see above). For songs no longer available in the Apple Music store, the add request still succeeds but nothing is actually added; capy re-reads the playlist after writing and warns when the content differs from what it expected.
 
-`capy pl sync` 是同一把鎖裡「每個清單先 pull 各平台、再 push 各平台」的一輪(provider 依字典序),一張表、一次確認,exit code 同上;push 的兩個前提由「先 pull 後 push」自動滿足,push 半邊直接用 pull 半邊剛讀到的平台清單、不再讀一次。TSV 比 pull / push 多一欄在最前面:`dir`(`pull` / `push`)。`--dry-run` 的 push 半邊是用 pull 套用後的 canonical 算的,所以看得到完整一輪;`--provider spotify` 只走一個平台;指到寫不了的平台(例如別台裝置的本機清單)時只做 pull 半邊(stderr 會說)。刪除閾值對每個 (清單, 平台) 各算,任一個擋下整輪就零寫入(`--force` 放行的話,pull 吸收進來的刪除會在同一個指令裡推到這個清單連結的每一個平台——先跑 `--dry-run`);但某個清單的某個平台推不了(例如含 local file)只會跳過那一格的 push 半邊(stderr 會說),其餘照常——cron 放 `capy pl sync --all --yes` 不會被一個清單綁死,exit 2 / 3 時再到終端機看。
+`capy pl sync` is one round under a single lock, "for each playlist, first pull from each platform, then push to each platform" (providers in lexical order), with one table and one confirmation; exit codes as above. Pulling first automatically meets push's two preconditions, and the push half reuses the platform playlists the pull half just read instead of reading them again. The TSV has one more column in front than pull / push: `dir` (`pull` / `push`). With `--dry-run`, the push half is computed from the master copy as it would be after the pull is applied, so you see the whole round; `--provider spotify` runs one platform only; pointed at a platform that can't be written (e.g. another device's local playlist), it runs only the pull half (stderr says so). The removal threshold is checked per (playlist, platform), and if any of them stops, the whole round writes nothing (if you override it with `--force`, the removals absorbed by the pull are pushed in the same command to every platform linked to that playlist — run `--dry-run` first). But when one playlist can't be pushed to one platform (e.g. it contains local files), only that cell's push half is skipped (stderr says so) and the rest goes ahead — so `capy pl sync --all --yes` in cron won't get stuck on one playlist; when it exits 2 / 3, look at it in a terminal.
 
-`capy pl dedup` 去掉清單裡重複的曲目。重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首);保留第一次出現的那份、拿掉後面的,**剩下的相對順序一個都不動——清單順序是你加歌的記憶,capy 沒有任何路徑會排序或打亂它**(去重只拿掉後出現的份;同步只在平台自己重排時才跟著動)。`capy pl dedup apple:冬日暖調` 這種寫法直接讀平台清單、只印報告(非 TTY 是 TSV:`pos id title artists reason reason_code`,`pos` 從 0 起、指向保留的那份,`reason_code` 是 `dup_id` 或 `dup_isrc`;有沒有重複 exit code 都是 0),不碰 Drive、不需要連結——要由 capy 去掉,就把清單連到正本再用下一種寫法;這種寫法配 `--yes` / `--force` / `--dry-run` / `--provider` 是錯誤(它們是 canonical 那條路的 flag)。給 canonical 清單名(`capy pl dedup 通勤`)則是 `pl sync` 的一輪中間多一步:先 pull、正本去重、再 push 把多出來的份從可寫的平台拿掉;一張表(`dir` 多一種 `dedup`,那些列的 `pos` 是正本裡的位置)、一次確認,exit code 同 `pl sync`;正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 `pl sync`,stderr 會說;`--provider` 沒選到或讀不到的平台這次沒檢查,stderr 也會說,不會被算成「沒重複」)。刪除閾值去重與 push 各算,`--force` 越過(去掉的份會在同一個指令裡推到清單連結的每個可寫平台)。寫不了的平台上還留著的份會列在 stderr 請你手動刪,下一次 pull 不會把它們加回正本。同 ISRC 不同 id 時正本記第一份,平台上留下哪個 id 由配對決定(相鄰兩份時留後面那個)。
+`capy pl dedup` removes duplicate tracks from a playlist. A duplicate is the same platform id or the same ISRC (a single and its album version count as one track); the first occurrence is kept and later ones are removed, and **the relative order of everything else doesn't change — a playlist's order is your memory of adding the songs, and no path in capy sorts or shuffles it** (dedup only removes the later copies; sync only reorders when the platform itself was reordered). The form `capy pl dedup apple:Chill` reads the platform playlist directly and only prints a report (without a TTY it's TSV: `pos id title artists reason reason_code`, where `pos` (0-based) is the position of the duplicate — the copy to remove — and `reason` names the position of the copy that's kept, and `reason_code` is `dup_id` or `dup_isrc`; the exit code is 0 whether or not there are duplicates). It doesn't touch Drive and needs no link — to have capy remove the duplicates, link the playlist to a master copy and use the next form; `--yes` / `--force` / `--dry-run` / `--provider` with this form are an error (they're flags for the master-copy path). Given a master copy's name (`capy pl dedup Commute`), it's a `pl sync` round with one more step in the middle: pull first, dedup the master copy, then push to remove the extra copies from the writable platforms. One table (`dir` has one more value, `dedup`, and in those rows `pos` is the position in the master copy), one confirmation, exit codes as for `pl sync`. Nothing is written when neither the master copy nor the platforms checked this time have duplicates (other changes the pull half sees are left for `pl sync`, and stderr says so; platforms not selected by `--provider`, or that couldn't be read, aren't checked this time — stderr says that too — and aren't counted as "no duplicates"). The removal threshold is checked separately for dedup and push; `--force` overrides it (the removed copies are pushed in the same command to every writable platform the playlist is linked to). Copies left on platforms capy can't write to are listed on stderr for you to delete by hand, and the next pull won't add them back to the master copy. When the same ISRC has different ids, the master copy keeps the first one, and which id stays on the platform depends on how the copies pair up (of two adjacent copies, the later one stays).
 
-`capy resolve` 補 `pl pull` 不做的事:清單連結了兩個平台、曲目只從其中一邊 pull 進來時,另一邊的 id 由它找——先用 ISRC 反查(信心 95),沒有再用標題 + 藝人 + 時長模糊比對(0–100;標題一邊有 live / remix / acoustic / cover 之類、或時長差 >3 秒,上限 84)。≥85 自動寫入,走 `pl pull` 同一套鎖、閘與寫入順序;其餘印成 review 佇列——候選已屬另一首的一律進佇列,**合併只由人決定**。exit code:`0` 無事可寫或已寫入(佇列有東西仍是 0,cron 放 `capy resolve --yes` 不會因為永遠有幾首解不開而報錯)、`1` 錯誤、`2` 有可自動寫入的 mapping 但沒確認(`--dry-run`、非 TTY 沒 `--yes`、取消)。非 TTY 的 TSV:`action cid provider provider_id confidence source title artists reason reason_code`(`action` ∈ `map` 待寫入 / `review` 要人裁決 / `conflict` 同 ISRC 觀測到不同 id)。`--review` 在終端機逐筆裁決,決定寫成釘選(之後自動程序不再改);非 TTY 只印佇列並以 exit 2 結束——腳本用 `capy resolve pin`。單次 resolve 打超過 200 次 API 會在 stderr 提醒(未解開的曲目每次都會重查,目前沒有 negative cache)。某個平台授權失效時只跳過那個平台(stderr 會說),別的平台照解;單次查詢失敗的那首列成 `review` 並在 reason 寫明,下次再查。`pl pull` 結尾會提示「N 首尚未對應到 <provider>」。
+`capy resolve` does what `pl pull` doesn't: when a playlist is linked to two platforms and its tracks were pulled in from only one side, it finds the other side's ids — first by ISRC lookup (confidence 95), otherwise by fuzzy matching on title + artists + duration (0–100; capped at 84 when one of the titles has live / remix / acoustic / cover or similar, or the durations differ by more than 3 seconds). ≥85 is written automatically, through the same lock, gate and write order as `pl pull`; the rest are printed as a review queue — a candidate that already belongs to another track always goes to the queue, because **only a person decides a merge**. Exit codes: `0` nothing to write, or written (still 0 when the queue has items, so `capy resolve --yes` in cron doesn't fail just because a few tracks never resolve); `1` error; `2` there are mappings to write automatically but they weren't confirmed (`--dry-run`, no TTY without `--yes`, cancelled). TSV without a TTY: `action cid provider provider_id confidence source title artists reason reason_code` (`action` ∈ `map` to be written / `review` needs a person / `conflict` different ids observed for the same ISRC). `--review` reviews the queue item by item in a terminal and writes your decisions as pins (automatic runs don't change them afterwards); without a TTY it only prints the queue and exits 2 — scripts use `capy resolve pin`. When one resolve run makes more than 200 API calls, it warns on stderr (unresolved tracks are looked up again every time; there's no negative cache yet). When a platform's authorization no longer works, only that platform is skipped (stderr says so) and the others are resolved as usual; a track whose lookup fails is listed as `review` with the reason, and is looked up again next time. At the end, `pl pull` tells you when "N tracks haven't been matched on <provider> yet".
 
-兩個逃生口:`capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),把 Drive 檔的合併形式輸出到 stdout——鍵是檔名(`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`)、值是該檔內容的縮排形式(壓回 compact 後與 Drive 上逐位元相同);本機沒資料時 exit 1 且不印東西。它用唯讀方式開 `state.db`:壞檔不刪、版本不符不改名、全新機器不建檔,而且整份匯出是一個一致的快照(與 cron 的 `pl pull` 同時跑也不會撕裂)。`capy drive init --from-local` 是 `pl pull` 以 exit 3 擋下「Drive 不完整」之後的出口:只建 Drive 缺的檔、不覆寫還在的檔、不動本機快取,別台裝置的 `dev__` 檔不代為上傳;先列出要建的檔(非 TTY 是 TSV `action file`),`--yes` 或在終端機確認後才上傳,`--dry-run` 只列不傳。確認訊息會帶目前登入的 Google 帳號:登錯帳號會把整個曲庫傳到別人的 appdata。
+Two escape hatches. `capy export` reads only the local `state.db` (it touches neither Drive, the network nor the keychain) and prints the Drive files merged into one to stdout: the keys are file names (`manifest.json`, `tracks.json`, `pl__<pid>.json`, `dev__<device_id>.json`) and the values are those files' contents, indented (compacted again, they're byte-for-byte what's on Drive); with no local data it exits 1 and prints nothing. It opens `state.db` read-only: a broken file isn't deleted, a version mismatch isn't renamed, a fresh machine gets no new file, and the whole export is one consistent snapshot (running it alongside a cron `pl pull` won't tear it). `capy drive init --from-local` is the way out after `pl pull` stops with exit 3 on "Drive incomplete": it creates only the files missing on Drive, never overwrites the ones still there, leaves the local cache alone, and doesn't upload other devices' `dev__` files on their behalf. It lists the files to create first (without a TTY, TSV `action file`) and uploads only with `--yes` or after you confirm in a terminal; `--dry-run` only lists. The confirmation shows the Google account you're logged in to: logged in to the wrong account, it would upload your whole library to someone else's appdata.
 
-### reason_code 代碼表
+### reason_code table
 
-`pl pull` / `push` / `sync` / `migrate` / `dedup` / `resolve` 的 TSV 最後一欄都是 `reason_code`:固定的英文代碼,**永不翻譯、只增不改**;前一欄 `reason` 是同一件事給人看的說法,跟著語系。腳本判斷原因請看這一欄。同一個代碼可以出現在不同命令(例如 `push`)。`pl sync` / `migrate` / `pl dedup` 的 TSV 最前面多一欄 `dir`,每一列照它的 `dir` 對下表:`dir=pull` 同 `pl pull`、`dir=push` 同 `pl push`。新增代碼時同一個 PR 補這張表(`internal/cli/reason_code_test.go` 會擋)。
+The last column of the TSV from `pl pull` / `push` / `sync` / `migrate` / `dedup` / `resolve` is always `reason_code`: a fixed English code that is **never translated, only added to, never changed**. The column before it, `reason`, says the same thing for people and follows the interface language. Scripts that need to know why should read this column. The same code can appear in different commands (for example `push`). The TSV of `pl sync` / `migrate` / `pl dedup` has an extra `dir` column in front; look up each row by its `dir`: `dir=pull` rows as in `pl pull`, `dir=push` rows as in `pl push`. When you add a code, update this table and the one in [README.zh-TW.md](README.zh-TW.md#reason_code-代碼表) in the same PR (`internal/cli/reason_code_test.go` checks both).
 
-| 命令(列) | action | reason_code | 意思 |
+| Command (rows) | action | reason_code | Meaning |
 |---|---|---|---|
-| `pl pull`(與 `dir=pull` 列) | `add` | `added_on_platform` | 平台上新加的曲目,加進正本 |
-| | `remove` | `removed_on_platform` | 平台上拿掉的曲目,從正本移除 |
-| | `move` | `moved_on_platform` | 平台上換了位置 |
-| | `rename` | `renamed_on_platform` | 平台上的清單改了名 |
-| | `unlink` | `playlist_gone` | 平台上的清單不見了,取消連結 |
-| `pl push`(與 `dir=push` 列) | `add` | `push` | 正本有、平台沒有,推上去 |
-| | `remove` | `removed_in_master` | 正本拿掉了,從平台移除 |
-| | `move` | `moved_in_master` | 正本換了位置 |
-| | `rename` | `renamed_in_master` | 正本改了名 |
-| | `skip` | `no_mapping` | 沒有這個平台的 id,這次不推:先 `capy resolve` |
-| | `skip` | `unpushable` | 有 id 但推不上去(local file、只在資料庫裡、檔案不在這台電腦),請在平台手動加 |
-| `migrate` 的 `dir=migrate` 列(`action` 一律是 `add`,搬不搬得過去看代碼) | `add` | `push` | 搬得過去(網頁的搬家精靈靠它認) |
-| | `add` | `no_mapping` | 目標平台沒對應到,這次不搬 |
-| | `add` | `unpushable` | 目標平台有 id 但推不上去,這次不搬 |
-| `pl dedup <正本>` 的 `dir=dedup` 列 | `remove` | `duplicate` | 正本裡後出現的重複份(保留第一份) |
-| `pl dedup <平台>:<清單>`(只報告,沒有 action 欄) | | `dup_id` | 同平台 id |
-| | | `dup_isrc` | 同 ISRC |
-| `resolve` | `map` | `isrc` | ISRC 反查到,自動寫入 |
-| | `map` | `fuzzy` | 模糊比對 ≥85,自動寫入 |
-| | `review` | `no_candidate` | 找不到候選 |
-| | `review` | `low_score` | 候選分數不到 85 |
-| | `review` | `candidate_taken` | 候選已屬於另一首(合併只由人決定) |
-| | `review` | `candidate_assigned` | 候選在這一輪已經分給另一首 |
-| | `review` | `lookup_failed` | 查詢失敗,下次再查 |
-| | `conflict` | `isrc_conflict` | 同 ISRC 觀測到不同 id |
+| `pl pull` (and `dir=pull` rows) | `add` | `added_on_platform` | Added on the platform; added to the master copy |
+| | `remove` | `removed_on_platform` | Removed on the platform; removed from the master copy |
+| | `move` | `moved_on_platform` | Moved on the platform |
+| | `rename` | `renamed_on_platform` | The playlist was renamed on the platform |
+| | `unlink` | `playlist_gone` | The playlist is gone from the platform; unlinked |
+| `pl push` (and `dir=push` rows) | `add` | `push` | In the master copy but not on the platform; pushed |
+| | `remove` | `removed_in_master` | Removed from the master copy; removed from the platform |
+| | `move` | `moved_in_master` | Moved in the master copy |
+| | `rename` | `renamed_in_master` | The master copy was renamed |
+| | `skip` | `no_mapping` | No id for this platform, so not pushed this time: run `capy resolve` first |
+| | `skip` | `unpushable` | Has an id but can't be pushed (a local file, only in the library, or the file isn't on this computer); add it on the platform by hand |
+| `migrate`'s `dir=migrate` rows (`action` is always `add`; the code says whether the track can be moved) | `add` | `push` | Can be moved (the web UI's move wizard relies on this) |
+| | `add` | `no_mapping` | Not matched on the target platform; not moved this time |
+| | `add` | `unpushable` | Has an id on the target platform but can't be pushed; not moved this time |
+| `pl dedup <master copy>`'s `dir=dedup` rows | `remove` | `duplicate` | A later duplicate in the master copy (the first copy is kept) |
+| `pl dedup <platform>:<playlist>` (report only, no action column) | | `dup_id` | Same platform id |
+| | | `dup_isrc` | Same ISRC |
+| `resolve` | `map` | `isrc` | Found by ISRC lookup; written automatically |
+| | `map` | `fuzzy` | Fuzzy match ≥85; written automatically |
+| | `review` | `no_candidate` | No candidate found |
+| | `review` | `low_score` | The candidate scored below 85 |
+| | `review` | `candidate_taken` | The candidate already belongs to another track (only a person decides a merge) |
+| | `review` | `candidate_assigned` | The candidate was already given to another track in this run |
+| | `review` | `lookup_failed` | The lookup failed; it's tried again next time |
+| | `conflict` | `isrc_conflict` | Different ids observed for the same ISRC |
 
-### 網頁介面
+### Web UI
 
 ```bash
 capy --web
 ```
 
-在你這台電腦上起一個只綁 `127.0.0.1` 的網頁介面,啟動時印一行網址(帶一次性 token),在終端機裡會順便替你開瀏覽器;放進管線或背景執行時只印網址。
+Starts a web UI on your computer, bound only to `127.0.0.1`, and prints one line with its URL (carrying a one-time token) at startup; in a terminal it also opens the browser for you, and in a pipeline or in the background it only prints the URL.
 
-**打開就是「搬家」:把一個平台的播放清單搬到另一個平台,三步做完。** 選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度(「比對歌曲 37 / 120」),搬不過去的歌會逐首列出來。它不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。
+**It opens on "Move": moving a playlist from one platform to another, in three steps.** Choose the source and the destination (each platform's connection status is visible at a glance, and you can connect one on the spot) → pick a playlist and decide whether to create a new one or add to an existing one → review which songs will be moved; nothing is written until you confirm. Matching the songs shows real progress ("Matching songs 37 / 120"), and songs that can't be moved are listed one by one. It never deletes the source, only adds, and keeps the order; it's free with no song limit, because it runs on your own computer with your own accounts.
 
-先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify 與 Apple Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify 或 Apple Music。
+The limits, up front: moving into the local library can only add to an existing M3U file (Spotify and Apple Music can both **create a new playlist** at the destination); whether songs moved into Apple Music are also added to your Apple Music library depends on your Apple Music settings, and they can only go into playlists you created yourself; Spotify needs your own app and Apple needs a token you copy from the web player yourself, so connecting your accounts the first time takes a few minutes — in exchange, nobody holds your credentials for you. M3U playlists on your disk can be moved to Spotify or Apple Music too.
 
-其他頁面:**我的清單**、**同步**、**搜尋**、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**(播放狀態面板):現在放什麼、進度、播放控制,`capy now` 的內容都在那裡。頁面上的每一個動作背後都是一條 capy 命令,主控台留著完整紀錄;要確認的事一律由命令自己問,頁面不會替你按。
+The other pages: **My playlists**, **Sync**, **Search** and **Accounts**; under "Advanced" are the **Console** (run any subcommand, just like in a terminal), **ISRC lookup** (asks all three platforms at once) and **Diagnostics**. The bottom of every page always has the **now-playing bar** (the playback panel): what's playing, progress and playback controls — everything `capy now` shows. Every action on the page is a capy command underneath, and the Console keeps the full log; anything that needs confirming is always asked by the command itself, and the page never answers for you. The sidebar also has the language menu (see [Language](#language)).
 
 ```bash
-capy --web --port 43117   # 指定 port(預設隨機;不可用 8888、80、443)
+capy --web --port 43117   # pick the port (random by default; 8888, 80 and 443 aren't allowed)
 ```
 
-幾件先知道的事:
+Good to know:
 
-- **只在你這台電腦上。** 只綁 `127.0.0.1`,不是區網服務;每次啟動產生一次性 token,行程結束網址就失效。頁面不用 cookie。
-- **一次跑一個命令。** 第二個命令會被擋(頁面會說「另一個命令執行中」),因為它跟終端機一樣共用同一份 Drive 與本機資料。跑著的時候,底部會多一列執行狀態:現在在做什麼、跑了多久、它最新印的那一行(比對歌曲時是做到第幾首),旁邊的 **中止** 隨時可以停(在主控台的命令列按 Ctrl-C 也行)。停下來的時機跟終端機按 Ctrl-C 一樣;已經答應寫入的命令要按兩次,因為停在一半可能只寫了一部分。
-- **憑證不會經過頁面。** 精靈輸入的 secret 只從瀏覽器送進行程再進 keychain,不會出現在事件、log 或網址裡;命令回聲裡的 token 值一律遮成 `***`。
-- **有幾個命令在網頁上不提供**:`debug` 群組、`--auto`、`--client-secret` / `--developer-token` / `--user-token`(請走精靈)、`now --watch`(看面板就好)。`capy update` 可以跑,但更新完這個網頁行程還是舊版,會要你重啟。
-- **Windows 第一次啟動**可能跳防火牆提示。它只聽 `127.0.0.1`,選「取消」也不影響本機連線。
+- **It's only on your computer.** It binds only to `127.0.0.1` and isn't a LAN service; each start generates a one-time token, and the URL stops working when the process ends. The page uses no cookies.
+- **One command at a time.** A second command is refused (the page says another command is running), because it shares the same Drive and local data as the terminal. While a command runs, an extra status row appears at the bottom: what it's doing, how long it's been running and the latest line it printed (while matching songs, how far it has got); the **Stop** button next to it stops it at any time (Ctrl-C on the Console's command line works too). It stops at the same points as Ctrl-C in a terminal; a command you've already allowed to write needs two presses, because stopping halfway may leave it partly written.
+- **Credentials never pass through the page.** Secrets you enter in a wizard go only from the browser into the process and then into the keychain, never into events, logs or URLs; token values in command echoes are always masked as `***`.
+- **A few commands aren't offered on the web**: the `debug` group, `--client-secret` / `--developer-token` / `--user-token` (use the wizard instead) and `now --watch` (just watch the panel). `capy update` can run, but after updating, this web process is still the old version and asks you to restart it.
+- **On Windows, the first start** may show a firewall prompt. It listens only on `127.0.0.1`, so choosing "Cancel" doesn't affect local connections.
 
-終端機的互動式介面(`capy` 無參數)是**重新執行 capy 自己**,所以每個子命令都保有它原本的樣子;網頁介面則在**同一個行程裡**跑並由頁面回答提示。兩條路不同是因為終端機已經有 TTY 可以讓給子行程,瀏覽器沒有;而網頁的表格與提示要能結構化送到瀏覽器,所以接的是同一組接縫。
+Interactive mode in a terminal (`capy` with no arguments) **runs capy itself again**, so every subcommand keeps its usual form; the web UI runs commands **in the same process**, and the page answers their prompts. The two paths differ because a terminal already has a TTY to hand to a child process and a browser doesn't; and the web UI's tables and prompts have to reach the browser in structured form, so it plugs into the same seams the commands use for tables and prompts.
 
-### 跨平台複製清單(兩個方向都行;例:Apple Music → Spotify)
+### Copy a playlist across platforms (either direction; e.g. Apple Music → Spotify)
 
-一個命令(Spotify、Apple Music、Google 三個都要先登入,`capy auth status` 看得到;清單名有空白要加雙引號):
-
-```
-capy migrate 公路旅行 --from apple --to spotify              # 在 Spotify 建一個同名的私人清單,把 Apple 的曲目搬過去
-capy migrate 公路旅行 --from apple --to spotify:開車歌單      # 或加進 Spotify 既有的清單:接在它原本的曲目後面
-capy migrate 公路旅行 --from spotify --to apple                # 反方向:在 Apple Music 建一個同名清單,把 Spotify 的曲目搬過去
-capy migrate                                                # 終端機裡不帶參數:逐段挑選來源平台、清單、目標平台、既有清單或建新的
-```
-
-它把下面手動流程的七步一次做完:讀來源(不連結、不動它)→ 決定正本與目標(既有的目標先拉進正本)→ 來源裡目標還沒有的依來源順序接在尾端(同平台 id 或同 ISRC 的略過,來源自己的重複也只留一份)→ 替每一首找目標平台的 id(ISRC 反查 → 模糊比對;沒對到的在終端機可以當場逐筆裁決)→ 一張表(`dir` 有 `pull` / `migrate` / `push` 三種)、一次確認 → 需要時才在目標建清單 → 推。先看不做用 `--dry-run`;腳本裡要 `--yes`(非 TTY 沒給以 exit 2 結束、不建清單)。**順序**:目標原本的順序是前綴,來源的曲目依來源的順序接在後面。**只新增**:永遠不動來源,對目標也不移除;目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 `capy pl sync`。沒對到的曲目這次不推,表裡會說,結尾給你 `capy resolve --review` 與 `capy pl sync` 的命令補上。完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要之後跟著來源的變動,結尾也會給 `capy pl link` + `capy pl sync` 的命令。例外:正本本來就連著來源(下面的手動流程做到一半)時,來源那半也一起拉進正本、以正本為準,結尾會說兩邊都連著。local 只能加進既有檔(`--to local:<檔名>`);搬進 Apple Music 的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定(Apple 的行為),而且只能搬進你自己建的清單(Apple 精選不行);Apple 商店裡已經下架的歌搬不過去:表裡可能照樣列出,寫完重讀時 capy 會警告。
-
-> ⚠️ 建清單(`POST /me/playlists`)與推曲目(`PUT /playlists/{id}/items`)是照 Spotify 2026-02 的官方文件實作,**還沒在真帳號上驗證過**。遇到 404,或建出來的清單在 app 裡是公開的,請回報。
-
-**背後在做什麼(手動流程;想讓兩邊持續同步時用這個)**:讓兩個平台連到同一個 canonical 清單,再推過去。下面以 Apple Music 的「公路旅行」複製到 Spotify 為例。
+One command (log in to Spotify, Apple Music and Google first — `capy auth status` shows all three; put playlist names with spaces in double quotes):
 
 ```
-capy pl link 公路旅行 apple:公路旅行                  # 1. canonical 清單(不存在就建立)連到 Apple 的清單
-capy pl link 公路旅行 spotify --create                # 2. 在 Spotify 建一個同名的私人空清單,連到同一個 canonical
-capy pl pull 公路旅行                                 # 3. 不帶 --provider:Apple 的曲目拉進 canonical;空的 Spotify 清單記下 base
-capy resolve 公路旅行 --provider spotify              # 4. 替每一首找 Spotify 上的 id(ISRC 反查 → 模糊比對)
-capy resolve --review                                 # 5. 上一步列出 review 佇列時才需要:逐筆裁決
-capy pl push 公路旅行 --provider spotify --dry-run    # 6. 先看要推什麼
-capy pl push 公路旅行 --provider spotify              # 7. 真的推
+capy migrate Roadtrip --from apple --to spotify            # create a private playlist with the same name on Spotify and move the Apple tracks into it
+capy migrate Roadtrip --from apple --to spotify:Driving    # or add to an existing Spotify playlist, after the tracks it already has
+capy migrate Roadtrip --from spotify --to apple            # the other direction: create a playlist with the same name on Apple Music and move the Spotify tracks into it
+capy migrate                                               # no arguments in a terminal: pick the source platform, the playlist, the target platform, and an existing playlist or a new one, step by step
 ```
 
-- **第 3 步不能省。** push 的前提是這台裝置對那個 Spotify 清單 pull 過;第 2 步剛建的清單還沒有 base,直接 push 會以 exit 3 擋下。
-- **不會刪到任何東西。** Spotify 那邊是第一次 pull(沒有 base 不產生 remove),push 全部是新增,刪除閾值不會觸發。
-- **不一定 100% 複製得過去。** Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
-- **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單(例如之前先在 app 裡建好了)時會擋下,並給你連它的命令;追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
-- **之後兩邊保持連結。** 任一邊有變動時跑 `capy pl sync 公路旅行` 就會帶到另一邊。只要一次性複製的話,完成後 `capy pl unlink 公路旅行 apple`。
-- **反方向(Spotify → Apple)一樣**:`capy migrate 公路旅行 --from spotify --to apple`,或把手動流程裡的兩個平台對調(`capy pl link 公路旅行 apple --create`)。Apple 這一側的加歌走 Apple 文件化的端點,移除與換序走網頁播放器自己用的端點(Apple 沒有正式承諾;細節見 docs/ARCHITECTURE.md §1.2),只寫你自己建的清單,加進清單的曲目會不會同時進資料庫看你的 Apple Music 設定。
+It does the seven steps of the manual flow below in one go: read the source (not linked, not touched) → settle the master copy and the target (an existing target is pulled into the master copy first) → append, in the source's order, the source tracks the target doesn't have yet (tracks with the same platform id or the same ISRC are skipped, and the source's own duplicates are kept only once) → find each track's id on the target platform (ISRC lookup → fuzzy match; in a terminal you can review the unmatched ones on the spot) → one table (`dir` has three values: `pull` / `migrate` / `push`), one confirmation → create the playlist on the target only when needed → push. To look without doing anything, use `--dry-run`; scripts need `--yes` (without a TTY and without it, capy exits 2 and creates no playlist). **Order**: the target's existing order is the prefix, and the source's tracks follow in the source's order. **Only adds**: the source is never touched, and nothing is removed from the target either; when the target has unsynced removals / reorders / renames, capy stops with exit 3 — run `capy pl sync` first. Unmatched tracks aren't pushed this time; the table says so, and the last lines give you the `capy resolve --review` and `capy pl sync` commands to finish them. Afterwards only the target is linked to capy's master copy (the source isn't linked: it's a one-time copy); to follow the source's changes later, the last lines also give you the `capy pl link` + `capy pl sync` commands. The exception: when the master copy is already linked to the source (you were halfway through the manual flow below), the source half is pulled into the master copy too, the master copy wins, and the last lines say that both are linked. local can only add to an existing file (`--to local:<file-name>`); whether tracks moved into Apple Music are also added to your Apple Music library depends on your Apple Music settings (Apple's behavior), and they can only go into playlists you created yourself (not Apple-curated ones); songs no longer available in the Apple Music store can't be moved: the table may still list them, and capy warns when it re-reads the playlist after writing.
 
-## Shell 補全(TAB 列出播放清單名與最近搜尋)
+> ⚠️ Creating playlists (`POST /me/playlists`) and pushing tracks (`PUT /playlists/{id}/items`) are implemented from Spotify's official documentation as of 2026-02 and **haven't been verified on a real account yet**. If you get a 404, or a created playlist shows up as public in the app, please report it.
+
+**What happens behind the scenes (the manual flow; use it when you want both sides to stay in sync)**: link both platforms to the same master copy, then push. The example copies the Apple Music playlist "Roadtrip" to Spotify.
 
 ```
-# zsh(放進 ~/.zshrc)
+capy pl link Roadtrip apple:Roadtrip                # 1. link a master copy (created if it doesn't exist) to the Apple playlist
+capy pl link Roadtrip spotify --create              # 2. create an empty private playlist with the same name on Spotify and link it to the same master copy
+capy pl pull Roadtrip                               # 3. without --provider: the Apple tracks come into the master copy; the empty Spotify playlist gets its base recorded
+capy resolve Roadtrip --provider spotify            # 4. find each track's id on Spotify (ISRC lookup → fuzzy match)
+capy resolve --review                               # 5. only needed when the previous step listed a review queue: review item by item
+capy pl push Roadtrip --provider spotify --dry-run  # 6. see what would be pushed first
+capy pl push Roadtrip --provider spotify            # 7. push for real
+```
+
+- **Don't skip step 3.** push requires that this device has pulled that Spotify playlist; the playlist just created in step 2 has no base yet, and pushing straight away stops with exit 3.
+- **Nothing gets deleted.** It's the Spotify side's first pull (no base means no removals), everything pushed is an addition, and the removal threshold won't trigger.
+- **Not everything necessarily comes across.** Apple tracks with a catalog match carry an ISRC and are looked up exactly on Spotify (confidence 95, written automatically); tracks you uploaded yourself that exist only in your library have no ISRC and rely on fuzzy matching of title, artists and duration, and below 85 they go into the review queue; songs Spotify doesn't have at all get pinned as unavailable in `--review`. The `skip` rows in step 6's table are the tracks that won't be copied this time.
+- **The playlist `--create` makes has the master copy's name**, so push won't add a `rename` row. If you already have your own playlist with the same name on Spotify (e.g. you created it in the app earlier), it stops and gives you the command to link that one instead; playlists by other people that you follow can't be linked and don't count. In a terminal you can also just type `capy pl link` and choose "Create a new empty playlist on spotify" at the second step.
+- **Afterwards both sides stay linked.** When either side changes, run `capy pl sync Roadtrip` to carry the change over. For a one-time copy, run `capy pl unlink Roadtrip apple` when you're done.
+- **The other direction (Spotify → Apple) works the same way**: `capy migrate Roadtrip --from spotify --to apple`, or swap the two platforms in the manual flow (`capy pl link Roadtrip apple --create`). On the Apple side, adding tracks uses Apple's documented endpoint, and removals and reorders use the endpoint the web player itself uses (Apple makes no official commitment to it; details in docs/ARCHITECTURE.md §1.2). capy writes only playlists you created yourself, and whether tracks added to a playlist also go into your library depends on your Apple Music settings.
+
+## Shell completion (TAB lists playlist names and recent searches)
+
+```
+# zsh (put this in ~/.zshrc)
 source <(capy completion zsh)
 # bash
 source <(capy completion bash)
 # fish
 capy completion fish | source
+# PowerShell (put this in $PROFILE)
+capy completion powershell | Out-String | Invoke-Expression
 ```
 
-候選只來自本機快取(`state.db`,不打網路):先跑過 `capy pl list` 才有清單名;`capy search` / `capy play` 會累積最近項目,`capy history clear` 清空。補全不會打網路、不會碰 keychain,所以按 TAB 不會卡。
+Candidates come only from the local cache (`state.db`, no network): playlist names show up after you've run `capy pl list`; `capy search` / `capy play` collect recent items, and `capy history clear` clears them. Completion never touches the network or the keychain, so pressing TAB never hangs.
 
-## 憑證與資料
+## Credentials and data
 
-你的憑證只存 OS keychain(macOS Keychain / Windows Credential Manager),不進設定檔、不上雲。唯一例外是專案自己的 Google client:Releases 的 binary 把它編在裡面(`strings capy` 讀得到,散佈給使用者的原生 app 本來就藏不住,RFC 8252 §8.5),那是 app 自身的識別,不是任何人的帳號憑證。架構、平台約束與開發階段見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+Your credentials are stored only in the OS keychain (macOS Keychain / Windows Credential Manager), never in config files or the cloud. The one exception is the project's own Google client: release binaries have it compiled in (`strings capy` can read it; a native app distributed to users can't hide it anyway, RFC 8252 §8.5). That's the app's own identity, not anyone's account credentials. For the architecture, platform constraints and development phases, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in Traditional Chinese).
 
-## 發版(維護者)
+## Releasing (maintainers)
 
-1. 一次性:repo Settings → Secrets and variables → Actions 設 `GOOGLE_CLIENT_ID` 與 `GOOGLE_CLIENT_SECRET`(專案自己的 Google Desktop client;它們只存在 GitHub secrets 與發出去的 binary 裡,不進 repo)。
-2. `git tag v1.2.3 && git push origin v1.2.3`:`.github/workflows/release.yml` 用 GoReleaser 建四個平台的檔、`checksums.txt` 與 GitHub Release;secret 沒設會在建置前就失敗。tag 帶 `-rc1` 之類會標成 pre-release,`capy update` 不會抓到它。
-3. 每個 PR 的 CI 都會用假值跑一次 `goreleaser release --snapshot`、執行建出來的 binary 確認注入到位,所以推 tag 前 release 設定已經被驗過。
+1. One-time setup: in the repo's Settings → Secrets and variables → Actions, set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (the project's own Google Desktop client; they exist only in GitHub secrets and in the released binaries, never in the repo).
+2. `git tag v1.2.3 && git push origin v1.2.3`: `.github/workflows/release.yml` uses GoReleaser to build the files for the four platforms, `checksums.txt` and the GitHub Release; if a secret isn't set, it fails before building. A tag with `-rc1` or similar is marked as a pre-release, and `capy update` won't pick it up.
+3. Every PR's CI runs `goreleaser release --snapshot` once with fake values and runs the resulting binary to check that the injection worked, so the release config has already been tested before you push a tag.
 
-## 授權
+## License
 
-MIT,見 [LICENSE](LICENSE)。Releases 的壓縮檔裡也附一份。
+MIT, see [LICENSE](LICENSE). The release archives include a copy too.

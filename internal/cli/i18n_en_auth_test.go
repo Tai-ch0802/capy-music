@@ -13,6 +13,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // zhAppleDisclosure:搬進語系目錄前 auth.go 的原文,一個位元組都不准變(CLAUDE.md:揭露在每個語系都要完整)。
@@ -58,13 +59,16 @@ func checkAppleDisclosure(t *testing.T, lang string) {
 				t.Errorf("加進資料庫只能寫「可能」,不可寫成 %q:%q", never, d)
 			}
 		}
+	default: // 新語系(例如 ja.json)沒有逐項檢查就不准過:揭露不完整也會被當成通過
+		t.Fatalf("add a disclosure check for %s in checkAppleDisclosure (internal/cli/i18n_en_auth_test.go)", lang)
 	}
 }
 
-// TestAuthLoginAppleDisclosureInEveryLanguage:每條印出或拒絕的路徑,在 en 與 zh-TW 都帶著完整揭露。
+// TestAuthLoginAppleDisclosureInEveryLanguage:每條印出或拒絕的路徑,在每個嵌入的語系都帶著完整揭露。
+// 跑的是 i18n.Supported()(不寫死清單):新增語系檔而沒在 checkAppleDisclosure 補檢查,這裡直接紅。
 func TestAuthLoginAppleDisclosureInEveryLanguage(t *testing.T) {
 	t.Cleanup(keyring.MockInit) // mock keychain 是 process 全域:種過的 token 不留給下一個測試
-	for _, lang := range []string{"en", "zh-TW"} {
+	for _, lang := range i18n.Supported() {
 		t.Run(lang, func(t *testing.T) {
 			withLanguage(t, lang)
 			checkAppleDisclosure(t, lang)
