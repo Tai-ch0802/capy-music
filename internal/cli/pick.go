@@ -2,8 +2,8 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -29,11 +29,75 @@ import (
 // (CLAUDE.md 硬約束),不得在命令裡直接 newForm(...).Run();既有的都在 isInteractive / bothTTY / stdinIsTTY 閘後面。
 // 配色是 ui.HuhStyles(跟互動式介面同一套):huh 預設把標題染成靛藍,深色終端機上很難讀(使用者回報)。
 func newForm(groups ...*huh.Group) *huh.Form {
+	return huh.NewForm(groups...).WithKeyMap(newKeyMap()).WithTheme(huh.ThemeFunc(ui.HuhStyles))
+}
+
+// newKeyMap:newForm 的鍵位。help 行的說明換成目前語系(計畫 Q56):鍵名與啟用狀態照 huh 預設,只換說明文字;
+// en.json 的值就是 huh 原本的英文。Confirm 的 y / n 說明 huh 繪製時會換成按鈕文字,這裡翻的只在那之前有效。
+func newKeyMap() *huh.KeyMap {
 	km := huh.NewDefaultKeyMap()
+	desc := map[string]string{ // huh 的英文說明 → 目錄;同一句英文共用一個 key
+		"complete":     i18n.T("pick.key.complete"),
+		"back":         i18n.T("pick.key.back"),
+		"next":         i18n.T("pick.key.next"),
+		"submit":       i18n.T("pick.key.submit"),
+		"first":        i18n.T("pick.key.first"),
+		"last":         i18n.T("pick.key.last"),
+		"page up":      i18n.T("pick.key.page_up"),
+		"page down":    i18n.T("pick.key.page_down"),
+		"select":       i18n.T("pick.key.select"),
+		"up":           i18n.T("pick.key.up"),
+		"down":         i18n.T("pick.key.down"),
+		"open":         i18n.T("pick.key.open"),
+		"close":        i18n.T("pick.key.close"),
+		"new line":     i18n.T("pick.key.new_line"),
+		"open editor":  i18n.T("pick.key.open_editor"),
+		"left":         i18n.T("pick.key.left"),
+		"right":        i18n.T("pick.key.right"),
+		"filter":       i18n.T("pick.key.filter"),
+		"set filter":   i18n.T("pick.key.set_filter"),
+		"clear filter": i18n.T("pick.key.clear_filter"),
+		"½ page up":    i18n.T("pick.key.half_page_up"),
+		"½ page down":  i18n.T("pick.key.half_page_down"),
+		"go to start":  i18n.T("pick.key.go_to_start"),
+		"go to end":    i18n.T("pick.key.go_to_end"),
+		"confirm":      i18n.T("pick.key.confirm"),
+		"toggle":       i18n.T("pick.key.toggle"),
+		"select all":   i18n.T("pick.key.select_all"),
+		"select none":  i18n.T("pick.key.select_none"),
+		"Yes":          i18n.T("pick.key.yes"),
+		"No":           i18n.T("pick.key.no"),
+	}
+	eachBinding(km, func(_ string, b *key.Binding) {
+		if h := b.Help(); desc[h.Desc] != "" {
+			b.SetHelp(h.Key, desc[h.Desc])
+		}
+	})
 	km.Quit = key.NewBinding(key.WithKeys("ctrl+c", "esc"))
-	km.Select.SetFilter = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"), key.WithDisabled())
-	km.Select.ClearFilter = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"), key.WithDisabled())
-	return huh.NewForm(groups...).WithKeyMap(km).WithTheme(huh.ThemeFunc(ui.HuhStyles))
+	cancel := i18n.T("pick.key.cancel")
+	km.Select.SetFilter = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", cancel), key.WithDisabled())
+	km.Select.ClearFilter = key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", cancel), key.WithDisabled())
+	return km
+}
+
+// eachBinding:KeyMap 裡的每個 key.Binding(含 Select、Input… 各欄位的子 KeyMap),name 是欄位路徑(Select.Filter)。
+// ponytail: 反射走欄位,不手列六十個;huh 升版多出的說明沒進 desc 會維持英文,TestFormKeyHelpLocalized 會抓到。
+func eachBinding(km *huh.KeyMap, fn func(name string, b *key.Binding)) {
+	var walk func(prefix string, v reflect.Value)
+	walk = func(prefix string, v reflect.Value) {
+		for i := range v.NumField() {
+			sf, f := v.Type().Field(i), v.Field(i)
+			if !sf.IsExported() {
+				continue
+			}
+			if b, ok := f.Addr().Interface().(*key.Binding); ok {
+				fn(prefix+sf.Name, b)
+			} else if f.Kind() == reflect.Struct {
+				walk(prefix+sf.Name+".", f)
+			}
+		}
+	}
+	walk("", reflect.ValueOf(km).Elem())
 }
 
 // pickOne:全 CLI 共用的挑選器,回選中的索引。標題的括號提示由這裡補,呼叫端只給主詞。
@@ -44,12 +108,12 @@ var pickOne = func(title string, labels []string) (int, error) {
 		opts[i] = huh.NewOption(l, i)
 	}
 	filter := len(labels) > 8
-	hint := "(Esc 取消)"
+	full := i18n.T("pick.title.esc", "title", title)
 	if filter {
-		hint = "(/ 過濾,Esc 取消)"
+		full = i18n.T("pick.title.filter_esc", "title", title)
 	}
 	idx := 0
-	sel := huh.NewSelect[int]().Title(title + hint).Options(opts...).Filtering(filter).Height(12).Value(&idx)
+	sel := huh.NewSelect[int]().Title(full).Options(opts...).Filtering(filter).Height(12).Value(&idx)
 	if err := newForm(huh.NewGroup(sel)).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return 0, errCancelled
@@ -93,7 +157,7 @@ func needTarget(cmd *cobra.Command, args []string, all bool, verb string) error 
 	bothGiven := all && len(args) == 1
 	neitherGiven := !all && len(args) == 0
 	if bothGiven || (neitherGiven && !isInteractive(cmd)) { // 都沒給時只有終端機能靠挑選器補
-		return fmt.Errorf("指定一個清單(名稱或 pid),或用 --all %s全部已連結的清單", verb)
+		return i18n.Errorf("pick.err.need_target", "verb", verb) // verb 是呼叫端翻好的動詞(拉 / 推 / 同步)
 	}
 	return nil
 }
@@ -102,19 +166,19 @@ func needTarget(cmd *cobra.Command, args []string, all bool, verb string) error 
 // (pl link 的「在平台上建一個新的空清單」;平台上一個清單都沒有時也還能選它)。
 func pickPlatformPlaylist(prov string, refs []provider.PlaylistRef, newLabel string) (string, error) {
 	if len(refs) == 0 && newLabel == "" {
-		return "", fmt.Errorf("%s 上沒有任何清單", prov)
+		return "", i18n.Errorf("pick.err.no_playlists", "platform", prov)
 	}
 	labels := make([]string, len(refs), len(refs)+1)
 	for i, r := range refs {
 		labels[i] = r.Name
 		if r.Total >= 0 {
-			labels[i] += fmt.Sprintf(" — %d 首", r.Total)
+			labels[i] = i18n.T("pick.label.with_total", "name", r.Name, "count", r.Total)
 		}
 	}
 	if newLabel != "" {
 		labels = append(labels, newLabel)
 	}
-	i, err := pickOne(fmt.Sprintf("選一個 %s 上的清單", prov), labels)
+	i, err := pickOne(i18n.T("pick.title.platform_playlist", "platform", prov), labels)
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +217,7 @@ func linkSummary(pl *canon.Playlist) string {
 	for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
 		parts = append(parts, prov+":"+pl.Links[prov])
 	}
-	return strings.Join(parts, "、")
+	return strings.Join(parts, i18n.T("sep.list"))
 }
 
 // pickLinkedPlaylist:pl pull / push / sync / unlink 不帶參數時挑一個已連結的清單。
@@ -162,9 +226,9 @@ func pickLinkedPlaylist(s *canonState, prov, title string) (string, error) {
 	pls := linkedPlaylists(s, prov)
 	if len(pls) == 0 {
 		if prov != "" {
-			return "", fmt.Errorf("沒有連結 %s 的清單 — 先 capy pl link <name> %s:<清單>", prov, prov)
+			return "", i18n.Errorf("pick.err.none_linked_to", "platform", prov)
 		}
-		return "", errors.New("沒有已連結的清單 — 先 capy pl link <name> <provider>:<清單>")
+		return "", i18n.Errorf("pick.err.none_linked")
 	}
 	labels := make([]string, len(pls))
 	for i, pl := range pls {
@@ -193,30 +257,30 @@ func pickLinkTarget(s *canonState, prov, id string) (string, error) {
 	for _, pl := range pls {
 		switch cur := pl.Links[prov]; {
 		case cur != "" && cur == id:
-			labels = append(labels, pl.Name+" — 已連結到這個清單")
+			labels = append(labels, i18n.T("pick.label.linked_here", "name", pl.Name))
 		case cur != "":
-			labels = append(labels, fmt.Sprintf("%s — 已連 %s:%s,要先 unlink", pl.Name, prov, cur))
+			labels = append(labels, i18n.T("pick.label.linked_elsewhere", "name", pl.Name, "platform", prov, "id", cur))
 		case len(pl.Links) > 0:
 			labels = append(labels, pl.Name+" — "+linkSummary(pl))
 		default:
 			labels = append(labels, pl.Name)
 		}
 	}
-	labels = append(labels, "+ 建立新的清單")
-	i, err := pickOne("要連結哪個清單?", labels)
+	labels = append(labels, i18n.T("pick.label.create_new"))
+	i, err := pickOne(i18n.T("pick.title.link_target"), labels)
 	if err != nil {
 		return "", err
 	}
 	if i < len(pls) {
 		return pls[i].PID, nil
 	}
-	name, err := promptNewName("新清單的名稱")
+	name, err := promptNewName(i18n.T("pick.prompt.new_name"))
 	if err != nil {
 		return "", err
 	}
 	for _, pl := range pls { // find 認名字也認 pid,兩種都要擋;同名兩個之後也只能用 pid 指名了
 		if strings.EqualFold(pl.Name, name) || pl.PID == name {
-			return "", fmt.Errorf("已經有這個清單了:%s(%s)—— 回去選它,或換一個名字", pl.Name, pl.PID)
+			return "", i18n.Errorf("pick.err.name_taken", "name", pl.Name, "pid", pl.PID)
 		}
 	}
 	return name, nil

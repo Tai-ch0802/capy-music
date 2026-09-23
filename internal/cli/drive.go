@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -50,7 +49,7 @@ func googleClientFromConfig(cfg *config.Config) (auth.GoogleClient, googleClient
 	if cfg.GoogleClientID != "" {
 		sec, err := secret.Get(auth.KeyGoogleClientSecret)
 		if err != nil && !errors.Is(err, secret.ErrNotFound) {
-			return auth.GoogleClient{}, "", fmt.Errorf("讀取 keychain 的 google.client_secret:%w", err)
+			return auth.GoogleClient{}, "", i18n.Errorf("drive.err.read_client_secret", "err", err)
 		}
 		return auth.GoogleClient{ID: cfg.GoogleClientID, Secret: sec}, googleFromConfig, nil
 	}

@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 // shell 補全(決策 14)。鐵則:只讀本機快取(state.db,等鎖上限 200 ms、逾時視同空)、絕不打網路、絕不碰 keychain——
@@ -27,17 +28,32 @@ func completeFromCache(cmd *cobra.Command, toComplete string, playlists, recent 
 	}
 	if playlists {
 		for _, p := range c.Playlists[pid] {
-			add(p.Name, "播放清單")
+			add(p.Name, i18n.T("completion.playlist"))
 		}
 	}
 	if recent {
 		for _, r := range c.Recent {
 			if r.Provider == pid {
-				add(r.Label, "最近:"+typeNames[r.Type])
+				add(r.Label, recentDesc(r.Type))
 			}
 		}
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp
+}
+
+// recentDesc:最近紀錄候選的說明。刻意不借 play_resolve.go 的 typeNames(挑選器的標籤):整句各自翻,英文才通順。
+func recentDesc(typ string) string {
+	switch typ {
+	case cache.TypePlaylist:
+		return i18n.T("completion.recent.playlist")
+	case cache.TypeArtist:
+		return i18n.T("completion.recent.artist")
+	case cache.TypeTrack:
+		return i18n.T("completion.recent.track")
+	case cache.TypeQuery:
+		return i18n.T("completion.recent.query")
+	}
+	return i18n.T("completion.recent.other")
 }
 
 func playCompletion(cmd *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {

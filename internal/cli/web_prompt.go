@@ -347,7 +347,7 @@ func (s *webServer) webReviewPrompt(it resolveItem, pos, total int, search func(
 }
 
 func (s *webServer) webClientIDWizard() (string, error) {
-	p := webPrompt{Kind: "form", Title: "Client ID", Note: &webNote{Title: spotifyAppTitle, Body: spotifyAppSteps},
+	p := webPrompt{Kind: "form", Title: "Client ID", Note: &webNote{Title: spotifyAppTitle(), Body: spotifyAppSteps()},
 		Fields: []webField{{Name: "client_id", Label: "Client ID"}}}
 	last := map[string]string{}
 	for {
@@ -368,7 +368,7 @@ func (s *webServer) webClientIDWizard() (string, error) {
 
 // webAppleDisclosure:揭露不可跳過,由伺服器判定——答案不是 true 就是「已取消(未同意聲明)」,前端 checkbox 不被信任。
 func (s *webServer) webAppleDisclosure() error {
-	a, err := s.ask(webPrompt{Kind: "confirm", Title: "我已閱讀,同意自負風險,繼續?", Note: &webNote{Title: "使用前請先閱讀", Body: appleDisclosure},
+	a, err := s.ask(webPrompt{Kind: "confirm", Title: "我已閱讀,同意自負風險,繼續?", Note: &webNote{Title: "使用前請先閱讀", Body: appleDisclosure()},
 		Affirmative: "同意", Negative: "取消", Default: false})
 	if err != nil || a.Cancel {
 		return huh.ErrUserAborted
@@ -395,7 +395,7 @@ func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err er
 	if !onlyDev {
 		fields = append(fields, webField{Name: "user", Label: "user token(media-user-token 標頭的值)", Secret: true})
 	}
-	p := webPrompt{Kind: "form", Title: "貼上 token", Note: &webNote{Title: "從網頁播放器複製 token", Body: appleGuide}, Fields: fields}
+	p := webPrompt{Kind: "form", Title: "貼上 token", Note: &webNote{Title: "從網頁播放器複製 token", Body: appleGuide()}, Fields: fields}
 	last := map[string]string{}
 	for {
 		refill(p.Fields, last)
@@ -419,7 +419,7 @@ func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err er
 }
 
 func (s *webServer) webGoogleWizard() (id, sec string, err error) {
-	p := webPrompt{Kind: "form", Title: "Google OAuth client", Note: &webNote{Title: "Google Drive 同步:先建自己的 OAuth client", Body: googleGuide},
+	p := webPrompt{Kind: "form", Title: "Google OAuth client", Note: &webNote{Title: "Google Drive 同步:先建自己的 OAuth client", Body: googleGuide()},
 		Fields: []webField{
 			{Name: "client_id", Label: "Client ID(結尾通常是 .apps.googleusercontent.com)"},
 			{Name: "client_secret", Label: "Client secret(可留空試試看;G-0 驗收會確定 Desktop client 要不要)", Secret: true},

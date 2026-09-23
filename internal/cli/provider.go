@@ -3,12 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/provider/local"
@@ -42,12 +43,12 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 	case "local":
 		return newLocalProvider()
 	default:
-		return nil, fmt.Errorf("未知的 provider %q(可用:%s)", id, strings.Join(providerIDs, "、"))
+		return nil, i18n.Errorf("platform.err.unknown", "id", strconv.Quote(id), "ids", strings.Join(providerIDs, i18n.T("sep.list")))
 	}
 }
 
 func providerFlag(cmd *cobra.Command) {
-	cmd.Flags().String(flagProvider, defaultProvider(), "平台("+strings.Join(providerIDs, "|")+";預設取 config 的 default_provider)")
+	cmd.Flags().String(flagProvider, defaultProvider(), i18n.T("flag.provider", "ids", strings.Join(providerIDs, "|")))
 	_ = cmd.RegisterFlagCompletionFunc(flagProvider, cobra.FixedCompletions(providerIDs, cobra.ShellCompDirectiveNoFileComp))
 }
 
@@ -71,15 +72,16 @@ func getProvider(cmd *cobra.Command) (provider.Provider, error) {
 	return newProvider(cmd.Context(), id)
 }
 
+// notSupported:what 是呼叫端翻好的名詞片語(i18n.T),譯文把它放進「{platform} 不支援{what}」整句。
 func notSupported(p provider.Provider, what string) error {
-	return fmt.Errorf("%s 不支援%s:%w", p.DisplayName(), what, provider.ErrNotSupported)
+	return i18n.Errorf("platform.err.not_supported", "platform", p.DisplayName(), "what", what, "err", provider.ErrNotSupported)
 }
 
 // as*:型別斷言 + Caps() 雙重檢查(Caps 可依平台變動,例如 Apple 播放只在 macOS)。
 func asSearcher(p provider.Provider) (provider.Searcher, error) {
 	s, ok := p.(provider.Searcher)
 	if !ok || !p.Caps().Has(provider.CapSearch) {
-		return nil, notSupported(p, "搜尋")
+		return nil, notSupported(p, i18n.T("platform.cap.search"))
 	}
 	return s, nil
 }
@@ -87,7 +89,7 @@ func asSearcher(p provider.Provider) (provider.Searcher, error) {
 func asPlayback(p provider.Provider) (provider.PlaybackController, error) {
 	c, ok := p.(provider.PlaybackController)
 	if !ok || !p.Caps().Has(provider.CapPlaybackControl) {
-		return nil, notSupported(p, "播放遙控(Apple Music 的播放只在 macOS 可用;其他平台請用 --provider spotify)")
+		return nil, notSupported(p, i18n.T("platform.cap.playback"))
 	}
 	return c, nil
 }
@@ -95,7 +97,7 @@ func asPlayback(p provider.Provider) (provider.PlaybackController, error) {
 func asISRCLookup(p provider.Provider) (provider.ISRCLookup, error) {
 	l, ok := p.(provider.ISRCLookup)
 	if !ok || !p.Caps().Has(provider.CapISRCLookup) {
-		return nil, notSupported(p, "ISRC 反查")
+		return nil, notSupported(p, i18n.T("platform.cap.isrc_lookup"))
 	}
 	return l, nil
 }
@@ -103,7 +105,7 @@ func asISRCLookup(p provider.Provider) (provider.ISRCLookup, error) {
 func asPlaylistReader(p provider.Provider) (provider.PlaylistReader, error) {
 	r, ok := p.(provider.PlaylistReader)
 	if !ok || !p.Caps().Has(provider.CapPlaylistRead) {
-		return nil, notSupported(p, "讀取播放清單")
+		return nil, notSupported(p, i18n.T("platform.cap.playlist_read"))
 	}
 	return r, nil
 }
@@ -112,7 +114,7 @@ func asPlaylistReader(p provider.Provider) (provider.PlaylistReader, error) {
 func asPlaylistWriter(p provider.Provider) (provider.PlaylistWriter, error) {
 	w, ok := p.(provider.PlaylistWriter)
 	if !ok || p.Caps()&(provider.CapPlaylistAppend|provider.CapPlaylistRemove|provider.CapPlaylistReorder|provider.CapPlaylistRename) == 0 {
-		return nil, notSupported(p, "寫入播放清單")
+		return nil, notSupported(p, i18n.T("platform.cap.playlist_write"))
 	}
 	return w, nil
 }
@@ -121,7 +123,7 @@ func asPlaylistWriter(p provider.Provider) (provider.PlaylistWriter, error) {
 func asPlaylistCreator(p provider.Provider) (provider.PlaylistCreator, error) {
 	c, ok := p.(provider.PlaylistCreator)
 	if !ok || !p.Caps().Has(provider.CapPlaylistCreate) {
-		return nil, notSupported(p, "建立播放清單")
+		return nil, notSupported(p, i18n.T("platform.cap.playlist_create"))
 	}
 	return c, nil
 }
@@ -134,10 +136,10 @@ func newLocalProvider() (provider.Provider, error) {
 		return nil, err
 	}
 	if cfg.LocalRoot == "" {
-		return nil, errors.New("尚未設定本機曲庫目錄 — 先執行 capy config set local_root <目錄>(裡面放 *.m3u8 清單與 library.json)")
+		return nil, i18n.Errorf("platform.err.local_root_unset")
 	}
 	if cfg.DeviceID == "" { // 本機清單的 id 帶裝置 id,它在 auth login google 時才產生;空的話 id 會變成 /通勤.m3u8、Foreign 全判本機
-		return nil, errors.New("本機清單的 id 帶裝置 id,而裝置 id 在 capy auth login google 時產生 — 先登入 Google")
+		return nil, i18n.Errorf("platform.err.local_no_device_id")
 	}
 	return local.New(cfg.LocalRoot, cfg.DeviceID), nil
 }
@@ -154,13 +156,13 @@ func friendlyErr(providerID string, err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, provider.ErrAuthExpired):
-		return fmt.Errorf("授權已過期或被拒(%v)— 重新執行 capy auth login %s", err, providerID)
+		return i18n.Errorf("platform.err.auth_expired", "err", err.Error(), "id", providerID) // err.Error():原本是 %v 不包,包了會被第二次 friendlyErr 再套一層
 	case errors.Is(err, provider.ErrNoActiveDevice):
-		return fmt.Errorf("沒有作用中的播放裝置 — 開一個播放器,或用 capy devices --provider %s 查看後以 --device 指定", providerID)
+		return i18n.Errorf("platform.err.no_active_device", "id", providerID)
 	case errors.Is(err, provider.ErrNotFound):
 		return err // 訊息已可行動(如「清單為空或不存在」),不需再包一層
 	case errors.Is(err, fs.ErrPermission): // local:沒有 auth / rate limit / restricted 這三族(計畫 §2 A2),只有檔案系統的錯
-		return fmt.Errorf("沒有讀取權限(%v)— 檢查 local_root 目錄與檔案的權限", err)
+		return i18n.Errorf("platform.err.permission", "err", err.Error())
 	default:
 		return err
 	}
@@ -187,10 +189,10 @@ func appleAPIBase() (string, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("CAPY_APPLE_API_BASE 不是合法的 URL(%v)— 請改成 https://<主機>/v1 的形式", err)
+		return "", i18n.Errorf("platform.err.apple_api_base_invalid", "err", err.Error())
 	}
 	if u.Scheme != "https" {
-		return "", fmt.Errorf("CAPY_APPLE_API_BASE 必須是 https(目前 %q)— developer token 與 Media-User-Token 會放在標頭送出,明文連線等於把它們交出去;請改成 https://<主機>/v1", raw)
+		return "", i18n.Errorf("platform.err.apple_api_base_https", "value", strconv.Quote(raw))
 	}
 	return raw, nil
 }
@@ -205,21 +207,21 @@ func newAppleProvider(ctx context.Context) (*appleprov.Provider, error) {
 	dev, exp, err := apple.DeveloperToken(time.Now())
 	switch {
 	case errors.Is(err, secret.ErrNotFound):
-		return nil, errors.New("尚未登入 Apple Music — 先執行 capy auth login apple")
+		return nil, i18n.Errorf("platform.err.apple_not_logged_in")
 	case errors.Is(err, apple.ErrDevTokenExpired):
-		return nil, fmt.Errorf("Apple developer token 已於 %s 過期(Apple 定期輪替)— 重新執行 capy auth login apple", exp.Format(time.RFC3339))
+		return nil, i18n.Errorf("platform.err.apple_dev_token_expired", "time", exp.Format(time.RFC3339))
 	case err != nil:
 		return nil, err
 	}
 	mut, err := secret.Get(apple.KeyMusicUserToken)
 	if errors.Is(err, secret.ErrNotFound) {
-		return nil, errors.New("尚未登入 Apple Music — 先執行 capy auth login apple")
+		return nil, i18n.Errorf("platform.err.apple_not_logged_in")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if cfg.AppleStorefront == "" {
-		return nil, errors.New("缺 Apple storefront — 重新執行 capy auth login apple")
+		return nil, i18n.Errorf("platform.err.apple_no_storefront")
 	}
 	base, err := appleAPIBase()
 	if err != nil {

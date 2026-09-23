@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zalando/go-keyring"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
@@ -957,17 +959,16 @@ func TestWebAccountPageKeysOnAuthStatusWording(t *testing.T) {
 			t.Errorf("account.js 沒有認 %q", lit)
 		}
 	}
-	src, err := os.ReadFile("auth.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	gsrc, err := os.ReadFile("auth_google.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	both := string(src) + string(gsrc)
+	// 這三個字面搬進了語系目錄(決策 50),不在 auth.go 原始碼裡了:改看 auth status 真的印出來的。
+	setCLITestConfig(t)
+	t.Cleanup(keyring.MockInit)                                                              // 連同下面種的 token 一起清掉
+	_, _ = fakeLoginOK(t, "")(context.Background(), "", nil)                                 // spotify refresh token
+	_, _, _ = fakeGoogleLogin(t, "", "", "")(context.Background(), auth.GoogleClient{}, nil) // google token
+	loggedIn, _ := runCLI(t, "auth", "status")
+	keyring.MockInitWithError(errors.New("locked"))
+	broken, _ := runCLI(t, "auth", "status")
 	for _, lit := range []string{"refresh token: keychain 存在", "token: keychain 存在", "讀取 keychain 失敗"} {
-		if !strings.Contains(both, lit) {
+		if !strings.Contains(loggedIn+broken, lit) {
 			t.Errorf("auth status 不再印 %q,帳號頁的判斷會靜默失效", lit)
 		}
 	}

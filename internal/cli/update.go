@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -56,16 +57,9 @@ var devStampRe = regexp.MustCompile(`^\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7}$`)
 func newUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "更新 capy 自己(正式版;--dev 則是 main 最新節點)",
-		Long: `更新 capy 自己。
-
-不帶參數:問 GitHub Releases 最新正式版,下載這個平台的檔案、用 checksums.txt 做 SHA-256 校驗、
-跑一次新 binary 的 --version 確認沒壞,才覆蓋目前執行中的這顆。校驗只保證下載完整(release 沒有簽章)。
-從 dev 版(go install 或 --dev 建的)執行會換成正式版。
-
---dev:問 GitHub 取 main 分支最新 commit,用 go install 從原始碼重建,再覆蓋目前執行中的這顆 binary
-(需要 Go toolchain;第一次會下載相依,約 20 秒)。`,
-		Args: cobra.NoArgs,
+		Short: i18n.T("cmd.update.short"),
+		Long:  i18n.T("cmd.update.long"),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if dev, _ := cmd.Flags().GetBool("dev"); dev {
 				return runDevUpdate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -73,7 +67,7 @@ func newUpdateCmd() *cobra.Command {
 			return runReleaseUpdate(cmd.Context(), cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().Bool("dev", false, "更新到 main 分支最新節點(從原始碼建置,需要 Go toolchain)")
+	cmd.Flags().Bool("dev", false, i18n.T("cmd.update.flag.dev"))
 	return cmd
 }
 
@@ -102,20 +96,20 @@ func githubJSON(ctx context.Context, apiPath string, v any) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		return fmt.Errorf("問 GitHub:%w", err)
+		return i18n.Errorf("update.err.github_request", "err", err)
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusForbidden, http.StatusTooManyRequests:
-		return errors.New("GitHub API 額度用完(未認證每小時 60 次),稍後再試")
+		return i18n.Errorf("update.err.github_rate_limit")
 	case http.StatusNotFound:
 		return errGitHubNotFound
 	default:
-		return fmt.Errorf("GitHub API 回 %d", resp.StatusCode)
+		return i18n.Errorf("update.err.github_status", "code", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
-		return fmt.Errorf("GitHub API 回應解析失敗:%w", err)
+		return i18n.Errorf("update.err.github_parse", "err", err)
 	}
 	return nil
 }
@@ -141,14 +135,14 @@ func runReleaseUpdate(ctx context.Context, out io.Writer) error {
 	var rel ghRelease
 	if err := githubJSON(ctx, "/repos/"+updateRepo+"/releases/latest", &rel); err != nil {
 		if errors.Is(err, errGitHubNotFound) {
-			return errors.New("尚無正式版 release(維護者還沒發第一版);目前可用 capy update --dev 更新到 main 最新節點")
+			return i18n.Errorf("update.err.no_release")
 		}
 		return err
 	}
 	latest := strings.TrimPrefix(rel.Tag, "v")
 	// ponytail: 只比「相同與否」不比大小;維護者撤掉一版時 latest 會倒退,那正是要跟的。
 	if version == latest {
-		fmt.Fprintf(out, "已是最新:v%s\n", latest)
+		fmt.Fprintln(out, i18n.T("update.release.up_to_date", "version", latest))
 		return nil
 	}
 	name := updateAssetName(latest)
@@ -157,42 +151,42 @@ func runReleaseUpdate(ctx context.Context, out io.Writer) error {
 		urls[a.Name] = a.URL
 	}
 	if urls[name] == "" || urls[updateChecksums] == "" {
-		return fmt.Errorf("release v%s 缺 %s(這個平台 %s/%s 的檔)或 %s;看看 https://github.com/%s/releases", latest, name, runtime.GOOS, runtime.GOARCH, updateChecksums, updateRepo)
+		return i18n.Errorf("update.err.missing_asset", "version", latest, "name", name, "os", runtime.GOOS, "arch", runtime.GOARCH, "checksums", updateChecksums, "repo", updateRepo)
 	}
-	from := version
 	if version == "dev" || devStampRe.MatchString(version) {
-		from = "dev 版 " + version + ",換到正式版"
+		fmt.Fprintln(out, i18n.T("update.release.downloading_from_dev", "version", latest, "current", version, "name", name))
+	} else {
+		fmt.Fprintln(out, i18n.T("update.release.downloading", "version", latest, "current", version, "name", name))
 	}
-	fmt.Fprintf(out, "最新正式版 v%s(目前 %s);下載 %s…\n", latest, from, name)
 	// 暫存目錄開在 binary 旁邊:同一個檔案系統,最後的 rename 才是原子的。
 	tmp, err := os.MkdirTemp(filepath.Dir(exe), ".capy-update-")
 	if err != nil {
-		return fmt.Errorf("無法在 %s 建暫存目錄(要有寫入權限才能覆蓋自己):%w", filepath.Dir(exe), err)
+		return i18n.Errorf("update.err.tempdir", "dir", filepath.Dir(exe), "err", err)
 	}
 	defer os.RemoveAll(tmp)
 	sums, err := fetchBytes(ctx, urls[updateChecksums], 1<<20)
 	if err != nil {
-		return fmt.Errorf("下載 %s:%w", updateChecksums, err)
+		return i18n.Errorf("update.err.download", "name", updateChecksums, "err", err)
 	}
 	want := checksumFor(sums, name)
 	if want == "" {
-		return fmt.Errorf("%s 沒有 %s 這一行,不敢裝", updateChecksums, name)
+		return i18n.Errorf("update.err.no_checksum_line", "checksums", updateChecksums, "name", name)
 	}
 	archive := filepath.Join(tmp, name)
 	if err := downloadVerified(ctx, urls[name], archive, want); err != nil {
-		return fmt.Errorf("下載 %s:%w", name, err)
+		return i18n.Errorf("update.err.download", "name", name, "err", err)
 	}
 	built, err := extractCapy(archive, tmp, binaryName())
 	if err != nil {
-		return fmt.Errorf("解開 %s:%w", name, err)
+		return i18n.Errorf("update.err.extract", "name", name, "err", err)
 	}
 	if err := updateVerify(built, latest); err != nil {
-		return fmt.Errorf("新 binary 自檢失敗(舊的沒動):%w", err)
+		return i18n.Errorf("update.err.verify_failed", "err", err)
 	}
 	if err := replaceExecutable(exe, built); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "已更新 %s → v%s\n", exe, latest)
+	fmt.Fprintln(out, i18n.T("update.updated", "exe", exe, "version", "v"+latest))
 	return nil
 }
 
@@ -214,7 +208,7 @@ func fetchBytes(ctx context.Context, url string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(b)) > limit {
-		return nil, fmt.Errorf("超過 %d bytes", limit)
+		return nil, i18n.Errorf("update.err.too_large", "limit", limit)
 	}
 	return b, nil
 }
@@ -257,7 +251,7 @@ func downloadVerified(ctx context.Context, url, dst, wantHex string) error {
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != wantHex {
 		_ = os.Remove(dst)
-		return fmt.Errorf("SHA-256 校驗失敗(下載不完整,或 release 檔被換過):%s ≠ %s 裡的 %s", got[:12], updateChecksums, wantHex[:12])
+		return i18n.Errorf("update.err.checksum_mismatch", "got", got[:12], "checksums", updateChecksums, "want", wantHex[:12])
 	}
 	return nil
 }
@@ -294,7 +288,7 @@ func extractCapy(archive, dir, name string) (string, error) {
 			rc.Close()
 			return dst, err
 		}
-		return "", fmt.Errorf("壓縮檔裡沒有 %s", name)
+		return "", i18n.Errorf("update.err.not_in_archive", "name", name)
 	}
 	f, err := os.Open(archive)
 	if err != nil {
@@ -309,7 +303,7 @@ func extractCapy(archive, dir, name string) (string, error) {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return "", fmt.Errorf("壓縮檔裡沒有 %s", name)
+			return "", i18n.Errorf("update.err.not_in_archive", "name", name)
 		}
 		if err != nil {
 			return "", err
@@ -327,10 +321,10 @@ func verifyBinary(bin, want string) error {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, "--version").Output()
 	if err != nil {
-		return fmt.Errorf("執行 %s --version:%w", bin, err)
+		return i18n.Errorf("update.err.run_version", "bin", bin, "err", err)
 	}
 	if !strings.Contains(string(out), want) {
-		return fmt.Errorf("%s --version 回 %q,不含預期的 %s", bin, strings.TrimSpace(string(out)), want)
+		return i18n.Errorf("update.err.version_mismatch", "bin", bin, "got", strconv.Quote(strings.TrimSpace(string(out))), "want", want)
 	}
 	return nil
 }
@@ -358,7 +352,7 @@ func resolveMainHead(ctx context.Context) (mainHead, error) {
 		return mainHead{}, err
 	}
 	if len(body.SHA) < 7 {
-		return mainHead{}, errors.New("GitHub API 回應解析失敗:沒有 sha")
+		return mainHead{}, i18n.Errorf("update.err.no_sha")
 	}
 	return mainHead{SHA: body.SHA, Date: body.Commit.Committer.Date}, nil
 }
@@ -366,7 +360,7 @@ func resolveMainHead(ctx context.Context) (mainHead, error) {
 func runDevUpdate(ctx context.Context, out, stderr io.Writer) error {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
-		return errors.New("找不到 go:--dev 是從原始碼建置,需要 Go toolchain(https://go.dev/dl/)")
+		return i18n.Errorf("update.err.no_go")
 	}
 	exe, err := updateExecutable()
 	if err != nil {
@@ -381,23 +375,23 @@ func runDevUpdate(ctx context.Context, out, stderr io.Writer) error {
 	}
 	ver := head.devVersion()
 	if i := strings.LastIndex(version, "-"); i >= 0 && strings.HasPrefix(head.SHA, version[i+1:]) {
-		fmt.Fprintf(out, "已是最新:%s(main %s)\n", version, head.SHA[:7])
+		fmt.Fprintln(out, i18n.T("update.dev.up_to_date", "version", version, "sha", head.SHA[:7]))
 		return nil
 	}
-	fmt.Fprintf(out, "main 最新 %s(%s),目前 %s;建置中(第一次會下載相依,約 20 秒)…\n", head.SHA[:7], head.Date.Local().Format("2006-01-02 15:04"), version)
+	fmt.Fprintln(out, i18n.T("update.dev.building", "sha", head.SHA[:7], "date", head.Date.Local().Format("2006-01-02 15:04"), "version", version))
 	// 暫存目錄開在 binary 旁邊:同一個檔案系統,最後的 rename 才是原子的。
 	tmp, err := os.MkdirTemp(filepath.Dir(exe), ".capy-update-")
 	if err != nil {
-		return fmt.Errorf("無法在 %s 建暫存目錄(要有寫入權限才能覆蓋自己):%w", filepath.Dir(exe), err)
+		return i18n.Errorf("update.err.tempdir", "dir", filepath.Dir(exe), "err", err)
 	}
 	defer os.RemoveAll(tmp)
 	if err := updateGoInstall(ctx, goBin, head.SHA, ver, tmp, stderr); err != nil {
-		return fmt.Errorf("go install 失敗:%w", err)
+		return i18n.Errorf("update.err.go_install", "err", err)
 	}
 	if err := replaceExecutable(exe, filepath.Join(tmp, binaryName())); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "已更新 %s → %s\n", exe, ver)
+	fmt.Fprintln(out, i18n.T("update.updated", "exe", exe, "version", ver))
 	return nil
 }
 
@@ -427,11 +421,11 @@ func replaceExecutable(dst, src string) error {
 	old := dst + ".old"
 	_ = os.Remove(old)
 	if err := os.Rename(dst, old); err != nil {
-		return fmt.Errorf("移開舊 binary:%w", err)
+		return i18n.Errorf("update.err.move_old", "err", err)
 	}
 	if err := os.Rename(src, dst); err != nil {
 		_ = os.Rename(old, dst)
-		return fmt.Errorf("放入新 binary:%w", err)
+		return i18n.Errorf("update.err.place_new", "err", err)
 	}
 	_ = os.Remove(old)
 	executableReplaced.Store(true)

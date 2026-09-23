@@ -19,6 +19,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/browser"
 	"github.com/Tai-ch0802/capy-music/internal/config"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
@@ -34,7 +35,7 @@ var (
 )
 
 func newAuthCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "auth", Short: "帳號授權"}
+	cmd := &cobra.Command{Use: "auth", Short: i18n.T("cmd.auth.short")}
 	cmd.AddCommand(newAuthLoginCmd(), newAuthStatusCmd(), newAuthLogoutCmd())
 	return cmd
 }
@@ -42,7 +43,7 @@ func newAuthCmd() *cobra.Command {
 func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login <spotify|apple|google>",
-		Short: "登入平台(Spotify:自己的 app + PKCE;Apple:自抓 web token;Google:Drive 同步用)",
+		Short: i18n.T("cmd.auth.login.short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
@@ -57,9 +58,9 @@ func newAuthLoginCmd() *cobra.Command {
 			case "spotify":
 				// 走下方既有流程。
 			case "local":
-				return errors.New("local 沒有憑證(計畫 §2 A8):capy config set local_root <目錄> 就能用")
+				return i18n.Errorf("auth.err.local_no_credentials")
 			default:
-				return fmt.Errorf("目前支援 spotify、apple、google")
+				return i18n.Errorf("auth.err.unsupported_provider")
 			}
 			cfg, err := config.Load()
 			if err != nil {
@@ -71,7 +72,7 @@ func newAuthLoginCmd() *cobra.Command {
 			}
 			if cid == "" {
 				if !stdinIsTTY() {
-					return fmt.Errorf("非互動環境請用 --client-id(建 app 步驟:https://developer.spotify.com/dashboard,redirect URI 填 http://127.0.0.1:8888/callback)")
+					return i18n.Errorf("auth.spotify.err.non_tty_client_id")
 				}
 				cid, err = runClientIDWizard()
 				if err != nil {
@@ -82,7 +83,7 @@ func newAuthLoginCmd() *cobra.Command {
 			if err := validateSpotifyClientID(cid); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "在瀏覽器完成 Spotify 授權…(180s 內)")
+			fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("auth.spotify.waiting"))
 			ctx, cancel := context.WithTimeout(cmd.Context(), 180*time.Second)
 			defer cancel()
 			if _, err := spotifyLogin(ctx, cid, openBrowser); err != nil {
@@ -93,33 +94,26 @@ func newAuthLoginCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "✅ Spotify 授權完成(refresh token 已入 keychain)")
+			fmt.Fprintln(cmd.OutOrStdout(), i18n.T("auth.spotify.done"))
 			defaultProviderHint(cmd, "spotify")
 			return nil
 		},
 	}
-	cmd.Flags().String("client-id", "", "(spotify / google)你自建 app 的 Client ID(略過精靈);google 等同 CAPY_GOOGLE_CLIENT_ID")
-	cmd.Flags().String("client-secret", "", "(google)自建 client 的 secret;等同 CAPY_GOOGLE_CLIENT_SECRET。argv 可被 ps 看到,建議用環境變數")
-	cmd.Flags().String("developer-token", "", "(apple)developer token;等同 CAPY_APPLE_DEVELOPER_TOKEN。argv 可被 ps 看到,建議用環境變數")
-	cmd.Flags().String("user-token", "", "(apple)media-user-token;等同 CAPY_APPLE_USER_TOKEN")
-	cmd.Flags().Bool("i-understand", false, "(apple)以 flag/環境變數提供 token 時,表示已閱讀「非 Apple 官方支援」聲明")
+	cmd.Flags().String("client-id", "", i18n.T("cmd.auth.login.flag.client_id"))
+	cmd.Flags().String("client-secret", "", i18n.T("cmd.auth.login.flag.client_secret"))
+	cmd.Flags().String("developer-token", "", i18n.T("cmd.auth.login.flag.developer_token"))
+	cmd.Flags().String("user-token", "", i18n.T("cmd.auth.login.flag.user_token"))
+	cmd.Flags().Bool("i-understand", false, i18n.T("cmd.auth.login.flag.i_understand"))
 	cmd.Flags().Bool("auto", false, "")
 	_ = cmd.Flags().MarkHidden("auto") // 未文件化、opt-in、開發者自負(CLAUDE.md 鐵則的唯一例外,見 auto_darwin.go)
 	return cmd
 }
 
-const appleDisclosure = `⚠️ 非 Apple 官方支援。你要貼上的兩個 token 屬於 Apple 網頁播放器(music.apple.com):
-  · Apple 可能隨時更換或撤銷 —— 屆時重新執行 capy auth login apple 即可
-  · 以第三方工具存取 Apple Music 的服務條款風險由你自行承擔
-  · capy 只指導你複製,不會讀取你的瀏覽器資料
-  · 寫入時,加進清單的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);capy 只寫你自己建的清單`
+// appleDisclosure / appleGuide:用到時才翻(命令樹可能在語系切換後重建;web 的提示橋也共用)。
+// 揭露每個語系都要完整(CLAUDE.md 鐵則),i18n_en_auth_test.go 逐語系釘住。
+func appleDisclosure() string { return i18n.T("auth.apple.disclosure") }
 
-const appleGuide = `從 Apple 網頁播放器複製 token(約 1 分鐘):
-  1. 用瀏覽器開 https://music.apple.com 並登入
-  2. 開 DevTools(F12 / ⌥⌘I)→ Network 分頁,篩選 "amp-api"
-  3. 隨便點一首歌或播放清單,點任一 amp-api 請求 → Request Headers
-  4. 複製 authorization 的值(整串;含不含 "Bearer " 都可)→ developer token
-  5. 複製 media-user-token 的值 → user token`
+func appleGuide() string { return i18n.T("auth.apple.guide") }
 
 // appleLogin:三條入口(flag/env、TTY 精靈[Task 3]、隱藏 --auto[Task 4])全收口到 applePersist。
 // 揭露不可跳過:flag/env 路徑要 --i-understand(拒絕訊息本身就帶聲明);精靈路徑是第一頁的 Confirm。
@@ -133,20 +127,20 @@ func appleLogin(cmd *cobra.Command) error {
 		user = os.Getenv("CAPY_APPLE_USER_TOKEN")
 	}
 	if dev == "" && user != "" {
-		return errors.New("給了 user token(--user-token / CAPY_APPLE_USER_TOKEN)但沒有 developer token — 兩個都給,或都不給(走精靈 / --auto)")
+		return i18n.Errorf("auth.apple.err.user_without_dev")
 	}
 	if auto, _ := cmd.Flags().GetBool("auto"); auto && dev == "" { // 明確提供任一 token 就不走 --auto;user-only 已在上面報錯,故這裡 dev == "" 等同「兩者都沒給」
 		// 唯一例外(CLAUDE.md):隱藏、opt-in、開發者自負。揭露照樣不可跳過。
-		fmt.Fprintln(cmd.ErrOrStderr(), "--auto:將以 AppleScript 讀取已登入分頁的 MusicKit token(隱藏功能,開發者自負)")
+		fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("auth.apple.auto_notice"))
 		if stdinIsTTY() {
 			if err := confirmAppleDisclosure(); err != nil {
 				return err
 			}
 		} else {
 			if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
-				return errors.New(appleDisclosure + "\n\n--auto 在非互動環境需加 --i-understand")
+				return i18n.Errorf("auth.apple.err.auto_needs_i_understand", "disclosure", appleDisclosure())
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), appleDisclosure) // 非 TTY 沒有 Confirm 頁,揭露要另外印出來(每條路徑都出現;CLAUDE.md 鐵則)
+			fmt.Fprintln(cmd.ErrOrStderr(), appleDisclosure()) // 非 TTY 沒有 Confirm 頁,揭露要另外印出來(每條路徑都出現;CLAUDE.md 鐵則)
 		}
 		wt, err := appleAutoTokens()
 		if err == nil {
@@ -155,7 +149,7 @@ func appleLogin(cmd *cobra.Command) error {
 		if !stdinIsTTY() {
 			return err
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "自動擷取失敗,改用手動貼上:%v\n", err)
+		fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("auth.apple.auto_failed", "err", err))
 		_, gerr := secret.Get(apple.KeyMusicUserToken)
 		dev, user, err = runAppleWizardInputs(gerr == nil)
 		if err != nil {
@@ -165,7 +159,7 @@ func appleLogin(cmd *cobra.Command) error {
 	}
 	if dev == "" {
 		if !stdinIsTTY() {
-			return errors.New("非互動環境請設 CAPY_APPLE_DEVELOPER_TOKEN(首次登入另需 CAPY_APPLE_USER_TOKEN)並加 --i-understand。\n" + appleGuide)
+			return i18n.Errorf("auth.apple.err.non_tty_needs_env", "guide", appleGuide())
 		}
 		if err := confirmAppleDisclosure(); err != nil {
 			return err
@@ -178,9 +172,9 @@ func appleLogin(cmd *cobra.Command) error {
 		return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
 	}
 	if ok, _ := cmd.Flags().GetBool("i-understand"); !ok {
-		return errors.New(appleDisclosure + "\n\n以 flag / 環境變數提供 token 時,請加 --i-understand 表示已閱讀並同意上述聲明")
+		return i18n.Errorf("auth.apple.err.flags_need_i_understand", "disclosure", appleDisclosure())
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), appleDisclosure) // 揭露在指令內、每條路徑都出現(CLAUDE.md 鐵則);印到 stderr,不動 stdout 契約
+	fmt.Fprintln(cmd.ErrOrStderr(), appleDisclosure()) // 揭露在指令內、每條路徑都出現(CLAUDE.md 鐵則);印到 stderr,不動 stdout 契約
 	return applePersist(cmd.Context(), cmd.OutOrStdout(), dev, user)
 }
 
@@ -195,13 +189,14 @@ var (
 func appleConfirmDisclosure() error {
 	agree := false
 	if err := newForm(huh.NewGroup(
-		huh.NewNote().Title("使用前請先閱讀").Description(appleDisclosure),
-		huh.NewConfirm().Title("我已閱讀,同意自負風險,繼續?").Affirmative("同意").Negative("取消").Value(&agree),
+		huh.NewNote().Title(i18n.T("auth.apple.confirm.title")).Description(appleDisclosure()),
+		huh.NewConfirm().Title(i18n.T("auth.apple.confirm.question")).
+			Affirmative(i18n.T("auth.apple.confirm.agree")).Negative(i18n.T("auth.apple.confirm.cancel")).Value(&agree),
 	)).Run(); err != nil {
 		return err
 	}
 	if !agree {
-		return errors.New("已取消(未同意聲明)")
+		return i18n.Errorf("auth.apple.err.declined")
 	}
 	return nil
 }
@@ -212,21 +207,21 @@ func appleWizardInputs(hasUser bool) (dev, user string, err error) {
 	onlyDev := hasUser
 	if hasUser {
 		if err := newForm(huh.NewGroup(
-			huh.NewConfirm().Title("keychain 已有 user token。只更新 developer token?").
-				Affirmative("只更新 developer token").Negative("兩個都重新貼").Value(&onlyDev),
+			huh.NewConfirm().Title(i18n.T("auth.apple.wizard.only_dev_question")).
+				Affirmative(i18n.T("auth.apple.wizard.only_dev")).Negative(i18n.T("auth.apple.wizard.both")).Value(&onlyDev),
 		)).Run(); err != nil {
 			return "", "", err
 		}
 	}
 	fields := []huh.Field{
-		huh.NewNote().Title("從網頁播放器複製 token").Description(appleGuide),
-		huh.NewInput().Title("developer token(authorization 標頭的值)").Value(&dev).Validate(validateAppleDevToken),
+		huh.NewNote().Title(i18n.T("auth.apple.wizard.guide_title")).Description(appleGuide()),
+		huh.NewInput().Title(i18n.T("auth.apple.wizard.dev_label")).Value(&dev).Validate(validateAppleDevToken),
 	}
 	if !onlyDev {
-		fields = append(fields, huh.NewInput().Title("user token(media-user-token 標頭的值)").
+		fields = append(fields, huh.NewInput().Title(i18n.T("auth.apple.wizard.user_label")).
 			EchoMode(huh.EchoModePassword).Value(&user).Validate(func(s string) error {
 			if strings.TrimSpace(s) == "" {
-				return errors.New("不可為空")
+				return i18n.Errorf("auth.apple.err.empty")
 			}
 			return nil
 		}))
@@ -247,17 +242,17 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	dev = apple.NormalizeDevToken(dev)
 	exp, err := apple.JWTExp(dev)
 	if err != nil {
-		return fmt.Errorf("developer token 格式不對(%v)— 應複製 authorization 標頭的值", err)
+		return i18n.Errorf("auth.apple.err.dev_token_malformed", "err", err)
 	}
 	if !exp.After(time.Now()) {
-		return fmt.Errorf("developer token 已於 %s 過期 — 回網頁播放器重新複製", exp.Format(time.RFC3339))
+		return i18n.Errorf("auth.apple.err.dev_token_expired", "time", exp.Format(time.RFC3339))
 	}
 	user = strings.TrimSpace(user)
 	keepUser := user == ""
 	if keepUser {
 		user, err = secret.Get(apple.KeyMusicUserToken)
 		if errors.Is(err, secret.ErrNotFound) {
-			return errors.New("keychain 沒有 user token — 首次登入請一併提供 media-user-token")
+			return i18n.Errorf("auth.apple.err.no_stored_user_token")
 		}
 		if err != nil {
 			return err
@@ -274,44 +269,38 @@ func applePersist(ctx context.Context, w io.Writer, dev, user string) error {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	verified, err := appleprov.NewClient(hc, base, dev, "").Preflight(ctx)
 	if err != nil {
-		return fmt.Errorf("developer token 被 Apple 拒絕 — 重新複製 authorization 標頭(Apple 可能已輪替):%w", err)
+		return i18n.Errorf("auth.apple.err.dev_token_rejected", "err", err)
 	}
 	sf, err := appleprov.NewClient(hc, base, dev, user).Storefront(ctx)
 	if err != nil {
 		if !verified {
-			err = fmt.Errorf("%w;preflight 回 404,也可能是 API base 或端點形狀不對(CAPY_APPLE_API_BASE,見計畫附錄 A C-0)", err)
+			err = i18n.Errorf("auth.apple.err.api_base_hint", "err", err)
 		}
 		if keepUser {
-			return fmt.Errorf("既有 user token 已失效 — 請一併提供新的 media-user-token:%w", err)
+			return i18n.Errorf("auth.apple.err.stored_user_token_dead", "err", err)
 		}
-		return fmt.Errorf("user token 被 Apple 拒絕 — 重新複製 media-user-token:%w", err)
+		return i18n.Errorf("auth.apple.err.user_token_rejected", "err", err)
 	}
 	if err := apple.SaveDeveloperToken(dev, exp); err != nil {
 		return err
 	}
 	if !keepUser {
 		if err := secret.Set(apple.KeyMusicUserToken, user); err != nil {
-			return fmt.Errorf("寫入 keychain 失敗:%w", err)
+			return i18n.Errorf("auth.err.keychain_write", "err", err)
 		}
 	}
 	cfg.AppleStorefront = sf
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "✅ Apple Music 登入完成(storefront %s;developer token 有效至 %s)\n", sf, exp.Format("2006-01-02"))
+	fmt.Fprintln(w, i18n.T("auth.apple.done", "storefront", sf, "expiry", exp.Format("2006-01-02")))
 	return nil
 }
 
 // spotifyAppTitle / spotifyAppSteps:BYO 精靈的說明原文;huh 表單與 web 提示橋共用同一份。
-const (
-	spotifyAppTitle = "建立你自己的 Spotify app(免費,約 2 分鐘)"
-	spotifyAppSteps = "Spotify 政策限制每個 app 只能有 5 位使用者,所以要用自己的 app:\n" +
-		"1. 開 https://developer.spotify.com/dashboard\n" +
-		"2. Create app,名稱隨意\n" +
-		"3. Redirect URI 填入(完全照抄): http://127.0.0.1:8888/callback\n" +
-		"4. 勾選 Web API → Save\n" +
-		"5. 複製 Client ID 貼到下一欄"
-)
+func spotifyAppTitle() string { return i18n.T("auth.spotify.app_title") }
+
+func spotifyAppSteps() string { return i18n.T("auth.spotify.app_steps") }
 
 // runClientIDWizard:BYO onboarding(spec §4.2)。測試 / web 替換點(P7 決策 40:web 改走表單提示橋)。
 // charm v2 調整條款:huh v2 API 與此處有出入時,以 go doc charm.land/huh/v2 為準,偏差記入報告。
@@ -319,8 +308,8 @@ var runClientIDWizard = func() (string, error) {
 	var cid string
 	form := newForm(huh.NewGroup(
 		huh.NewNote().
-			Title(spotifyAppTitle).
-			Description(spotifyAppSteps),
+			Title(spotifyAppTitle()).
+			Description(spotifyAppSteps()),
 		huh.NewInput().
 			Title("Client ID").
 			Value(&cid).
@@ -336,7 +325,7 @@ var runClientIDWizard = func() (string, error) {
 // (P7 T1 抽出:web 的表單提示橋也用它們;錯誤訊息一字不差)。
 func validateSpotifyClientID(s string) error {
 	if !clientIDRe.MatchString(strings.TrimSpace(s)) {
-		return errors.New("Client ID 應為 32 位小寫十六進位字串(從 dashboard 複製)")
+		return i18n.Errorf("auth.spotify.err.bad_client_id")
 	}
 	return nil
 }
@@ -347,7 +336,7 @@ func validateAppleDevToken(s string) error {
 		return err
 	}
 	if !exp.After(time.Now()) {
-		return fmt.Errorf("已於 %s 過期,請重新複製", exp.Format(time.RFC3339))
+		return i18n.Errorf("auth.apple.err.token_expired_recopy", "time", exp.Format(time.RFC3339))
 	}
 	return nil
 }
@@ -355,15 +344,15 @@ func validateAppleDevToken(s string) error {
 // maskClientID:顯示頭尾各 4 碼;格式異常時不切片、直接指出下一步。
 func maskClientID(id string) string {
 	if !clientIDRe.MatchString(id) {
-		return "已設定但格式異常(應為 32 位十六進位)— 重跑 capy auth login spotify"
+		return i18n.T("auth.status.client_id_malformed")
 	}
-	return "已設定(" + id[:4] + "…" + id[len(id)-4:] + ")"
+	return i18n.T("auth.status.client_id_set", "head", id[:4], "tail", id[len(id)-4:])
 }
 
 func newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "顯示各平台授權狀態(離線檢查;線上驗證用 capy doctor)",
+		Short: i18n.T("cmd.auth.status.short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load()
@@ -375,29 +364,29 @@ func newAuthStatusCmd() *cobra.Command {
 			if cfg.SpotifyClientID != "" {
 				fmt.Fprintf(w, "  client_id: %s\n", maskClientID(cfg.SpotifyClientID))
 			} else {
-				fmt.Fprintln(w, "  client_id: 未設定")
+				fmt.Fprintln(w, "  client_id: "+i18n.T("auth.status.not_set"))
 			}
 			if err := auth.SpotifyStored(); err == nil { // 新鍵優先,尚未升級的舊鍵也算「已登入」
-				fmt.Fprintln(w, "  refresh token: keychain 存在")
+				fmt.Fprintln(w, "  refresh token: "+i18n.T("auth.status.in_keychain"))
 			} else {
-				fmt.Fprintln(w, "  refresh token: 不存在(執行 capy auth login spotify)")
+				fmt.Fprintln(w, "  refresh token: "+i18n.T("auth.status.token_missing", "provider", "spotify"))
 			}
 			fmt.Fprintln(w, "google:")
 			switch {
 			case cfg.GoogleClientID != "":
 				fmt.Fprintf(w, "  client: config(%s)\n", maskGoogleClientID(cfg.GoogleClientID))
 			case auth.BuiltinGoogleClientID != "":
-				fmt.Fprintln(w, "  client: 內建(release binary)")
+				fmt.Fprintln(w, "  client: "+i18n.T("auth.status.google_builtin"))
 			default:
-				fmt.Fprintln(w, "  client: 未設定(執行 capy auth login google)")
+				fmt.Fprintln(w, "  client: "+i18n.T("auth.status.google_not_set"))
 			}
 			switch tok, err := auth.GoogleStored(); {
 			case err == nil:
-				fmt.Fprintf(w, "  token: keychain 存在(access token 到期 %s;refresh token 不輪替)\n", tok.Expiry.Local().Format(time.RFC3339))
+				fmt.Fprintln(w, "  token: "+i18n.T("auth.status.google_token", "expiry", tok.Expiry.Local().Format(time.RFC3339)))
 			case errors.Is(err, secret.ErrNotFound):
-				fmt.Fprintln(w, "  token: 不存在(執行 capy auth login google)")
+				fmt.Fprintln(w, "  token: "+i18n.T("auth.status.token_missing", "provider", "google"))
 			default:
-				fmt.Fprintf(w, "  token: 讀取 keychain 失敗:%v\n", err)
+				fmt.Fprintln(w, "  token: "+i18n.T("auth.status.keychain_read_failed", "err", err))
 			}
 			if cfg.GoogleEmail != "" {
 				fmt.Fprintf(w, "  email: %s\n", cfg.GoogleEmail)
@@ -408,26 +397,26 @@ func newAuthStatusCmd() *cobra.Command {
 			fmt.Fprintln(w, "apple:")
 			switch _, exp, err := apple.DeveloperToken(time.Now()); {
 			case err == nil:
-				fmt.Fprintf(w, "  developer token: 有效至 %s\n", exp.Format(time.RFC3339))
+				fmt.Fprintln(w, "  developer token: "+i18n.T("auth.status.valid_until", "expiry", exp.Format(time.RFC3339)))
 			case errors.Is(err, apple.ErrDevTokenExpired):
-				fmt.Fprintf(w, "  developer token: 已於 %s 過期(執行 capy auth login apple)\n", exp.Format(time.RFC3339))
+				fmt.Fprintln(w, "  developer token: "+i18n.T("auth.status.dev_token_expired", "expiry", exp.Format(time.RFC3339)))
 			case errors.Is(err, secret.ErrNotFound):
-				fmt.Fprintln(w, "  developer token: 不存在(執行 capy auth login apple)")
+				fmt.Fprintln(w, "  developer token: "+i18n.T("auth.status.token_missing", "provider", "apple"))
 			default:
-				fmt.Fprintf(w, "  developer token: 讀取 keychain 失敗:%v\n", err)
+				fmt.Fprintln(w, "  developer token: "+i18n.T("auth.status.keychain_read_failed", "err", err))
 			}
 			switch _, err := secret.Get(apple.KeyMusicUserToken); {
 			case err == nil:
-				fmt.Fprintln(w, "  user token: 存在")
+				fmt.Fprintln(w, "  user token: "+i18n.T("auth.status.present"))
 			case errors.Is(err, secret.ErrNotFound):
-				fmt.Fprintln(w, "  user token: 不存在(執行 capy auth login apple)")
+				fmt.Fprintln(w, "  user token: "+i18n.T("auth.status.token_missing", "provider", "apple"))
 			default:
-				fmt.Fprintf(w, "  user token: 讀取 keychain 失敗:%v\n", err)
+				fmt.Fprintln(w, "  user token: "+i18n.T("auth.status.keychain_read_failed", "err", err))
 			}
 			if cfg.AppleStorefront != "" {
 				fmt.Fprintf(w, "  storefront: %s\n", cfg.AppleStorefront)
 			} else {
-				fmt.Fprintln(w, "  storefront: 未設定")
+				fmt.Fprintln(w, "  storefront: "+i18n.T("auth.status.not_set"))
 			}
 			return nil
 		},
@@ -437,7 +426,7 @@ func newAuthStatusCmd() *cobra.Command {
 func newAuthLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout <spotify|apple|google>",
-		Short: "登出平台(刪除 keychain 憑證;client_id 保留在 config;google 的 BYO client secret 一併刪除)",
+		Short: i18n.T("cmd.auth.logout.short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
@@ -459,7 +448,7 @@ func newAuthLogoutCmd() *cobra.Command {
 				}
 				switch cfg, err := config.Load(); { // 沒登入就不該還顯示 email
 				case err != nil: // keychain 的鍵已經刪了,不讓整個命令失敗,但要講
-					fmt.Fprintf(cmd.ErrOrStderr(), "token 已刪除,但 config 的 google_email 清不掉:%v\n", err)
+					fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("auth.logout.google_email_not_cleared", "err", err))
 				case cfg.GoogleEmail != "":
 					cfg.GoogleEmail = ""
 					if err := config.Save(cfg); err != nil {
@@ -467,9 +456,9 @@ func newAuthLogoutCmd() *cobra.Command {
 					}
 				}
 			default:
-				return fmt.Errorf("目前支援 spotify、apple、google")
+				return i18n.Errorf("auth.err.unsupported_provider")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "已登出 %s\n", args[0])
+			fmt.Fprintln(cmd.OutOrStdout(), i18n.T("auth.logout.done", "provider", args[0]))
 			return nil
 		},
 	}
