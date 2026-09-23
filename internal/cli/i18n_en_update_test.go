@@ -32,7 +32,7 @@ func TestUpdateInEnglish(t *testing.T) {
 		stubVersion(t, "dev")
 		stubVerify(t, nil)
 		out, err := runCLI(t, "update")
-		want := "Latest release is v1.2.3 (you have dev build dev; switching to the release); downloading " + updateAssetName("1.2.3") + "…\nUpdated "
+		want := "Latest release is v1.2.3 (you're on a dev build, dev; switching to the release); downloading " + updateAssetName("1.2.3") + "…\nUpdated "
 		if err != nil || hasCJK(out) || !strings.HasPrefix(out, want) || !strings.HasSuffix(out, " → v1.2.3\n") {
 			t.Fatalf("%v %q", err, out)
 		}

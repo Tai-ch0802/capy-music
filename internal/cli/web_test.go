@@ -967,7 +967,8 @@ func TestWebAccountPageKeysOnAuthStatusWording(t *testing.T) {
 	loggedIn, _ := runCLI(t, "auth", "status")
 	keyring.MockInitWithError(errors.New("locked"))
 	broken, _ := runCLI(t, "auth", "status")
-	for _, lit := range []string{"refresh token: keychain 存在", "token: keychain 存在", "讀取 keychain 失敗"} {
+	// "\n  token:" 是 google 那一行(兩格縮排);只寫 "token:" 的話 spotify 的 refresh token 那行就滿足了,google 那行沒被釘住。
+	for _, lit := range []string{"refresh token: keychain 存在", "\n  token: keychain 存在", "讀取 keychain 失敗"} {
 		if !strings.Contains(loggedIn+broken, lit) {
 			t.Errorf("auth status 不再印 %q,帳號頁的判斷會靜默失效", lit)
 		}

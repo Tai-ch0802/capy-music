@@ -23,7 +23,7 @@ func TestDoctorEnglishLocalAllPass(t *testing.T) {
 	_, _, root := localWorld(t)
 	withLanguage(t, "en")
 	out, _, err := runPull(t, "doctor", "--provider", "local")
-	want := "✅ local_root setting:" + root + "\n✅ Directory and library.json:1 playlist file\nAll checks passed 🎉\n"
+	want := "✅ local_root setting: " + root + "\n✅ Directory and library.json: 1 playlist file\nAll checks passed 🎉\n"
 	if err != nil || out != want {
 		t.Fatalf("(%v)\n got %q\nwant %q", err, out, want)
 	}
@@ -37,7 +37,7 @@ func TestDoctorEnglishFailedCount(t *testing.T) {
 	if err == nil || err.Error() != "2 checks failed" {
 		t.Fatalf("%v", err)
 	}
-	if !strings.Contains(out, "❌ local_root setting:not set — capy config set local_root <directory>\n") {
+	if !strings.Contains(out, "❌ local_root setting: not set — capy config set local_root <directory>\n") {
 		t.Errorf("%q", out)
 	}
 

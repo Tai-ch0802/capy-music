@@ -33,10 +33,10 @@ func runChecks(ctx context.Context, w io.Writer, checks []check) (failed int) {
 		detail, err := c.fn(ctx)
 		if err != nil {
 			failed++
-			fmt.Fprintf(w, "❌ %s:%v\n", c.name, err)
+			fmt.Fprintln(w, i18n.T("doctor.line.fail", "name", c.name, "err", err)) // 整行一則:英文冒號後要空格
 			continue
 		}
-		fmt.Fprintf(w, "✅ %s:%s\n", c.name, detail)
+		fmt.Fprintln(w, i18n.T("doctor.line.ok", "name", c.name, "detail", detail))
 	}
 	return failed
 }

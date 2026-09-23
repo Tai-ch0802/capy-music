@@ -20,7 +20,7 @@ func TestGoogleLoginEnglish(t *testing.T) {
 	setGoogleTest(t)
 
 	_, err := runCLI(t, "auth", "login", "google")
-	if err == nil || !strings.HasPrefix(err.Error(), "this binary has no built-in Google client (none built with go install do); ") ||
+	if err == nil || !strings.HasPrefix(err.Error(), "this binary has no built-in Google client (builds from go install never include one); ") ||
 		!strings.Contains(err.Error(), `click "Publish app"`) || hasCJK(err.Error()) {
 		t.Fatalf("非 TTY 沒有 client 的英文錯誤(含整段指南):%v", err)
 	}
@@ -69,10 +69,10 @@ func TestGoogleLoginConfigSaveFailureEnglish(t *testing.T) {
 
 func TestMaskGoogleClientIDEnglish(t *testing.T) {
 	withLanguage(t, "en")
-	if got := maskGoogleClientID("abc.apps.googleusercontent.com"); got != "set" {
+	if got := maskGoogleClientID("abc.apps.googleusercontent.com"); got != "configured" {
 		t.Errorf("短 id:%q", got)
 	}
-	if got := maskGoogleClientID("1234567890-abc.apps.googleusercontent.com"); got != "set (123456…)" {
+	if got := maskGoogleClientID("1234567890-abc.apps.googleusercontent.com"); got != "configured (123456…)" {
 		t.Errorf("長 id:%q", got)
 	}
 }

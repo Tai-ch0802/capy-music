@@ -31,7 +31,7 @@ func TestEnglishRootHelpAndFlags(t *testing.T) {
 	for flag, want := range map[string]string{
 		"provider": "platform (spotify|apple|local; defaults to default_provider in config)",
 		"web":      "use capy from your browser: binds to 127.0.0.1 only and prints a one-time URL at startup",
-		"port":     "port for --web (default 0 = pick one; 8888, 80 and 443 are not allowed)",
+		"port":     "port for --web (default 0 = any free port; 8888, 80 and 443 are not allowed)",
 	} {
 		if got := root.Flags().Lookup(flag).Usage; got != want {
 			t.Errorf("--%s:%q", flag, got)

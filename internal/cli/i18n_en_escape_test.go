@@ -10,6 +10,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
@@ -27,7 +28,7 @@ func TestEnglishExportErrors(t *testing.T) {
 	if err := os.WriteFile(p+".v2", []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	want := nothing + "; also found a cache kept from before an upgrade: " + p + ".v2 — to recover from it, run capy export with the capy binary of that version"
+	want := nothing + "; also found " + p + ".v2, kept from before an upgrade — to recover from a kept cache, run capy export with the capy binary of that version"
 	if _, _, err := runPull(t, "export"); err == nil || err.Error() != want {
 		t.Fatalf("got  %v\nwant %s", err, want)
 	}
@@ -108,7 +109,7 @@ func TestEnglishEscapeHelp(t *testing.T) {
 	withLanguage(t, "en")
 	setCLITestConfig(t)
 	for args, wants := range map[string][]string{
-		"export --help":     {"Reads only the local state.db and never touches Drive", "capy export > backup.json never silently writes an empty shell"},
+		"export --help":     {"Reads only the local state.db and never touches Drive", "capy export > backup.json never silently writes an empty file"},
 		"drive --help":      {"Maintenance commands for the Google Drive appdata", "Restore the files missing from the Drive appdata using this machine's state.db"},
 		"drive init --help": {"The way out after pl pull stops with exit 3", "currently the only mode", "exits 2 if there is anything to create", "skip the confirmation"},
 	} {
@@ -120,6 +121,20 @@ func TestEnglishEscapeHelp(t *testing.T) {
 			if !strings.Contains(out, w) {
 				t.Errorf("capy %s 缺 %q:\n%s", args, w, out)
 			}
+		}
+	}
+}
+
+// TestEnglishDriveInitConfirmWarnsWrongAccount:drive init 的確認訊息只在終端機出現(測試跑不到那個 huh 表單),
+// 但它是這個命令唯一的「登錯帳號」防線:英文的單複數與警告直接釘住。
+func TestEnglishDriveInitConfirmWarnsWrongAccount(t *testing.T) {
+	withLanguage(t, "en")
+	for n, want := range map[int]string{
+		1: "Upload the file above to the Drive appdata of a@b.c? (If this is the wrong account, your playlist data (playlists and track mappings) ends up in someone else's space)",
+		3: "Upload the 3 files above to the Drive appdata of a@b.c? (If this is the wrong account, your playlist data (playlists and track mappings) ends up in someone else's space)",
+	} {
+		if got := i18n.T("escape.drive_init.confirm", "count", n, "account", "a@b.c"); got != want {
+			t.Errorf("count %d:\ngot  %s\nwant %s", n, got, want)
 		}
 	}
 }
