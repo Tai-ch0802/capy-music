@@ -110,7 +110,7 @@ func TestGuideOnSiteIsCurrent(t *testing.T) {
 			t.Fatal(err)
 		}
 		// 兩份共用 /guide.css:比的是產生出來的 CSS,所以只有一份用到的 margin-top 值也會在這裡紅,不會讓另一頁安靜地少一段間距。
-		// 兩頁都要宣告兩種語言的網址(寫死網址當尺,不拿 guides 自己比)。
+		// 兩頁都要宣告兩種語言的網址(寫死網址當尺):擋的是 guides 表打錯網址、產生器漏插;產生結果跟 site/public 的比對在下面。
 		for _, link := range []string{
 			`<link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/guide">`,
 			`<link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/guide">`,
@@ -140,7 +140,7 @@ func TestGuideOnSiteIsCurrent(t *testing.T) {
 	}
 }
 
-// 英文版是中文版的完整翻譯:少翻一節、一步、一條命令,這裡要紅(只數結構,不比內容)。兩份也要在開頭互相連到對方。
+// 英文版是中文版的完整翻譯:少翻一節、一段、一步、一條命令或一個連結,這裡要紅(只數結構,不比內容)。兩份也要在開頭互相連到對方。
 // 連結寫網站的絕對網址:離線打開的檔案、Artifact、網站上三個地方都點得到,轉換時不必改寫。
 func TestGuideTranslationsMatch(t *testing.T) {
 	doc := func(name string) string {
@@ -151,7 +151,7 @@ func TestGuideTranslationsMatch(t *testing.T) {
 		return string(b)
 	}
 	zh, en := doc("guide.html"), doc("guide.en.html")
-	for _, tag := range []string{"<section", "<h2", "<h3", "<pre", "<li>", "<tr", "<kbd", `class="step"`, `class="note`, "<code>capy "} {
+	for _, tag := range []string{"<section", "<h2", "<h3", "<p", "<pre", "<li>", "<tr", "<a ", "<b>", "<kbd", `class="step"`, `class="note`, "<code>capy "} {
 		if a, b := strings.Count(zh, tag), strings.Count(en, tag); a != b {
 			t.Errorf("%s:docs/guide.html 有 %d 個、docs/guide.en.html 有 %d 個——兩份指南的結構要一樣", tag, a, b)
 		}
