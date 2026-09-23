@@ -195,4 +195,6 @@ loadCommands()
   .finally(() => {
     route();
     player?.start();
+    // 目錄讀不到、/api/commands 卻成功(網路閃斷):畫面是空的,至少說一句。沒有目錄可翻,只能用英文(也是預設語系)。
+    if (!i18nOK && !document.getElementById('notice').textContent) notice("capy --web couldn't load the interface texts; reload the page");
   });

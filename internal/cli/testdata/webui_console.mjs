@@ -930,7 +930,7 @@ await scenario('14', async () => {
 
 // 14b. 帳號頁的細節欄(i18n T3 自審):auth status --json 的事實畫成給人看、跟著語系的句子,沒有的事實不畫(整欄都沒有就是 —);
 //      JSON 的欄名與列舉值(client_id: / missing / developer_token …)不上畫面。到期時間用這台電腦的時區
-//      (TestWebConsoleBehaviour 給 node 的是 TZ=Asia/Taipei)。三列的順序是 Spotify、Apple Music、Google Drive。
+//      (預期值用同一台機器的 Date 算,不靠 TZ:CI 的 Windows 不一定吃 TZ 環境變數)。三列的順序是 Spotify、Apple Music、Google Drive。
 await scenario('14b', async () => {
   const { initAccount } = await import('./pages/account.mjs');
   const fixtures = [
@@ -942,11 +942,14 @@ await scenario('14b', async () => {
     { spotify: { state: 'missing', client_id: 'missing' }, google: { state: 'keychain_error', client: 'config' },
       apple: { state: 'keychain_error', developer_token: 'keychain_error', user_token: 'keychain_error' } },
   ];
+  const p2 = (n) => String(n).padStart(2, '0');
+  const local = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+  const [valid, expired] = [local('2026-10-01T04:30:00Z'), local('2026-01-01T00:00:00Z')];
   const want = {
-    'zh-TW': [['client ID 已設定', 'developer token 有效至 2026-10-01 12:30 · 商店地區:台灣', 'me@example.com'],
-      ['client ID 格式不對', 'developer token 已於 2026-01-01 08:00 過期', '—'], ['—', '—', '—']],
-    en: [['client ID set', 'developer token valid until 2026-10-01 12:30 · store region: Taiwan', 'me@example.com'],
-      ['client ID has the wrong format', 'developer token expired on 2026-01-01 08:00', '—'], ['—', '—', '—']],
+    'zh-TW': [['client ID 已設定', `developer token 有效至 ${valid} · 商店地區:台灣`, 'me@example.com'],
+      ['client ID 格式不對', `developer token 已於 ${expired} 過期`, '—'], ['—', '—', '—']],
+    en: [['client ID set', `developer token valid until ${valid} · store region: Taiwan`, 'me@example.com'],
+      ['client ID has the wrong format', `developer token expired on ${expired}`, '—'], ['—', '—', '—']],
   };
   const raw = ['client_id', 'developer_token', 'user_token', 'access_token', 'device_id', 'dev1', 'storefront', 'missing', 'keychain_error', 'builtin', 'malformed', 'T04:30', ': ok', ': set'];
   try {
@@ -980,6 +983,11 @@ await scenario('15', async () => {
   for (const [name, fetchImpl, want] of [
     ['401', async () => new Response(JSON.stringify({ error: badToken }), { status: 401, headers: { 'Content-Type': 'application/json' } }), badToken],
     ['down', async () => { throw new TypeError('Failed to fetch'); }, 'Failed to fetch'],
+    // 目錄那一發失敗、/api/commands 卻成功:畫面是空的,notice 要說一句(不能是空白一片)
+    ['i18n-blip', async (path) => (String(path).includes('/api/i18n')
+      ? new Response('oops', { status: 500 })
+      : new Response(JSON.stringify({ version: 'dev', providers: ['spotify'], default_provider: 'spotify', commands: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })),
+    "capy --web couldn't load the interface texts; reload the page"],
   ]) {
     await loadI18n(empty); // 真的瀏覽器裡這時還沒有目錄:別讓前面情境載進來的中文目錄替 t() 墊字
     for (const k of Object.keys(ids)) delete ids[k];
@@ -991,7 +999,7 @@ await scenario('15', async () => {
     const drawn = [];
     const walk = (e) => { drawn.push(e._text || '', ...Object.values(e.attrs || {}), e.placeholder || ''); for (const c of e.children || []) walk(c); };
     for (const e of [...Object.values(ids), globalThis.document.body]) walk(e);
-    const keys = drawn.filter((s) => s.includes('webui.'));
+    const keys = drawn.filter((s) => s.includes('webui.') || /(^|\s)web\.err\./.test(s)); // web.err.* 也是 key:沒目錄時 t() 只會回它
     check(!keys.length, `${name}:目錄讀不到時畫面上不可以有 key:${JSON.stringify(keys.slice(0, 5))}`);
     check(ids.notice?.textContent === want && ids.notice.hidden === false, `${name}:notice 要說原因:「${ids.notice?.textContent}」`);
   }

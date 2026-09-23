@@ -1584,7 +1584,6 @@ func TestWebConsoleBehaviour(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, "harness.mjs")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TZ=Asia/Taipei") // 帳號頁的到期時間用這台電腦的時區(情境 14b)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("前端行為不成立(%v):\n%s", err, out)
 	}
