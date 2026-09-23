@@ -304,6 +304,13 @@ func (g *webGlobalStderr) Write(p []byte) (int, error) {
 // <key>.token.lock:等的可能是同一行程的面板 / ISRC 頁在換發 token(review #56 第 1 點),檔名之前的半句改寫;
 // pull.lock:等的真的是另一個 capy 行程(終端機 / cron),原文是對的,只把 Ctrl-C 換成頁面上有的鈕(dock 的「中止」)。
 // 不比對 auth 的措辭(它跟著語系):只認檔名與「Ctrl-C」這兩個任何語系都不翻的字(README 的慣例)。
+//
+// 給 internal/auth/tokenstore.go 的契約(T2d 把那句等鎖提示搬進語系目錄時,每個語系都要守):
+//   - 傳給 LockFile 的鎖檔名原樣出現(spotify.token.lock、pull.lock;token 鎖靠 webTokenLockName 認),
+//     token 鎖的整句從檔名那裡開始保留、前半句換成 web.lock.token;
+//   - 按鍵寫成 " Ctrl-C"(半形空白 + Ctrl-C,連同空白換成 web.lock.stop;譯文自己帶要不要空白,見 README)。
+//
+// 違反了不會報錯、只是網頁上照樣叫人按 Ctrl-C——auth 的 TestLockNoticeKeepsWebContract 在每個語系釘住這兩點。
 type webLockStderr struct{ w io.Writer }
 
 // webTokenLockName:等的是 <key>.token.lock(Spotify / Google 的 TokenSource);pull.lock 不符。

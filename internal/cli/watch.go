@@ -109,7 +109,7 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err, m.fails = msg.err, m.fails+1
 			if m.fails >= watchMaxFails {
-				m.fatal = i18n.Errorf("watch.err.consecutive_failures", "count", m.fails, "err", msg.err) // 一定是 watchMaxFails(5)次:不用複數
+				m.fatal = i18n.Errorf("watch.err.consecutive_failures", "count", m.fails, "err", msg.err)
 				return m, tea.Quit
 			}
 			return m, m.tick()

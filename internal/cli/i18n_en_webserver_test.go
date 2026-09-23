@@ -90,7 +90,7 @@ func TestEnglishWebHTTPErrors(t *testing.T) {
 		want string
 	}{
 		{map[string]string{"Host": "localhost"}, 421, "Host must be " + s.hostport + "\n"},
-		{map[string]string{"Origin": "http://evil.example"}, 403, "Origin isn't this page\n"},
+		{map[string]string{"Origin": "http://evil.example"}, 403, "the request's Origin doesn't match this page\n"},
 		{map[string]string{"Sec-Fetch-Site": "cross-site"}, 403, "cross-site request\n"},
 	} {
 		resp := c.req(ctx, http.MethodGet, "/api/commands", nil, tc.hdr)

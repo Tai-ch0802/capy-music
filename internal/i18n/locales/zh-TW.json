@@ -790,7 +790,9 @@
   "update.release.downloading_from_dev": "最新正式版 v{version}(目前 dev 版 {current},換到正式版);下載 {name}…",
   "update.release.up_to_date": "已是最新:v{version}",
   "update.updated": "已更新 {exe} → {version}",
-  "watch.err.consecutive_failures": "連續 {count} 次讀不到播放狀態:{err}",
+  "watch.err.consecutive_failures": {
+    "other": "連續 {count} 次讀不到播放狀態:{err}"
+  },
   "watch.error_attempt": "⚠ {err}(第 {attempt} 次)",
   "watch.keys": "  space 播放/暫停 · n 下一首 · p 上一首 · q/esc 離開",
   "watch.rate_limited": "rate limited,等待中…({message})",

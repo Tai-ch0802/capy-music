@@ -46,7 +46,7 @@ func TestEnglishPlayerHelp(t *testing.T) {
 	}
 	for _, f := range []struct{ cmd, flag, want string }{
 		{"play", "device", "name of the target device (see capy devices)"},
-		{"play", "id", "play this provider track ID directly (skips the search)"},
+		{"play", "id", "play a track directly by its platform track ID (skips the search)"},
 		{"play", "type", "search only this type: track|artist|playlist (same as the prefixes artist: / pl: / track:)"},
 		{"play", "pick", "open the picker right away (playlists and recent items from the local cache; needs a terminal)"},
 		{"now", "watch", "keep it on screen (bubbletea view; space play/pause, n/p next/previous track, q/esc quit)"},
@@ -150,7 +150,7 @@ func TestEnglishPlayErrors(t *testing.T) {
 		{[]string{"play", "--id", "t1", "派對"}, "use either --id or a search query, not both"},
 		{[]string{"play", "--type", "track"}, "--type only applies to a search query (no arguments resumes playback; a URI / track ID needs no type)"},
 		{[]string{"play", "--pick"}, "--pick needs a terminal; elsewhere, give a search query and set the type with --type or a prefix"},
-		{[]string{"play", "spotify:album:xyz"}, "only track URIs / IDs are supported, not spotify:album:xyz — get the track IDs with capy pl show and play those"},
+		{[]string{"play", "spotify:album:xyz"}, "only track URIs / IDs are supported for now, not spotify:album:xyz — get the track IDs with capy pl show and play those"},
 		{[]string{"play", "artist:五月天", "--type", "track"}, "the prefix artist: conflicts with --type track"},
 		{[]string{"play", "--type", "album", "x"}, `--type must be track, artist or playlist, got "album"`},
 	} {

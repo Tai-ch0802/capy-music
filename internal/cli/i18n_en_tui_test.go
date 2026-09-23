@@ -206,11 +206,11 @@ func TestEnglishTUIFrozenNoteFitsWhenTooNarrow(t *testing.T) {
 	}
 	var note string
 	for _, l := range strings.Split(ansi.Strip((*got)[0]), "\n") {
-		if strings.Contains(l, "restart capy") {
+		if strings.Contains(l, "back on restart") {
 			note = l
 		}
 	}
-	if note != "  Window too small; restart capy to wake it." || wantWidth(note) > w-1 {
+	if note != "  Capybara froze (no room); back on restart." || wantWidth(note) > w-1 {
 		t.Errorf("定格的說明:%q(寬 %d,上限 %d)", note, wantWidth(note), w-1)
 	}
 }
