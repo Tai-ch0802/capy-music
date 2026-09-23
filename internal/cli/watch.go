@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -99,7 +100,7 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.st, m.err, m.fails = nil, msg.err, 0
 			return m, m.tick()
 		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失
-			m.err, m.fails = fmt.Errorf("rate limited,等待中…(%s)", rl.Message), 0
+			m.err, m.fails = i18n.Errorf("watch.rate_limited", "message", rl.Message), 0
 			return m, m.tick()
 		case msg.fromCtl && msg.err != nil:
 			m.err = msg.err
@@ -108,7 +109,7 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err, m.fails = msg.err, m.fails+1
 			if m.fails >= watchMaxFails {
-				m.fatal = fmt.Errorf("連續 %d 次讀不到播放狀態:%w", m.fails, msg.err)
+				m.fatal = i18n.Errorf("watch.err.consecutive_failures", "count", m.fails, "err", msg.err) // 一定是 watchMaxFails(5)次:不用複數
 				return m, tea.Quit
 			}
 			return m, m.tick()
@@ -147,7 +148,7 @@ func (m watchModel) View() tea.View {
 	line := func(s string) { b.WriteString(ansi.Truncate(s, w, "…")); b.WriteByte('\n') }
 	switch {
 	case m.st == nil || m.st.Track == nil:
-		line("目前沒有播放內容")
+		line(i18n.T("player.nothing_playing"))
 	default:
 		st := m.st
 		mark := "⏸"
@@ -167,7 +168,7 @@ func (m watchModel) View() tea.View {
 		if st.Device.Name != "" {
 			dev := fmt.Sprintf("  %s(%s)", st.Device.Name, st.Device.Type)
 			if st.Device.VolumePct > 0 {
-				dev += fmt.Sprintf(" · 音量 %d", st.Device.VolumePct)
+				dev += i18n.T("watch.volume", "pct", st.Device.VolumePct)
 			}
 			line(dev)
 		}
@@ -175,9 +176,9 @@ func (m watchModel) View() tea.View {
 	if m.err != nil && m.fails == 0 {
 		line("⚠ " + m.err.Error())
 	} else if m.err != nil {
-		line(fmt.Sprintf("⚠ %v(第 %d 次)", m.err, m.fails))
+		line(i18n.T("watch.error_attempt", "err", m.err, "attempt", m.fails))
 	}
-	line("  space 播放/暫停 · n 下一首 · p 上一首 · q/esc 離開")
+	line(i18n.T("watch.keys"))
 	return tea.NewView(b.String())
 }
 

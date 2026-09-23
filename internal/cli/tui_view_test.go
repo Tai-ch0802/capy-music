@@ -353,7 +353,7 @@ func TestTUIQuestionMarkPrintsKeymap(t *testing.T) {
 	}
 	// 每一行都要到:tuiJoin 的預算是單行的,整份丟進去會量到所有行的加總、九行剩三行(PR #49 review)。
 	lines := strings.Split((*got)[0], "\n")
-	if want := len(strings.Split(tuiKeymap, "\n")); len(lines) != want {
+	if want := len(strings.Split(tuiKeymap(), "\n")); len(lines) != want {
 		t.Fatalf("鍵位表 %d 行只印出 %d 行:%q", want, len(lines), (*got)[0])
 	}
 	if !strings.Contains((*got)[0], "Tab") {

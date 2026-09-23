@@ -150,20 +150,20 @@ func webCommands(root *cobra.Command) []webCommand {
 }
 
 // webDenyTokens:純字串 deny,鎖前、比對 args 每個 token(等於、或以它加 = 開頭)。五個都是 String / Bool 無短旗標。
-// 不擋的話 start 事件回顯 args 就把 secret 送進頁面歷史。
-var webDenyTokens = map[string]string{
-	"--auto":            "--auto 是 CLAUDE.md 的唯一例外,只給開發者在自己的終端機用",
-	"--web":             "web 模式裡不能再起一個 capy --web",
-	"--client-secret":   "在網頁請走精靈,不要把 secret 打在命令列",
-	"--developer-token": "在網頁請走精靈,不要把 token 打在命令列",
-	"--user-token":      "在網頁請走精靈,不要把 token 打在命令列",
+// 不擋的話 start 事件回顯 args 就把 secret 送進頁面歷史。值是 i18n.Errorf:package 層級在 init 就建好,印出時才翻。
+var webDenyTokens = map[string]error{
+	"--auto":            i18n.Errorf("web.deny.auto"),
+	"--web":             i18n.Errorf("web.deny.web"),
+	"--client-secret":   i18n.Errorf("web.deny.client_secret"),
+	"--developer-token": i18n.Errorf("web.deny.token"),
+	"--user-token":      i18n.Errorf("web.deny.token"),
 }
 
 func webDenied(args []string) string {
 	for _, a := range args {
 		name, _, _ := strings.Cut(a, "=")
-		if msg, ok := webDenyTokens[name]; ok {
-			return name + ":" + msg
+		if why, ok := webDenyTokens[name]; ok {
+			return i18n.T("web.deny", "flag", name, "why", why)
 		}
 	}
 	return ""
@@ -182,8 +182,6 @@ func (s *webServer) allowed(root *cobra.Command, args []string) (string, bool) {
 
 // ── /api/run ──
 
-const webStaleMsg = "磁碟上的 binary 已更新;這個 capy --web 仍是舊版,請重啟"
-
 func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Args []string `json:"args"`
@@ -191,7 +189,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	body := http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		httpErr(w, http.StatusBadRequest, "JSON 壞掉:"+err.Error())
+		httpErr(w, http.StatusBadRequest, i18n.T("web.err.bad_json", "err", err))
 		return
 	}
 	// 讀到 EOF:net/http 對有 Content-Length 的 body 要讀完才起 background read、連線斷掉才會 cancel r.Context();
@@ -209,14 +207,14 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.runMu.TryLock() {
-		httpErr(w, http.StatusConflict, "另一個命令執行中,等它結束或按「中止」")
+		httpErr(w, http.StatusConflict, i18n.T("web.err.busy"))
 		return
 	}
 	defer s.runMu.Unlock()
 	// 鎖內才檢查:換掉 binary 的那個 job 是在鎖內結束時才立旗,鎖外讀會讀到它立旗之前的值,
 	// 然後在「磁碟上已是新 binary」的舊行程裡再跑一個命令——正是這道閘要擋的 state.db 互相 retire。
 	if s.stale.Load() {
-		httpErr(w, http.StatusServiceUnavailable, webStaleMsg)
+		httpErr(w, http.StatusServiceUnavailable, i18n.T("web.stale"))
 		return
 	}
 	resetDefaultProvider()      // 長駐行程要看到終端機改的 config.json
@@ -224,12 +222,12 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	root := newRootCmd()
 	path, ok := s.allowed(root, args)
 	if !ok {
-		httpErr(w, http.StatusForbidden, "web 模式不提供 "+path)
+		httpErr(w, http.StatusForbidden, i18n.T("web.err.not_offered", "command", path))
 		return
 	}
 	fl, ok := w.(http.Flusher)
 	if !ok {
-		httpErr(w, http.StatusInternalServerError, "ResponseWriter 不能串流")
+		httpErr(w, http.StatusInternalServerError, i18n.T("web.err.no_stream"))
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -266,7 +264,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	code, msg := ExitCode(err)
 	if path == "capy update" && executableReplaced.Load() { // update 真的換了 binary(no-op 的「已是最新」不算;review #59)
 		s.stale.Store(true)
-		_ = sse.event(map[string]any{"type": "stderr", "text": webStaleMsg + "\n"})
+		_ = sse.event(map[string]any{"type": "stderr", "text": i18n.T("web.stale") + "\n"})
 	}
 	if webNowInvalidatedBy(path) { // 帳號 / 預設平台變了:快取的 PlaybackController 不再有效
 		s.dropNow()
@@ -293,7 +291,7 @@ func webExitReason(ctx context.Context, err error) string {
 func (s *webServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 	j := s.current()
 	if j == nil || j.id != r.PathValue("job") {
-		httpErr(w, http.StatusNotFound, "沒有這個 job(已結束?)")
+		httpErr(w, http.StatusNotFound, i18n.T("web.err.no_job"))
 		return
 	}
 	j.cancel(errWebCancelled)

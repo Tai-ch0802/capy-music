@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
@@ -117,7 +118,7 @@ func (s *webServer) handleISRC(w http.ResponseWriter, r *http.Request) {
 	ids := providerIDs
 	if q := r.URL.Query().Get("provider"); q != "" && q != "all" {
 		if !isProviderID(q) {
-			httpErr(w, http.StatusBadRequest, "未知的 provider "+q)
+			httpErr(w, http.StatusBadRequest, i18n.T("web.err.unknown_provider", "id", q))
 			return
 		}
 		ids = []string{q}
@@ -250,7 +251,7 @@ func (s *webServer) nowProvider(q string) string {
 func (s *webServer) handleNow(w http.ResponseWriter, r *http.Request) {
 	id := s.nowProvider(r.URL.Query().Get("provider"))
 	if !isProviderID(id) {
-		httpErr(w, http.StatusBadRequest, "未知的 provider "+id)
+		httpErr(w, http.StatusBadRequest, i18n.T("web.err.unknown_provider", "id", id))
 		return
 	}
 	// 單飛:上一次 poll 還在等 token 鎖或平台回應時,立刻回上次快照,不排隊、不堆 goroutine。

@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -113,7 +114,7 @@ func tuiMenuWindow(n, sel int) (lo, hi int) {
 // tuiMenuView:選單的每一列(由上而下),已經夾好寬度。空清單回一行「沒有符合的命令」。
 func tuiMenuView(items []tuiCmdItem, sel, w int, t ui.Theme) []string {
 	if len(items) == 0 {
-		return []string{tuiJoin(w, tuiSeg{"  沒有符合的命令", t.Mutedly})}
+		return []string{tuiJoin(w, tuiSeg{"  " + i18n.T("tui.menu.no_match"), t.Mutedly})}
 	}
 	pathW := 0
 	for _, it := range items {

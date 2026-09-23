@@ -6,8 +6,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -16,6 +14,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/resolve"
 )
@@ -112,30 +111,30 @@ func validateAnswer(p webPrompt, a webAnswer) error {
 	case "confirm":
 		var b bool
 		if json.Unmarshal(a.Value, &b) != nil {
-			return errors.New("confirm 的答案要是 true / false")
+			return i18n.Errorf("webprompt.err.answer_not_bool")
 		}
 	case "select":
 		var i int
 		if json.Unmarshal(a.Value, &i) != nil || i < 0 || i >= len(p.Options) {
-			return fmt.Errorf("select 的答案要是 0–%d 的整數", len(p.Options)-1)
+			return i18n.Errorf("webprompt.err.answer_not_index", "max", len(p.Options)-1)
 		}
 	case "input":
 		var s string
 		if json.Unmarshal(a.Value, &s) != nil {
-			return errors.New("input 的答案要是字串")
+			return i18n.Errorf("webprompt.err.answer_not_string")
 		}
 	case "form":
 		var m map[string]string
 		if json.Unmarshal(a.Value, &m) != nil {
-			return errors.New("form 的答案要是 {欄位: 字串}")
+			return i18n.Errorf("webprompt.err.answer_not_object")
 		}
 		for _, f := range p.Fields {
 			if _, ok := m[f.Name]; !ok {
-				return fmt.Errorf("form 缺欄位 %s", f.Name)
+				return i18n.Errorf("webprompt.err.missing_field", "name", f.Name)
 			}
 		}
 	default:
-		return errors.New("未知的提示種類")
+		return i18n.Errorf("webprompt.err.unknown_kind")
 	}
 	return nil
 }
@@ -145,7 +144,7 @@ func validateAnswer(p webPrompt, a webAnswer) error {
 func (s *webServer) ask(p webPrompt) (webAnswer, error) {
 	j := s.current()
 	if j == nil { // 接縫只在 runMu 內的 ExecuteContext 期間執行;沒有 job 是程式錯,回錯而不是掛住
-		return webAnswer{}, errors.New("web 提示只能在命令執行中出現(沒有目前 job)")
+		return webAnswer{}, i18n.Errorf("webprompt.err.no_job_prompt")
 	}
 	return j.ask(p)
 }
@@ -207,20 +206,20 @@ func (s *webServer) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	var a webAnswer
 	body := http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(body).Decode(&a); err != nil {
-		httpErr(w, http.StatusBadRequest, "JSON 壞掉:"+err.Error())
+		httpErr(w, http.StatusBadRequest, i18n.T("webprompt.err.bad_json", "err", err))
 		return
 	}
 	_, _ = io.Copy(io.Discard, body)
 	j := s.current()
 	if j == nil || j.id != r.PathValue("job") {
-		httpErr(w, http.StatusNotFound, "沒有這個 job(已結束?)")
+		httpErr(w, http.StatusNotFound, i18n.T("webprompt.err.job_not_found"))
 		return
 	}
 	j.mu.Lock()
 	p := j.pending
 	if p == nil || p.id != a.ID {
 		j.mu.Unlock()
-		httpErr(w, http.StatusConflict, "沒有等待中的提示,或 id 不符(遲到的答案不收)")
+		httpErr(w, http.StatusConflict, i18n.T("webprompt.err.stale_answer"))
 		return
 	}
 	if err := validateAnswer(p.p, a); err != nil {
@@ -270,7 +269,7 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 // webConfirmWrite:按「取消」回 (false, nil)(pull.go → PendingError exit 2,同終端機選取消);
 // 關掉 / 逾時 / ctx 取消回 (false, huh.ErrUserAborted)(pull.go 原樣 return → exit 1;reviewLoop 當「不同意合併」)。
 func (s *webServer) webConfirmWrite(prompt string) (bool, error) {
-	a, err := s.ask(webPrompt{Kind: "confirm", Title: prompt, Affirmative: "套用", Negative: "取消", Default: false})
+	a, err := s.ask(webPrompt{Kind: "confirm", Title: prompt, Affirmative: i18n.T("changeset.confirm.apply"), Negative: i18n.T("changeset.confirm.cancel"), Default: false})
 	if err != nil || a.Cancel {
 		return false, huh.ErrUserAborted
 	}
@@ -300,16 +299,11 @@ func (s *webServer) webPromptNewName(title string) (string, error) {
 // webReviewPrompt:三段式鏡像 resolve.go 的 reviewPrompt:第一層取消 = 整輪不寫入(ErrUserAborted);manual 的搜尋字串
 // 取消也是;第三層(候選)取消 = 這筆略過。寫入邏輯全在 applyDecision,兩版共用。
 func (s *webServer) webReviewPrompt(it resolveItem, pos, total int, search func(string) ([]provider.Track, error)) (reviewDecision, error) {
-	title := fmt.Sprintf("[%d/%d] %s — %s(%s)\n%s:%s", pos, total, it.track.Title, strings.Join(it.track.Artists, ", "), mmss(it.track.DurationMS), it.prov, it.reason)
-	var labels, kinds []string
-	if it.cand != nil {
-		labels, kinds = append(labels, fmt.Sprintf("接受 %d 分候選:%s", it.score, describe(*it.cand))), append(kinds, "accept")
+	title, opts := reviewMenu(it, pos, total) // 與終端機同一份標題與選項,兩邊不會漂
+	labels, kinds := make([]string, len(opts)), make([]string, len(opts))
+	for i, o := range opts {
+		labels[i], kinds[i] = o.Key, o.Value
 	}
-	if it.action == "conflict" {
-		labels, kinds = append(labels, "釘住現有 mapping "+it.current.ID+"(人確認過,之後不再問)"), append(kinds, "keep")
-	}
-	labels = append(labels, "略過(下次再問)", "手動搜尋", "這個平台沒有這首(釘成不可得)")
-	kinds = append(kinds, "skip", "manual", "none")
 	a, err := s.ask(webPrompt{Kind: "select", Title: title, Options: labels})
 	if err != nil || a.Cancel {
 		return reviewDecision{}, huh.ErrUserAborted
@@ -319,7 +313,7 @@ func (s *webServer) webReviewPrompt(it resolveItem, pos, total int, search func(
 	case "accept":
 		d.cand = it.cand
 	case "manual":
-		a, err := s.ask(webPrompt{Kind: "input", Title: "搜尋字串", Default: resolve.FuzzyQuery(it.track)})
+		a, err := s.ask(webPrompt{Kind: "input", Title: i18n.T("resolve.review.search_query"), Default: resolve.FuzzyQuery(it.track)})
 		if err != nil || a.Cancel {
 			return reviewDecision{}, huh.ErrUserAborted
 		}
@@ -332,9 +326,9 @@ func (s *webServer) webReviewPrompt(it resolveItem, pos, total int, search func(
 		}
 		picks := make([]string, len(found))
 		for i, t := range found {
-			picks[i] = fmt.Sprintf("%d 分  %s", resolve.ScoreFuzzy(it.track, t), describe(t))
+			picks[i] = i18n.T("resolve.review.pick_item", "score", resolve.ScoreFuzzy(it.track, t), "candidate", describe(t))
 		}
-		a, err = s.ask(webPrompt{Kind: "select", Title: "選一首釘上(關掉 = 略過)", Options: picks})
+		a, err = s.ask(webPrompt{Kind: "select", Title: i18n.T("webprompt.review.pick_title"), Options: picks})
 		if err != nil {
 			return reviewDecision{}, huh.ErrUserAborted
 		}
@@ -368,13 +362,13 @@ func (s *webServer) webClientIDWizard() (string, error) {
 
 // webAppleDisclosure:揭露不可跳過,由伺服器判定——答案不是 true 就是「已取消(未同意聲明)」,前端 checkbox 不被信任。
 func (s *webServer) webAppleDisclosure() error {
-	a, err := s.ask(webPrompt{Kind: "confirm", Title: "我已閱讀,同意自負風險,繼續?", Note: &webNote{Title: "使用前請先閱讀", Body: appleDisclosure()},
-		Affirmative: "同意", Negative: "取消", Default: false})
+	a, err := s.ask(webPrompt{Kind: "confirm", Title: i18n.T("auth.apple.confirm.question"), Note: &webNote{Title: i18n.T("auth.apple.confirm.title"), Body: appleDisclosure()},
+		Affirmative: i18n.T("auth.apple.confirm.agree"), Negative: i18n.T("auth.apple.confirm.cancel"), Default: false})
 	if err != nil || a.Cancel {
 		return huh.ErrUserAborted
 	}
 	if !a.boolValue() {
-		return errors.New("已取消(未同意聲明)")
+		return i18n.Errorf("auth.apple.err.declined")
 	}
 	return nil
 }
@@ -382,8 +376,8 @@ func (s *webServer) webAppleDisclosure() error {
 func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err error) {
 	onlyDev := hasUser
 	if hasUser {
-		a, err := s.ask(webPrompt{Kind: "confirm", Title: "keychain 已有 user token。只更新 developer token?",
-			Affirmative: "只更新 developer token", Negative: "兩個都重新貼", Default: true})
+		a, err := s.ask(webPrompt{Kind: "confirm", Title: i18n.T("auth.apple.wizard.only_dev_question"),
+			Affirmative: i18n.T("auth.apple.wizard.only_dev"), Negative: i18n.T("auth.apple.wizard.both"), Default: true})
 		if err != nil || a.Cancel {
 			return "", "", huh.ErrUserAborted
 		}
@@ -391,11 +385,11 @@ func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err er
 	}
 	// dev 欄刻意不設 Secret,與 huh 版一致(那邊也只有 user token 是 EchoModePassword):它是一長串 JWT,
 	// 貼錯要看得出來;`autocomplete=off` 已設。它一樣不得出現在任何事件裡,由測試釘住。
-	fields := []webField{{Name: "dev", Label: "developer token(authorization 標頭的值)"}}
+	fields := []webField{{Name: "dev", Label: i18n.T("auth.apple.wizard.dev_label")}}
 	if !onlyDev {
-		fields = append(fields, webField{Name: "user", Label: "user token(media-user-token 標頭的值)", Secret: true})
+		fields = append(fields, webField{Name: "user", Label: i18n.T("auth.apple.wizard.user_label"), Secret: true})
 	}
-	p := webPrompt{Kind: "form", Title: "貼上 token", Note: &webNote{Title: "從網頁播放器複製 token", Body: appleGuide()}, Fields: fields}
+	p := webPrompt{Kind: "form", Title: i18n.T("webprompt.apple.paste_tokens"), Note: &webNote{Title: i18n.T("auth.apple.wizard.guide_title"), Body: appleGuide()}, Fields: fields}
 	last := map[string]string{}
 	for {
 		refill(p.Fields, last)
@@ -407,11 +401,11 @@ func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err er
 		keepSecrets(p.Fields, v, last) // user token 留空 = 沿用上次:dev token 過期重問時不必回 DevTools 重抄
 		last = v
 		if err := validateAppleDevToken(v["dev"]); err != nil {
-			p.Error = "developer token:" + err.Error()
+			p.Error = i18n.T("webprompt.err.field", "field", "developer token", "err", err)
 			continue
 		}
 		if !onlyDev && strings.TrimSpace(v["user"]) == "" {
-			p.Error = "user token:不可為空"
+			p.Error = i18n.T("webprompt.err.field", "field", "user token", "err", i18n.T("auth.apple.err.empty"))
 			continue
 		}
 		return v["dev"], v["user"], nil
@@ -419,10 +413,10 @@ func (s *webServer) webAppleWizardInputs(hasUser bool) (dev, user string, err er
 }
 
 func (s *webServer) webGoogleWizard() (id, sec string, err error) {
-	p := webPrompt{Kind: "form", Title: "Google OAuth client", Note: &webNote{Title: "Google Drive 同步:先建自己的 OAuth client", Body: googleGuide()},
+	p := webPrompt{Kind: "form", Title: "Google OAuth client", Note: &webNote{Title: i18n.T("google.wizard.title"), Body: googleGuide()},
 		Fields: []webField{
-			{Name: "client_id", Label: "Client ID(結尾通常是 .apps.googleusercontent.com)"},
-			{Name: "client_secret", Label: "Client secret(可留空試試看;G-0 驗收會確定 Desktop client 要不要)", Secret: true},
+			{Name: "client_id", Label: i18n.T("google.wizard.client_id")},
+			{Name: "client_secret", Label: i18n.T("google.wizard.client_secret"), Secret: true},
 		}}
 	last := map[string]string{}
 	for {
@@ -435,7 +429,7 @@ func (s *webServer) webGoogleWizard() (id, sec string, err error) {
 		keepSecrets(p.Fields, v, last)
 		last = v
 		if strings.TrimSpace(v["client_id"]) == "" {
-			p.Error = "Client ID:必填"
+			p.Error = i18n.T("webprompt.err.field", "field", "Client ID", "err", i18n.T("google.wizard.required"))
 			continue
 		}
 		return strings.TrimSpace(v["client_id"]), strings.TrimSpace(v["client_secret"]), nil
@@ -444,7 +438,7 @@ func (s *webServer) webGoogleWizard() (id, sec string, err error) {
 
 func (s *webServer) webGoogleSecretPrompt(clientID string) (string, error) {
 	a, err := s.ask(webPrompt{Kind: "form", Title: "Client secret",
-		Note:   &webNote{Title: "找不到這個 client 的 secret", Body: "client id " + maskGoogleClientID(clientID) + " 還在 config,但 secret 不在 keychain(capy auth logout google 會刪掉它)。\n貼上 secret;留空則試試看不帶 secret(Desktop client 是否必須帶 secret 由 G-0 驗收決定)。"},
+		Note:   &webNote{Title: i18n.T("google.secret_prompt.title"), Body: i18n.T("google.secret_prompt.body", "client_id", maskGoogleClientID(clientID))},
 		Fields: []webField{{Name: "client_secret", Label: "Client secret", Secret: true}}})
 	if err != nil || a.Cancel {
 		return "", huh.ErrUserAborted
@@ -457,7 +451,7 @@ func (s *webServer) webGoogleSecretPrompt(clientID string) (string, error) {
 func (s *webServer) webOpenBrowser(url string) error {
 	j := s.current()
 	if j == nil {
-		return errors.New("沒有目前 job")
+		return i18n.Errorf("webprompt.err.no_job")
 	}
 	return j.sse.event(map[string]any{"type": "open_url", "url": url})
 }
