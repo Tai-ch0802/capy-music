@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -73,7 +74,7 @@ var promptNewName = func(title string) (string, error) {
 	return name, nil
 }
 
-var errCancelled = errors.New("已取消")
+var errCancelled = i18n.Errorf("pick.err.cancelled")
 
 // argsOrPicker:0 個參數只在終端機裡放行(RunE 會開挑選器補),其餘一律走 cobra 原本的檢查 ——
 // 非 TTY(管線 / cron)看到的錯誤訊息一個字都不能變,可腳本化是硬約束。

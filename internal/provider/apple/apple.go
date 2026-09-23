@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -31,7 +32,7 @@ var (
 
 // ErrNotRunning:Music.app 沒開。State 不會替使用者把它啟動起來(Play 會)。
 // 包住 provider.ErrPlayerNotRunning,cli 只認抽象的那個、不必 import 本套件;放在無 build tag 的檔案讓 Windows 也編得過。
-var ErrNotRunning = fmt.Errorf("Music.app 未執行(capy play 會把它啟動):%w", provider.ErrPlayerNotRunning)
+var ErrNotRunning = i18n.Errorf("apple.err.not_running", "err", provider.ErrPlayerNotRunning)
 
 func New(hc *http.Client, base, devToken, userToken, storefront string) *Provider {
 	return &Provider{c: NewClient(hc, base, devToken, userToken), storefront: storefront}

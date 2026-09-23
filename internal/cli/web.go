@@ -3,7 +3,7 @@ package cli
 // capy --web(P7,2026-09-17;計畫 docs/superpowers/plans/2026-09-17-web-mode.md 決策 40–41)。
 //
 // 不變式(-race 會抓,寫在檔頭給後人):Serve 開始後,newRootCmd()、defaultProvider()、resetDefaultProvider()、
-// 任何 var 接縫的**寫入**只在 runMu 內發生;允許清單與 /api/commands 的命令樹在 Serve 前算一次;
+// 任何 var 接縫與 i18n.Set 的**寫入**只在 runMu 內發生;允許清單與 /api/commands 的命令樹在 Serve 前算好(後者每個語系一份);
 // /api/now、/api/isrc 兩個直達端點(T4)不經 cobra、不進 runMu、不呼叫 defaultProvider()。
 // 五個 stderr 全域是例外:它們在 Serve 前指派一次(之後不再寫那幾個 var),但**寫入那些 writer** 的 goroutine
 // 不只 job——兩個直達端點也會經 BackoffStderr / LockStderr 印退避與等鎖提示(決策 42),所以併發安全靠的是
@@ -32,6 +32,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/browser"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
@@ -55,7 +56,8 @@ type webServer struct {
 	token    string          // 每次啟動一次性;URL fragment → sessionStorage → X-Capy-Token
 	hostport string          // r.Host 必須逐字等於它(127.0.0.1:<port>;不收 localhost,同 Spotify redirect 措辭)
 	allow    map[string]bool // CommandPath 允許清單,Serve 前算一次
-	commands []webCommand    // /api/commands,Serve 前算一次
+	// commands:/api/commands,語系 → 命令清單,Serve 前算好(決策 50:切語系不必重建命令樹)
+	commands map[string][]webCommand
 	static   http.Handler
 
 	runMu sync.Mutex // 單一序列槽:同時只有一個 job;TryLock 失敗回 409
@@ -100,9 +102,16 @@ func newWebServer(ctx context.Context) (*webServer, error) {
 		return nil, err
 	}
 	root := newRootCmd()
+	cmds := map[string][]webCommand{}
+	lang := i18n.Current()
+	for _, l := range i18n.Supported() { // Serve 前、還沒有任何 job:暫時切語系建樹不會跟誰搶
+		i18n.Set(l)
+		cmds[l] = webCommands(newRootCmd())
+	}
+	i18n.Set(lang)
 	return &webServer{
 		ctx: ctx, token: token,
-		allow: webAllowlist(root), commands: webCommands(root),
+		allow: webAllowlist(root), commands: cmds,
 		static: http.FileServerFS(sub), fallbackStderr: os.Stderr,
 	}, nil
 }
@@ -224,12 +233,13 @@ func httpErr(w http.ResponseWriter, code int, msg string) {
 }
 
 func (s *webServer) handleCommands(w http.ResponseWriter, _ *http.Request) {
+	lang, _ := configLanguage() // 同 default_provider:每次讀 config,終端機切的語系也看得到(不 Set:這裡在 runMu 外)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"version":          version,
 		"providers":        providerIDs,
 		"default_provider": loadDefaultProvider(), // 每次讀 config,不走 defaultProvider() 的 OnceValue
-		"commands":         s.commands,
+		"commands":         s.commands[lang],
 	})
 }
 

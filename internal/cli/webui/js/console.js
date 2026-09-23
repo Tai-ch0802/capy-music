@@ -532,8 +532,9 @@ export class Console {
     if (cancelled) { b.dataset.exit = 'cancelled'; el.dataset.code = 'cancelled'; }
     const mark = code === 0 ? '✓' : (cancelled || code === 2 || code === 3 ? '·' : '✗');
     let text = `${mark} exit ${code}`;
-    // 取消原因本身(errWebCancelled「已取消」)或 context canceled 那串都只是在重複「已取消」,不印。
-    if (cancelled) { text += ' · 已取消'; if (/context canceled|^(Error: )?已取消$/.test(message || '')) message = ''; }
+    // 取消原因本身(errWebCancelled:zh-TW「已取消」、en「cancelled」)或 context canceled 那串都只是在重複「已取消」,不印。
+    // ponytail: 比對兩種語系的文字,T3(計畫 §2.4 第 5 點)改成只看 reason。
+    if (cancelled) { text += ' · 已取消'; if (/context canceled|^(Error: )?(已取消|cancelled)$/.test(message || '')) message = ''; }
     else if (reason === 'shutdown') text += ' · capy --web 已結束';
     else if (reason === 'timeout') text += ' · 等待回答逾時';
     else if (reason === 'stale') text += ' · 請重啟 capy --web';

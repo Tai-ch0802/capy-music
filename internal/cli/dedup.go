@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -28,7 +29,7 @@ import (
 // 相鄰兩份時留後面那個 id(lcsPairs 對同一個 C item 取 L 順序最後的候選)。曲目一樣、順序一樣,只差 id;測試釘住這個行為。
 
 // errRestrictedPlaylist:pl show / pl dedup 讀到 ErrRestricted 時的說法。
-var errRestrictedPlaylist = errors.New("無法讀取這個清單的內容 — 可能是追蹤的他人清單(Spotify 2026-02 起只提供 metadata,spec §1.1),也可能是授權不足;先跑 capy doctor 確認授權")
+var errRestrictedPlaylist = i18n.Errorf("dedup.err.restricted_playlist")
 
 var dedupReportHeader = []string{"POS", "ID", "TITLE", "ARTISTS", "REASON"}
 

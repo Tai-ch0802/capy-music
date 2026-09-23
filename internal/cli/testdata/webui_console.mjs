@@ -130,7 +130,9 @@ const gate = () => {
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
 const notices = [];
-const con = new Console(mk(), api, (t) => notices.push(t));
+const root = mk();
+const con = new Console(root, api, (t) => notices.push(t));
+const allByClass = (e, cls, out = []) => { for (const c of e.children || []) { if (c.classList?.contains(cls)) out.push(c); allByClass(c, cls, out); } return out; };
 const failures = [];
 const check = (ok, msg) => { if (!ok) failures.push(msg); };
 // 一組情境丟例外(例如舊版沒有某個方法)只算那一組失敗,其餘照跑,才看得出哪幾條不成立。
@@ -430,6 +432,18 @@ await scenario('9', async () => {
   script = { r: { status: 409, error: '另一個命令執行中' } };
   const res = await con.run('r');
   check(res?.[2] === 'refused' && notices[notices.length - 1] === '另一個命令執行中', `409 要說原因並回報 refused:${res} ${notices}`);
+});
+
+// 10. 取消的原因本身不重印,兩種語系都是(errWebCancelled 跟著語系:zh-TW「已取消」、en「cancelled」;決策 50)。
+await scenario('10', async () => {
+  for (const message of ['Error: 已取消', 'Error: cancelled', 'Error: context canceled']) {
+    reset();
+    script = { c: { events: [{ type: 'exit', code: 1, message, reason: 'cancelled' }] } };
+    await con.run('c');
+    const exits = allByClass(root, 'block__exit');
+    const text = exits[exits.length - 1]?.textContent;
+    check(text === '· exit 1 · 已取消', `取消時「${message}」只是在重複已取消,不該印出來:「${text}」`);
+  }
 });
 
 if (failures.length) {

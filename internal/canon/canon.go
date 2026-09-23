@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/ulid"
 )
 
@@ -31,7 +32,7 @@ var (
 	NewULID = ulid.New
 )
 
-var ErrSchemaTooNew = errors.New("Drive 上的檔案 schema 比這個 capy 新,請先 capy update")
+var ErrSchemaTooNew = i18n.Errorf("canon.err.schema_too_new")
 
 // Manifest:manifest.json。playlists 是 Drive 上應該存在的 pl__<pid>.json(2026-09-08 T8 加):pull 的閘用
 // 「manifest 宣告、但 Drive 取不到」偵測部分遺失(spec §6.3)。last_compaction 隨 op log 佈局待 P5,先不放。

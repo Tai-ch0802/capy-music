@@ -13,11 +13,12 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
-var errNotLoggedInGoogle = errors.New("尚未登入 Google — 先執行 capy auth login google")
+var errNotLoggedInGoogle = i18n.Errorf("drive.err.not_logged_in")
 
 // newDriveClient:測試替換點(對照 provider.go 的 newProvider),e2e 用 drivetest 假 Drive 接進來。
 var newDriveClient = func(ctx context.Context) (*drive.Client, error) {
@@ -63,7 +64,7 @@ func googleClientFromConfig(cfg *config.Config) (auth.GoogleClient, googleClient
 func newDebugDriveLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "drive-ls",
-		Short: "列出 Google Drive appdata 的檔案(P3 驗收用)",
+		Short: "List the files in Google Drive appdata (P3 acceptance)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			q, _ := cmd.Flags().GetString("q")
 			c, err := newDriveClient(cmd.Context())
@@ -82,6 +83,6 @@ func newDebugDriveLsCmd() *cobra.Command {
 			return ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"ID", "NAME", "KIND", "PID", "DEVICE", "VER", "MODIFIED"}, rows)
 		},
 	}
-	cmd.Flags().String("q", "", "files.list 的 q(例:appProperties has { key='kind' and value='pl' })")
+	cmd.Flags().String("q", "", "the q parameter of files.list (e.g. appProperties has { key='kind' and value='pl' })")
 	return cmd
 }

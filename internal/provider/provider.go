@@ -5,11 +5,12 @@ package provider
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 )
 
 type Capability uint32
@@ -44,16 +45,16 @@ func (c Capability) Has(want Capability) bool { return c&want == want }
 
 // 語意化錯誤:provider 實作把傳輸層錯誤映射到這些,CLI 層轉成可行動的訊息。
 var (
-	ErrAuthExpired    = errors.New("授權已過期")
-	ErrNoActiveDevice = errors.New("沒有作用中的播放裝置")
-	ErrRestricted     = errors.New("平台不提供此內容")
-	ErrNotSupported   = errors.New("此平台不支援這個操作")
-	ErrNotFound       = errors.New("找不到資源")
+	ErrAuthExpired    = i18n.Errorf("provider.err.auth_expired")
+	ErrNoActiveDevice = i18n.Errorf("provider.err.no_active_device")
+	ErrRestricted     = i18n.Errorf("provider.err.restricted")
+	ErrNotSupported   = i18n.Errorf("provider.err.not_supported")
+	ErrNotFound       = i18n.Errorf("provider.err.not_found")
 	// ErrPlayerNotRunning:本機播放器 app 沒開(Apple Music.app)。State 回它而不是把 app 啟動起來;是狀態不是失敗。
-	ErrPlayerNotRunning = errors.New("播放器未執行")
+	ErrPlayerNotRunning = i18n.Errorf("provider.err.player_not_running")
 	// ErrVolumeNotAllowed:這個裝置不給遠端調音量(手機、部分喇叭)。是裝置的限制,不是授權問題,
 	// 也不是「平台不支援」——同一個平台換一台裝置就可以。
-	ErrVolumeNotAllowed = errors.New("這個裝置不允許遠端調整音量")
+	ErrVolumeNotAllowed = i18n.Errorf("provider.err.volume_not_allowed")
 )
 
 type Track struct {
@@ -145,7 +146,7 @@ type TrackGetter interface {
 }
 
 // ErrBadISRC:正規化後不是 12 碼英數。
-var ErrBadISRC = errors.New("ISRC 格式不對(要 12 碼英數)")
+var ErrBadISRC = i18n.Errorf("provider.err.bad_isrc")
 
 var (
 	isrcRe    = regexp.MustCompile(`^[A-Z0-9]{12}$`)

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -66,8 +67,13 @@ func newRootCmd() *cobra.Command {
 }
 
 // Execute 是 CLI 進入點。SIGINT/SIGTERM 取消 ctx,讓 429 退避等待中的請求可被中斷
-// (spec 硬約束:可腳本化/可被 cron 終止是核心價值)。
-func Execute() error { return executeSignalled(newRootCmd()) }
+// (spec 硬約束:可腳本化/可被 cron 終止是核心價值)。語系在建命令樹之前決定(決策 50)。
+func Execute() error {
+	if warn := applyLanguage(); warn != "" {
+		fmt.Fprintln(os.Stderr, warn)
+	}
+	return executeSignalled(newRootCmd())
+}
 
 // SignalError:行程是被 SIGINT / SIGTERM 結束的 → exit 130 / 143(shell 慣例 128+n),腳本才分得出「被砍」跟「做完」。
 // Err 是命令自己回的錯(互動式介面 / now --watch / --web 把 ctx 取消當「使用者要離開」,回的是 nil),訊息照舊印。
