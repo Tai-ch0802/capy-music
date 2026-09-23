@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -161,14 +162,14 @@ func T(key string, args ...any) string {
 	}
 	s := m.text
 	if m.plural != nil {
-		n := 0
+		var n int64 // 任何整數型別都認(uint、int32、自訂的 type Count int…);不是整數就當 0
 		for i := 0; i+1 < len(args); i += 2 {
 			if args[i] == "count" {
-				switch v := args[i+1].(type) {
-				case int:
-					n = v
-				case int64:
-					n = int(v % 10_000_000) // MatchPlural 允許取模
+				switch v := reflect.ValueOf(args[i+1]); {
+				case v.CanInt():
+					n = v.Int() % 10_000_000 // MatchPlural 允許取模
+				case v.CanUint():
+					n = int64(v.Uint() % 10_000_000)
 				}
 			}
 		}
@@ -176,7 +177,7 @@ func T(key string, args ...any) string {
 			n = -n
 		}
 		var found bool
-		if s, found = m.plural[plural.Cardinal.MatchPlural(l.tag, n, 0, 0, 0, 0)]; !found {
+		if s, found = m.plural[plural.Cardinal.MatchPlural(l.tag, int(n), 0, 0, 0, 0)]; !found {
 			s = m.plural[plural.Other]
 		}
 	}

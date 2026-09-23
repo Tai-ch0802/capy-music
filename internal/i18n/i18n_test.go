@@ -72,6 +72,10 @@ func TestTPlaceholdersPluralAndFallback(t *testing.T) {
 	check("en", func() string { return T("p", "count", 21) }, "21 tracks")
 	check("en", func() string { return T("p", "count", int64(1)) }, "1 track")
 	check("en", func() string { return T("p", "count", -1) }, "-1 track")
+	check("en", func() string { return T("p", "count", uint(1)) }, "1 track") // 任何整數型別都認
+	check("en", func() string { return T("p", "count", int32(1)) }, "1 track")
+	type tracks int
+	check("en", func() string { return T("p", "count", tracks(1)) }, "1 track")
 	check("en", func() string { return T("a", "x", "{y}", "y", "z") }, "A {y} z") // 值裡的 {y} 不再被替換
 	check("en", func() string { return T("pct", "x", "%d") }, "100% %d")          // 不經 fmt
 }

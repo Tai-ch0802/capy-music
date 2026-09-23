@@ -2,6 +2,9 @@ package i18n
 
 // cjkAllowlist:還有中文字串沒搬進語系目錄的檔(計畫 §4 的 T2a–T2d 逐區搬)。**只准縮小**:搬完一個檔就拿掉它,
 // TestNoCJKOutsideCatalog 會抓「已經搬完卻還列著」與「沒列卻有中文」;清空之後 productionDefault 要改成 en。
+// cjkAllowlistLen 釘住目前的長度:拿掉檔的 PR 要一起調小,白名單不准變長(TestCJKAllowlistOnlyShrinks)。
+const cjkAllowlistLen = 55
+
 var cjkAllowlist = []string{
 	"internal/auth/apple/auto_darwin.go",
 	"internal/auth/apple/token.go",

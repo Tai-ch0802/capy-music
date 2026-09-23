@@ -283,6 +283,15 @@ func TestNoCJKOutsideCatalog(t *testing.T) {
 	}
 }
 
+func TestCJKAllowlistOnlyShrinks(t *testing.T) {
+	switch n := len(cjkAllowlist); {
+	case n > cjkAllowlistLen:
+		t.Fatalf("白名單有 %d 個檔,上限 %d:白名單只准縮小,新的字串直接搬進語系目錄", n, cjkAllowlistLen)
+	case n < cjkAllowlistLen:
+		t.Fatalf("白名單剩 %d 個檔:把 cjkAllowlistLen 一起調成 %d,釘住新的上限", n, n)
+	}
+}
+
 // TestDefaultIsEnglishOnceMigrated:白名單清空 = 字串搬完,預設語系就該是英文(決策 50)。
 func TestDefaultIsEnglishOnceMigrated(t *testing.T) {
 	if locales[productionDefault] == nil { // 測試二進位的 Default() 不經這個常數:打錯只會在發出去的 binary 的 init 才炸
