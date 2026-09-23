@@ -10,19 +10,20 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
 func newPlCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "pl", Short: "播放清單"}
+	cmd := &cobra.Command{Use: "pl", Short: i18n.T("cmd.pl.short")}
 	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd(), newPlSyncCmd(), newPlDedupCmd())
 	return cmd
 }
 
 func newPlListCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "list", Short: "列出我的播放清單", Args: cobra.NoArgs,
+		Use: "list", Short: i18n.T("cmd.pl.list.short"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p, err := getProvider(cmd)
 			if err != nil {
@@ -87,19 +88,19 @@ func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, provider
 	case 1:
 		return hits[0].ID, nil
 	case 0:
-		return "", fmt.Errorf("找不到名為 %q 的清單 — 用 capy pl list 查看", arg)
+		return "", i18n.Errorf("pl.err.not_found", "name", strconv.Quote(arg))
 	default:
 		ids := make([]string, len(hits))
 		for i, h := range hits {
 			ids[i] = fmt.Sprintf("%s(%s)", h.ID, h.Owner)
 		}
-		return "", fmt.Errorf("有 %d 個同名清單,請改用 ID:%s", len(hits), strings.Join(ids, "、"))
+		return "", i18n.Errorf("pl.err.same_name", "count", len(hits), "ids", strings.Join(ids, i18n.T("sep.list")))
 	}
 }
 
 func newPlShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "show [name|playlist ID]", Short: "顯示清單內容(不帶參數且在終端機裡會開挑選器)", Args: argsOrPicker(1),
+		Use: "show [name|playlist ID]", Short: i18n.T("cmd.pl.show.short"), Args: argsOrPicker(1),
 		ValidArgsFunction: plShowCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()

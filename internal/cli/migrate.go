@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -40,26 +41,16 @@ func newMigrateCmd() *cobra.Command {
 	var from, to string
 	var dryRun, yes bool
 	cmd := &cobra.Command{
-		Use:   "migrate [來源清單 ID 或名稱] --from <平台> --to <平台>[:<既有清單 ID 或名稱>]",
-		Short: "把一個平台的清單搬到另一個平台(新建或加進既有清單);順序不動、不刪來源、只新增",
-		Long: `把 --from 平台的清單複製到 --to 平台,不用自己串 pl link / pull / resolve / push。--to 只給平台 = 在那裡建一個跟來源同名的私人清單
-(Spotify、Apple Music 都能建,local 不能);--to <平台>:<清單> = 加進既有清單。不帶參數且在終端機裡會逐段挑選(來源平台 → 清單 → 目標平台 → 既有清單或建新的);
-非 TTY 要給清單與 --from / --to。
-
-順序:目標原本的順序是前綴,來源的曲目依來源的順序接在後面;來源裡目標已經有的(同平台 id 或同 ISRC)略過,來源自己的重複也只留一份。
-永遠不動來源;對目標只做新增——目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 capy pl sync。
-每一首先用 ISRC 反查、再模糊比對(≥85 自動);沒對到的這次不推,表裡會說,終端機裡可以當場逐筆裁決。
-一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code;dir ∈ pull / migrate / push;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼)、一次確認;
---dry-run 只列(有東西時 exit 2、不建清單);非 TTY 沒 --yes 也是 exit 2。確認之後才在目標平台建清單。
-完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要持續同步,結尾會給 pl link + pl sync 的命令。
-local 只能加進既有檔(--to local:<檔名>)。搬進 Apple Music 的曲目可能會一起加進你的 Apple Music 資料庫(看你的 Apple Music 設定,這是 Apple 的行為);Apple 只寫你自己建的清單,商店裡已下架的歌搬不過去:表裡可能照樣列出,寫完重讀時會警告。`,
-		Args: argsOrPicker(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runMigrate(cmd, args, from, to, dryRun, yes) },
+		Use:   "migrate " + i18n.T("cmd.migrate.use"),
+		Short: i18n.T("cmd.migrate.short"),
+		Long:  i18n.T("cmd.migrate.long"),
+		Args:  argsOrPicker(1),
+		RunE:  func(cmd *cobra.Command, args []string) error { return runMigrate(cmd, args, from, to, dryRun, yes) },
 	}
-	cmd.Flags().StringVar(&from, "from", "", "來源平台("+strings.Join(providerIDs, "|")+");終端機裡不給會挑選")
-	cmd.Flags().StringVar(&to, "to", "", "目標平台,或 <平台>:<既有清單 ID 或名稱>;只給平台 = 建一個跟來源同名的新清單(Spotify / Apple Music);終端機裡不給會挑選")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出要搬什麼,不建清單、不碰平台也不碰 Drive(有東西時 exit 2)")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用);不當場裁決沒對到的曲目")
+	cmd.Flags().StringVar(&from, "from", "", i18n.T("cmd.migrate.flag.from", "ids", strings.Join(providerIDs, "|")))
+	cmd.Flags().StringVar(&to, "to", "", i18n.T("cmd.migrate.flag.to"))
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("cmd.migrate.flag.dry_run"))
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("cmd.migrate.flag.yes"))
 	return cmd
 }
 
@@ -67,17 +58,17 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 	ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 	interactive := isInteractive(cmd)
 	if !interactive && (from == "" || to == "") {
-		return errors.New("--from 與 --to 必填(非終端機沒有挑選器):capy migrate <清單> --from apple --to spotify[:<既有清單>]")
+		return i18n.Errorf("migrate.err.need_from_to")
 	}
 	// 來源
 	var err error
 	if from == "" {
-		if from, err = pickProvider("從哪個平台搬?"); err != nil {
+		if from, err = pickProvider(i18n.T("migrate.pick.from")); err != nil {
 			return err
 		}
 	}
 	if !isProviderID(from) {
-		return fmt.Errorf("--from 為 %s:%q", strings.Join(providerIDs, "|"), from)
+		return i18n.Errorf("migrate.err.bad_from", "ids", strings.Join(providerIDs, "|"), "value", strconv.Quote(from))
 	}
 	pA, err := newProvider(ctx, from)
 	if err != nil {
@@ -109,7 +100,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 	dst, toRef := migrateEnd{}, ""
 	switch {
 	case to == "":
-		if dst.prov, err = pickProvider("搬到哪個平台?"); err != nil {
+		if dst.prov, err = pickProvider(i18n.T("migrate.pick.to")); err != nil {
 			return err
 		}
 	case strings.Contains(to, ":"):
@@ -119,7 +110,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 	case isProviderID(to):
 		dst.prov = to
 	default:
-		return fmt.Errorf("--to 為 <平台> 或 <平台>:<既有清單>,平台為 %s:%q", strings.Join(providerIDs, "|"), to)
+		return i18n.Errorf("migrate.err.bad_to", "ids", strings.Join(providerIDs, "|"), "value", strconv.Quote(to))
 	}
 	pB, err := newProvider(ctx, dst.prov)
 	if err != nil {
@@ -127,7 +118,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 	}
 	wB, err := asPlaylistWriter(pB)
 	if err != nil {
-		return fmt.Errorf("%s 目前只讀,不能當 migrate 的目標:%w", dst.prov, err)
+		return i18n.Errorf("migrate.err.target_read_only", "platform", dst.prov, "err", err)
 	}
 	rB, err := asPlaylistReader(pB)
 	if err != nil {
@@ -144,12 +135,12 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			return err
 		}
 		if !slices.ContainsFunc(refsB, func(x provider.PlaylistRef) bool { return x.ID == dst.id }) { // 同 pl link:不在自己列表裡的 pull 會當 gone
-			return fmt.Errorf("%s:%s 不在你的清單列表裡(capy pl list 看得到的才算),不能當目標", dst.prov, dst.id)
+			return i18n.Errorf("migrate.err.target_not_listed", "platform", dst.prov, "id", dst.id)
 		}
 	case to == "": // 挑選器:既有的清單,或建一個新的
 		newLabel := ""
 		if cerr == nil {
-			newLabel = "+ 在 " + dst.prov + " 建一個跟來源同名的新清單"
+			newLabel = i18n.T("migrate.pick.create_new", "platform", dst.prov)
 		}
 		if dst.id, err = pickPlatformPlaylist(dst.prov, refsB, newLabel); err != nil {
 			return err
@@ -159,19 +150,19 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		if ok, err := readable(ctx, rB, dst.id); err != nil {
 			return friendlyErr(dst.prov, err)
 		} else if !ok {
-			return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不能當目標", dst.prov, dst.id)
+			return i18n.Errorf("migrate.err.target_unreadable", "platform", dst.prov, "id", dst.id)
 		}
 	}
 	if dst.id == "" {
 		if cerr != nil {
-			return fmt.Errorf("%s 不能建清單,只能加進既有的:--to %s:<清單 ID 或名稱>(%v)", dst.prov, dst.prov, cerr)
+			return i18n.Errorf("migrate.err.cannot_create", "platform", dst.prov, "err", cerr.Error())
 		}
 		dup, err := sameNamePlaylists(ctx, rB, refsB, src.name)
 		if err != nil {
 			return friendlyErr(dst.prov, err)
 		}
 		if len(dup) > 0 {
-			return fmt.Errorf("%s 上已經有叫「%s」的清單(%s):要加進它就 --to %s:%s;真的要另建一個,先在 app 裡建好再用 --to %s:<ID>", dst.prov, src.name, strings.Join(dup, "、"), dst.prov, dup[0], dst.prov)
+			return i18n.Errorf("migrate.err.same_name_exists", "platform", dst.prov, "name", src.name, "ids", strings.Join(dup, i18n.T("sep.list")), "id", dup[0])
 		}
 		dst.name = src.name
 	} else {
@@ -193,7 +184,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		return friendlyErr(from, err)
 	}
 	if len(tracksA) == 0 {
-		fmt.Fprintf(stderr, "%s 是空的,沒有東西可搬\n", src)
+		fmt.Fprintln(stderr, i18n.T("migrate.source_empty", "src", src))
 		return nil
 	}
 	var deferred error
@@ -215,7 +206,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 				return err
 			}
 			if len(blocked) > 0 {
-				return &BlockedError{Msg: strings.Join(blocked, ";") + "。migrate 不越過刪除閾值:先 capy pl sync " + pl.Name + " 處理那邊的變更,再 migrate"}
+				return &BlockedError{Msg: i18n.T("migrate.err.blocked", "blocked", strings.Join(blocked, ";"), "name", pl.Name)}
 			}
 			pullRows = append(pullRows, rows...)
 			maps.Copy(lives, lv)
@@ -233,7 +224,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 				return err
 			}
 			if pl.Links[dst.prov] != dst.id {
-				return fmt.Errorf("%s 端找不到清單 %s(已取消連結),重跑一次", dst.prov, dst.id)
+				return i18n.Errorf("migrate.err.target_gone", "platform", dst.prov, "id", dst.id)
 			}
 		}
 		type appended struct {
@@ -265,9 +256,9 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		}
 		existing := len(pl.Items) - len(added) // 正本既有的份數:新建的目標要把它們一起推過去(沿用了連著來源的正本時就是全部);既有的目標它們已在上面
 		if len(added) == 0 && dst.id != "" {   // 沒東西可接就一個位元組都不寫:pull 半邊看到的變更留給 sync(同 pl dedup 的規矩),不退化成一次 sync
-			msg := fmt.Sprintf("%s 的 %d 首都已在正本 %s(%s)裡,無變更", src, len(tracksA), pl.Name, pl.PID)
+			msg := i18n.T("migrate.all_present", "src", src, "count", len(tracksA), "name", pl.Name, "pid", pl.PID)
 			if len(pullRows) > 0 {
-				msg += fmt.Sprintf("(pull 半邊看到 %d 筆平台變更,留給 capy pl sync)", len(pullRows))
+				msg += i18n.T("migrate.all_present.pull_pending", "count", len(pullRows))
 			}
 			fmt.Fprintln(stderr, msg)
 			return errSkipCommit
@@ -290,23 +281,23 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			}
 		}
 		if mapped > 0 || queued > 0 {
-			fmt.Fprintf(stderr, "resolve:%d 首自動對應到 %s,%d 首要人裁決\n", mapped, dst.prov, queued)
+			fmt.Fprintln(stderr, i18n.T("migrate.resolve_summary", "mapped", mapped, "platform", dst.prov, "queued", queued))
 		}
 		if queued > 0 && !yes && !dryRun && migrateIsTTY(cmd) {
-			ok, err := confirmWrite(fmt.Sprintf("%d 首在 %s 沒有自動對應到,現在逐筆裁決?(否 = 先推有對應的,之後 capy resolve %q --provider %s --review)", queued, dst.prov, pl.Name, dst.prov))
+			ok, err := confirmWrite(i18n.T("migrate.confirm.review", "count", queued, "platform", dst.prov, "name_arg", strconv.Quote(pl.Name)))
 			if err != nil {
 				return err
 			}
 			if ok {
 				n, err := reviewLoop(ctx, s, items, false, stderr)
 				if errors.Is(err, huh.ErrUserAborted) { // 取消 = 整輪不寫入(同 resolve --review):清單也還沒建
-					fmt.Fprintln(stderr, "已取消:這輪不寫入任何東西")
+					fmt.Fprintln(stderr, i18n.T("migrate.review.cancelled"))
 					return &PendingError{N: len(added) + len(pullRows)}
 				}
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(stderr, "裁決 %d 筆\n", n)
+				fmt.Fprintln(stderr, i18n.T("migrate.reviewed", "count", n))
 			}
 		}
 		// 表:pull(既有 B 的變更)、migrate(接在尾端的來源曲目)、push(既有 B 才算得出來;新建的要建了才有 id)
@@ -365,16 +356,16 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			var prompt string
 			switch {
 			case dst.id != "":
-				prompt = fmt.Sprintf("把 %s 的 %d 首加進 %s?", src, len(added), dst)
+				prompt = i18n.T("migrate.confirm.add", "src", src, "count", len(added), "dst", dst)
 			case follow:
-				prompt = fmt.Sprintf("在 %s 建立清單「%s」,把正本(連著 %s)的 %d 首推過去?", dst.prov, pl.Name, src, len(pl.Items))
+				prompt = i18n.T("migrate.confirm.create_follow", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(pl.Items))
 			case existing > 0:
-				prompt = fmt.Sprintf("在 %s 建立清單「%s」,把 %s 的 %d 首連同正本原有的 %d 首推過去?", dst.prov, pl.Name, src, len(added), existing)
+				prompt = i18n.T("migrate.confirm.create_with_existing", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(added), "existing", existing)
 			default:
-				prompt = fmt.Sprintf("在 %s 建立清單「%s」,把 %s 的 %d 首推過去?", dst.prov, pl.Name, src, len(added))
+				prompt = i18n.T("migrate.confirm.create", "platform", dst.prov, "name", pl.Name, "src", src, "count", len(added))
 			}
 			if unmapped > 0 {
-				prompt += fmt.Sprintf("(其中 %d 首在 %s 沒有對應,這次不推)", unmapped, dst.prov)
+				prompt += i18n.T("migrate.confirm.unmapped", "count", unmapped, "platform", dst.prov)
 			}
 			ok, err := confirmWrite(prompt)
 			if err != nil {
@@ -392,14 +383,14 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			dst.id, dst.name, created = made.ID, made.Name, made.ID
 			pl.Links[dst.prov] = made.ID
 			pl.UpdatedAt = canon.Now().Unix()
-			fmt.Fprintf(stderr, "在 %s 建立清單 %s(%s)\n", dst.prov, made.Name, made.ID)
+			fmt.Fprintln(stderr, i18n.T("migrate.created", "platform", dst.prov, "name", made.Name, "id", made.ID))
 			// 重新 list 才看得到剛建的清單;讀到空清單、記下 base(push 前提一);沒有 base 又是空的 L,DERIVE 不會動 C
 			pf2 := newPlatforms(ctx)
 			if _, _, lives, err = observeAndDerive(ctx, s, targets, dst.prov, stderr, pf2); err != nil {
 				return err
 			}
 			if pl.Links[dst.prov] != made.ID { // 剛建的清單不在第二次 list 裡(真帳號還沒驗過的路徑):被當 gone 取消連結;收尾會帶 pl link 接回的命令
-				return fmt.Errorf("%s 端的清單列表看不到剛建的清單 %s,已取消連結", dst.prov, made.ID)
+				return i18n.Errorf("migrate.err.created_not_listed", "platform", dst.prov, "id", made.ID)
 			}
 			if plans, _, err = migratePlanPush(ctx, s, targets, dst.prov, stderr, pf2, lives); err != nil {
 				return err
@@ -408,35 +399,35 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		reportProgress("write", 0, 0)
 		applied, touched, deferred = applyPlans(ctx, s, plans, stderr)
 		if applied > 0 {
-			fmt.Fprintf(stderr, "已推送 %d 筆變更\n", applied)
+			fmt.Fprintln(stderr, i18n.T("migrate.pushed", "count", applied))
 		}
-		if follow {
-			pulled := ""
-			if len(pullRows) > 0 {
-				pulled = fmt.Sprintf("、pull 了 %d 筆來源變更", len(pullRows))
-			}
-			summary = fmt.Sprintf("正本 %s(%s)連著 %s,以正本為準%s,推了 %d 首到 %s\n", pl.Name, pl.PID, src, pulled, applied, dst)
-		} else {
-			summary = fmt.Sprintf("已把 %s 的 %d 首接進正本 %s(%s,共 %d 首),推了 %d 首到 %s\n", src, len(added), pl.Name, pl.PID, len(pl.Items), applied, dst)
+		nameArg := strconv.Quote(pl.Name)
+		switch {
+		case follow && len(pullRows) > 0:
+			summary = i18n.T("migrate.summary.follow_pulled", "name", pl.Name, "pid", pl.PID, "src", src, "pulled", len(pullRows), "count", applied, "dst", dst) + "\n"
+		case follow:
+			summary = i18n.T("migrate.summary.follow", "name", pl.Name, "pid", pl.PID, "src", src, "count", applied, "dst", dst) + "\n"
+		default:
+			summary = i18n.T("migrate.summary.appended", "src", src, "count", len(added), "name", pl.Name, "pid", pl.PID, "total", len(pl.Items), "pushed", applied, "dst", dst) + "\n"
 		}
 		if unmapped > 0 {
-			summary += fmt.Sprintf("%d 首在 %s 沒有對應、這次沒推:capy resolve %q --provider %s --review 裁決後,capy pl sync %q --provider %s 推過去\n", unmapped, dst.prov, pl.Name, dst.prov, pl.Name, dst.prov)
+			summary += i18n.T("migrate.summary.unmapped", "count", unmapped, "platform", dst.prov, "name_arg", nameArg) + "\n"
 		}
 		if link := pl.Links[src.prov]; link != "" { // 兩句都要看 links 講:來源連著時「一次性複製」是假話、再叫人 pl link 是多餘的(review #55)
-			summary += fmt.Sprintf("來源 %s:%s 也連著這個正本(不是一次性複製):之後 capy pl sync %q 會讓兩邊都跟上正本\n", src.prov, link, pl.Name)
+			summary += i18n.T("migrate.summary.source_linked", "platform", src.prov, "id", link, "name_arg", nameArg) + "\n"
 		} else {
-			summary += fmt.Sprintf("來源沒有連結(一次性複製)。之後要跟著 %s 的變動:capy pl link %q %s:%s,再 capy pl sync %q\n", src.prov, pl.Name, src.prov, src.id, pl.Name)
+			summary += i18n.T("migrate.summary.source_unlinked", "platform", src.prov, "name_arg", nameArg, "id", src.id) + "\n"
 		}
 		return nil
 	})
 	if err == nil && deferred == nil { // push 失敗(deferred)時 COMMIT 照走、但結尾要以它收場(同 push / sync 經 finishPush);成功才講成功
 		fmt.Fprint(stderr, summary)
 	}
-	next := fmt.Sprintf("重跑 capy migrate %q --from %s --to %s:%s(已推到平台的曲目會當既有內容吸收,不會重複)", src.name, src.prov, dst.prov, dst.id)
-	after := "再重跑 capy migrate"
+	next := i18n.T("migrate.next.rerun", "name_arg", strconv.Quote(src.name), "from", src.prov, "platform", dst.prov, "id", dst.id)
+	after := i18n.T("migrate.next.rerun_after")
 	if created != "" { // 清單建好了、連結卻沒寫進 Drive:重跑會撞同名,要指到已建好的那個
-		next = fmt.Sprintf("%s 上的清單 %s(%s)已經建好,但連結沒寫進 Drive:用 capy pl link %q %s:%s 接回來,再 capy pl sync %q --provider %s", dst.prov, dst.name, created, plName, dst.prov, created, plName, dst.prov)
-		after = fmt.Sprintf("再 capy pl link %q %s:%s 接回來並 capy pl sync %q --provider %s", plName, dst.prov, created, plName, dst.prov)
+		next = i18n.T("migrate.next.relink", "platform", dst.prov, "created_name", dst.name, "id", created, "name_arg", strconv.Quote(plName))
+		after = i18n.T("migrate.next.relink_after", "name_arg", strconv.Quote(plName), "platform", dst.prov, "id", created)
 		if err != nil && !touched {
 			err = fmt.Errorf("%w;%s", err, next)
 		}
@@ -453,7 +444,7 @@ func migrateCanonical(s *canonState, src, dst migrateEnd, stderr io.Writer) (*ca
 	if dst.id != "" {
 		for _, pid := range slices.Sorted(maps.Keys(s.playlists)) {
 			if pl := s.playlists[pid]; pl.Links[dst.prov] == dst.id {
-				fmt.Fprintf(stderr, "沿用 %s 連著的 canonical 清單 %s(%s)\n", dst, pl.Name, pl.PID)
+				fmt.Fprintln(stderr, i18n.T("migrate.canon.reuse_linked", "end", dst, "name", pl.Name, "pid", pl.PID))
 				return pl, nil
 			}
 		}
@@ -470,24 +461,22 @@ func migrateCanonical(s *canonState, src, dst migrateEnd, stderr io.Writer) (*ca
 	case pl == nil:
 		pl = canon.NewPlaylist(name)
 		s.playlists[pl.PID] = pl
-		fmt.Fprintf(stderr, "建立 canonical 清單 %s(%s)\n", pl.Name, pl.PID)
+		fmt.Fprintln(stderr, i18n.T("migrate.canon.created", "name", pl.Name, "pid", pl.PID))
 	case pl.Links[dst.prov] != "" && dst.id == "":
-		return nil, fmt.Errorf("已經有叫「%s」的 canonical 清單(%s)連著 %s:%s:要加進那個清單就 --to %s:%s", pl.Name, pl.PID, dst.prov, pl.Links[dst.prov], dst.prov, pl.Links[dst.prov])
+		return nil, i18n.Errorf("migrate.err.canon_linked_to_target", "name", pl.Name, "pid", pl.PID, "platform", dst.prov, "id", pl.Links[dst.prov])
 	case pl.Links[dst.prov] != "":
-		return nil, fmt.Errorf("同名的 canonical 清單 %s(%s)已連結 %s:%s,不是 %s:先 capy pl unlink %q %s", pl.Name, pl.PID, dst.prov, pl.Links[dst.prov], dst.id, pl.Name, dst.prov)
+		return nil, i18n.Errorf("migrate.err.canon_linked_elsewhere", "name", pl.Name, "pid", pl.PID, "platform", dst.prov, "linked", pl.Links[dst.prov], "id", dst.id, "name_arg", strconv.Quote(pl.Name))
 	case dst.id == "" && pl.Links[src.prov] != "" && pl.Links[src.prov] != src.id: // 同名但連著來源平台另一份:沿用會把這份的歌推去那份
-		return nil, fmt.Errorf("同名的 canonical 清單 %s(%s)連著 %s:%s,不是來源 %s:要搬的是那一份就用它,不然先 capy pl unlink %q %s", pl.Name, pl.PID, src.prov, pl.Links[src.prov], src, pl.Name, src.prov)
+		return nil, i18n.Errorf("migrate.err.canon_linked_other_source", "name", pl.Name, "pid", pl.PID, "platform", src.prov, "linked", pl.Links[src.prov], "src", src, "name_arg", strconv.Quote(pl.Name))
+	case len(pl.Links) == 0:
+		fmt.Fprintln(stderr, i18n.T("migrate.canon.reuse_unlinked", "name", pl.Name, "pid", pl.PID))
 	default:
-		links := "還沒連任何平台"
-		if len(pl.Links) > 0 {
-			links = "連著 " + linkSummary(pl)
-		}
-		fmt.Fprintf(stderr, "沿用既有的 canonical 清單 %s(%s;%s)\n", pl.Name, pl.PID, links)
+		fmt.Fprintln(stderr, i18n.T("migrate.canon.reuse", "name", pl.Name, "pid", pl.PID, "links", linkSummary(pl)))
 	}
 	if dst.id != "" && pl.Links[dst.prov] != dst.id {
 		pl.Links[dst.prov] = dst.id
 		pl.UpdatedAt = canon.Now().Unix()
-		fmt.Fprintf(stderr, "已連結 %s(%s)↔ %s\n", pl.Name, pl.PID, dst)
+		fmt.Fprintln(stderr, i18n.T("migrate.canon.linked", "name", pl.Name, "pid", pl.PID, "end", dst))
 	}
 	return pl, nil
 }
@@ -504,7 +493,7 @@ func migratePlanPush(ctx context.Context, s *canonState, targets []*canon.Playli
 	for _, p := range plans {
 		for _, op := range p.ops {
 			if op.Kind != provider.OpAdd {
-				return nil, nil, &BlockedError{Msg: fmt.Sprintf("%s 在 %s 有還沒同步的 %s(migrate 只做新增):先 capy pl sync %q --provider %s,再 migrate", p.pl.Name, p.prov, op.Kind, p.pl.Name, p.prov)}
+				return nil, nil, &BlockedError{Msg: i18n.T("migrate.err.pending_non_add", "name", p.pl.Name, "platform", p.prov, "kind", op.Kind, "name_arg", strconv.Quote(p.pl.Name))}
 			}
 		}
 	}
@@ -517,11 +506,11 @@ func migrateReason(s *canonState, w provider.PlaylistWriter, prov, cid string) (
 	m := s.tracks.Tracks[cid].Mappings[prov]
 	switch {
 	case m.ID != "" && w.Pushable(m.ID):
-		return m.ID, fmt.Sprintf("推到 %s:%s(%s %d)", prov, m.ID, m.Source, m.Confidence), "push", true
+		return m.ID, i18n.T("migrate.reason.push", "platform", prov, "id", m.ID, "source", m.Source, "confidence", m.Confidence), "push", true
 	case m.ID != "":
-		return m.ID, "有 mapping 但推不出去(local file / library-only),只能在平台手動加", "unpushable", false
+		return m.ID, i18n.T("migrate.reason.unpushable"), "unpushable", false
 	}
-	return "", prov + " 沒有對應,這次不推", "no_mapping", false
+	return "", i18n.T("migrate.reason.no_mapping", "platform", prov), "no_mapping", false
 }
 
 // sameNamePlaylists:平台上跟 name 同名(EqualFold,同 resolvePlaylistID)而且連得上的清單 id。pl link --create 與 migrate 建清單前都先擋——

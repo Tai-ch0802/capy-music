@@ -37,7 +37,7 @@ import (
 type PendingError struct{ N int }
 
 func (e *PendingError) Error() string {
-	return fmt.Sprintf("%d 筆變更待套用:加 --yes 套用,或在終端機執行以確認", e.N)
+	return i18n.T("changeset.pending", "count", e.N) // 網頁 console.js 看 exit 2 的訊息裡有沒有 --yes:每個語系都要留著它
 }
 
 // BlockedError:安全閥擋下(Drive 不完整、刪除超過閾值)→ exit 3,零寫入。
@@ -147,7 +147,7 @@ func (s *canonState) find(arg string) (*canon.Playlist, error) {
 	for i, h := range hits {
 		pids[i] = h.PID
 	}
-	return nil, fmt.Errorf("有 %d 個同名的 canonical 清單,請改用 pid:%s", len(hits), strings.Join(pids, "、"))
+	return nil, i18n.Errorf("pull.err.same_name", "count", len(hits), "pids", strings.Join(pids, i18n.T("sep.list")))
 }
 
 // errSkipCommit:fn 用它表示「成功,但這次不要 COMMIT」(--dry-run 永不寫入,連 bootstrap 檔都不建)。
@@ -156,7 +156,7 @@ var errSkipCommit = errors.New("skip commit")
 // withCanonical:鎖 → FETCH → 閘(Drive 不完整 / schema 太新 → 零寫入)→ fn 改狀態 → COMMIT。fn 回錯就什麼都不寫。
 // pull.lock 包住整段,兩個 capy 同時 pull 不會互相蓋掉對方剛上傳的檔;token 鎖在它裡面,順序固定不會死鎖。
 func withCanonical(ctx context.Context, stderr io.Writer, fn func(*canonState) error) error {
-	unlock, err := auth.LockFile(ctx, "pull.lock", "對方正在同步播放清單")
+	unlock, err := auth.LockFile(ctx, "pull.lock", i18n.T("escape.lock_notice"))
 	if err != nil {
 		return err
 	}
@@ -209,16 +209,18 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 		}
 		f := drive.Newest(fs)
 		if len(fs) > 1 {
-			fmt.Fprintf(stderr, "警告:Drive appdata 有 %d 份 %s,採用最新的一份\n", len(fs), name)
+			fmt.Fprintln(stderr, i18n.T("pull.warn.duplicate_files", "count", len(fs), "name", name))
 		}
 		b, err := dc.Download(ctx, f.ID)
 		if err != nil {
-			return nil, false, fmt.Errorf("下載 %s:%w", name, friendlyErr("google", err))
+			return nil, false, i18n.Errorf("escape.err.download", "name", name, "err", friendlyErr("google", err))
 		}
 		s.fetched[name] = fetchedFile{f, b, idVers(fs)}
 		return b, true, nil
 	}
-	decodeErr := func(name string, err error) error { return fmt.Errorf("讀取 Drive 的 %s:%w", name, err) }
+	decodeErr := func(name string, err error) error {
+		return i18n.Errorf("pull.err.read_drive_file", "name", name, "err", err)
+	}
 	s.manifest = canon.NewManifest()
 	if b, ok, err := get("manifest.json"); err != nil {
 		return nil, err
@@ -263,7 +265,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 	// 位元組變了,COMMIT 自然重傳(無變更的 pull 也會走 COMMIT)。多重歸屬的警告也在這裡印一次。
 	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
 	for _, w := range id.Warnings() {
-		fmt.Fprintln(stderr, "警告:tracks.json "+w)
+		fmt.Fprintln(stderr, i18n.T("pull.warn.tracks", "warning", w))
 	}
 	healed := 0
 	var healedNames []string // 自癒會動到所有受影響的清單(不只這次的目標),名字要列出來
@@ -274,7 +276,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 		}
 	}
 	if healed > 0 { // 這裡還不知道會不會寫入(--dry-run / 閾值 / 取消都不會),只講事實、不承諾這次上傳
-		fmt.Fprintf(stderr, "修復 %d 筆清單項目的合併殘留(%s;上次寫入中斷:tracks.json 已合併、清單還指著舊 cid),下次寫入時一併上傳\n", healed, strings.Join(healedNames, "、"))
+		fmt.Fprintln(stderr, i18n.T("pull.healed", "count", healed, "playlists", strings.Join(healedNames, i18n.T("sep.list"))))
 	}
 	// 閘的兩個證人:manifest 宣告的 pid、本機 db 記得的 pid(db 壞或空就沒有第二個證人,不算錯)。
 	known := slices.Clone(s.manifest.Playlists)
@@ -299,8 +301,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 		}
 	}
 	if len(missing) > 0 {
-		return nil, &BlockedError{Msg: fmt.Sprintf("Drive appdata 不完整,取不到:%s。這不會被當成「使用者刪光了」,零寫入;--yes / --force 都不放行。"+
-			"若 Drive 真的被清空或登錯 Google 帳號(目前 %s),出口是 capy drive init --from-local(只補 Drive 缺的檔;本機 state.db 是唯一剩下的一份,別刪)", strings.Join(missing, "、"), googleAccount())}
+		return nil, &BlockedError{Msg: i18n.T("pull.blocked.drive_incomplete", "files", strings.Join(missing, i18n.T("sep.list")), "account", googleAccount())}
 	}
 	return s, nil
 }
@@ -309,7 +310,7 @@ func googleAccount() string {
 	if cfg, err := config.Load(); err == nil && cfg.GoogleEmail != "" {
 		return cfg.GoogleEmail
 	}
-	return "未知帳號"
+	return i18n.T("pull.unknown_account")
 }
 
 // commitCanonical:Drive 先(tracks → 清單 → 自己的 dev 檔 → manifest 最後,它宣告的檔要先存在)、SQLite 後。
@@ -375,7 +376,7 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 			_, err = dc.Create(ctx, u.ref.Name, u.ref.Props, u.body)
 		}
 		if err != nil {
-			return fmt.Errorf("上傳 %s 失敗(本機快取未動,下次 pull 重算):%w", u.ref.Name, friendlyErr("google", err))
+			return i18n.Errorf("pull.err.upload", "name", u.ref.Name, "err", friendlyErr("google", err))
 		}
 	}
 	c := store.Canonical{Manifest: s.manifest, Tracks: s.tracks}
@@ -386,7 +387,7 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 		c.Devices = append(c.Devices, *s.devices[id])
 	}
 	if err := st.Hydrate(c); err != nil {
-		fmt.Fprintf(s.stderr, "警告:Drive 已更新,但本機快取寫入失敗(下次 pull 會重建):%v\n", err)
+		fmt.Fprintln(s.stderr, i18n.T("pull.warn.cache_write", "err", err))
 	}
 	return nil
 }
@@ -399,7 +400,7 @@ func commitCanonical(ctx context.Context, dc *drive.Client, st *store.Store, s *
 type guardError struct{ Files string }
 
 func (e *guardError) Error() string {
-	return "Drive 上的檔在這次執行期間變了(" + e.Files + ");零寫入,重跑一次"
+	return i18n.T("pull.err.drive_changed", "files", e.Files)
 }
 
 func guardVersions(ctx context.Context, dc *drive.Client, s *canonState, staged []string) error {
@@ -419,20 +420,20 @@ func guardVersions(ctx context.Context, dc *drive.Client, s *canonState, staged 
 		switch {
 		case slices.Equal(now, f.peers):
 		case i < 0:
-			bad = append(bad, name+" 被別台裝置刪除或換掉")
+			bad = append(bad, i18n.T("pull.guard.deleted", "name", name))
 		case now[i].Version != f.file.Version:
-			bad = append(bad, name+" 被別台裝置改過")
+			bad = append(bad, i18n.T("pull.guard.modified", "name", name))
 		default:
-			bad = append(bad, name+" 多了一份(或另一份被改過)")
+			bad = append(bad, i18n.T("pull.guard.duplicated", "name", name))
 		}
 	}
 	for _, name := range staged {
 		if _, ok := s.fetched[name]; !ok && len(byName[name]) > 0 { // 我們要 Create 的檔對方剛建了:再建就是第二份
-			bad = append(bad, name+" 被別台裝置建立")
+			bad = append(bad, i18n.T("pull.guard.created", "name", name))
 		}
 	}
 	if len(bad) > 0 {
-		return &guardError{Files: strings.Join(bad, "、")}
+		return &guardError{Files: strings.Join(bad, i18n.T("sep.list"))}
 	}
 	return nil
 }
@@ -448,7 +449,7 @@ func hostname() string {
 func splitProviderRef(arg string) (prov, ref string, err error) {
 	prov, ref, ok := strings.Cut(arg, ":")
 	if !ok || !isProviderID(prov) || ref == "" {
-		return "", "", fmt.Errorf("格式是 <provider>:<清單 ID 或名稱>,provider 為 %s:%q", strings.Join(providerIDs, "|"), arg)
+		return "", "", i18n.Errorf("pull.err.provider_ref", "ids", strings.Join(providerIDs, "|"), "arg", strconv.Quote(arg))
 	}
 	return prov, ref, nil
 }
@@ -471,7 +472,7 @@ func readable(ctx context.Context, r provider.PlaylistReader, id string) (bool, 
 func newPlLinkCmd() *cobra.Command {
 	var createFlag bool
 	cmd := &cobra.Command{
-		Use: "link [name|pid] [provider]:[playlist ID|名稱](或 [provider] --create)", Short: "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link。不帶參數且在終端機裡會三段挑選)", Args: argsOrPicker(2),
+		Use: i18n.T("cmd.pl.link.use"), Short: i18n.T("cmd.pl.link.short"), Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			create := createFlag // 挑選器第二段選「建新的空清單」也會把它打開
@@ -480,12 +481,12 @@ func newPlLinkCmd() *cobra.Command {
 			if len(args) == 2 {
 				if create { // 平台清單還不存在,沒有 ID 或名稱可給
 					if prov = args[1]; !isProviderID(prov) {
-						return fmt.Errorf("配 --create 時第二個參數只給平台(%s),清單名稱跟著 canonical 清單:%q", strings.Join(providerIDs, "|"), prov)
+						return i18n.Errorf("link.err.create_platform_only", "ids", strings.Join(providerIDs, "|"), "arg", strconv.Quote(prov))
 					}
 				} else if prov, ref, err = splitProviderRef(args[1]); err != nil {
 					return err
 				}
-			} else if prov, err = pickProvider("連到哪個平台?"); err != nil { // 第一段。三個平台全列,不先探測誰有登入:
+			} else if prov, err = pickProvider(i18n.T("link.pick.platform")); err != nil { // 第一段。三個平台全列,不先探測誰有登入:
 				return err // 探測要建 provider 又慢,選到沒登入的,下面的錯誤本來就會指路 auth login
 			}
 			p, err := newProvider(ctx, prov)
@@ -522,7 +523,7 @@ func newPlLinkCmd() *cobra.Command {
 				}
 				newLabel := ""
 				if cerr == nil {
-					newLabel = "+ 在 " + prov + " 建一個新的空清單(名字跟著下一步選的清單)"
+					newLabel = i18n.T("link.pick.create_new", "platform", prov)
 				}
 				if id, err = pickPlatformPlaylist(prov, refs, newLabel); err != nil {
 					return err
@@ -533,12 +534,12 @@ func newPlLinkCmd() *cobra.Command {
 				// 「存在」的定義要跟 pull 的 gone 判準一致(在 ListPlaylists 裡):像 base62 的 ID 會被 resolvePlaylistID 直接放行,
 				// 別人的公開清單讀得到卻不在自己的列表裡,連了第一次 pull 就會被當成已刪除而自動 unlink。
 				if !slices.ContainsFunc(refs, func(x provider.PlaylistRef) bool { return x.ID == id }) {
-					return fmt.Errorf("%s:%s 不在你的清單列表裡(capy pl list 看得到的才算):pull 會把不在列表裡的清單視為已刪除並自動取消連結,所以不可連結", prov, id)
+					return i18n.Errorf("link.err.not_listed", "platform", prov, "id", id)
 				}
 				if ok, err := readable(ctx, r, id); err != nil {
 					return friendlyErr(prov, err)
 				} else if !ok {
-					return fmt.Errorf("%s 清單 %s 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不可連結", prov, id)
+					return i18n.Errorf("link.err.unreadable", "platform", prov, "id", id)
 				}
 			}
 			var done strings.Builder // 成功訊息等 COMMIT 成功才印:COMMIT 失敗時 stdout 不可還說「已連結」(PR #48 review)
@@ -560,24 +561,24 @@ func newPlLinkCmd() *cobra.Command {
 				if !create { // 要建的清單還沒有 id,沒人連得到它;空 id 會撞上每個沒連這個平台的清單
 					for _, pid := range slices.Sorted(maps.Keys(s.playlists)) {
 						if other := s.playlists[pid]; other.Links[prov] == id && (pl == nil || other.PID != pl.PID) {
-							return fmt.Errorf("%s:%s 已連結到 canonical 清單 %s(%s),一個平台清單只能連一個", prov, id, other.Name, other.PID)
+							return i18n.Errorf("link.err.taken", "platform", prov, "id", id, "name", other.Name, "pid", other.PID)
 						}
 					}
 				}
 				if pl == nil {
 					if _, err := ulid.Time(arg); err == nil && strings.ToUpper(arg) == arg { // 合法 ULID 卻不存在:別把它當名字建清單
-						return fmt.Errorf("找不到 pid %s 的 canonical 清單", arg)
+						return i18n.Errorf("link.err.no_pid", "pid", arg)
 					}
 					pl = canon.NewPlaylist(arg)
 					s.playlists[pl.PID] = pl
-					fmt.Fprintf(cmd.ErrOrStderr(), "建立 canonical 清單 %s(%s)\n", pl.Name, pl.PID)
+					fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("link.created_master", "name", pl.Name, "pid", pl.PID))
 				}
 				if cur, ok := pl.Links[prov]; ok && cur != id {
 					if !foreignLink(p, cur) {
-						return fmt.Errorf("%s(%s)已連結 %s:%s,先 capy pl unlink %s %s", pl.Name, pl.PID, prov, cur, pl.Name, prov)
+						return i18n.Errorf("link.err.already_linked", "name", pl.Name, "pid", pl.PID, "platform", prov, "id", cur)
 					}
 					// 決策 33 / Q30:撞到別台裝置的本機清單 → 接管(重灌後 device_id 變了也靠這條接回來);原裝置下一輪起變 foreign
-					fmt.Fprintf(&done, "%s(%s)原本連到裝置 %s 的 %s,已改為本機;那台之後會跳過這個清單\n", pl.Name, pl.PID, deviceName(s, cur), prov)
+					fmt.Fprintln(&done, i18n.T("link.taken_over", "name", pl.Name, "pid", pl.PID, "device", deviceName(s, cur), "platform", prov))
 					delete(s.mine().Base[pl.PID], prov) // 舊 base 是別台的觀測,對本機的檔沒意義
 				}
 				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單。
@@ -590,28 +591,28 @@ func newPlLinkCmd() *cobra.Command {
 					switch len(dup) {
 					case 0:
 					case 1:
-						return fmt.Errorf("%s 上已經有叫「%s」的清單(%s):要連它就 capy pl link %q %s:%s;真的要另建一個,先在 app 裡建好再用 %s:<ID> 連", prov, pl.Name, dup[0], pl.Name, prov, dup[0], prov)
+						return i18n.Errorf("link.err.same_name_one", "platform", prov, "name", pl.Name, "id", dup[0], "quoted", strconv.Quote(pl.Name))
 					default:
-						return fmt.Errorf("%s 上已經有 %d 個叫「%s」的清單(%s):挑一個用 capy pl link %q %s:<ID> 連", prov, len(dup), pl.Name, strings.Join(dup, "、"), pl.Name, prov)
+						return i18n.Errorf("link.err.same_name_many", "platform", prov, "count", len(dup), "name", pl.Name, "ids", strings.Join(dup, i18n.T("sep.list")), "quoted", strconv.Quote(pl.Name))
 					}
 					made, err := creator.CreatePlaylist(ctx, pl.Name) // 名字跟 canonical 一樣:push 不會再多排一個 rename
 					if err != nil {
 						return friendlyErr(prov, err)
 					}
 					id = made.ID
-					fmt.Fprintf(cmd.ErrOrStderr(), "在 %s 建立清單 %s(%s)\n", prov, made.Name, made.ID)
-					recovery = fmt.Sprintf("%s 上的空清單 %s 已經建好,但連結沒寫進 Drive:用 capy pl link %q %s:%s 把它接回來", prov, made.ID, pl.Name, prov, made.ID)
+					fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("link.created_platform", "platform", prov, "name", made.Name, "id", made.ID))
+					recovery = i18n.T("link.recovery", "platform", prov, "id", made.ID, "quoted", strconv.Quote(pl.Name))
 				}
 				if pl.Links[prov] != id {
 					pl.Links[prov] = id
 					pl.UpdatedAt = canon.Now().Unix()
 				}
-				fmt.Fprintf(&done, "已連結 %s(%s)↔ %s:%s;接著 capy pl pull %s\n", pl.Name, pl.PID, prov, id, pl.Name)
+				fmt.Fprintln(&done, i18n.T("link.done", "name", pl.Name, "pid", pl.PID, "platform", prov, "id", id))
 				return nil
 			})
 			if err != nil {
 				if recovery != "" {
-					return fmt.Errorf("%w;%s", err, recovery)
+					return i18n.Errorf("link.err.with_recovery", "err", err, "recovery", recovery)
 				}
 				return err
 			}
@@ -619,16 +620,16 @@ func newPlLinkCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&createFlag, "create", false, "在平台上建一個跟 canonical 清單同名的空清單再連結;此時第二個參數只給平台、不帶「:」(例如 spotify);Spotify 與 Apple Music 支援,local 不行")
+	cmd.Flags().BoolVar(&createFlag, "create", false, i18n.T("cmd.pl.link.flag.create"))
 	return cmd
 }
 
 func newPlUnlinkCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "unlink [name|pid] [provider]", Short: "取消 canonical 清單與平台清單的連結(canonical 內容不動;不帶參數且在終端機裡會兩段挑選)", Args: argsOrPicker(2),
+		Use: "unlink [name|pid] [provider]", Short: i18n.T("cmd.pl.unlink.short"), Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 2 && !isProviderID(args[1]) {
-				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), args[1])
+				return i18n.Errorf("pull.err.bad_provider", "ids", strings.Join(providerIDs, "|"), "arg", strconv.Quote(args[1]))
 			}
 			return withCanonical(cmd.Context(), cmd.ErrOrStderr(), func(s *canonState) error {
 				arg, prov := "", ""
@@ -636,7 +637,7 @@ func newPlUnlinkCmd() *cobra.Command {
 					arg, prov = args[0], args[1]
 				} else {
 					var err error
-					if arg, err = pickLinkedPlaylist(s, "", "選一個要取消連結的清單"); err != nil {
+					if arg, err = pickLinkedPlaylist(s, "", i18n.T("unlink.pick.playlist")); err != nil {
 						return err
 					}
 				}
@@ -645,7 +646,7 @@ func newPlUnlinkCmd() *cobra.Command {
 					return err
 				}
 				if pl == nil {
-					return fmt.Errorf("找不到 canonical 清單 %q", arg)
+					return i18n.Errorf("unlink.err.not_found", "arg", strconv.Quote(arg))
 				}
 				if prov == "" { // 第二段:只列這個清單真的連了的平台,選了不會撲空
 					provs := slices.Sorted(maps.Keys(pl.Links))
@@ -653,7 +654,7 @@ func newPlUnlinkCmd() *cobra.Command {
 					for i, pv := range provs {
 						labels[i] = pv + ":" + pl.Links[pv]
 					}
-					i, err := pickOne("取消哪一個平台的連結?", labels)
+					i, err := pickOne(i18n.T("unlink.pick.platform"), labels)
 					if err != nil {
 						return err
 					}
@@ -661,11 +662,11 @@ func newPlUnlinkCmd() *cobra.Command {
 				}
 				id, ok := pl.Links[prov]
 				if !ok {
-					return fmt.Errorf("%s(%s)沒有連結 %s", pl.Name, pl.PID, prov)
+					return i18n.Errorf("unlink.err.not_linked", "name", pl.Name, "pid", pl.PID, "platform", prov)
 				}
 				delete(pl.Links, prov)
 				pl.UpdatedAt = canon.Now().Unix()
-				fmt.Fprintf(cmd.OutOrStdout(), "已取消連結 %s(%s)↔ %s:%s\n", pl.Name, pl.PID, prov, id)
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("unlink.done", "name", pl.Name, "pid", pl.PID, "platform", prov, "id", id))
 				return nil
 			})
 		},
@@ -679,7 +680,7 @@ func newPlUnlinkCmd() *cobra.Command {
 var confirmWrite = func(prompt string) (bool, error) {
 	ok := false
 	err := newForm(huh.NewGroup(
-		huh.NewConfirm().Title(prompt).Affirmative("套用").Negative("取消").Value(&ok),
+		huh.NewConfirm().Title(prompt).Affirmative(i18n.T("changeset.confirm.apply")).Negative(i18n.T("changeset.confirm.cancel")).Value(&ok),
 	)).Run()
 	return ok, err
 }
@@ -702,24 +703,22 @@ func newPlPullCmd() *cobra.Command {
 	var prov string
 	cmd := &cobra.Command{
 		Use:   "pull [name|pid]",
-		Short: "平台 → canonical → Drive:列出變更、確認後才寫(spec §6.1)",
-		Long: `平台 → canonical → Drive(spec §6.1、§6.5)。變更集先印出(非 TTY 是無標題 TSV:action provider playlist pos cid provider_id title artists reason reason_code;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼),
-確認後才寫入;寫入順序 Drive 先、SQLite 後。exit code:0 無變更或已套用、1 錯誤、2 有待套用變更(--dry-run、非 TTY 沒 --yes、取消)、
-3 安全閥擋下(Drive 不完整;刪除 >10 首或 >30% 且 >3 首)。--yes 跳過確認、--force 才越過刪除閾值,兩者都不放行「Drive 不完整」。`,
-		Args: cobra.MaximumNArgs(1),
+		Short: i18n.T("cmd.pl.pull.short"),
+		Long:  i18n.T("cmd.pl.pull.long"),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := needTarget(cmd, args, all, i18n.Errorf("pick.err.need_target.pull")); err != nil {
 				return err
 			}
 			if prov != "" && !isProviderID(prov) {
-				return fmt.Errorf("provider 為 %s:%q", strings.Join(providerIDs, "|"), prov)
+				return i18n.Errorf("pull.err.bad_provider", "ids", strings.Join(providerIDs, "|"), "arg", strconv.Quote(prov))
 			}
 			if force && all { // 安全閥一次只解除一個清單:整輪放行會連「使用者自己都還不知道被清空」的清單一起放掉
-				return errors.New("--force 只能配單一清單(capy pl pull <name> --force),不能配 --all")
+				return i18n.Errorf("pull.err.force_with_all")
 			}
 			ctx, stderr := cmd.Context(), cmd.ErrOrStderr()
 			return withCanonical(ctx, stderr, func(s *canonState) error {
-				targets, err := pullTargets(s, args, all, prov, "拉")
+				targets, err := pullTargets(s, args, all, prov, i18n.T("pull.pick.title.pull"))
 				if err != nil {
 					return err
 				}
@@ -733,11 +732,11 @@ func newPlPullCmd() *cobra.Command {
 					}
 				}
 				if len(blocked) > 0 && !force { // 安全閥先於提示:被擋下的 derive 結果不落地,拿它算「尚未對應」會對不上
-					return &BlockedError{Msg: strings.Join(blocked, ";") + "。加 --force 越過(先用 --dry-run 看清楚要刪什麼)"}
+					return &BlockedError{Msg: i18n.T("changeset.blocked", "reasons", strings.Join(blocked, i18n.T("sep.clause")))}
 				}
 				resolveHint(s, targets, prov, stderr) // pull 不做 resolve,只提示(決策 22);--provider 那輪只提示它
 				if len(rows) == 0 {
-					fmt.Fprintln(stderr, "無變更")
+					fmt.Fprintln(stderr, i18n.T("changeset.no_changes"))
 					if dryRun {
 						return errSkipCommit
 					}
@@ -750,7 +749,7 @@ func newPlPullCmd() *cobra.Command {
 					if !bothTTY(cmd) {
 						return &PendingError{N: len(rows)}
 					}
-					ok, err := confirmWrite(fmt.Sprintf("套用以上 %d 筆變更到 Drive?", len(rows)))
+					ok, err := confirmWrite(i18n.T("pull.confirm", "count", len(rows)))
 					if err != nil {
 						return err
 					}
@@ -758,22 +757,24 @@ func newPlPullCmd() *cobra.Command {
 						return &PendingError{N: len(rows)}
 					}
 				}
-				fmt.Fprintf(stderr, "已套用 %d 筆變更\n", len(rows))
+				fmt.Fprintln(stderr, i18n.T("changeset.applied", "count", len(rows)))
 				return nil
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "拉全部已連結的清單")
-	cmd.Flags().StringVar(&prov, "provider", "", "只拉這個 provider 的連結(預設:清單連結的全部 provider)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只列出變更,不寫入(有變更時 exit 2)")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "跳過確認(cron / 管線用);不放行 Drive 不完整")
-	cmd.Flags().BoolVar(&force, "force", false, "越過刪除閾值(>10 首,或 >30% 且 >3 首);只能配單一清單、不能配 --all;不放行 Drive 不完整")
+	cmd.Flags().BoolVar(&all, "all", false, i18n.T("cmd.pl.pull.flag.all"))
+	cmd.Flags().StringVar(&prov, "provider", "", i18n.T("cmd.pl.pull.flag.provider"))
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("cmd.pl.pull.flag.dry_run"))
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("cmd.pl.pull.flag.yes"))
+	cmd.Flags().BoolVar(&force, "force", false, i18n.T("cmd.pl.pull.flag.force"))
 	return cmd
 }
 
 // pullTargets:--all = 所有有連結的清單(可用 --provider 篩),否則指定的那一個;依 (name, pid) 排序,輸出才決定性。
-// verb:挑選器標題用的動詞(拉 / 推 / 同步);len(args) == 1 或 --all 時用不到。
-func pullTargets(s *canonState, args []string, all bool, prov, verb string) ([]*canon.Playlist, error) {
+// verb:挑選器標題 pull.pick.title 的 {verb},呼叫端翻好的原形動詞(en:pull / push / sync;zh-TW:拉 / 推 / 同步);
+// len(args) == 1 或 --all 時用不到。ponytail: 英文「Pick a playlist to {verb}」拼得通;哪個語系的動詞會變形,再改成呼叫端傳整句標題。
+// title 是挑選器的整句標題(每個呼叫者一則 key:英文不拼動詞)。
+func pullTargets(s *canonState, args []string, all bool, prov, title string) ([]*canon.Playlist, error) {
 	linked := func(pl *canon.Playlist) bool {
 		if prov != "" {
 			return pl.Links[prov] != ""
@@ -793,7 +794,7 @@ func pullTargets(s *canonState, args []string, all bool, prov, verb string) ([]*
 			arg = args[0]
 		} else { // 不帶參數 + 終端機:挑選器補(呼叫端的 needTarget 已擋掉非 TTY)
 			var err error
-			if arg, err = pickLinkedPlaylist(s, prov, "選一個清單來"+verb); err != nil {
+			if arg, err = pickLinkedPlaylist(s, prov, title); err != nil {
 				return nil, err
 			}
 		}
@@ -802,10 +803,10 @@ func pullTargets(s *canonState, args []string, all bool, prov, verb string) ([]*
 			return nil, err
 		}
 		if pl == nil {
-			return nil, fmt.Errorf("找不到 canonical 清單 %q — 先 capy pl link %s <provider>:<清單>", arg, arg)
+			return nil, i18n.Errorf("pull.err.not_found", "arg", strconv.Quote(arg), "name", arg)
 		}
 		if !linked(pl) {
-			return nil, fmt.Errorf("%s(%s)沒有連結任何平台清單 — 先 capy pl link", pl.Name, pl.PID)
+			return nil, i18n.Errorf("pull.err.not_linked", "name", pl.Name, "pid", pl.PID)
 		}
 		out = append(out, pl)
 	}
@@ -839,7 +840,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			}
 			link := pl.Links[prov]
 			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單——不是 gone、不動 base、不 unlink
-				fmt.Fprintf(stderr, "跳過 %s 的 %s:%s 屬於裝置 %s(要在這台接手:capy pl link %s %s:<檔名>)\n", pl.Name, prov, link, deviceName(s, link), pl.Name, prov)
+				fmt.Fprintln(stderr, i18n.T("pull.skip.foreign", "name", pl.Name, "platform", prov, "id", link, "device", deviceName(s, link)))
 				continue
 			}
 			r, refs, err := pf.reader(prov)
@@ -854,13 +855,13 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				tracks, err := r.GetPlaylistItems(ctx, link)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
-					fmt.Fprintf(stderr, "跳過 %s 的 %s:%s(開發模式 app 讀不到 Spotify 官方 / 他人的清單,不是清單消失)\n", pl.Name, prov, link)
+					fmt.Fprintln(stderr, i18n.T("pull.skip.restricted", "name", pl.Name, "platform", prov, "id", link))
 					lives[liveKey{pl.PID, prov}] = nil
 					continue
 				case errors.Is(err, provider.ErrNotFound):
 					tracks = nil // 有列在清單列表裡卻 404 = 空清單(Apple 的 library 端點就這樣回);移除照常走 GATE 與閾值,不是 exit 1
 				case err != nil:
-					return nil, nil, nil, fmt.Errorf("讀取 %s 的 %s:%s:%w", pl.Name, prov, link, friendlyErr(prov, err))
+					return nil, nil, nil, i18n.Errorf("pull.err.read_playlist", "name", pl.Name, "platform", prov, "id", link, "err", friendlyErr(prov, err))
 				}
 				in.Live = &canon.Observed{ID: link, Name: ref.Name, Tracks: tracks}
 				lives[liveKey{pl.PID, prov}] = in.Live
@@ -881,18 +882,18 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				rows = append(rows, []string{ch.Action, prov, pl.Name, pos, ch.CID, ch.ProviderID, ch.Title, strings.Join(ch.Artists, ", "), ch.Reason, ch.Code})
 			}
 			if removalBlocked(removes, res.VisibleCount) {
-				blocked = append(blocked, fmt.Sprintf("%s 在 %s 要移除 %d 首(可見 %d 首),超過閾值", pl.Name, prov, removes, res.VisibleCount))
+				blocked = append(blocked, i18n.T("pull.blocked.threshold", "name", pl.Name, "platform", prov, "removes", removes, "visible", res.VisibleCount))
 			}
 			if slices.ContainsFunc(res.Changes, func(ch canon.Change) bool { return ch.Action == "rename" }) {
 				// 改名落地的這一輪說一次:push 不會把 rename 排給不支援改名的平台(規則 4、P6 §2 A13),之後也不再提(每輪都印太吵——PR #38 review)
 				for _, other := range slices.Sorted(maps.Keys(pl.Links)) {
 					if op, err := pf.provider(other); other != prov && err == nil && !op.Caps().Has(provider.CapPlaylistRename) {
-						fmt.Fprintf(stderr, "提示:%s 改名為 %s,但 %s 不支援改名,它那邊仍叫 %s(要一致請自己在那邊改名再重新 capy pl link)\n", pl.Name, res.Playlist.Name, other, pl.Name)
+						fmt.Fprintln(stderr, i18n.T("pull.hint.rename_unsupported", "name", pl.Name, "new_name", res.Playlist.Name, "platform", other))
 					}
 				}
 			}
 			if res.Gone {
-				fmt.Fprintf(stderr, "警告:%s 端找不到清單 %s,%s 將取消連結(Q6);canonical 內容不動\n", prov, link, pl.Name)
+				fmt.Fprintln(stderr, i18n.T("pull.warn.gone", "platform", prov, "id", link, "name", pl.Name))
 				delete(pl.Links, prov)
 				delete(s.mine().Base[pl.PID], prov) // 自己這台的舊 base 一起清(別台的碰不到,靠 Snapshot.ID 比對擋)
 				pl.UpdatedAt = canon.Now().Unix()
@@ -913,7 +914,7 @@ func deviceName(s *canonState, id string) string {
 	dev, _, _ := strings.Cut(id, "/")
 	for _, d := range s.manifest.Devices {
 		if d.ID == dev && d.Name != "" {
-			return d.Name + "(" + dev + ")"
+			return i18n.T("pull.device_name", "name", d.Name, "id", dev)
 		}
 	}
 	return dev

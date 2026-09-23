@@ -8,6 +8,7 @@ package canon
 import (
 	"slices"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -70,7 +71,7 @@ func PushPlan(live []LiveItem, want []Item, liveName, wantName string, mappingID
 		}
 		id, ok := mappingID(it.CID)
 		if !ok {
-			skipped = append(skipped, Skip{IID: it.IID, CID: it.CID, Reason: "沒有這個平台的 mapping(或釘成不可得):capy resolve", Code: "no_mapping"})
+			skipped = append(skipped, Skip{IID: it.IID, CID: it.CID, Reason: i18n.T("canon.reason.no_mapping"), Code: "no_mapping"})
 			continue
 		}
 		target = append(target, slot{id, -1})

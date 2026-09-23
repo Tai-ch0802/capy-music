@@ -1,11 +1,11 @@
 package canon
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 	"sort"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -64,7 +64,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	}
 	if in.Live == nil {
 		res.Gone = true
-		res.Changes = []Change{{Action: "unlink", Reason: "平台端清單不存在(Q6:自動取消連結)", Code: "playlist_gone"}}
+		res.Changes = []Change{{Action: "unlink", Reason: i18n.T("canon.reason.playlist_gone"), Code: "playlist_gone"}}
 		return res, nil
 	}
 	L := in.Live.Tracks
@@ -210,7 +210,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 				}
 				var err error
 				if rank, err = RankBetween(prevRank, next); err != nil {
-					return res, fmt.Errorf("清單 %s 的 rank 資料髒了,不自動重排:%w", c.PID, err)
+					return res, i18n.Errorf("canon.err.dirty_rank", "pid", c.PID, "err", err)
 				}
 			}
 			if r.item >= 0 {
@@ -227,7 +227,7 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 	// 變更集(順序:rename、remove、add、move)。
 	var changes []Change
 	if in.Base != nil && in.Live.Name != in.Base.Name && c.Name != in.Live.Name { // 規則 7
-		changes = append(changes, Change{Action: "rename", Title: in.Live.Name, Reason: "平台改名:" + c.Name + " → " + in.Live.Name, Code: "renamed_on_platform"})
+		changes = append(changes, Change{Action: "rename", Title: in.Live.Name, Reason: i18n.T("canon.reason.renamed_on_platform", "from", c.Name, "to", in.Live.Name), Code: "renamed_on_platform"})
 		c.Name = in.Live.Name
 	}
 	title := func(cid string) (string, []string) {
@@ -243,18 +243,18 @@ func Derive(in DeriveInput) (DeriveResult, error) {
 			if tr, ok := lookup(it.CID); ok {
 				pid = tr.Mappings[prov].ID
 			}
-			changes = append(changes, Change{Action: "remove", Pos: i, IID: it.IID, CID: it.CID, ProviderID: pid, Title: t, Artists: a, Reason: "平台已移除", Code: "removed_on_platform"})
+			changes = append(changes, Change{Action: "remove", Pos: i, IID: it.IID, CID: it.CID, ProviderID: pid, Title: t, Artists: a, Reason: i18n.T("canon.reason.removed_on_platform"), Code: "removed_on_platform"})
 		}
 	}
 	for pos, t := range L {
 		if pairedL[pos] < 0 && !ignoredL[pos] {
-			changes = append(changes, Change{Action: "add", Pos: pos, CID: lcid[pos], ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台新增", Code: "added_on_platform"})
+			changes = append(changes, Change{Action: "add", Pos: pos, CID: lcid[pos], ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: i18n.T("canon.reason.added_on_platform"), Code: "added_on_platform"})
 		}
 	}
 	for pos, t := range L {
 		if item := pairedL[pos]; item >= 0 && moved[item] {
 			it := c.Items[item]
-			changes = append(changes, Change{Action: "move", Pos: pos, From: item, IID: it.IID, CID: it.CID, ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: "平台換序", Code: "moved_on_platform"})
+			changes = append(changes, Change{Action: "move", Pos: pos, From: item, IID: it.IID, CID: it.CID, ProviderID: t.ProviderID, Title: t.Title, Artists: t.Artists, Reason: i18n.T("canon.reason.moved_on_platform"), Code: "moved_on_platform"})
 		}
 	}
 	if len(changes) > 0 { // 規則 10:無變更時逐位元不變
