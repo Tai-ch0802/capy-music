@@ -24,9 +24,9 @@ import (
 // Source 是來源語系:其他語系缺的 key 退回它,新語系從它複製。
 const Source = "en"
 
-// productionDefault:config 沒設 language 時的語系。搬字串期間維持 zh-TW,main 上的 dev binary 才不會半中半英;
-// 清空 CJK 白名單的那個 PR 改成 "en"(TestDefaultIsEnglishOnceMigrated 會逼這件事)。
-const productionDefault = "zh-TW"
+// productionDefault:config 沒設 language 時的語系(決策 50「預設英文」)。字串搬完、CJK 白名單清空的那個 PR(T3)改成 en;
+// 之後任何語系的使用者都要自己 capy config set language <代碼>,網頁的語言選單改的也是同一個設定。
+const productionDefault = "en"
 
 //go:embed locales/*.json
 var localeFS embed.FS
