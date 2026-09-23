@@ -125,10 +125,10 @@ func newPlDedupCmd() *cobra.Command {
 					fmt.Fprintln(stderr, m)
 				}
 				if len(refused) > 0 { // planPush 不 strict 時不會回 refused;同 sync,留著免得哪天改回 strict 而靜靜寫入
-					return &BlockedError{Msg: strings.Join(refused, ";")}
+					return &BlockedError{Msg: strings.Join(refused, i18n.T("sep.clause"))}
 				}
 				if blocked = append(blocked, pblocked...); len(blocked) > 0 && !force {
-					return &BlockedError{Msg: i18n.T("dedup.err.blocked", "reasons", strings.Join(blocked, ";"))}
+					return &BlockedError{Msg: i18n.T("changeset.blocked", "reasons", strings.Join(blocked, i18n.T("sep.clause")))}
 				}
 				resolveHint(s, targets, prov, stderr)
 				ops := 0
@@ -172,7 +172,7 @@ func newPlDedupCmd() *cobra.Command {
 			switch {
 			case err != nil:
 			case deduped > 0 && pulled > 0:
-				fmt.Fprintln(stderr, i18n.T("dedup.removed_and_pulled", "count", deduped, "pulls", pulled))
+				fmt.Fprintln(stderr, i18n.T("dedup.removed_and_pulled", "count", deduped, "pulls", i18n.T("dedup.pull_changes", "count", pulled)))
 			case deduped > 0:
 				fmt.Fprintln(stderr, i18n.T("dedup.removed", "count", deduped))
 			case pulled > 0: // 正本沒有要去除的份、多的份只剩在寫不了的平台上,但 pull 半邊有東西落地
@@ -219,7 +219,7 @@ func dedupReport(cmd *cobra.Command, prov, ref string) error {
 	dups := canon.Duplicates(keys)
 	label := prov + ":" + id
 	if ref != id { // 使用者打的是名稱:兩個都印,對得起來(PR #54 review)
-		label = fmt.Sprintf("%s:%s(%s)", prov, ref, id)
+		label = i18n.T("dedup.report.label", "platform", prov, "ref", ref, "id", id)
 	}
 	if len(dups) == 0 {
 		fmt.Fprintln(stderr, i18n.T("dedup.report.none", "playlist", label))

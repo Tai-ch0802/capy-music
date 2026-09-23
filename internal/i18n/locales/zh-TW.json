@@ -190,7 +190,6 @@
   "dedup.confirm_force": {
     "other": "--force:刪除會傳播到這個清單連結的每一個平台。套用以上 {count} 筆變更(去除 {dups} 份重複;pull {pulls} 筆到 Drive、push {pushes} 筆到平台)?"
   },
-  "dedup.err.blocked": "{reasons}。加 --force 越過(先用 --dry-run 看清楚要刪什麼)",
   "dedup.err.report_only": "{platform}:{ref} 只報告、不改平台(--yes / --force / --dry-run / --provider 在這裡沒有意義);要由 capy 移除:capy pl link <名稱> {platform}:{ref},再 capy pl dedup <名稱>",
   "dedup.err.restricted_playlist": "無法讀取這個清單的內容 — 可能是追蹤的他人清單(Spotify 2026-02 起只提供 metadata,spec §1.1),也可能是授權不足;先跑 capy doctor 確認授權",
   "dedup.manual_leftover": {
@@ -208,6 +207,9 @@
     "other": "正本與這次檢查的平台沒有重複(pull 半邊看到 {count} 筆平台變更,留給 capy pl sync)"
   },
   "dedup.pick_title": "選一個清單來去重",
+  "dedup.pull_changes": {
+    "other": "{count} 筆 pull 變更"
+  },
   "dedup.pulled_only": {
     "other": "已套用 {count} 筆 pull 變更(正本沒有要去除的份)"
   },
@@ -221,8 +223,9 @@
     "other": "已去除 {count} 份重複"
   },
   "dedup.removed_and_pulled": {
-    "other": "已去除 {count} 份重複(另套用 {pulls} 筆 pull 變更)"
+    "other": "已去除 {count} 份重複(另套用 {pulls})"
   },
+  "dedup.report.label": "{platform}:{ref}({id})",
   "dedup.report.link_hint": {
     "other": "{count} 份重複;要由 capy 移除:capy pl link <名稱> {platform}:{id},再 capy pl dedup <名稱>"
   },
@@ -478,6 +481,7 @@
   "pl.err.bad_provider": "provider 為 {ids}:{value}",
   "pl.err.not_found": "找不到名為 {name} 的清單 — 用 capy pl list 查看",
   "pl.err.same_name": "有 {count} 個同名清單,請改用 ID:{ids}",
+  "pl.same_name_item": "{id}({owner})",
   "platform.cap.isrc_lookup": "ISRC 反查",
   "platform.cap.playback": "播放遙控(Apple Music 的播放只在 macOS 可用;其他平台請用 --provider spotify)",
   "platform.cap.playlist_create": "建立播放清單",

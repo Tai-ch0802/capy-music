@@ -54,7 +54,7 @@ func TestEnglishDedupReport(t *testing.T) {
 	if _, errs := mustPull(t, "pl", "dedup", "spotify:p2"); errs != "spotify:p2 has no duplicates\n" {
 		t.Fatalf("%q", errs)
 	}
-	if _, errs := mustPull(t, "pl", "dedup", "spotify:sleep"); errs != "spotify:sleep(p2) has no duplicates\n" {
+	if _, errs := mustPull(t, "pl", "dedup", "spotify:sleep"); errs != "spotify:sleep (p2) has no duplicates\n" {
 		t.Fatalf("%q", errs)
 	}
 	const reportOnly = "spotify:p1 is only reported on, never changed (--yes / --force / --dry-run / --provider mean nothing here); to have capy remove the duplicates: capy pl link <name> spotify:p1, then capy pl dedup <name>"
@@ -185,7 +185,7 @@ func TestEnglishDedupThreshold(t *testing.T) {
 	mustPull(t, "pl", "pull", "commute", "--yes")
 	_, _, err := runPull(t, "pl", "dedup", "commute", "--yes")
 	if exitOf(t, err) != 3 || !strings.HasPrefix(err.Error(), "commute: removing 11 duplicates (of 13 tracks) exceeds the threshold") ||
-		!strings.HasSuffix(err.Error(), ". Add --force to override (check what would be deleted with --dry-run first)") {
+		!strings.HasSuffix(err.Error(), ". Pass --force to override (check what would be removed with --dry-run first)") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -195,7 +195,7 @@ func TestEnglishPlDedupHelp(t *testing.T) {
 	withLanguage(t, "en")
 	pullWorld(t)
 	out, _, err := runPull(t, "pl", "dedup", "--help")
-	if err != nil || hasCJK(out) || !strings.Contains(out, "capy pl dedup [name|pid | <provider>:<playlist ID or name>]") ||
+	if err != nil || hasCJK(out) || !strings.Contains(out, "capy pl dedup [name|pid | <provider>:<playlist-id-or-name>]") ||
 		!strings.Contains(out, "pushed to the playlist's other linked platforms in the same command") {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -216,7 +216,7 @@ func TestEnglishPlShowNameErrors(t *testing.T) {
 	fs.set("p1", "twin", "a")
 	fs.set("p2", "twin", "b")
 	_, _, err := runPull(t, "pl", "show", "twin")
-	if err == nil || !strings.HasPrefix(err.Error(), "2 playlists share this name; use an ID instead: p1(") || !strings.Contains(err.Error(), ", p2(") || hasCJK(err.Error()) {
+	if err == nil || !strings.HasPrefix(err.Error(), "2 playlists share this name; use an ID instead: p1 (") || !strings.Contains(err.Error(), ", p2 (") || hasCJK(err.Error()) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -290,5 +290,22 @@ func TestEnglishDeriveDirtyRank(t *testing.T) {
 	}
 	if len(inner) != 1 || err.Error() != prefix+inner[0].Error() || !errors.Is(err, inner[0]) {
 		t.Fatalf("要包住 RankBetween 的錯:%v %v", err, inner)
+	}
+}
+
+// 去重與 pull 同一輪都落地:英文把 pull 的筆數組成片語(單複數跟著 pull 的筆數,不是去重的份數),繁中與搬字串前逐位元相同。
+func TestDedupRemovedAndPulledWording(t *testing.T) {
+	for lang, want := range map[string]string{"en": "Removed 2 duplicates and applied 1 pull change", "zh-TW": "已去除 2 份重複(另套用 1 筆 pull 變更)"} {
+		t.Run(lang, func(t *testing.T) {
+			withLanguage(t, lang)
+			fs, _, _ := pullWorld(t)
+			fs.set("p1", "commute", "a", "b", "a", "c", "b")
+			mustPull(t, "pl", "link", "commute", "spotify:p1")
+			mustPull(t, "pl", "pull", "commute", "--yes")
+			fs.set("p1", "commute", "a", "b", "a", "c", "b", "d") // 平台多一首 = pull 半邊 1 筆
+			if _, errs := mustPull(t, "pl", "dedup", "commute", "--yes"); !dedupHasLine(errs, want) {
+				t.Fatalf("%s", errs)
+			}
+		})
 	}
 }

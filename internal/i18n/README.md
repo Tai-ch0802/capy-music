@@ -35,10 +35,12 @@ Use one English term per concept so messages stay consistent.
 | 正本 | master copy | capy's own copy of a playlist, kept in the user's Google Drive |
 | 清單、播放清單 | playlist | |
 | 平台 | platform | Spotify, Apple Music, local library |
+| 本機 | this computer | "this computer's state.db"; not "this machine" |
 | 本機曲庫 | local library | M3U playlists plus `library.json` on this computer |
 | 資料庫(Apple Music) | library | "your Apple Music library" |
 | 連結 | link | a master copy linked to a playlist on a platform |
-| 對應 | mapping | a track's id on each platform |
+| 對應(名詞) | mapping | a track's id on each platform; REASON texts say "no mapping" for 沒有對應 |
+| 對應到、沒對應到 | matched, unmatched | prose about whether a track was found on a platform: "2 tracks haven't been matched on apple yet" |
 | 裁決、逐筆裁決 | review | the review queue; "review each match" |
 | 變更集 | change set | |
 | 閾值 | threshold | |

@@ -218,7 +218,7 @@ func TestEnglishPushDriveFailureAfterWrite(t *testing.T) {
 	srv.FailOn(func(r *http.Request) bool { return r.Method == http.MethodPatch }, http.StatusInternalServerError, "backendError")
 	_, _, err := runPull(t, "pl", "push", "Commute", "--yes")
 	msg := fmt.Sprint(err)
-	if exitOf(t, err) != 1 || !strings.HasPrefix(msg, "1 change was already written to the platform, but writing to Drive failed: ") || !strings.HasSuffix(msg, " (the base didn't advance): run capy pl pull, then capy pl push") {
+	if exitOf(t, err) != 1 || !strings.HasPrefix(msg, "1 change was already pushed, but writing to Drive failed: ") || !strings.HasSuffix(msg, " (the base didn't advance); run capy pl pull, then capy pl push") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -286,5 +286,41 @@ func TestEnglishSyncRound(t *testing.T) {
 	want := "Skipping the push half for Bedtime on spotify: Bedtime on spotify has 1 local file (local-lf1) that a full replace would lose; pushing this playlist isn't supported yet\n"
 	if !strings.Contains(errs, want) {
 		t.Fatalf("只跳過那一格:%s", errs)
+	}
+}
+
+// 終端機裡才問的那一句(push.confirm、sync.confirm、sync.confirm_force):假裝有 TTY、攔下 confirmWrite 並拒絕,
+// 整句英文、單複數都對,措辭不看有幾個平台;拒絕後平台一首都不動。
+func TestEnglishPushSyncConfirmPrompts(t *testing.T) {
+	fs, dc := enPushWorld(t, "a", "b", "c")
+	origTTY, origConfirm := bothTTY, confirmWrite
+	t.Cleanup(func() { bothTTY, confirmWrite = origTTY, origConfirm })
+	bothTTY = func(*cobra.Command) bool { return true }
+	var asked []string
+	confirmWrite = func(p string) (bool, error) { asked = append(asked, p); return false, nil }
+
+	fs.set("p1", "Commute", "a", "b", "c", "x") // 平台多一首:sync 只有 pull 半邊
+	runPull(t, "pl", "sync", "Commute")
+	runPull(t, "pl", "sync", "Commute", "--force")
+	fs.set("p1", "Commute", "a", "b", "c")
+	editCanonical(t, dc, drivePlaylist(t, dc), []string{"a", "b", "c", "d"}, nil, "")
+	runPull(t, "pl", "push", "Commute")
+	runPull(t, "pl", "sync", "Commute")
+	editCanonical(t, dc, drivePlaylist(t, dc), []string{"a", "b", "c", "d", "e"}, nil, "")
+	runPull(t, "pl", "push", "Commute")
+	runPull(t, "pl", "sync", "Commute")
+	want := []string{
+		"Apply the 1 change above (1 pulled to Drive, 0 pushed to platforms)?",
+		"--force: removals will spread to every platform this playlist is linked to. Apply the 1 change above (1 pulled to Drive, 0 pushed to platforms)?",
+		"Push the 1 change above?",
+		"Apply the 1 change above (0 pulled to Drive, 1 pushed to platforms)?",
+		"Push the 2 changes above?",
+		"Apply the 2 changes above (0 pulled to Drive, 2 pushed to platforms)?",
+	}
+	if !slices.Equal(asked, want) {
+		t.Fatalf("確認句:\n got %q\nwant %q", asked, want)
+	}
+	if got := fs.tracksOf("p1"); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Fatalf("拒絕之後平台不該變:%q", got)
 	}
 }

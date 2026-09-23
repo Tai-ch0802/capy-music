@@ -206,7 +206,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 				return err
 			}
 			if len(blocked) > 0 {
-				return &BlockedError{Msg: i18n.T("migrate.err.blocked", "blocked", strings.Join(blocked, ";"), "name", pl.Name)}
+				return &BlockedError{Msg: i18n.T("migrate.err.blocked", "blocked", strings.Join(blocked, i18n.T("sep.clause")), "name", pl.Name)}
 			}
 			pullRows = append(pullRows, rows...)
 			maps.Copy(lives, lv)
@@ -429,7 +429,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		next = i18n.T("migrate.next.relink", "platform", dst.prov, "created_name", dst.name, "id", created, "name_arg", strconv.Quote(plName))
 		after = i18n.T("migrate.next.relink_after", "name_arg", strconv.Quote(plName), "platform", dst.prov, "id", created)
 		if err != nil && !touched {
-			err = fmt.Errorf("%w;%s", err, next)
+			err = fmt.Errorf("%w%s%s", err, i18n.T("sep.clause"), next)
 		}
 	}
 	return finishPush(err, applied, touched, deferred, next, after)
@@ -488,7 +488,7 @@ func migratePlanPush(ctx context.Context, s *canonState, targets []*canon.Playli
 		return nil, nil, err
 	}
 	if len(refused) > 0 {
-		return nil, nil, &BlockedError{Msg: strings.Join(refused, ";")}
+		return nil, nil, &BlockedError{Msg: strings.Join(refused, i18n.T("sep.clause"))}
 	}
 	for _, p := range plans {
 		for _, op := range p.ops {

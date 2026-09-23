@@ -37,7 +37,7 @@ func TestEnglishResolveISRCAndNothingToWrite(t *testing.T) {
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-b", Name: "song-b", ISRC: fakeISRC("b")})
 	out, errs := mustPull(t, "resolve", "--yes")
-	if strings.Count(out, "\tISRC lookup\tisrc\n") != 2 || !strings.Contains(errs, "Wrote 2 mappings\n") {
+	if strings.Count(out, "\tmatched by ISRC lookup\tisrc\n") != 2 || !strings.Contains(errs, "Wrote 2 mappings\n") {
 		t.Fatalf("%q\n%s", out, errs)
 	}
 	if _, errs := mustPull(t, "resolve", "--yes"); !strings.Contains(errs, "No mappings to write automatically\n") {
@@ -52,7 +52,7 @@ func TestEnglishResolveErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"resolve", "--provider", "bogus"}, `unknown provider "bogus" (spotify|apple|local)`},
+		{[]string{"resolve", "--provider", "bogus"}, `unknown provider "bogus" (available: spotify|apple|local)`},
 		{[]string{"resolve", "--review", "--dry-run"}, "--review can't be combined with --dry-run (review decisions are always written; to look at the queue first, use capy resolve --dry-run)"},
 		{[]string{"resolve", "pin", "i:nope", "apple:none"}, "no cid i:nope in tracks (run capy pl pull first)"},
 	} {
@@ -129,14 +129,14 @@ func TestEnglishResolveConflictKeep(t *testing.T) {
 	tr.Tracks[fakeCID("a")] = ta
 	putTracks(t, dc, tr)
 	out, _ := mustPull(t, "resolve", "--yes")
-	want := "conflict\t" + fakeCID("a") + "\tspotify\ta\t100\tobserved\tsong-a\tartist\tdifferent ids seen for the same ISRC: a-live (song-a (Live), 4:10), a-demo (song-a (Demo), 3:10); keep in --review pins the current mapping\tisrc_conflict\n"
+	want := "conflict\t" + fakeCID("a") + "\tspotify\ta\t100\tobserved\tsong-a\tartist\tdifferent ids seen for the same ISRC: a-live (song-a (Live), 4:10), a-demo (song-a (Demo), 3:10); in --review, the Keep option pins the current mapping\tisrc_conflict\n"
 	if out != want {
 		t.Fatalf("got  %q\nwant %q", out, want)
 	}
 	stubReview(t, func(resolveItem, func(string) ([]provider.Track, error)) reviewDecision {
 		return reviewDecision{kind: "keep"}
 	})
-	if _, errs := mustPull(t, "resolve", "--review"); !strings.Contains(errs, "[1/1] song-a: kept the current mapping a\n") {
+	if _, errs := mustPull(t, "resolve", "--review"); !strings.Contains(errs, "[1/1] song-a: pinned the current mapping a\n") {
 		t.Fatalf("%s", errs)
 	}
 }
@@ -192,7 +192,7 @@ func TestEnglishResolveHintsAndPlanDegradation(t *testing.T) {
 	mustPull(t, "pl", "pull", "commute", "--yes")
 	mustPull(t, "pl", "link", "commute", "apple:p2")
 	_, errs := mustPull(t, "pl", "pull", "commute", "--yes")
-	if !strings.Contains(errs, "2 tracks aren't mapped to apple yet; run capy resolve\n") || !strings.Contains(errs, "1 track isn't mapped to spotify yet; run capy resolve\n") {
+	if !strings.Contains(errs, "2 tracks haven't been matched on apple yet; run capy resolve\n") || !strings.Contains(errs, "1 track hasn't been matched on spotify yet; run capy resolve\n") {
 		t.Fatalf("%s", errs)
 	}
 	orig, origHint := apiCallHint, newProvider

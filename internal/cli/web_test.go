@@ -1574,7 +1574,7 @@ func TestWebMoveWizardKeysOnMigrateWording(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "r[dir] === 'migrate' && r[code] !== 'push'") || strings.Contains(string(b), "PUSHABLE_MARK") {
+	if src := string(b); !strings.Contains(src, "'REASON_CODE'") || !strings.Contains(src, "'push'") || strings.Contains(src, "PUSHABLE_MARK") { // 行為由 webui_console.mjs 的 tally 情境釘住
 		t.Error("move.js 的 tally() 要以 REASON_CODE 是不是 push 判斷搬得過去,不看 REASON 的字(會跟著語系變)")
 	}
 	decl := regexp.MustCompile(`const REVIEW_MARKS = \[([^\]]*)\];`).FindStringSubmatch(string(b))

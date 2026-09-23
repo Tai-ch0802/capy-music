@@ -89,13 +89,13 @@ func TestEnglishPlLinkRefusals(t *testing.T) {
 		{"pl link hits spotify:ed", "can't read the tracks of spotify playlist ed (an app in development mode can't get Spotify's own or other users' playlists), so it can't be linked"},
 		{"pl link other spotify:p1", "spotify:p1 is already linked to master copy commute (" + pid + "); a platform playlist can be linked to only one master copy"},
 		{"pl link commute spotify:p2", "commute (" + pid + ") is already linked to spotify:p1; run capy pl unlink commute spotify first"},
-		{"pl link commute tidal:p2", `the format is <provider>:<playlist ID or name>, where provider is spotify|apple|local: "tidal:p2"`},
+		{"pl link commute tidal:p2", `the format is <provider>:<playlist-id-or-name>, where provider is spotify|apple|local: "tidal:p2"`},
 		{"pl link public spotify:" + pub, "spotify:" + pub + " isn't in your list of playlists (only what capy pl list shows counts): pull treats playlists missing from that list as deleted and unlinks them automatically, so it can't be linked"},
 		{"pl link 01ARZ3NDEKTSV4RRFFQ69G5FAV spotify:p10", "no master copy has pid 01ARZ3NDEKTSV4RRFFQ69G5FAV"},
 		// --create:平台上已有同名(一個 / 多個)、第二個參數給成 provider:ref,都在建清單之前擋下。
 		{"pl link --create winter spotify", `spotify already has a playlist named "winter" (p2): to link it, run capy pl link "winter" spotify:p2; if you really want another one, create it in the app first and link it with spotify:<ID>`},
 		{"pl link --create run spotify", `spotify already has 2 playlists named "run" (p5, p6): pick one and link it with capy pl link "run" spotify:<ID>`},
-		{"pl link --create night spotify:p1", `with --create, the second argument is just the platform (spotify|apple|local); the playlist is named after the master copy: "spotify:p1"`},
+		{"pl link --create night spotify:p1", `"spotify:p1" isn't a platform: with --create, the second argument is just the platform (spotify|apple|local), and the new playlist is named after the master copy`},
 	} {
 		if _, _, err := runPull(t, strings.Fields(c.args)...); err == nil || err.Error() != c.want {
 			t.Errorf("%s:\n got %v\nwant %s", c.args, err, c.want)
@@ -136,7 +136,7 @@ func TestEnglishPlPullSafetyChecks(t *testing.T) {
 	deleteDriveFile(t, dc, "pl__")
 	_, _, err = runPull(t, "pl", "pull", "commute", "--yes", "--force")
 	want := "the Drive appdata is incomplete; can't get pl__" + pid + ".json. This is not treated as \"you deleted everything\": nothing was written, and neither --yes nor --force overrides it. " +
-		"If Drive really was wiped, or you're logged in to the wrong Google account (currently tai@example.com), the way out is capy drive init --from-local (it only restores the files missing on Drive; this machine's state.db is the only copy left, so don't delete it)"
+		"If Drive really was wiped, or you're logged in to the wrong Google account (currently tai@example.com), the way out is capy drive init --from-local (it only restores the files missing on Drive; this computer's state.db is the only copy left, so don't delete it)"
 	if exitOf(t, err) != 3 || err.Error() != want {
 		t.Fatalf("Drive 不完整:\n got %v\nwant %s", err, want)
 	}
@@ -189,7 +189,7 @@ func TestEnglishPlLocalForeignAndTakeover(t *testing.T) {
 	device := host + " (" + devA + ")"
 	setDevice(t, devB)
 	_, errs := mustPull(t, "pl", "pull", "commute", "--yes")
-	if want := "Skipping local:" + devA + "/mix.m3u8 of commute: it belongs to device " + device + " (to take it over on this computer: capy pl link commute local:<file name>)\n"; !strings.Contains(errs, want) {
+	if want := "Skipping local:" + devA + "/mix.m3u8 of commute: it belongs to device " + device + " (to take it over on this computer: capy pl link commute local:<file-name>)\n"; !strings.Contains(errs, want) {
 		t.Fatalf("stderr 少了 %q:\n%s", want, errs)
 	}
 	out, _ := mustPull(t, "pl", "link", "commute", "local:mix.m3u8")
@@ -239,7 +239,7 @@ func TestEnglishPlPullDriveNotices(t *testing.T) {
 	}
 	putTracks(t, dc2, tracks)
 	_, errs = mustPull(t, "pl", "pull", "commute", "--dry-run")
-	if want := "Repaired 1 playlist item left over from an interrupted merge (commute; the last write merged tracks.json but stopped before updating the playlist, which still pointed at the old cid); it will be uploaded with the next write\n"; !strings.Contains(errs, want) {
+	if want := "Repaired 1 playlist item that still pointed at a merged-away cid after an interrupted merge (in commute; the last write merged tracks.json but stopped before updating the playlist data); it will be uploaded with the next write\n"; !strings.Contains(errs, want) {
 		t.Fatalf("自癒:%q", errs)
 	}
 }
@@ -280,7 +280,7 @@ func TestEnglishPullHelp(t *testing.T) {
 	setCLITestConfig(t)
 	for args, wants := range map[string][]string{
 		"pl pull --help":   {"Platform → master copy → Drive (spec §6.1, §6.5)", "reason_code is a fixed code for scripts", "pull all linked playlists", "override the removal threshold"},
-		"pl link --help":   {"Link a master copy to a platform playlist", "link [name|pid] [provider]:[playlist ID|name] (or [provider] --create)", "works with Spotify and Apple Music, not local"},
+		"pl link --help":   {"Link a master copy to a platform playlist", "link [name|pid] [provider]:[playlist-id|name] (or [provider] --create)", "works with Spotify and Apple Music, not local"},
 		"pl unlink --help": {"Unlink a master copy from a platform playlist"},
 	} {
 		out, err := runCLI(t, strings.Fields(args)...)

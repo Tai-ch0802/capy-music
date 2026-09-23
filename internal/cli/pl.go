@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -92,7 +91,7 @@ func resolvePlaylistID(ctx context.Context, pr provider.PlaylistReader, provider
 	default:
 		ids := make([]string, len(hits))
 		for i, h := range hits {
-			ids[i] = fmt.Sprintf("%s(%s)", h.ID, h.Owner)
+			ids[i] = i18n.T("pl.same_name_item", "id", h.ID, "owner", h.Owner)
 		}
 		return "", i18n.Errorf("pl.err.same_name", "count", len(hits), "ids", strings.Join(ids, i18n.T("sep.list")))
 	}

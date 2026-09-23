@@ -56,7 +56,7 @@ func TestEnglishMigrateHelp(t *testing.T) {
 		t.Errorf("Short:%v", err)
 	}
 	for _, want := range []string{
-		"migrate [source playlist ID or name] --from <platform> --to <platform>[:<existing playlist ID or name>]",
+		"migrate [source-playlist-id-or-name] --from <platform> --to <platform>[:<existing-playlist-id-or-name>]",
 		"dir action provider playlist pos cid provider_id title artists reason reason_code; dir ∈ pull / migrate / push",
 		"Tracks moved into Apple Music may also be added to your Apple Music library (depending on your Apple Music settings; this is Apple's behavior)",
 		"source platform (spotify|apple|local); picked interactively in a terminal if omitted",
@@ -88,7 +88,7 @@ func TestEnglishMigrateNewPlaylist(t *testing.T) {
 		"resolve: 3 matched on spotify automatically, 0 left for review",
 		"Created the playlist road trip (new1) on spotify",
 		"Pushed 3 changes",
-		"Added 3 tracks from apple:q1 to the master copy road trip (" + pid + ", 3 in total); pushed 3 to spotify:new1",
+		"Added 3 tracks from apple:q1 to the master copy road trip (" + pid + ", now 3 in total) and pushed 3 to spotify:new1",
 		`The source isn't linked (a one-time copy). To follow later changes on apple: capy pl link "road trip" apple:q1, then capy pl sync "road trip"`,
 	} {
 		wantLine(t, errs, line)
@@ -129,7 +129,7 @@ func TestEnglishMigrateReviewPrompts(t *testing.T) {
 	withLanguage(t, "en")
 	prompts := migratePromptsDeclined(t, "n")
 	if len(prompts) != 2 ||
-		prompts[0] != `1 track has no automatic match on spotify. Review now, one by one? (No = push the matched tracks first; later: capy resolve "road trip" --provider spotify --review)` ||
+		prompts[0] != `1 track has no automatic match on spotify. Review now, one by one? (Cancel = push the matched tracks now and review later with capy resolve "road trip" --provider spotify --review)` ||
 		prompts[1] != `Create the playlist "road trip" on spotify and push 2 tracks from apple:q1? (1 of them has no match on spotify and won't be pushed this time)` {
 		t.Fatalf("%q", prompts)
 	}
@@ -139,7 +139,7 @@ func TestEnglishMigrateReviewPromptsPlural(t *testing.T) {
 	withLanguage(t, "en")
 	prompts := migratePromptsDeclined(t, "n", "m")
 	if len(prompts) != 2 ||
-		prompts[0] != `2 tracks have no automatic match on spotify. Review now, one by one? (No = push the matched tracks first; later: capy resolve "road trip" --provider spotify --review)` ||
+		prompts[0] != `2 tracks have no automatic match on spotify. Review now, one by one? (Cancel = push the matched tracks now and review later with capy resolve "road trip" --provider spotify --review)` ||
 		prompts[1] != `Create the playlist "road trip" on spotify and push 3 tracks from apple:q1? (2 of them have no match on spotify and won't be pushed this time)` {
 		t.Fatalf("%q", prompts)
 	}
@@ -157,7 +157,7 @@ func TestEnglishMigrateReviewedAndUnmapped(t *testing.T) {
 	}
 	t.Cleanup(func() { reviewPrompt = origPrompt })
 	out, errs := mustPull(t, "migrate", "road trip", "--from", "apple", "--to", "spotify")
-	wantLine(t, out, "\t"+fakeCID("n")+"\tn\tsong-n\tartist\tno match on spotify; not pushed this time\tno_mapping")
+	wantLine(t, out, "\t"+fakeCID("n")+"\tn\tsong-n\tartist\tno mapping for spotify; not pushed this time\tno_mapping")
 	wantLine(t, errs, "resolve: 1 matched on spotify automatically, 1 left for review")
 	wantLine(t, errs, "Reviewed 1 track")
 	wantLine(t, errs, "Pushed 1 change")
@@ -175,7 +175,7 @@ func TestEnglishMigrateSourceLinked(t *testing.T) {
 	_, errs := mustPull(t, "migrate", "road trip", "--from", "apple", "--to", "spotify", "--yes")
 	pid := drivePlaylistNamed(t, dc, "road trip").PID
 	wantLine(t, errs, "Using the existing master copy road trip ("+pid+"; linked to apple:q1)")
-	wantLine(t, errs, "The master copy road trip ("+pid+") is linked to apple:q1, so it took precedence (source changes pulled: 1); pushed 3 tracks to spotify:new1")
+	wantLine(t, errs, "The master copy road trip ("+pid+") is linked to apple:q1, so the master copy wins: pulled the source's changes into it first (1 pulled), then pushed 3 tracks to spotify:new1")
 	wantLine(t, errs, `The source apple:q1 is linked to this master copy too (not a one-time copy): from now on, capy pl sync "road trip" keeps both sides in step with the master copy`)
 }
 
@@ -190,7 +190,7 @@ func TestEnglishMigrateCreatedPlaylistMissingFromList(t *testing.T) {
 		}
 	})
 	_, _, err := runPull(t, "migrate", "road trip", "--from", "apple", "--to", "spotify", "--yes")
-	if err == nil || err.Error() != `the playlist new1 that was just created doesn't show up in the spotify playlist list; the link was removed;`+
+	if err == nil || err.Error() != `the playlist new1 that was just created doesn't show up in the spotify playlist list; the link was removed; `+
 		`the playlist road trip (new1) on spotify was created, but its link wasn't saved to Drive: reconnect it with capy pl link "road trip" spotify:new1, then capy pl sync "road trip" --provider spotify` {
 		t.Fatalf("%v", err)
 	}
@@ -208,9 +208,9 @@ func TestEnglishMigrateRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"migrate", "road trip"}, "--from and --to are required (there is no picker outside a terminal): capy migrate <playlist> --from apple --to spotify[:<existing playlist>]"},
+		{[]string{"migrate", "road trip"}, "--from and --to are required (there is no picker outside a terminal): capy migrate <playlist> --from apple --to spotify[:<existing-playlist>]"},
 		{[]string{"migrate", "road trip", "--from", "nope", "--to", "spotify"}, `--from must be ` + ids + `: "nope"`},
-		{[]string{"migrate", "road trip", "--from", "apple", "--to", "nope"}, `--to must be <platform> or <platform>:<existing playlist>, where the platform is ` + ids + `: "nope"`},
+		{[]string{"migrate", "road trip", "--from", "apple", "--to", "nope"}, `--to must be <platform> or <platform>:<existing-playlist>, where the platform is ` + ids + `: "nope"`},
 	} {
 		if _, _, err := runPull(t, c.args...); err == nil || err.Error() != c.want {
 			t.Errorf("%v:%v", c.args, err)
