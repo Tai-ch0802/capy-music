@@ -1,7 +1,7 @@
 // webui_console.mjs:在 node 裡跑真的 console.js(TestWebConsoleBehaviour 把它與 console.js / table.js 複製到暫存目錄)。
 // 字串契約證明不了時序:這裡用最小的 DOM 替身與假的 /api/run,釘住執行狀態列、中止與「一次一個」的行為。
 // 任何一條不成立就印出來並以 1 結束。
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeSync } from 'node:fs';
 
 const pages = { hidden: false };
 function mk(tag = 'div') {
@@ -108,7 +108,10 @@ globalThis.CSS = { escape: (s) => s };
 const { loadI18n, t, applyStatic, languages, currentLang } = await import('./i18n.mjs');
 let early = null;
 try { t('webui.lang.label'); } catch (e) { early = e; }
-const { Console, maskSecrets } = await import('./console.mjs');
+const { Console, maskSecrets, timing } = await import('./console.mjs');
+// 不真的等 0.8 秒(播放控制亮狀態列)與 5 秒(中止警告過期):計時器照到期先後觸發,縮短不改順序,只省下 CI 的時間。
+timing.quiet = 300; // 情境 8 要在它亮之前先看到「沒亮」:留寬一點
+timing.disarm = 50;
 const { languageMenu } = await import('./lang.mjs');
 const { Player } = await import('./player.mjs');
 for (const f of readdirSync('./pages')) await import(`./pages/${f}`);
@@ -159,9 +162,11 @@ const api = {
     throw new Error('unexpected fetch ' + path);
   },
 };
+const gates = []; // 每一道閘的 release:情境半路丟例外沒放開的,scenario() 收尾時補放(見下)
 const gate = () => {
   let release;
   const p = new Promise((r) => { release = r; });
+  gates.push(release);
   return [p, release];
 };
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
@@ -175,8 +180,27 @@ const root = mk();
 const con = new Console(root, api, (t) => notices.push(t));
 const allByClass = (e, cls, out = []) => { for (const c of e.children || []) { if (c.classList?.contains(cls)) out.push(c); allByClass(c, cls, out); } return out; };
 // 一組情境丟例外(例如舊版沒有某個方法)只算那一組失敗,其餘照跑,才看得出哪幾條不成立。
+// 每組開始與結束都印一行(結束時連同這組新增的失敗):卡住被 Go 那邊的逾時砍掉時,輸出停在哪一組就是卡在哪一組。
+// 用 writeSync:行程被砍掉之前寫的每一行都要已經進了管線,不留在 node 的緩衝裡。
+const say = (s) => writeSync(1, s + '\n');
+let printed = 0;
+const flush = () => { if (failures.length > printed) say(failures.slice(printed).join('\n')); printed = failures.length; };
+// 情境結束時還有命令在跑 = 半路丟例外、閘沒放開:串流永遠不收尾,之後每個 run() 都被擋成 busy,
+// 等 idle() 的情境永遠等不到、busyOn() 的每秒計時又撐著 node 不結束——一路拖到 Go 那邊的逾時,而且看不出是哪一組。
+// 所以在這裡記一條失敗、補放每一道閘,讓那個命令收尾,後面的情境照常跑。
 const scenario = async (name, fn) => {
+  flush();
+  const t0 = Date.now();
+  say(`── 情境 ${name} 開始`);
   try { await fn(); } catch (e) { failures.push(`情境 ${name} 丟出例外:${e.message}`); }
+  if (con.running) {
+    failures.push(`情境 ${name} 結束時還有命令在跑(閘沒放開)`);
+    for (const r of gates) r();
+    await tick(50);
+  }
+  gates.length = 0;
+  say(`── 情境 ${name} 結束(${Date.now() - t0} ms,${failures.length - printed} 條不成立)`);
+  flush();
 };
 const reset = () => { bodies.length = 0; answers.length = 0; globalThis.location.hash = ''; calls.length = 0; cancels.length = 0; notices.length = 0; script = {}; pages.hidden = false; globalThis.document.getElementById('cmd').value = ''; };
 
@@ -300,9 +324,9 @@ await scenario('8', async () => {
   con.idle(() => { ran = true; });
   check(!ran, 'idle() 要等播放控制結束');
   check(bar.hidden === true, '短的播放控制不亮狀態列');
-  check(globalThis.document.body.dataset.slot === '' && !('busy' in globalThis.document.body.dataset), '佔槽當下就標 data-slot,看得到的 data-busy 要等 0.8 秒');
-  await tick(900);
-  check(bar.hidden === false && 'busy' in globalThis.document.body.dataset, '卡住超過 0.8 秒要亮狀態列');
+  check(globalThis.document.body.dataset.slot === '' && !('busy' in globalThis.document.body.dataset), '佔槽當下就標 data-slot,看得到的 data-busy 要等 timing.quiet');
+  await tick(timing.quiet * 2);
+  check(bar.hidden === false && 'busy' in globalThis.document.body.dataset, '卡住超過 timing.quiet 要亮狀態列');
   await con.stop();
   check(cancels.length === 1, `卡住的播放控制要中止得了:${cancels}`);
   release();
@@ -323,7 +347,7 @@ await scenario('8b', async () => {
   await con.stop();
   const act = globalThis.document.getElementById('busy-act');
   check(act.textContent.includes('寫'), '已答應寫入時第一次按中止要先警告');
-  await tick(5200);
+  await tick(timing.disarm * 2);
   check(!con.armed && act.textContent === '讀取 Drive…', `警告過期後活動列要還原成最後一行:「${act.textContent}」`);
   release();
   await p;
@@ -1005,8 +1029,9 @@ await scenario('15', async () => {
   }
 });
 
+flush();
 if (failures.length) {
-  console.log(failures.join('\n'));
+  say(`${failures.length} 條不成立`);
   process.exit(1);
 }
-console.log('ok');
+say('ok');

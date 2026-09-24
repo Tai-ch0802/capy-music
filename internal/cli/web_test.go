@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -1306,7 +1307,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(player, "fetch('/api/run'") || !strings.Contains(player, "this.con.run(cmd, {}, { quiet: true })") {
 		t.Error("player.control() 要走 con.run(quiet),不可以自己打 /api/run")
 	}
-	// 佔槽(閘、aria-disabled)當下就做;看得到的調暗與狀態列跟著 busyOn(播放控制過 QUIET_MS 才亮)。
+	// 佔槽(閘、aria-disabled)當下就做;看得到的調暗與狀態列跟著 busyOn(播放控制過 timing.quiet 才亮)。
 	if !strings.Contains(console, "document.body.dataset.slot = ''") || !strings.Contains(common, "document.body.hasAttribute('data-slot')") {
 		t.Error("頁面按鈕的閘要看 body[data-slot](播放控制也算)")
 	}
@@ -1580,11 +1581,17 @@ func TestWebConsoleBehaviour(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// 本機整趟不到一秒(harness 把 console.js 的計時縮短了);一分鐘是給卡住用的上限,不是給慢用的。
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, "harness.mjs")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
+		// 被 ctx 砍掉在 Windows 上只顯示成 exit status 1:要自己說是逾時。harness 每個情境開始與結束各印一行,
+		// 最後一行「情境 X 開始」就是卡住的那一組;最後一行是 ok 就是跑完了、卻有計時器撐著 node 不結束。
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("前端行為測試逾時(%v 還沒跑完,node 被砍掉:%v),卡在最後一個開始了卻沒結束的情境:\n%s", time.Minute, err, out)
+		}
 		t.Fatalf("前端行為不成立(%v):\n%s", err, out)
 	}
 }
