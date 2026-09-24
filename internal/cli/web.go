@@ -69,13 +69,20 @@ type webServer struct {
 
 	fallbackStderr io.Writer // webGlobalStderr 沒有 job 時的去處(os.Stderr;測試換 buffer)
 
-	// 播放面板(web_api.go):provFlag 是啟動時的 --provider(有明指才算);now 是每個 provider 的 PlaybackController
-	// 快取(伺服器 ctx 建一次);pollMu 讓同時只有一個 poll 真的打平台;lastNow 是給 stale 回應用的上一份快照。
-	provFlag string
-	nowMu    sync.Mutex
-	now      map[string]provider.PlaybackController
-	pollMu   sync.Mutex
-	lastNow  atomic.Pointer[nowSnapshot]
+	// 播放面板(web_api.go;決策 51):provFlag 是啟動時的 --provider(有明指才算,釘住面板)。
+	// now 是每個 provider 的 PlaybackController 快取(伺服器 ctx 建一次);nowCache 是每個 provider 最近一次真的問到的結果
+	// 與有效期(Spotify 的配額靠它省);兩者都由 nowMu 守。pollMu 讓同時只有一輪在問平台;lastNow 是上一輪顯示的那份
+	// (stale 回應用),shown 是上一輪顯示的平台(跟隨規則的 base,dropNow 不清:換語系不該讓面板跳平台);
+	// nowGen 由 dropNow 遞增,在飛的那一輪拿舊世代的結果就不寫回快取;settleUntil 是播放命令後的安定期(UnixNano)。
+	provFlag    string
+	nowMu       sync.Mutex
+	now         map[string]provider.PlaybackController
+	nowCache    map[string]nowEntry
+	pollMu      sync.Mutex
+	lastNow     atomic.Pointer[nowSnapshot]
+	shown       atomic.Pointer[string]
+	nowGen      atomic.Uint64
+	settleUntil atomic.Int64
 }
 
 type webCommand struct {

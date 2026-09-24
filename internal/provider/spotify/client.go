@@ -36,15 +36,23 @@ func NewClient(hc *http.Client, base string) *Client {
 }
 
 // apiError 承載 Spotify 的錯誤回應;Reason 用於 player 404 的 NO_ACTIVE_DEVICE 判定。
+// Err:429 時是 *provider.RateLimitError,讓上層拿得到 Retry-After 的秒數(web 的播放列照它冷卻)。
 type apiError struct {
 	Status  int
 	Reason  string
 	Message string
+	Err     error
 }
 
 func (e *apiError) Error() string {
 	return fmt.Sprintf("spotify API %d %s %s", e.Status, e.Reason, e.Message)
 }
+
+func (e *apiError) Unwrap() error { return e.Err }
+
+// quotaFallback:QUOTA_EXCEEDED 沒帶 Retry-After 時的冷卻秒數。配額的時間窗 Spotify 沒公開(quota-modes 文件)。
+// ponytail: 固定 10 分鐘;真的遇到再依實際 Retry-After 調
+const quotaFallback = 600
 
 // do 送出請求。429 依 Retry-After 退避重試;401 與 oauth2 refresh 失敗映射
 // provider.ErrAuthExpired;其他 >=400 回 *apiError。out 非 nil 且非 204 時解 JSON。
@@ -79,11 +87,15 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			resp.Body.Close()
+			eb := decodeErr(resp)
+			if eb.Reason == "QUOTA_EXCEEDED" { // 配額用完(2026-07 起以開發者帳號計):重試只會再吃一次 429
+				rl := &provider.RateLimitError{Seconds: provider.RetryAfterSeconds(resp, quotaFallback), Message: i18n.T("spotify.err.quota_exceeded")}
+				return resp.StatusCode, &apiError{Status: resp.StatusCode, Reason: eb.Reason, Message: rl.Message, Err: rl}
+			}
 			if err := provider.Backoff(ctx, resp, attempt); err != nil {
 				var rl *provider.RateLimitError
 				if errors.As(err, &rl) {
-					return resp.StatusCode, &apiError{Status: resp.StatusCode, Message: rl.Message}
+					return resp.StatusCode, &apiError{Status: resp.StatusCode, Message: rl.Message, Err: rl}
 				}
 				return 0, err // ctx 取消原樣透傳
 			}
@@ -94,15 +106,8 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			return resp.StatusCode, provider.ErrAuthExpired
 		}
 		if resp.StatusCode >= 400 {
-			var eb struct {
-				Error struct {
-					Message string `json:"message"`
-					Reason  string `json:"reason"`
-				} `json:"error"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&eb)
-			resp.Body.Close()
-			return resp.StatusCode, &apiError{Status: resp.StatusCode, Reason: eb.Error.Reason, Message: eb.Error.Message}
+			eb := decodeErr(resp)
+			return resp.StatusCode, &apiError{Status: resp.StatusCode, Reason: eb.Reason, Message: eb.Message}
 		}
 
 		status := resp.StatusCode
@@ -114,6 +119,21 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		resp.Body.Close()
 		return status, derr
 	}
+}
+
+type errBody struct {
+	Message string `json:"message"`
+	Reason  string `json:"reason"`
+}
+
+// decodeErr:讀 {"error": {"status", "message", "reason"}} 並關掉 body;解不出來就是空的。
+func decodeErr(resp *http.Response) errBody {
+	var eb struct {
+		Error errBody `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&eb)
+	resp.Body.Close()
+	return eb.Error
 }
 
 // ── JSON 映射 ──

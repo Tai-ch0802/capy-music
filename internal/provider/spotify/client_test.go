@@ -558,3 +558,58 @@ func TestGetTrackMaps404ToNotFound(t *testing.T) {
 		t.Fatalf("404 要映射成 ErrNotFound:%v", err)
 	}
 }
+
+// TestDoQuotaExceededNotRetried:【fails-before-fix】429 的 body 說 QUOTA_EXCEEDED(dev mode 配額以開發者帳號計,2026-07)——
+// 重試只會再吃一次 429:一個請求就回獨立的錯誤,沒有 Retry-After 時帶預設的冷卻秒數。以前 body 沒讀就關掉,照一般限流重試三次。
+func TestDoQuotaExceededNotRetried(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"status":429,"message":"Too many requests","reason":"QUOTA_EXCEEDED"}}`))
+	}))
+	defer srv.Close()
+	orig := provider.Wait
+	provider.Wait = func(context.Context, time.Duration) error { t.Error("配額用完不可以等待重試"); return nil }
+	t.Cleanup(func() { provider.Wait = orig })
+
+	c := NewClient(srv.Client(), srv.URL)
+	_, err := c.do(context.Background(), http.MethodGet, "/me/player", nil, nil, nil)
+	var rl *provider.RateLimitError
+	var ae *apiError
+	if !errors.As(err, &rl) || rl.Seconds != quotaFallback || !errors.As(err, &ae) || ae.Status != http.StatusTooManyRequests || ae.Reason != "QUOTA_EXCEEDED" {
+		t.Fatalf("要回帶冷卻秒數的 429 apiError,得到 %#v", err)
+	}
+	if !strings.Contains(err.Error(), "QUOTA_EXCEEDED") {
+		t.Errorf("訊息要說是配額用完:%q", err.Error())
+	}
+	if calls != 1 {
+		t.Errorf("配額用完不重試,實際打了 %d 次", calls)
+	}
+}
+
+// TestDoRateLimitKeepsRetryAfter:【fails-before-fix】Retry-After 的秒數要傳得到上層(web 的播放列照它冷卻)。
+// 以前 do() 把 RateLimitError 換成只有訊息的 apiError,秒數在這裡就丟了。
+func TestDoRateLimitKeepsRetryAfter(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	orig := provider.Wait
+	provider.Wait = func(context.Context, time.Duration) error { t.Error("WithoutWait 不可以等待"); return nil }
+	t.Cleanup(func() { provider.Wait = orig })
+
+	c := NewClient(srv.Client(), srv.URL)
+	_, err := c.do(provider.WithoutWait(context.Background()), http.MethodGet, "/me/player", nil, nil, nil)
+	var rl *provider.RateLimitError
+	if !errors.As(err, &rl) || rl.Seconds != 120 {
+		t.Fatalf("要拿得到 Retry-After 的 120 秒,得到 %#v", err)
+	}
+	if calls != 1 {
+		t.Errorf("WithoutWait 只打一次,實際 %d 次", calls)
+	}
+}

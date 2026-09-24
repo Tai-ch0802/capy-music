@@ -319,6 +319,8 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .dock__now { font-size: var(--t-14); color: var(--text); display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
 .dock__now[data-stale="true"] .dock__now-line { color: var(--muted); }
 .dock__now-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock__now-line a { color: var(--text-hi); text-decoration: none; }
+.dock__now-line a:hover, .dock__now-line a:focus-visible { text-decoration: underline; }
 .dock__now-ctl { display: flex; gap: .25rem; flex: none; }
 .dock__now-ctl .btn { min-height: 36px; min-width: 40px; padding: 0 .5rem; border-radius: var(--r-pill); color: var(--text-hi); }
 .dock__notice { font-size: var(--t-14); color: var(--warn); }

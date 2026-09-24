@@ -49,6 +49,14 @@ func RetryAfterSeconds(resp *http.Response, fallback int) int {
 	return fallback
 }
 
+type noWaitKey struct{}
+
+// WithoutWait:這個 ctx 上的 rate limit 不睡,直接回 *RateLimitError(Seconds = 伺服器要的秒數)。給輪詢用:
+// 下一輪本來就會再問,睡在單飛鎖裡只會把整條播放列凍住(web 的 /api/now;計畫 2026-09-24 §1.2)。
+func WithoutWait(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noWaitKey{}, true)
+}
+
 // Backoff 處理一次 rate limit(Spotify 429、Drive 429 / 403 userRateLimitExceeded):達上限 → RateLimitError
 // (不等待);否則印提示並等待(可取消)。沒有 Retry-After 時指數退避 1s、2s、4s(Drive 的 403 不帶標頭)。
 func Backoff(ctx context.Context, resp *http.Response, attempt int) error {
@@ -56,6 +64,9 @@ func Backoff(ctx context.Context, resp *http.Response, attempt int) error {
 		return &RateLimitError{Message: i18n.T("provider.backoff.gave_up")}
 	}
 	secs := RetryAfterSeconds(resp, 1<<attempt)
+	if ctx.Value(noWaitKey{}) != nil {
+		return &RateLimitError{Seconds: secs, Message: i18n.T("provider.backoff.retry_after", "seconds", secs)}
+	}
 	if secs > int(MaxBackoff/time.Second) {
 		return &RateLimitError{Seconds: secs, Message: i18n.T("provider.backoff.too_long", "seconds", secs, "max", int(MaxBackoff/time.Second))}
 	}

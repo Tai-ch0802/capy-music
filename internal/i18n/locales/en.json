@@ -692,6 +692,7 @@
   "player.err.watch_needs_tty": "--watch needs a terminal; elsewhere use capy now (one-shot plain text)",
   "player.nothing_playing": "Nothing is playing",
   "provider.backoff.gave_up": "rate limited, retry limit reached",
+  "provider.backoff.retry_after": "rate limited: the server asked to wait {seconds}s",
   "provider.backoff.too_long": "rate limited: the server asked to wait {seconds}s, which is over the {max}s limit; try again later",
   "provider.backoff.waiting": "rate limited, retrying in {wait}…",
   "provider.err.auth_expired": "authorization expired",
@@ -900,6 +901,7 @@
   "spotify.err.create_no_id": "Spotify's response to creating the playlist had no id",
   "spotify.err.playlist_not_found": "{err}: playlist {id}",
   "spotify.err.playlist_or_tracks": "use either PlaylistID or TrackIDs, not both",
+  "spotify.err.quota_exceeded": "Spotify says this developer account has used up its API quota (QUOTA_EXCEEDED; every app under the same Spotify developer account shares one quota) — try again later",
   "spotify.err.track_not_found": "{err}: track {id}",
   "spotify.err.unpushable": {
     "one": "a track can't be pushed (a local file or an empty id), so nothing was sent: {items}",

@@ -1,6 +1,8 @@
-// player.js:dock 的正在播放列。每 2 秒打 GET /api/now(輪詢不串流),document.hidden 時停;
+// player.js:dock 的正在播放列。每 2.5 秒打 GET /api/now(輪詢不串流),document.hidden 時停;
+// 伺服器決定顯示哪個平台(跟著正在播的那個,決策 51)、多久真的問一次 Spotify——這裡的輪詢只打本機。
 // 控制鈕不另做端點,跑既有命令(決策 42):走 Console.run 的 quiet 模式,跟其他命令共用同一個序列槽、閘與中止。
 import { t } from './i18n.js';
+import { providerName } from './pages/common.js';
 
 // POLL_MS 要大於伺服器的 webNowWait(2 s):相等的話單飛的 TryLock 幾乎每兩輪就固定失敗一次。
 const POLL_MS = 2500;
@@ -60,22 +62,35 @@ export class Player {
   }
 
   render(d) {
-    this.last = d; // ← → 與 + - 要用它算絕對值:seek 吃秒數、vol 吃 0-100
+    this.last = d; // ← → 與 + - 要用它算絕對值:seek 吃秒數、vol 吃 0-100;控制鈕的 --provider 也看它
     this.root.dataset.playing = String(!!d.playing);
     this.root.dataset.stale = d.stale ? 'true' : '';
+    const name = providerName(d.provider); // 面板會自己換平台:每一行都先說是哪個平台
     if (d.error) {
-      this.line.textContent = t('webui.player.error', { provider: d.provider, error: d.error });
+      this.line.textContent = t('webui.player.error', { provider: name, error: d.error });
       return;
     }
-    if (!d.track) {
-      this.line.textContent = t('webui.player.idle', { provider: d.provider });
+    if (!d.track) { // 在播卻沒有曲目 = Spotify 的 podcast 或廣告(item 是 null)
+      this.line.textContent = d.playing ? `${name} · ▶` : t('webui.player.idle', { provider: name });
       return;
     }
     const tr = d.track;
     const dev = d.device ? ` · ${d.device.name}${d.device.volume_known ? ` · 🔊 ${d.device.volume_pct}` : ''}` : '';
     const age = d.stale ? ' · ' + t('webui.player.age', { count: Math.round((d.stale_ms || 0) / 1000) }) : '';
-    this.line.textContent = `${d.playing ? '▶' : '⏸'} ${tr.title} — ${(tr.artists || []).join(', ')}` +
-      ` · ${mmss(d.position_ms)} / ${mmss(tr.duration_ms)}${dev}${age}`;
+    // 曲名連回平台(Spotify Developer Policy II:顯示 Spotify 的內容要附連回去的連結)。只收 https,不讓 javascript: 之類進 href。
+    let title = document.createElement('span');
+    if (/^https:\/\//.test(tr.url || '')) {
+      title = document.createElement('a');
+      title.href = tr.url;
+      title.target = '_blank';
+      title.rel = 'noopener noreferrer';
+    }
+    title.textContent = tr.title;
+    const head = document.createElement('span');
+    head.textContent = `${name} · ${d.playing ? '▶' : '⏸'} `;
+    const tail = document.createElement('span');
+    tail.textContent = ` — ${(tr.artists || []).join(', ')} · ${mmss(d.position_ms)} / ${mmss(tr.duration_ms)}${dev}${age}`;
+    this.line.replaceChildren(head, title, tail);
   }
 
   // 前後各十秒、音量升降五格:鏡射 TUI 的鍵位。沒有最後一份狀態就不動作(算不出絕對值)。
@@ -100,6 +115,10 @@ export class Player {
       if (!this.con.quiet) this.notice(t('webui.player.busy'));
       return;
     }
+    // 控制的是面板上看到的那個平台(以前不帶,一律打到 default_provider:面板顯示 Spotify、⏸ 卻暫停了 Apple)。
+    // 還沒有任何一份狀態就不帶,跟終端機一樣走預設平台。
+    const p = this.last && this.last.provider;
+    if (p) cmd += ` --provider ${p}`;
     const [code] = await this.con.run(cmd, {}, { quiet: true }); // 失敗的說明由 Console.report 負責
     if (code !== -1) this.tick(); // 命令已經跑完,立刻再輪詢一次,不等下一個 2.5 秒
   }
