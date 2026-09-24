@@ -43,9 +43,11 @@ export const stages = () => ({ read: t('webui.console.stage.read'), match: t('we
 // 使用者自己中止時,交給頁面 onExit 的訊息。頁面要認它就 import 這個函式,不要各自抄一份字面(review #69)。
 export const cancelledMsg = () => t('webui.console.stopped');
 
-// 播放控制(quiet)跑超過這麼久才亮執行狀態列:按一下暫停不該整條 dock 閃一下,
+// quiet:播放控制跑超過這麼久才亮執行狀態列:按一下暫停不該整條 dock 閃一下,
 // 但卡住(等 token 鎖沒有上限、在等系統對話框)時一定要看得到在等什麼、也要按得到中止(review #65 第 1 點)。
-const QUIET_MS = 800;
+// disarm:兩段式中止的警告多久過期(review #65 第 2 點)。
+// 匯出只給 testdata/webui_console.mjs 縮短用:行為測試不必真的等 0.8 + 5 秒。
+export const timing = { quiet: 800, disarm: 5000 };
 
 export class Console {
   constructor(root, api, notice) {
@@ -134,7 +136,7 @@ export class Console {
   // run(line, hooks):hooks.onTable / onStdout / onExit 讓發起命令的頁面拿到解析後的輸出。
   // 命令本身照樣完整跑在 dock 裡(回聲、串流、提示、退出碼都在),頁面只是多一份結構化的複本。
   // quiet:播放控制用——同一個序列槽、同一個閘、同一顆中止,但不畫區塊(輸出不進主控台),
-  // 執行狀態列過了 QUIET_MS 還沒結束才亮。
+  // 執行狀態列過了 timing.quiet 還沒結束才亮。
   // label:頁面給的白話(「讀取你的清單」);執行狀態列與收尾的那句話用它,命令原文留在主控台與 title(決策 45)。
   // args:直接送 argv 陣列(精靈用,決策 46):伺服器的 splitArgs 只認雙引號、沒有跳脫,而 local 的清單 ID 含空白是常態、
   //   含 " 就組不出來。有給 args 時 line 只拿來顯示(沒給就用 args 接起來),伺服器端的拒絕清單本來就是對 argv 做的。
@@ -159,7 +161,7 @@ export class Console {
     // quiet 的區塊不掛上主控台;有提示 / 授權連結時才掛上去(event())。
     const b = quiet ? document.createElement('article') : this.block(line || '(help)');
     this.slotOn(shown, raw);
-    if (quiet) this.later = setTimeout(() => this.busyOn(), QUIET_MS);
+    if (quiet) this.later = setTimeout(() => this.busyOn(), timing.quiet);
     else { this.busyOn(); this.notice(''); }
     document.body.dataset.connected = 'true';
     try {
@@ -237,7 +239,7 @@ export class Console {
     document.querySelectorAll('[data-run]').forEach((x) => { x.setAttribute('aria-disabled', 'true'); if (x.tagName === 'SELECT') x.disabled = true; });
   }
 
-  // 執行狀態列:一般命令點下去的當下就亮(不等伺服器回 start),播放控制過了 QUIET_MS 才亮;
+  // 執行狀態列:一般命令點下去的當下就亮(不等伺服器回 start),播放控制過了 timing.quiet 才亮;
   // 串流收尾才熄——在 exit 事件就熄的話,使用者以為可以按下一個了,伺服器卻還握著序列槽。
   busyOn() {
     this.barShown = true;
@@ -586,7 +588,7 @@ export class Console {
         this.armed = false;
         this.stopBtn.textContent = t('webui.console.stop');
         this.barAct.textContent = this.lastAct || '';
-      }, 5000);
+      }, timing.disarm);
       return;
     }
     clearTimeout(this.disarm);
