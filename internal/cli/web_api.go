@@ -217,10 +217,12 @@ func (s *webServer) fillCanonical(resp *isrcResponse, isrc string) {
 // 有效期(決策 51;計畫 docs/superpowers/plans/2026-09-24-web-player-follow-apple-play.md §1.2)。瀏覽器照樣每 2.5 秒
 // 問 /api/now——那一段只打本機;真的打 Spotify Web API 的次數由這幾個值決定(dev mode 的配額以開發者帳號計,跟 pl sync、cron 共用)。
 const (
-	webNowFailTTL = time.Minute      // 建不起來(沒登入)、State 回錯:一分鐘後再試;沒登入 Apple 的人不會每 2.5 秒讀 keychain
-	webNowIdleTTL = 15 * time.Second // Spotify 閒置或暫停(Q65):手機上開始播,最慢 15 秒出現
-	webNowPlayTTL = 10 * time.Second // Spotify 正在播:手機上暫停或換歌,最慢 10 秒出現;這首結束時提早重問
-	webNowSettle  = 3 * time.Second  // 播放命令後的安定期:Spotify 的播放器寫入是最終一致,剛按完可能讀到舊狀態
+	webNowFailTTL = time.Minute      // 建不起來(沒登入)、token 失效:一分鐘後再試;沒登入 Apple 的人不會每 2.5 秒讀 keychain
+	webNowIdleTTL = 15 * time.Second // Spotify 閒置或暫停(Q65):手機上開始播,最慢 15 秒出現;5xx、網路斷一下也是 15 秒後再問
+	// webNowUnsupportedTTL:平台不支援播放(local、Windows 上的 apple)——這個行程裡不會變,dropNow(換帳號、改設定)時才重來。
+	webNowUnsupportedTTL = 24 * time.Hour
+	webNowPlayTTL        = 10 * time.Second // Spotify 正在播:手機上暫停或換歌,最慢 10 秒出現;這首結束時提早重問
+	webNowSettle         = 3 * time.Second  // 播放命令後的安定期:Spotify 的播放器寫入是最終一致,剛按完可能讀到舊狀態
 )
 
 // webNowClock:有效期、安定期、stale_ms 都看它。測試替換點。
@@ -250,11 +252,13 @@ type nowSnapshot struct {
 }
 
 // nowEntry:某個 provider 最近一次真的問到的結果;until 之前用它回答(正在播的進度依經過時間往前推)。
-// cooldown:這是限流(429 / QUOTA_EXCEEDED)的冷卻——安定期、dropNow 都不縮短它,冷卻期內重問就違反 Retry-After。
+// cooldown:這是限流(429 / QUOTA_EXCEEDED)的冷卻——安定期、expireExcept、dropNow 都不縮短它,冷卻期內重問就違反 Retry-After。
+// unsupported:平台不支援播放——安定期與 expireExcept 不動它(重問也不會變),dropNow 才清。
 type nowEntry struct {
-	resp      *nowResponse
-	at, until time.Time
-	cooldown  bool
+	resp        *nowResponse
+	at, until   time.Time
+	cooldown    bool
+	unsupported bool
 }
 
 // nowBuildErr:建不起來(沒登入、平台不支援播放)——跟 State 回錯分開,有效期不同(見 nowTTL)。
@@ -335,8 +339,9 @@ func (s *webServer) consult(id string) *nowResponse {
 	s.nowMu.Lock()
 	e, ok := s.nowCache[id]
 	s.nowMu.Unlock()
-	// 安定期只跳過沒出錯的快取:出錯的(沒登入)與限流的冷卻照樣守——冷卻期內重問就違反 Retry-After。
-	if ok && now.Before(e.until) && (e.resp.Error != "" || !s.settling(now)) {
+	// 安定期不必在這裡另外判斷:settleNow 已經讓命令之前讀到的快取過期(限流的冷卻與「不支援播放」除外),
+	// 安定期內讀到的成功結果也不留(下面的 until = at)。留下來的只剩該守的:冷卻、不支援,以及安定期內讀到的錯誤。
+	if ok && now.Before(e.until) {
 		return advance(e.resp, now.Sub(e.at))
 	}
 	gen, sg := s.nowGen.Load(), s.settleSeq.Load()
@@ -353,18 +358,19 @@ func (s *webServer) consult(id string) *nowResponse {
 		if s.nowCache == nil {
 			s.nowCache = map[string]nowEntry{}
 		}
-		s.nowCache[id] = nowEntry{resp: resp, at: at, until: until, cooldown: errors.As(err, &rl)}
+		s.nowCache[id] = nowEntry{resp: resp, at: at, until: until, cooldown: errors.As(err, &rl), unsupported: errors.Is(err, provider.ErrNotSupported)}
 	}
 	s.nowMu.Unlock()
 	return resp
 }
 
-// expireExcept:讓 keep 以外、沒出錯的快取立刻過期。出錯的(沒登入、429 的冷卻)不動:冷卻期內重問就違反 Retry-After。
+// expireExcept:讓 keep 以外的快取立刻過期——包括出錯的(一次 502、沒登入),使用者按了播放或 base 剛停,就值得再問一次。
+// 限流的冷卻不動(冷卻期內重問就違反 Retry-After),「不支援播放」也不動(重問也不會變)。
 func (s *webServer) expireExcept(keep string) {
 	s.nowMu.Lock()
 	defer s.nowMu.Unlock()
 	for id, e := range s.nowCache {
-		if id != keep && e.resp.Error == "" {
+		if id != keep && !e.cooldown && !e.unsupported {
 			e.until = time.Time{}
 			s.nowCache[id] = e
 		}
@@ -385,19 +391,24 @@ func advance(r *nowResponse, age time.Duration) *nowResponse {
 }
 
 // nowTTL:這份結果可以用多久。Apple 的 State 是本機 osascript、不花配額,每輪都問——包括回錯的時候(Music.app 沒開、
-// 放的是沒有時長的串流):下一輪就看得到變化。建不起來的(沒登入)一分鐘才重試:那要讀 keychain。其他平台的每一問都是一次 Web API 呼叫。
+// 放的是沒有時長的串流):下一輪就看得到變化。建不起來的(沒登入)一分鐘才重試:那要讀 keychain。其他平台的每一問都是一次 Web API 呼叫:
+// token 失效一分鐘一次(重建要換發 token);5xx、網路斷一下跟閒置一樣 15 秒——不讓一次 502 把面板卡住一分鐘。
 func nowTTL(id string, r *nowResponse, err error) time.Duration {
 	var rl *provider.RateLimitError
 	var be nowBuildErr
 	switch {
 	case errors.As(err, &rl):
 		return max(webNowFailTTL, time.Duration(rl.Seconds)*time.Second) // 照 Retry-After:冷卻期內不重試
+	case errors.As(err, &be) && errors.Is(err, provider.ErrNotSupported):
+		return webNowUnsupportedTTL
 	case errors.As(err, &be):
 		return webNowFailTTL
 	case id == "apple": // Apple 的 State 錯只會來自 osascript(Music.app 沒開、沒有時長的串流),不會是 ErrAuthExpired
 		return 0
-	case err != nil:
+	case errors.Is(err, provider.ErrAuthExpired):
 		return webNowFailTTL
+	case err != nil:
+		return webNowIdleTTL
 	case !r.Playing:
 		return webNowIdleTTL
 	case r.Track == nil || r.Track.DurationMS <= 0:
@@ -562,8 +573,8 @@ func webNowSettledBy(path string) bool {
 	return false
 }
 
-// settleNow:進安定期,並讓命令之前讀到的(沒出錯的)快取立刻過期——不然這幾秒剛好沒有一輪的話,
-// 安定期一過,命令之前的「在播」還會被當成新鮮的端出來。出錯的與限流的冷卻不動。
+// settleNow:進安定期,並讓命令之前讀到的快取立刻過期——不然這幾秒剛好沒有一輪的話,安定期一過,命令之前的「在播」
+// 還會被當成新鮮的端出來;面板上的一次 502 也會在使用者按了播放之後繼續掛著。限流的冷卻與「不支援播放」不動。
 func (s *webServer) settleNow() {
 	t := webNowClock().Add(webNowSettle)
 	s.settleUntil.Store(&t)

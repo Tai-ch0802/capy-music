@@ -46,8 +46,9 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
   | 情況 | 有效期 | 理由 |
   |---|---|---|
   | apple 的 State(含 Music.app 沒開、osascript 回錯) | 0,每輪都問 | osascript 在本機跑,不花配額;Music.app 開始播放 2.5 秒內就看得到 |
-  | 任何平台建不起來(沒登入、不支援播放) | 60 秒 | 沒登入 Apple 的人不會每 2.5 秒讀一次 keychain |
-  | 其他平台的 State 回錯(5xx) | 60 秒 | 每次都是一次 Web API 呼叫 |
+  | 任何平台建不起來(沒登入) | 60 秒 | 沒登入 Apple 的人不會每 2.5 秒讀一次 keychain |
+  | 平台不支援播放(local、Windows 上的 apple) | 到 `dropNow` 為止 | 這個行程裡不會變(#95 review 第 3 點) |
+  | 其他平台的 State 回錯 | 15 秒;token 失效 60 秒 | 一次 502 不讓面板卡一分鐘(#95 review 第 1 點);token 失效重建要換發 token |
   | 被限流(429) | max(60 秒, `Retry-After`) | 照指南等 `Retry-After`,不重試 |
   | spotify 閒置(204)或暫停中 | **15 秒**(Q65) | 在手機上開始播,最慢 15 秒內會出現 |
   | spotify 正在播 | min(10 秒, 離這首結束的時間 + 1 秒) | 換歌約 1 秒內更新 |
@@ -238,7 +239,7 @@ Windows:Apple Music for Windows 沒有腳本介面,本來就不支援播放。
 | Q61 | Apple 以 id 播放時改印誠實的那句、不印 ▶、exit 0 | ✅ 照推薦 |
 | Q62 | 探測 | ✅ 授權我跑,已完成(§2.2) |
 | Q63 | 真的播:選項 1 或 選項 2 | ✅ 選項 2(資料庫裡有的歌直接播,比對不到就退回開啟並標亮) |
-| Q64 | TUI 的同一個 bug 另開 PR | ✅ 另開,沿用 §1.2 的規則與節流(TUI 與 `now --watch` 現在每分鐘打 30 次) |
+| Q64 | TUI 的同一個 bug 另開 PR | ✅ 另開,沿用 §1.2 的規則與節流(TUI 與 `now --watch` 現在每分鐘打 30 次);順便做 #95 review 第 2 點:被限流時狀態列說幾點會再試 |
 | Q65 | Spotify 閒置或暫停時的有效期 | ✅ 15 秒 |
 | Q66 | 429 與 `QUOTA_EXCEEDED` 的處理要做,而且放在問題一的範圍內 | ✅ 做,PR A 不拆 |
 | Q67 | 播放列曲名連回平台(Developer Policy II) | ✅ 做 |

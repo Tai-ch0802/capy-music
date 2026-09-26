@@ -1046,3 +1046,95 @@ func TestWebNowPinnedByWebFlag(t *testing.T) {
 		t.Errorf("釘住時不問別家:Spotify %d 次", n)
 	}
 }
+
+// ── #95 review(2026-09-27)──
+
+// TestWebNowTransientErrorTTL:【fails-before-fix】Spotify 的 5xx、網路斷一下,15 秒後就再問——以前快取 60 秒,
+// 面板上的一次 502 會掛一分鐘。token 失效仍是一分鐘(重建要換發 token,見 TestWebNowDropsCacheOnStateError)。
+func TestWebNowTransientErrorTTL(t *testing.T) {
+	setCLITestConfig(t)
+	advance := fakeNowClock(t)
+	sp := newNowFakeAs("spotify", nil)
+	sp.set(nil, errors.New("spotify API 502"))
+	swapNowByID(t, map[string]*nowFake{"spotify": sp})
+	_, c := startWeb(t)
+	if m := c.now(""); m["error"] == nil {
+		t.Fatalf("502 要照實顯示:%v", m)
+	}
+	sp.set(newNowFake().state, nil)
+	advance(15 * time.Second)
+	if m := c.now(""); m["error"] != nil || m["playing"] != true {
+		t.Errorf("15 秒後要再問,錯誤不可以掛一分鐘:%v", m)
+	}
+}
+
+// TestWebNowSettleRefreshesErrors:【fails-before-fix】按了播放(安定期)就重問出錯的那一家——以前 settleNow 不動有錯的快取,
+// 一次 502 之後按 ⏵ 也不會刷新。沒登入的那家也只多建一次,不會安定期內每一輪都重建(讀 keychain)。
+func TestWebNowSettleRefreshesErrors(t *testing.T) {
+	setCLITestConfig(t)
+	setDefaultProvider(t, "apple")
+	advance := fakeNowClock(t)
+	apple := newNowFakeAs("apple", nowTrack(false, "a", 0, 200000))
+	sp := newNowFakeAs("spotify", nil)
+	sp.set(nil, errors.New("spotify API 502"))
+	built := swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": sp}) // local 沒登入(不在 fakes 裡)
+	s, c := startWeb(t)
+	c.now("")
+	if n := built["local"].Load(); n != 1 {
+		t.Fatalf("第一輪:local 建一次(沒登入):%d 次", n)
+	}
+	sp.set(nil, nil)
+	s.settleNow() // = 使用者按了播放
+	c.now("")
+	if n := sp.calls.Load(); n != 2 {
+		t.Errorf("按了播放就要重問出錯的那一家:Spotify %d 次", n)
+	}
+	advance(2500 * time.Millisecond) // 還在安定期內
+	c.now("")
+	advance(2500 * time.Millisecond)
+	c.now("")
+	if n := built["local"].Load(); n != 2 {
+		t.Errorf("沒登入的那家:安定期只多建一次(不是每一輪):%d 次", n)
+	}
+}
+
+// localNoPlayback:沒有播放能力的平台(local、Windows 上的 apple):asPlayback 回「不支援」。
+type localNoPlayback struct{ fakeProvider }
+
+func (localNoPlayback) ID() string { return "local" }
+
+// TestWebNowUnsupportedNotRetried:【fails-before-fix】不支援播放的平台在這個行程裡不會變——建一次就記住,dropNow(換帳號、改設定)才重來。
+// 以前每 60 秒就為了得到同一句「不支援播放」再建一次。
+func TestWebNowUnsupportedNotRetried(t *testing.T) {
+	setCLITestConfig(t)
+	setDefaultProvider(t, "apple")
+	advance := fakeNowClock(t)
+	fakes := map[string]provider.Provider{
+		"apple":   newNowFakeAs("apple", nowTrack(false, "a", 0, 200000)),
+		"spotify": newNowFakeAs("spotify", nil),
+		"local":   localNoPlayback{},
+	}
+	var localBuilt atomic.Int32
+	orig := newProvider
+	newProvider = func(_ context.Context, id string) (provider.Provider, error) {
+		if id == "local" {
+			localBuilt.Add(1)
+		}
+		return fakes[id], nil
+	}
+	t.Cleanup(func() { newProvider = orig })
+	s, c := startWeb(t)
+	for range 10 { // 5 分鐘
+		c.now("")
+		s.settleNow() // 按播放也不必再問一次「不支援」
+		advance(30 * time.Second)
+	}
+	if n := localBuilt.Load(); n != 1 {
+		t.Errorf("不支援播放的平台只建一次:%d 次", n)
+	}
+	s.dropNow(false)
+	c.now("")
+	if n := localBuilt.Load(); n != 2 {
+		t.Errorf("dropNow(改設定)之後重來一次:%d 次", n)
+	}
+}
