@@ -101,3 +101,22 @@ func TestBackoffExponentialFallback(t *testing.T) {
 		t.Fatalf("無 Retry-After 應指數退避 %v,得 %v", want, got)
 	}
 }
+
+// TestBackoffWithoutWaitReturnsSeconds:輪詢(web 的 /api/now)不睡在鎖裡——直接回 RateLimitError 帶 Retry-After 的秒數,
+// 冷卻交給呼叫端。就算秒數在上限內也不等、不印等待提示。
+func TestBackoffWithoutWaitReturnsSeconds(t *testing.T) {
+	waits := stubWait(t)
+	buf := &bytes.Buffer{}
+	orig := BackoffStderr
+	BackoffStderr = buf
+	t.Cleanup(func() { BackoffStderr = orig })
+
+	err := Backoff(WithoutWait(context.Background()), resp429("7"), 0)
+	var rl *RateLimitError
+	if !errors.As(err, &rl) || rl.Seconds != 7 {
+		t.Fatalf("WithoutWait 應立即回 RateLimitError{Seconds: 7},得到 %v", err)
+	}
+	if len(*waits) != 0 || buf.Len() != 0 {
+		t.Errorf("WithoutWait 不可以等,也不印等待提示:waits=%v stderr=%q", *waits, buf.String())
+	}
+}

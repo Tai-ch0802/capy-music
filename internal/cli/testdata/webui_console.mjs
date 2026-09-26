@@ -20,7 +20,7 @@ function mk(tag = 'div') {
     set innerHTML(_) { this._text = ''; this.children = []; },
     appendChild(c) { if (c.parentNode?.children) c.parentNode.children = c.parentNode.children.filter((x) => x !== c); this.children.push(c); c.parentNode = this; return c; }, // 同真的 DOM:append 已掛著的節點 = 搬家
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
-    replaceChildren(...cs) { this.children = []; this.append(...cs); },
+    replaceChildren(...cs) { this._text = ''; this.children = []; this.append(...cs); }, // 同真的 DOM:先前 textContent 設的字也一起換掉
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); },
     insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); c.parentNode = this; return c; },
     get firstChild() { return this.children[0] || null; },
@@ -783,9 +783,9 @@ await scenario('13', async () => {
   const d = { provider: 'spotify', playing: true, position_ms: 61000, stale: true, stale_ms: 1000,
     track: { title: 'Song', artists: ['A', 'B'], duration_ms: 200000 }, device: { name: 'Mac', volume_known: true, volume_pct: 40 } };
   player.render(d);
-  check(line.textContent === '▶ Song — A, B · 1:01 / 3:20 · Mac · 🔊 40 · 1 秒前', `播放列(中文):「${line.textContent}」`);
+  check(line.textContent === 'Spotify · ▶ Song — A, B · 1:01 / 3:20 · Mac · 🔊 40 · 1 秒前', `播放列(中文):「${line.textContent}」`);
   player.render({ provider: 'apple' });
-  check(line.textContent === 'apple:目前沒有播放內容', `播放列沒在播(中文):「${line.textContent}」`);
+  check(line.textContent === 'Apple Music:目前沒有播放內容', `播放列沒在播(中文):「${line.textContent}」`);
   // 待套用(exit 2、訊息提到 --yes)的補一句:中文接全形括號、英文值開頭是空白(接在訊息後面),兩邊都釘住。
   const pendingExit = async (msg) => {
     script = { y: { events: [{ type: 'exit', code: 2, message: 'Error: ' + msg, reason: 'done' }] } };
@@ -800,13 +800,13 @@ await scenario('13', async () => {
   await loadI18n(api);
   try {
     player.render(d);
-    check(line.textContent === '▶ Song — A, B · 1:01 / 3:20 · Mac · 🔊 40 · 1 second ago', `播放列(英文、單數):「${line.textContent}」`);
+    check(line.textContent === 'Spotify · ▶ Song — A, B · 1:01 / 3:20 · Mac · 🔊 40 · 1 second ago', `播放列(英文、單數):「${line.textContent}」`);
     player.render({ ...d, stale_ms: 5000 });
     check(line.textContent.endsWith(' · 5 seconds ago'), `播放列(英文、複數):「${line.textContent}」`);
     player.render({ provider: 'apple', error: 'boom' });
-    check(line.textContent === 'apple: boom', `播放列的錯誤(英文):「${line.textContent}」`);
+    check(line.textContent === 'Apple Music: boom', `播放列的錯誤(英文):「${line.textContent}」`);
     player.render({ provider: 'apple' });
-    check(line.textContent === 'apple: nothing playing', `播放列沒在播(英文):「${line.textContent}」`);
+    check(line.textContent === 'Apple Music: nothing playing', `播放列沒在播(英文):「${line.textContent}」`);
     player.disconnected();
     const lineGone = line.textContent;
 
@@ -875,6 +875,42 @@ await scenario('13', async () => {
 
 // 14. 帳號 / 診斷 / ISRC 三頁(i18n T3):帳號狀態只看 auth status --json 的 state,不比對給人看的字;
 //     zh-TW 畫出來跟搬進目錄前一個字都不差;英文的真目錄畫出來沒有任何中文字。
+// 13b. 播放列跟著平台走(決策 51):控制鈕送的是面板上看到的那個平台(以前不帶 --provider,一律打到 default_provider);
+//      還沒有任何狀態就不帶。曲名連回平台(只收 https);Spotify 播 podcast / 廣告(沒有 track)照樣說在播。
+await scenario('13b', async () => {
+  const line = mk('span');
+  const nowRoot = mk();
+  nowRoot.querySelector = (sel) => (sel === '#now-line' ? line : null);
+  const player = new Player(nowRoot, api, () => {}, con);
+  reset();
+  await player.control('pause');
+  check(calls.at(-1) === 'pause', `還沒有狀態:不帶 --provider:「${calls.at(-1)}」`);
+  const song = { title: 'Song', artists: ['A'], duration_ms: 200000 };
+  player.render({ provider: 'apple', playing: true, position_ms: 61000, track: song, device: { name: 'Music.app', volume_known: false } });
+  await player.control('pause');
+  check(calls.at(-1) === 'pause --provider apple', `控制面板上的平台:「${calls.at(-1)}」`);
+  player.seekBy(10);
+  await tick(20);
+  check(calls.at(-1) === 'seek 71 --provider apple', `← → 也送給面板上的平台:「${calls.at(-1)}」`);
+
+  player.render({ provider: 'spotify', playing: true, position_ms: 0, track: { ...song, url: 'https://open.spotify.com/track/x' } });
+  const a = line.children[1];
+  check(a?.tagName === 'A' && a.href === 'https://open.spotify.com/track/x' && a.target === '_blank' && a.rel === 'noopener noreferrer' && a.textContent === 'Song',
+    `曲名要連回 Spotify:${JSON.stringify({ tag: a?.tagName, href: a?.href, rel: a?.rel })}`);
+  check(line.textContent === 'Spotify · ▶ Song — A · 0:00 / 3:20', `有連結也是同一行字:「${line.textContent}」`);
+  // 每 2.5 秒一輪:同一個連結原地改字,不重建(重建會把停在連結上的鍵盤焦點丟掉)
+  player.render({ provider: 'spotify', playing: true, position_ms: 2500, track: { ...song, url: 'https://open.spotify.com/track/x' } });
+  check(line.children[1] === a && line.textContent === 'Spotify · ▶ Song — A · 0:02 / 3:20', `下一輪要沿用同一個連結節點:「${line.textContent}」`);
+  player.render({ provider: 'spotify', playing: true, position_ms: 0, track: { ...song, url: 'javascript:alert(1)' } });
+  check(line.children[1]?.tagName !== 'A', '不是 https 的網址不可以變成連結');
+  player.render({ provider: 'spotify', playing: true, track: null, device: { name: 'iPhone' } });
+  check(line.textContent === 'Spotify · ▶', `podcast / 廣告在播:「${line.textContent}」`);
+  player.render({ provider: 'spotify', playing: true, track: null, stale: true, stale_ms: 8000 });
+  check(line.textContent === 'Spotify · ▶ · 8 秒前', `podcast 那行也要說多久沒更新:「${line.textContent}」`);
+  player.render({ provider: 'spotify', playing: true, position_ms: 0, track: { ...song, url: 'https://open.spotify.com/track/x' } });
+  check(line.children[1]?.tagName === 'A' && line.textContent === 'Spotify · ▶ Song — A · 0:00 / 3:20', `純文字行之後要把曲目那行接回來:「${line.textContent}」`);
+});
+
 await scenario('14', async () => {
   const { parseStatus, stateOf, initAccount } = await import('./pages/account.mjs');
   const { initDoctor } = await import('./pages/doctor.mjs');

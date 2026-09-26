@@ -650,6 +650,7 @@
   "player.err.watch_needs_tty": "--watch 需要終端機;非互動環境請用 capy now(單次純文字)",
   "player.nothing_playing": "目前沒有播放內容",
   "provider.backoff.gave_up": "rate limited,重試已達上限",
+  "provider.backoff.retry_after": "rate limited,伺服器要求等待 {seconds} 秒",
   "provider.backoff.too_long": "rate limited,伺服器要求等待 {seconds} 秒(超過上限 {max} 秒),請稍後再試",
   "provider.backoff.waiting": "rate limited,等待 {wait} 後重試…",
   "provider.err.auth_expired": "授權已過期",
@@ -838,6 +839,7 @@
   "spotify.err.create_no_id": "Spotify 建立清單的回應沒有 id",
   "spotify.err.playlist_not_found": "{err}:清單 {id}",
   "spotify.err.playlist_or_tracks": "PlaylistID 與 TrackIDs 擇一",
+  "spotify.err.quota_exceeded": "Spotify 回報這個開發者帳號的 API 配額用完了(QUOTA_EXCEEDED;同一個 Spotify 開發者帳號底下的所有 app 共用一份配額),請稍後再試",
   "spotify.err.track_not_found": "{err}:曲目 {id}",
   "spotify.err.unpushable": {
     "other": "推不出去的曲目(local file 或空 id),整批不送:{items}"

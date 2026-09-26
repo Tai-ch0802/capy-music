@@ -268,7 +268,10 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		_ = sse.event(map[string]any{"type": "stderr", "text": i18n.T("web.stale") + "\n"})
 	}
 	if webNowInvalidatedBy(path) { // 帳號 / 預設平台變了:快取的 PlaybackController 不再有效
-		s.dropNow()
+		s.dropNow(webNowResetsShown(path, args))
+	}
+	if webNowSettledBy(path) { // 播放狀態剛被改:接下來幾秒面板不用快取(決策 51 的安定期)
+		s.settleNow()
 	}
 	reason := webExitReason(jobCtx, err)
 	// 取消本身不是訊息:頁面看 reason 就知道(計畫 §2.4 第 5 點),不必比對跟著語系變的文字。「取消本身」= 中止的原因
