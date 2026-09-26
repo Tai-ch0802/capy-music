@@ -339,12 +339,13 @@ func (s *webServer) consult(id string) *nowResponse {
 	if ok && now.Before(e.until) && (e.resp.Error != "" || !s.settling(now)) {
 		return advance(e.resp, now.Sub(e.at))
 	}
-	gen := s.nowGen.Load()
+	gen, sg := s.nowGen.Load(), s.settleSeq.Load()
 	resp, err := s.pollNow(id)
 	at := webNowClock()
 	until := at.Add(nowTTL(id, resp, err))
-	if err == nil && s.settling(at) {
-		until = at // 安定期內讀到的可能還是命令之前的狀態:不留,安定期一過就重問
+	// 安定期內讀到的、或問的期間有播放命令跑完的,都可能還是命令之前的狀態:不留,下一輪就重問。
+	if err == nil && (s.settling(at) || s.settleSeq.Load() != sg) {
+		until = at
 	}
 	var rl *provider.RateLimitError
 	s.nowMu.Lock()
@@ -566,6 +567,7 @@ func webNowSettledBy(path string) bool {
 func (s *webServer) settleNow() {
 	t := webNowClock().Add(webNowSettle)
 	s.settleUntil.Store(&t)
+	s.settleSeq.Add(1)
 	s.expireExcept("")
 }
 

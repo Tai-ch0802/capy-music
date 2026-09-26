@@ -613,3 +613,19 @@ func TestDoRateLimitKeepsRetryAfter(t *testing.T) {
 		t.Errorf("WithoutWait 只打一次,實際 %d 次", calls)
 	}
 }
+
+// TestDoQuotaExceededHonoursRetryAfter:QUOTA_EXCEEDED 帶了 Retry-After 就照它,不用預設的冷卻。
+func TestDoQuotaExceededHonoursRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"status":429,"message":"Too many requests","reason":"QUOTA_EXCEEDED"}}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	_, err := c.do(context.Background(), http.MethodGet, "/me/player", nil, nil, nil)
+	var rl *provider.RateLimitError
+	if !errors.As(err, &rl) || rl.Seconds != 3600 {
+		t.Fatalf("要照 Retry-After 的 3600 秒:%#v", err)
+	}
+}

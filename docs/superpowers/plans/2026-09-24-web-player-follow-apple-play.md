@@ -9,7 +9,7 @@
 
 使用者另外要求:先讀 Spotify 的 [Building with AI](https://developer.spotify.com/documentation/web-api/tutorials/building-with-ai) 指南,找比每分鐘打 24 次 API 更有效的做法。這份指南本身沒談輪詢,但它連到的 Rate limits、Quota modes、Developer Terms、Developer Policy 和 OpenAPI 規格都有相關規定。結論在 §1.2 與 §1.5,依指南檢查 capy 整個 Spotify 串接的結果在 §1.7。
 
-**2026-09-26 推 PR 前的對抗式審查**(四個視角、每則再派一個 agent 試著推翻)確認並修掉:TUI 與 `now --watch` 在 `QUOTA_EXCEEDED` / 長 `Retry-After` 時每 2 秒重打(現在照 `Retry-After` 等);唯讀的 `auth status` 與 `dropNow` 會清掉限流的冷卻;安定期越過限流的冷卻、也沒讓命令之前的快取過期;`dropNow` 時在飛的那一輪結果寫回快照;Apple 的 State 錯誤被快取 60 秒;登出後面板一直停在「未登入」;安定期用牆上時鐘比對;曲名連結每 2.5 秒重建而丟掉鍵盤焦點、stale 時不變色、podcast 那行少了 stale 秒數。每一則都有修之前會 fail 的測試。
+**2026-09-26 推 PR 前的對抗式審查**(四個視角、每則再派一個 agent 試著推翻)確認並修掉:TUI 與 `now --watch` 在 `QUOTA_EXCEEDED` / 長 `Retry-After` 時每 2 秒重打(現在照 `Retry-After` 等);唯讀的 `auth status` 與 `dropNow` 會清掉限流的冷卻;安定期越過限流的冷卻、也沒讓命令之前的快取過期;`dropNow` 時在飛的那一輪結果寫回快照;Apple 的 State 錯誤被快取 60 秒;登出後面板一直停在「未登入」;安定期用牆上時鐘比對;曲名連結每 2.5 秒重建而丟掉鍵盤焦點、stale 時不變色、podcast 那行少了 stale 秒數。每一則都有修之前會 fail 的測試。第二輪(驗證者重跑)另外抓出十二個測試缺口——拿掉某個守衛(`WithoutWait`、兩處世代號、`--web --provider`、「不送出」、安定期內的限流、限流不丟 controller、安定期的命令清單、`staleNow` 退回 `shown`、進度上限、15 秒邊界、QUOTA 的 `Retry-After`)整套仍綠燈——以及一個測試之間的 data race 和一個相鄰邊界(問的期間有播放命令跑完,讀到的可能是命令之前的狀態,現在不快取),全部補上,每個守衛都用突變確認有測試會紅。
 
 研究方式:兩輪 workflow。第一輪兩路追程式碼、兩路查 Apple 播放的外部資料,每個 Apple 做法各派一個 agent 試著推翻它。第二輪一路依指南檢查 Spotify 串接、一路找輪詢的替代方案,兩路各有一個驗證 agent 反查。探測(§2.2)是 2026-09-24 在使用者的 Mac 上跑的,macOS 26.5.1,Music.app 的實際畫面由使用者目視回報。
 

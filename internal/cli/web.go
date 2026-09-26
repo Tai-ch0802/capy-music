@@ -83,6 +83,7 @@ type webServer struct {
 	shown       atomic.Pointer[string]
 	nowGen      atomic.Uint64
 	settleUntil atomic.Pointer[time.Time]
+	settleSeq   atomic.Uint64 // 每次 settleNow 加一:在飛的那一輪若跨過一個播放命令,它讀到的不快取
 }
 
 type webCommand struct {

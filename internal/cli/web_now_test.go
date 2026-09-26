@@ -119,6 +119,17 @@ func fakeNowClock(t *testing.T) func(time.Duration) {
 	return func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
 }
 
+// waitRound:等在飛的那一輪收尾(它還會讀 webNowClock 等套件變數,不等完就結束的話會跟 Cleanup 換回原值撞在一起,-race 會抓)。
+func waitRound(t *testing.T, s *webServer) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !s.pollMu.TryLock(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("卡住的那一輪沒有收尾")
+		}
+	}
+	s.pollMu.Unlock()
+}
+
 // nowTrack:在播或暫停、有曲目的狀態。
 func nowTrack(playing bool, title string, posMS, durMS int) *provider.PlaybackState {
 	return &provider.PlaybackState{Playing: playing, ProgressMS: posMS,
@@ -308,8 +319,8 @@ func TestWebNowStaleNeverCrossesProvider(t *testing.T) {
 		t.Fatal("先要有一份 spotify 的新鮮快照")
 	}
 	blk := make(chan struct{})
-	defer close(blk)
 	f.blockOn(blk)
+	defer func() { close(blk); waitRound(t, s) }() // 等卡住的那一輪收尾:它還會讀 webNowClock
 	m := c.now("?provider=apple")
 	if m["provider"] != "apple" || !m["stale"].(bool) {
 		t.Fatalf("卡住時要回 apple 的 stale:%v", m)
@@ -460,7 +471,8 @@ func TestWebNowSpotifyNotConsultedWhileBasePlaying(t *testing.T) {
 	}
 }
 
-// TestWebNowSpotifyIdleTTL:哪裡都沒在播時,Spotify 每 15 秒才問一次(Q65),Apple 每輪都問。
+// TestWebNowSpotifyIdleTTL:哪裡都沒在播時,Spotify 滿 15 秒才再問一次(Q65:手機上開始播,最慢 15 秒出現),Apple 每輪都問。
+// 邊界用字面值釘,不用常數:把 webNowIdleTTL 改成別的值,這裡要紅。
 func TestWebNowSpotifyIdleTTL(t *testing.T) {
 	setCLITestConfig(t)
 	setDefaultProvider(t, "apple")
@@ -469,16 +481,25 @@ func TestWebNowSpotifyIdleTTL(t *testing.T) {
 	sp := newNowFakeAs("spotify", nil)
 	swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": sp})
 	_, c := startWeb(t)
-	for range 12 { // 0、2.5 … 27.5 秒
+	for i := range 6 { // 0、2.5 … 12.5 秒
+		if i > 0 {
+			advance(2500 * time.Millisecond)
+		}
 		if m := c.now(""); m["provider"] != "apple" {
 			t.Fatalf("都沒在播:留在預設平台:%v", m)
 		}
-		advance(2500 * time.Millisecond)
 	}
+	advance(2500*time.Millisecond - time.Millisecond) // 14.999 秒
+	c.now("")
+	if n := sp.calls.Load(); n != 1 {
+		t.Errorf("15 秒還沒到不問 Spotify:%d 次", n)
+	}
+	advance(time.Millisecond)
+	c.now("")
 	if n := sp.calls.Load(); n != 2 {
-		t.Errorf("30 秒內 Spotify 只該問 2 次(0 秒與 15 秒),實際 %d 次", n)
+		t.Errorf("滿 15 秒就要問:%d 次", n)
 	}
-	if n := apple.calls.Load(); n != 12 {
+	if n := apple.calls.Load(); n != 8 {
 		t.Errorf("Apple 每輪都問:%d 次", n)
 	}
 }
@@ -514,12 +535,14 @@ func TestWebNowTrackEndExpires(t *testing.T) {
 	swapNowByID(t, map[string]*nowFake{"spotify": f})
 	_, c := startWeb(t)
 	c.now("")
-	advance(3 * time.Second)
-	c.now("")
+	advance(3500 * time.Millisecond)
+	if m := c.now(""); m["position_ms"].(float64) != 227000 {
+		t.Errorf("進度往前推不可以超過曲長:%v", m["position_ms"])
+	}
 	if n := f.calls.Load(); n != 1 {
 		t.Fatalf("還在這首的有效期內:%d 次", n)
 	}
-	advance(1500 * time.Millisecond)
+	advance(time.Second)
 	c.now("")
 	if n := f.calls.Load(); n != 2 {
 		t.Errorf("這首結束約 1 秒後要重問:%d 次", n)
@@ -612,6 +635,9 @@ func TestWebNowRateLimitCooldown(t *testing.T) {
 	c.now("")
 	if n := sp.calls.Load(); n != 2 {
 		t.Errorf("冷卻過了要再問:%d 次", n)
+	}
+	if n := built["spotify"].Load(); n != 1 {
+		t.Errorf("限流是狀態:controller 不丟、不重建(重建要讀 keychain):建構 %d 次", n)
 	}
 }
 
@@ -715,6 +741,9 @@ func TestWebNowDropKeepsShownProvider(t *testing.T) {
 	c.now("")
 	sp.set(nowTrack(false, "s", 0, 200000), nil)
 	s.dropNow(false)
+	if got := s.staleNow(""); got.Provider != "spotify" || got.Track != nil {
+		t.Errorf("還沒有新的一輪時,stale 回應也要是上一輪顯示的平台(不是預設的 apple):%+v", got)
+	}
 	if m := c.now(""); m["provider"] != "spotify" {
 		t.Errorf("dropNow 之後還是留在上一輪顯示的 Spotify:%v", m)
 	}
@@ -769,6 +798,20 @@ func TestWebNowSettleKeepsCooldown(t *testing.T) {
 	if n := apple.calls.Load(); n != 4 {
 		t.Errorf("Apple 照常每輪都問:%d 次", n)
 	}
+
+	// 安定期「內」才讀到的限流也照 Retry-After 冷卻,不能因為在安定期就當場作廢。
+	sp2 := newNowFakeAs("spotify", nil)
+	sp2.set(nil, &provider.RateLimitError{Seconds: 120, Message: "rate limited"})
+	swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": sp2})
+	s2, c2 := startWeb(t)
+	s2.settleNow()
+	c2.now("")
+	c2.now("")
+	advance(webNowSettle + time.Second)
+	c2.now("")
+	if n := sp2.calls.Load(); n != 1 {
+		t.Errorf("安定期內讀到的限流也要冷卻:Spotify %d 次", n)
+	}
 }
 
 // TestWebNowSettleExpiresPreCommandCache:【fails-before-fix】命令之前讀到的「在播」在安定期結束後不可以還當新鮮的用——
@@ -788,9 +831,79 @@ func TestWebNowSettleExpiresPreCommandCache(t *testing.T) {
 	}
 }
 
-// TestWebNowDropDuringRoundDiscardsResult:【fails-before-fix】登出(dropNow)時正在飛的那一輪,結果不可以回到快照——
+// TestWebNowDropDuringRoundDiscardsResult:【fails-before-fix】登出(dropNow)時正在飛的那一輪,結果不送出、不回到快照、也不寫進快取——
 // 不然已登出帳號的那首歌會被當成新鮮的端出來,dropNow 的註解說要防的正是這個。
 func TestWebNowDropDuringRoundDiscardsResult(t *testing.T) {
+	setCLITestConfig(t)
+	origWait := webNowWait
+	webNowWait = 10 * time.Second // 這一輪要在 handler 還等著的時候收尾,才驗得到「不送出」
+	t.Cleanup(func() { webNowWait = origWait })
+	advance := fakeNowClock(t)
+	f := newNowFake()
+	swapNowByID(t, map[string]*nowFake{"spotify": f})
+	s, c := startWeb(t)
+	c.now("")
+	advance(11 * time.Second)
+	blk := make(chan struct{})
+	f.blockOn(blk)
+	got := make(chan map[string]any, 1)
+	go func() { got <- c.now("") }()
+	for deadline := time.Now().Add(5 * time.Second); f.calls.Load() < 2; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("這一輪沒有進到 State")
+		}
+	}
+	s.dropNow(true)
+	close(blk)
+	f.blockOn(nil)
+	if m := <-got; m["track"] != nil {
+		t.Errorf("dropNow 之前開始的那一輪不可以送出去:%v", m)
+	}
+	waitRound(t, s)
+	if snap := s.lastNow.Load(); snap != nil {
+		t.Errorf("也不可以寫回快照:%+v", snap.resp.Track)
+	}
+	c.now("")
+	if n := f.calls.Load(); n != 3 {
+		t.Errorf("也不可以寫進快取(下一輪要重問):State %d 次", n)
+	}
+}
+
+// TestWebNowDropDuringBuildDiscardsController:建 controller 的期間 dropNow 過(auth login 換了帳號),那個 controller 這一次照用、不留。
+func TestWebNowDropDuringBuildDiscardsController(t *testing.T) {
+	setCLITestConfig(t)
+	origWait := webNowWait
+	webNowWait = 100 * time.Millisecond
+	t.Cleanup(func() { webNowWait = origWait })
+	advance := fakeNowClock(t)
+	building := make(chan struct{})
+	release := make(chan struct{})
+	var built atomic.Int32
+	orig := newProvider
+	newProvider = func(context.Context, string) (provider.Provider, error) {
+		if built.Add(1) == 1 {
+			close(building)
+			<-release // = 等 <key>.token.lock
+		}
+		return newNowFake(), nil
+	}
+	t.Cleanup(func() { newProvider = orig })
+	s, c := startWeb(t)
+	go c.now("?provider=spotify")
+	<-building
+	s.dropNow(true)
+	close(release)
+	waitRound(t, s)
+	advance(11 * time.Second)
+	c.now("?provider=spotify")
+	if n := built.Load(); n != 2 {
+		t.Errorf("dropNow 之前開始建的 controller 不可以留下來:建構 %d 次", n)
+	}
+}
+
+// TestWebNowCommandDuringRoundNotCached:【fails-before-fix】問的期間有播放命令跑完(一輪卡在慢的請求上跨過了整個安定期),
+// 讀到的可能是命令之前的狀態——不快取,下一輪重問。
+func TestWebNowCommandDuringRoundNotCached(t *testing.T) {
 	setCLITestConfig(t)
 	origWait := webNowWait
 	webNowWait = 100 * time.Millisecond
@@ -803,18 +916,15 @@ func TestWebNowDropDuringRoundDiscardsResult(t *testing.T) {
 	advance(11 * time.Second)
 	blk := make(chan struct{})
 	f.blockOn(blk)
-	c.now("") // 這一輪卡在 State,handler 先回 stale
-	s.dropNow(true)
+	c.now("") // 這一輪卡在 State
+	s.settleNow()
+	advance(webNowSettle + time.Second) // 安定期過了才回來
 	close(blk)
 	f.blockOn(nil)
-	for deadline := time.Now().Add(5 * time.Second); !s.pollMu.TryLock(); time.Sleep(10 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("卡住的那一輪沒有收尾")
-		}
-	}
-	s.pollMu.Unlock()
-	if snap := s.lastNow.Load(); snap != nil {
-		t.Errorf("dropNow 之前開始的那一輪不可以寫回快照:%+v", snap.resp.Track)
+	waitRound(t, s)
+	c.now("")
+	if n := f.calls.Load(); n != 3 {
+		t.Errorf("跨過播放命令的那一輪不快取:State %d 次", n)
 	}
 }
 
@@ -867,5 +977,72 @@ func TestWebNowLogoutResetsShown(t *testing.T) {
 	s.dropNow(true) // = auth logout spotify 跑完
 	if m := c.now(""); m["provider"] != "apple" {
 		t.Errorf("登出之後面板回到預設平台:%v", m)
+	}
+}
+
+// TestWebNowSettledByPlaybackCommands:改變播放狀態的六個命令都要進安定期(搜尋頁的 play --id 也是)。
+func TestWebNowSettledByPlaybackCommands(t *testing.T) {
+	for _, p := range []string{"capy play", "capy pause", "capy next", "capy prev", "capy seek", "capy vol"} {
+		if !webNowSettledBy(p) {
+			t.Errorf("%s 要進安定期", p)
+		}
+	}
+	for _, p := range []string{"capy now", "capy search", "capy devices", "capy auth status"} {
+		if webNowSettledBy(p) {
+			t.Errorf("%s 不改播放狀態", p)
+		}
+	}
+}
+
+// backoffFake:State 真的走 provider.Backoff(跟 Spotify client 一樣),驗面板的輪詢有帶 WithoutWait。
+type backoffFake struct{ *nowFake }
+
+func (f backoffFake) State(ctx context.Context) (*provider.PlaybackState, error) {
+	f.calls.Add(1)
+	h := http.Header{}
+	h.Set("Retry-After", "30")
+	if err := provider.Backoff(ctx, &http.Response{StatusCode: http.StatusTooManyRequests, Header: h}, 0); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// TestWebNowPollDoesNotSleepOnRateLimit:【fails-before-fix】面板的輪詢遇到 429 不睡在 pollMu 裡(WithoutWait)——
+// 睡 30 秒 × 3 次的話,整條面板凍住,超過 STALE_DEAD_MS 還會被判定失聯。
+func TestWebNowPollDoesNotSleepOnRateLimit(t *testing.T) {
+	setCLITestConfig(t)
+	fakeNowClock(t)
+	var waited atomic.Int32
+	orig := provider.Wait
+	provider.Wait = func(context.Context, time.Duration) error { waited.Add(1); return nil }
+	t.Cleanup(func() { provider.Wait = orig })
+	f := backoffFake{newNowFake()}
+	origNP := newProvider
+	newProvider = func(context.Context, string) (provider.Provider, error) { return f, nil }
+	t.Cleanup(func() { newProvider = origNP })
+	_, c := startWeb(t)
+	m := c.now("?provider=spotify")
+	if n := waited.Load(); n != 0 {
+		t.Errorf("面板的輪詢不可以在 429 上睡:等了 %d 次", n)
+	}
+	if m["error"] == nil {
+		t.Errorf("限流要照實顯示:%v", m)
+	}
+}
+
+// TestWebNowPinnedByWebFlag:capy --web --provider X 釘住面板——前端只打不帶參數的 /api/now,這是使用者唯一的釘法。
+func TestWebNowPinnedByWebFlag(t *testing.T) {
+	setCLITestConfig(t)
+	fakeNowClock(t)
+	apple := newNowFakeAs("apple", nowTrack(false, "a", 0, 200000))
+	sp := newNowFakeAs("spotify", nowTrack(true, "s", 0, 200000))
+	swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": sp})
+	s, c := startWeb(t)
+	s.provFlag = "apple" // = runWeb 看到 --provider apple;在第一個請求之前設
+	if m := c.now(""); m["provider"] != "apple" {
+		t.Errorf("--web --provider apple 釘住面板:%v", m)
+	}
+	if n := sp.calls.Load(); n != 0 {
+		t.Errorf("釘住時不問別家:Spotify %d 次", n)
 	}
 }
