@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
 // TUI 跟著正在播的平台走(Q64):跟隨規則與節流是 web 播放面板的那一套(決策 51,nowTracker)。
@@ -130,6 +132,19 @@ func TestTUIExecSettlesAndInvalidates(t *testing.T) {
 	if m = pollOnce(t, m); m.pcErr == nil {
 		t.Error("登出之後要重建(testTracker 的建構一律失敗 = 沒登入),不可以繼續用舊的 controller")
 	}
+	// 再登入:建得起來了,「沒有播放遙控」要消失、按鍵要回來(以前這個狀態在啟動時就定死)。
+	stub := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "spotify" {
+			return f, nil
+		}
+		return stub(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = stub })
+	m = step(t, m, tuiExecMsg{args: []string{"auth", "login", "spotify"}}, false)
+	if m = pollOnce(t, m); m.pcErr != nil || strings.Contains(m.statusLine(99), "沒有播放遙控") {
+		t.Errorf("登入之後要恢復:pcErr=%v %q", m.pcErr, ansi.Strip(m.statusLine(99)))
+	}
 }
 
 // TestTUIStateTimesOut:osascript 或 HTTP 卡住時,這一輪要回錯(算一次失敗,連續幾次就停擺、按 r 重試),
@@ -204,5 +219,122 @@ func TestTUIRoundsAreSingleFlight(t *testing.T) {
 	<-second
 	if n := f.calls.Load(); n != 1 {
 		t.Errorf("第二輪要用第一輪剛寫的快取:State %d 次", n)
+	}
+}
+
+// followingApple:預設 Spotify 沒在播、Apple 在播,狀態列已經跟到 Apple。
+func followingApple(t *testing.T) (tuiModel, *watchFake, *watchFake) {
+	t.Helper()
+	sp := &watchFake{st: nowTrack(false, "昨天那首", 1000, 200000)}
+	ap := &watchFake{st: nowTrack(true, "Sugar", 30000, 235000)}
+	m := newTestTUI(t, sp)
+	m.trk.now["apple"] = ap
+	m = pollOnce(t, m)
+	if m.provID != "apple" {
+		t.Fatalf("前提:跟到 Apple:%q", m.provID)
+	}
+	return m, sp, ap
+}
+
+// TestTUITypedPlaybackCommandsFollowTheShownPlatform:【review】沒明指時,命令列打的 pause 也要送給狀態列上的那一家——
+// 不然按鍵停的是 Apple、打 /pause 停的卻是 Spotify,同一個畫面兩個平台。搜尋類(play <查詢>)照舊用預設平台,自己打了 --provider 不動。
+func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
+	got := recordExec(t)
+	m, _, _ := followingApple(t)
+	for _, line := range []string{"pause", "seek 1:00", "now", "play", "play 派對動物", "pause --provider spotify", "pl list"} {
+		m.typing = true
+		m.input.SetValue(line)
+		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
+	}
+	want := [][]string{
+		{"/bin/capy", "pause", "--provider", "apple"},
+		{"/bin/capy", "seek", "1:00", "--provider", "apple"},
+		{"/bin/capy", "now", "--provider", "apple"},
+		{"/bin/capy", "play", "--provider", "apple"},
+		{"/bin/capy", "play", "派對動物"},
+		{"/bin/capy", "pause", "--provider", "spotify"},
+		{"/bin/capy", "pl", "list"},
+	}
+	if !slices.EqualFunc(*got, want, slices.Equal[[]string]) {
+		t.Errorf("執行的參數:\n got %q\nwant %q", *got, want)
+	}
+}
+
+// TestTUISwitchDropsThePreviousPlatformsTrack:【review】換到一家正在出錯(或限流)的平台時,上一家的曲目不能留在狀態列上——
+// 出錯與限流的分支不動 st,留下來的話 ←→ 會拿 Apple 的進度去 seek Spotify。
+func TestTUISwitchDropsThePreviousPlatformsTrack(t *testing.T) {
+	recordPrintln(t)
+	m, _, _ := followingApple(t)
+	m = step(t, m, tuiStateMsg{provider: "spotify", err: errors.New("502 bad gateway"), gen: m.gen}, false)
+	if m.st != nil {
+		t.Errorf("Apple 的那首不能掛在 Spotify 名下:%+v", m.st)
+	}
+	if _, ok := m.seekTarget(true); ok {
+		t.Error("沒有基準點就不 seek")
+	}
+}
+
+// failingPause:Pause 送不出去(沒有作用中的裝置)。
+type failingPause struct{ *nowFake }
+
+func (failingPause) Pause(context.Context) error { return provider.ErrNoActiveDevice }
+
+// TestTUIFailedControlExpiresTheCache:【review】按鍵送不出去時,快取的狀態可能就是錯的(以為在播):下一輪要重問,
+// 不然十秒內再按空白鍵還是照舊送 Pause。
+func TestTUIFailedControlExpiresTheCache(t *testing.T) {
+	fakeNowClock(t)
+	recordPrintln(t)
+	f := newNowFake() // 在播:有效期最多 10 秒
+	m := newTestTUI(t, &watchFake{})
+	m.trk.now["spotify"] = failingPause{f}
+	m = pollOnce(t, m)
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeySpace}, true)
+	pollOnce(t, m)
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("送不出去之後要重問:State %d 次", n)
+	}
+}
+
+// TestTUIRetryAsksAgain:【review】停擺後按 r 要真的重問,不是端出快取裡的同一則錯誤(Spotify 出錯的結果留 15 秒)。
+func TestTUIRetryAsksAgain(t *testing.T) {
+	fakeNowClock(t)
+	recordPrintln(t)
+	f := newNowFake()
+	f.set(nil, errors.New("502 bad gateway"))
+	m := newTestTUI(t, &watchFake{})
+	m.trk.now["spotify"] = f
+	m = pollOnce(t, m)
+	m.stalled = true
+	step(t, m, tea.KeyPressMsg{Code: 'r'}, true)
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("按 r 要真的重問:State %d 次", n)
+	}
+}
+
+// TestTUIControlKeyStartsSettle:【review】按鍵送出後進安定期:閒置的結果留 15 秒,不讓快取過期的話按了播放,狀態列要等 15 秒才跟上。
+func TestTUIControlKeyStartsSettle(t *testing.T) {
+	fakeNowClock(t)
+	f := newNowFake()
+	f.set(nil, nil)
+	m := newTestTUI(t, &watchFake{})
+	m.st = nil
+	m.trk.now["spotify"] = f
+	m = pollOnce(t, m)
+	step(t, m, tea.KeyPressMsg{Code: tea.KeySpace}, true)
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("按了播放要馬上重問:State %d 次", n)
+	}
+}
+
+// TestTUIProviderFlagPins:【review】capy --provider spotify:只問 Spotify,Apple 在播也不換過去,也不記 shown。
+func TestTUIProviderFlagPins(t *testing.T) {
+	sp := &watchFake{st: nowTrack(false, "昨天那首", 1000, 200000)}
+	ap := newNowFakeAs("apple", nowTrack(true, "Sugar", 30000, 235000))
+	trk := testTracker(t, "spotify", sp)
+	trk.now["apple"] = ap
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "spotify", trk, watchPollSpotify)
+	m = pollOnce(t, m)
+	if m.provID != "spotify" || ap.calls.Load() != 0 || trk.shown.Load() != nil {
+		t.Errorf("釘住就只問 spotify:provID=%q apple State %d 次 shown=%v", m.provID, ap.calls.Load(), trk.shown.Load())
 	}
 }

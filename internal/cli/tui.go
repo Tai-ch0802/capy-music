@@ -47,7 +47,10 @@ const (
 	tuiSeekStep = 10000 // ←/→ 一次 10 秒
 	tuiVolStep  = 5     // +/- 一次 5
 	tuiMaxFails = 5
-	tuiMinWidth = 46 // 窄於此:橫幅換成一行
+	// 每次 State 的上限。輪詢帶 WithoutWait,不會睡在 429 退避裡(不像 now --watch 的 pollTimeout 要蓋住 MaxBackoff),
+	// 這只是卡住的上限:osascript 或 HTTP 卡住時狀態列最多停這麼久就回錯,不是一分鐘。
+	tuiStateTimeout = 10 * time.Second
+	tuiMinWidth     = 46 // 窄於此:橫幅換成一行
 	// 水豚常駐需要的終端機高度。常駐的畫面是 capyBlockRows + 4 = 15 行;View 比終端機高的話 inline renderer 的
 	// 游標上移會被頂端截斷、舊畫面留在上面(PR #45 修掉的「水豚頭重複三次」)。牠最多佔半個畫面,所以是兩倍。
 	tuiAliveMinHeight = 2 * (capyBlockRows + 4)
@@ -173,10 +176,11 @@ func (m tuiModel) control(f func(provider.PlaybackController, context.Context) e
 	poll := m.poll()
 	return func() tea.Msg {
 		pc, err := trk.playback(id)
-		if err == nil {
-			err = f(pc, ctx)
-		}
 		if err != nil {
+			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
+		}
+		if err := f(pc, ctx); err != nil {
+			trk.expireExcept("") // 送不出去(例如沒有作用中的裝置):快取的狀態可能就是錯的,下一輪重問,不要照它再按一次同樣的鍵
 			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 		}
 		trk.settleNow()
@@ -292,17 +296,26 @@ func (m *tuiModel) printErr(err error) tea.Cmd {
 var tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd { return tea.ExecProcess(c, fn) }
 
 // withProviderFlag:capy --provider apple 開的介面是 Apple,命令列跑的卻是 config 的 default_provider——
-// 同一個畫面兩個平台,而且 pause 停的不是上面在播的那首。只在使用者明指時附加,而且要先確認目標子命令
-// 真的吃這個 flag:auth / config / export / resolve 沒掛 --provider,多送一個會直接 unknown flag 退出。
+// 同一個畫面兩個平台,而且 pause 停的不是上面在播的那首。明指就一律附加;沒明指時,作用在「現在在播的那首」的命令
+// (pause / next / prev / seek / vol、不帶參數的 play、now)跟著狀態列上的平台走(決策 53),其他(search、
+// play <查詢>、pl …)照舊用 default_provider,使用者自己打了 --provider 就不動。要先確認目標子命令真的吃這個 flag:
+// auth / config / export / resolve 沒掛 --provider,多送一個會直接 unknown flag 退出。
 func (m tuiModel) withProviderFlag(args []string) []string {
-	if m.provFlag == "" {
-		return args
-	}
-	c, _, err := newRootCmd().Find(args)
+	c, rest, err := newRootCmd().Find(args)
 	if err != nil || c.Flags().Lookup(flagProvider) == nil {
 		return args
 	}
-	return append(slices.Clone(args), "--"+flagProvider, m.provFlag)
+	id := m.provFlag
+	if id == "" {
+		path := c.CommandPath()
+		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
+		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
+		if !follows || typed {
+			return args
+		}
+		id = m.provID
+	}
+	return append(slices.Clone(args), "--"+flagProvider, id)
 }
 
 // runArgs:把輸入的一行拿去重新執行 capy 自己。執行期間 bubbletea 讓出終端機,子命令拿到真的 TTY。
@@ -393,8 +406,8 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	if msg.dropped { // 已登出 / 換掉的帳號的結果:不顯示,鏈照走
 		return m, tick()
 	}
-	if msg.provider != "" {
-		m.provID = msg.provider
+	if msg.provider != "" && msg.provider != m.provID { // 換平台:上一家的曲目與失敗次數不能掛在這一家名下(限流、出錯的分支都不動 st)
+		m.provID, m.st, m.fails = msg.provider, nil, 0
 	}
 	var be nowBuildErr
 	m.pcErr = nil
@@ -599,6 +612,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		// lastErr 也清掉:明確的重試是新的一件事,重試又撞到同一則錯誤時要再印一次,
 		// 不然使用者按了鍵,十秒內畫面上完全沒有任何事情發生過的痕跡。
 		m.errShort, m.fails, m.lastErr = "", 0, ""
+		m.trk.expireExcept("") // 真的重問,不是端出快取裡的同一則錯誤(限流的冷卻照守)
 		return m, m.poll()
 	case "space":
 		m = m.newChain()
@@ -864,7 +878,7 @@ var runTUI = func(cmd *cobra.Command) error {
 	if provID == "" {
 		provID = loadDefaultProvider() // 第一輪回來之前先顯示預設平台
 	}
-	trk := &nowTracker{ctx: ctx, timeout: pollTimeout(watchPollSpotify)}
+	trk := &nowTracker{ctx: ctx, timeout: tuiStateTimeout}
 	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, trk, watchPollSpotify)
 	origStderr := provider.BackoffStderr // 429 退避的提示不能印進畫面
 	provider.BackoffStderr = io.Discard
