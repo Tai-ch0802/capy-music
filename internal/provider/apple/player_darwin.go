@@ -110,10 +110,17 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 		return err
 	}
 	// osascript 的錯(沒有自動化權限 -1743、Music.app 剛啟動、資料庫那份已下架)一律退回打開頁面,不當失敗;錯誤訊息是在地化的,不解析。
+	// 但每一步之前先看 ctx:終端機的 Ctrl-C 會連 osascript 一起殺掉,那不是「沒找到」——使用者喊停之後不再開始播放、不再打開 Music.app。
 	if pid := libraryMatch(tr); pid != "" {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if out, err := runOSA(playLibraryScript, pid); err == nil && out == "pid" {
 			return nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := runOpen("music://music.apple.com/" + url.PathEscape(p.storefront) + "/song/" + url.PathEscape(id)); err != nil {
 		return err

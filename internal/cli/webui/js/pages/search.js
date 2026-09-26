@@ -53,15 +53,16 @@ function resultTable(header, rows, prov, con, notice) {
     const td = el('td', 'row-actions');
     const id = rows[i][0];
     const title = rows[i][1] || id;
-    const play = () => {
+    const play = async () => {
       let said = '';
       // local 的 id 是 <device_id>/<檔名>,含空白是常態:不 quote 會被 splitArgs 切斷(review #62)。
-      con.run(`play --id ${quote(id)} --provider ${prov}`, {
-        onStdout: (s) => { said += s; },
-        // exit 0 卻不是 ▶ 開頭(player.go 印 ▶ 的那一行是另一端)= 只在 Music.app 打開、沒開始播:那句一定要讓人看到,
-        // 不然成功時的輸出只進看不到的主控台頁。頁面照抄命令的那句,不自己另寫一句。
-        onExit: (code) => { const line = said.trim(); if (code === 0 && line && !line.startsWith('▶')) notice(line); },
-      }, { label: apple ? t('webui.search.open_music_label', { title }) : t('webui.search.play_label', { title }) });
+      const [code] = await con.run(`play --id ${quote(id)} --provider ${prov}`, { onStdout: (s) => { said += s; } },
+        { label: apple ? t('webui.search.open_music_label', { title }) : t('webui.search.play_label', { title }) });
+      // exit 0 卻不是 ▶ 開頭(player.go 印 ▶ 的那一行是另一端)= 只在 Music.app 打開、沒開始播:那句一定要讓人看到,
+      // 不然成功時的輸出只進看不到的主控台頁。頁面照抄命令的那句,不自己另寫一句。等 run() 整個收尾才說(不放在 onExit):
+      // 收尾時會叫醒排隊的自動讀取,它一開跑就清掉 notice(review)。
+      const line = said.trim();
+      if (code === 0 && line && !line.startsWith('▶')) notice(line);
     };
     td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
     tr.appendChild(td);

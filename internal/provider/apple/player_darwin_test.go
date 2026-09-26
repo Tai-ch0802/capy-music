@@ -268,3 +268,69 @@ func TestStateDoesNotLaunchMusicWhenNotRunning(t *testing.T) {
 		t.Fatalf("stateScript 必須在進 tell 區塊前先檢查 is running(否則會啟動 Music.app):%q", stateScript)
 	}
 }
+
+// ── PR B 審查(2026-09-27)──
+
+// TestPlayTrackStopsWhenCancelled:【fails-before-fix】使用者喊停(終端機的 Ctrl-C 會連 osascript 一起殺掉)之後,不再開始播放、
+// 不再打開 Music.app,照實回取消——以前 osascript 被殺掉的錯被當成「沒找到」,照樣打開頁面、印「已打開」。
+func TestPlayTrackStopsWhenCancelled(t *testing.T) {
+	for _, during := range []string{libraryMatchScript, playLibraryScript} {
+		ctx, cancel := context.WithCancel(context.Background())
+		var scripts []string
+		var opened []string
+		origOSA, origOpen := runOSA, runOpen
+		runOSA = func(script string, _ ...string) (string, error) {
+			scripts = append(scripts, script)
+			if script == during {
+				cancel() // = Ctrl-C 落在這一步
+				return "", errors.New("signal: interrupt")
+			}
+			return "PID1\t227000\t1", nil
+		}
+		runOpen = func(u string) error { opened = append(opened, u); return nil }
+		err := songProvider(t).Play(ctx, provider.PlayRequest{TrackIDs: []string{"s1"}})
+		runOSA, runOpen = origOSA, origOpen
+		if !errors.Is(err, context.Canceled) || len(opened) != 0 {
+			t.Errorf("取消落在 %.20q:要回取消、不打開頁面:%v %v", during, err, opened)
+		}
+		if during == libraryMatchScript && len(scripts) != 1 {
+			t.Errorf("查資料庫時取消:不再開始播放:%d 個腳本", len(scripts))
+		}
+	}
+}
+
+// TestPlayTrackOpenFailureIsAnError:open 失敗就照實回錯,不能說「已在 Music.app 打開」。
+func TestPlayTrackOpenFailureIsAnError(t *testing.T) {
+	stubPlay(t, "", nil, "", nil)
+	runOpen = func(string) error { return errors.New("LSOpenURLsWithRole() failed with error -10814") }
+	err := songProvider(t).Play(context.Background(), provider.PlayRequest{TrackIDs: []string{"s1"}})
+	if err == nil || errors.Is(err, provider.ErrOpenedNotPlaying) {
+		t.Fatalf("open 失敗要回錯,不是「已打開」:%v", err)
+	}
+}
+
+// TestPlayScriptsGuards:兩支腳本裡刻意的寫法(真機量出來的),拿掉編譯照樣過、測試替身也看不出來,所以把結構釘住:
+// 確認播放只認 persistent ID(用歌名補判的話,同名的另一首還在播時會誤報 ▶);whose 只放文字條件(加上 media kind 會切成
+// 逐碼位比對,NFD 的歌名就對不到);專輯比對忽略變音符號。
+func TestPlayScriptsGuards(t *testing.T) {
+	if n := strings.Count(playLibraryScript, `return "pid"`); n != 1 {
+		t.Fatalf(`playLibraryScript 只能有一個 return "pid":%d`, n)
+	}
+	for _, line := range strings.Split(playLibraryScript, "\n") {
+		if strings.Contains(line, `return "pid"`) && !strings.Contains(line, "if persistent ID of current track is wantPID then") {
+			t.Errorf("確認播放只認 persistent ID:%q", line)
+		}
+	}
+	if !strings.Contains(playLibraryScript, "if player state is playing then") {
+		t.Error("要先確認播放中")
+	}
+	for _, line := range strings.Split(libraryMatchScript, "\n") {
+		if strings.Contains(line, "whose") && !strings.HasSuffix(strings.TrimSpace(line), "whose name is wantName and artist is wantArtist)") {
+			t.Errorf("whose 只放文字條件:%q", line)
+		}
+	}
+	i, j, k := strings.Index(libraryMatchScript, "ignoring diacriticals"), strings.Index(libraryMatchScript, "album of t is wantAlbum"), strings.Index(libraryMatchScript, "end ignoring")
+	if i < 0 || !(i < j && j < k) {
+		t.Error("專輯比對要在 ignoring diacriticals 裡")
+	}
+}

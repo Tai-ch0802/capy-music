@@ -1244,7 +1244,7 @@
   "webui.search.go": "搜尋",
   "webui.search.keywords": "關鍵字",
   "webui.search.label": "在 {platform} 找「{query}」",
-  "webui.search.lead": "在平台上找歌。Spotify 找到了可以直接播;Apple Music 只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。",
+  "webui.search.lead": "在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。",
   "webui.search.limit": "結果數",
   "webui.search.not_found": "在 {platform} 找不到「{query}」。換個關鍵字,或換一個平台試試。",
   "webui.search.open_music": "在 Music.app 開啟",

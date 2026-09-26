@@ -247,10 +247,14 @@ func TestPlayOpenedNotPlayingIsHonest(t *testing.T) {
 	if !strings.Contains(out, "「Radioactivity — Kraftwerk」") || !strings.Contains(out, "點兩下") || strings.Contains(out, "700050031") {
 		t.Errorf("--id 時要用平台查到的歌名,並說去 Music.app 點兩下:%q", out)
 	}
-	f.playErr = provider.ErrOpenedNotPlaying // 沒帶歌名:用 CLI 自己的 label
+	f.playErr = &provider.OpenedError{Label: "別的 — 名字"} // 查詢播放時 CLI 自己的 label 比較完整(artist: 會說只取第一首),不換
 	out, err = runCLI(t, "play", "track:派對動物")
 	if err != nil || strings.Contains(out, "▶") || !strings.Contains(out, "「派對動物 — 五月天」") {
 		t.Errorf("查詢播放的 label:%v %q", err, out)
+	}
+	f.playErr = &provider.OpenedError{} // 平台沒查到歌名:退回 id,不印「」
+	if out, err := runCLI(t, "play", "--id", "700050031"); err != nil || !strings.Contains(out, "「700050031」") {
+		t.Errorf("沒有歌名時用 id:%v %q", err, out)
 	}
 	if recent := cache.Load().Recent; len(recent) == 0 || recent[0].ID != "t1" {
 		t.Errorf("使用者選了這首:照樣記進最近播放:%+v", recent)

@@ -1317,7 +1317,7 @@
   "webui.search.go": "Search",
   "webui.search.keywords": "Keywords",
   "webui.search.label": "Searching {platform} for \"{query}\"",
-  "webui.search.lead": "Find songs on a platform. Spotify plays them right away; Apple Music plays songs already in your library and opens the rest in Music.app with the song highlighted.",
+  "webui.search.lead": "Find songs on a platform. Spotify plays them right away; on macOS, Apple Music plays songs already in your library and opens the rest in Music.app with the song highlighted.",
   "webui.search.limit": "Number of results",
   "webui.search.not_found": "Nothing found for \"{query}\" on {platform}. Try other keywords or another platform.",
   "webui.search.open_music": "Open in Music.app",

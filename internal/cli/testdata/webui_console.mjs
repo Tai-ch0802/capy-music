@@ -653,7 +653,7 @@ await scenario('8k', async () => {
   const zh = await paint();
   want(zh, 'zh-TW', ['我的清單', 'capy 替你保管的清單(正本在你的 Google Drive),以及各平台上現有的清單。', '重新整理', '平台上現有的清單', '平台', '本機曲庫', '列出來',
     'road trip(2 首)', '(本機沒有這首的資料)', '看 Spotify 上的內容', '還沒有清單。到「搬家」搬一個過來,或到「同步」把平台上的清單連起來。',
-    '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music 只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
+    '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
     '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
     '從平台更新', '推到平台', '雙向同步', '去除重複',
@@ -725,6 +725,27 @@ await scenario('8l', async () => {
   check(JSON.stringify(zh.calls) === JSON.stringify(plays), `送出的命令不變:${JSON.stringify(zh.calls)}`);
   check(zh.labels[0] === '在 Music.app 開啟「Radioactivity」', `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
   check(JSON.stringify(zh.after) === JSON.stringify([[honest], [honest], [honest]]), `只打開的那句要進 notice,▶ 與失敗不多說:${JSON.stringify(zh.after)}`);
+
+  // 收尾時叫醒的自動讀取(別頁第一次打開時排的 con.idle)一開跑就會清掉 notice:那句要等 run() 整個收尾之後才說(review)。
+  reset();
+  const [g, release] = gate();
+  script = {
+    'search k --provider apple --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [['700050031', 'Radioactivity']] }, done] },
+    'play --id 700050031 --provider apple': { gate: g, events: [{ type: 'stdout', text: honest + '\n' }, done] },
+    'auth status --json': { events: [done] },
+  };
+  const r2 = mk();
+  initSearch(r2, api, con, (s) => notices.push(s), { list: ['apple'], current: 'apple' });
+  r2.querySelector('input').value = 'k';
+  r2.querySelector('.btn--primary').click();
+  await new Promise((res) => con.idle(res));
+  r2.querySelector('.tbl-wrap').querySelectorAll('tbody tr')[0].querySelector('.btn--ghost').click();
+  await tick(5);
+  con.idle(() => con.run('auth status --json'));
+  release();
+  await tick(20);
+  await new Promise((res) => con.idle(res));
+  check(calls.includes('auth status --json') && notices.at(-1) === honest, `排隊的自動讀取不可以把那句清掉:${JSON.stringify(notices)} ${JSON.stringify(calls)}`);
 
   i18nFile = './i18n-en.json';
   try {
