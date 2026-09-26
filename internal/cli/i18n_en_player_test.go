@@ -80,9 +80,14 @@ func TestEnglishPlayLabels(t *testing.T) {
 	}
 	f.top = append(f.top, provider.Track{ProviderID: "h2"})
 	f.caps &^= provider.CapPlayQueue
-	if out, err := runCLI(t, "play", "artist:五月天"); err != nil || out != "▶ 五月天: Stubborn (Fake can't queue tracks, so only the first top track plays; queueing comes in P4)\n" {
+	if out, err := runCLI(t, "play", "artist:五月天"); err != nil || out != "▶ 五月天: Stubborn (Fake can't queue tracks, so capy only takes the first top track)\n" {
 		t.Errorf("不能排佇列:%q %v", out, err)
 	}
+	f.playErr = &provider.OpenedError{Label: "Radioactivity — Kraftwerk"}
+	if out, err := runCLI(t, "play", "--id", "700050031"); err != nil || out != "Opened \"Radioactivity — Kraftwerk\" in Music.app and highlighted it. capy can only start songs it finds in your Music library: double-click the highlighted song in Music.app to play it.\n" {
+		t.Errorf("只打開了:%q %v", out, err)
+	}
+	f.playErr = nil
 	f.top = nil
 	if _, err := runCLI(t, "play", "artist:五月天"); err == nil || err.Error() != "五月天 has no top tracks" {
 		t.Errorf("沒有熱門歌曲:%v", err)

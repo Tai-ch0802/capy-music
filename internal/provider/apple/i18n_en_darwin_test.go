@@ -5,7 +5,6 @@ package apple
 import (
 	"context"
 	"errors"
-	"net/http"
 	"testing"
 
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -18,19 +17,19 @@ func TestEnglishPlayerErrors(t *testing.T) {
 
 	orig := runOSA
 	t.Cleanup(func() { runOSA = orig })
-	runOSA = func(string) (string, error) { return "", errors.New("exit status 1") }
+	runOSA = func(string, ...string) (string, error) { return "", errors.New("exit status 1") }
 	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != "osascript failed (Music.app not installed, or automation not allowed?): exit status 1" {
 		t.Errorf("osascript 失敗:%v", err)
 	}
-	runOSA = func(string) (string, error) { return "playing\tx", nil }
+	runOSA = func(string, ...string) (string, error) { return "playing\tx", nil }
 	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != `unexpected osascript output: "playing\tx"` {
 		t.Errorf("格式非預期:%v", err)
 	}
-	runOSA = func(string) (string, error) { return "playing\ta\tb\tc\t1,5\t0", nil }
+	runOSA = func(string, ...string) (string, error) { return "playing\ta\tb\tc\t1,5\t0", nil }
 	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != `can't parse the numeric fields in osascript output: "playing\ta\tb\tc\t1,5\t0"` {
 		t.Errorf("數值欄位:%v", err)
 	}
-	runOSA = func(string) (string, error) { return "not running", nil }
+	runOSA = func(string, ...string) (string, error) { return "not running", nil }
 	if _, err := (&Provider{}).State(ctx); !errors.Is(err, provider.ErrPlayerNotRunning) || err.Error() != "Music.app is not running (capy play starts it): the player is not running" {
 		t.Errorf("未執行:%v", err)
 	}
@@ -42,12 +41,6 @@ func TestEnglishPlayerErrors(t *testing.T) {
 	}
 	if err := (&Provider{}).Play(ctx, provider.PlayRequest{TrackIDs: []string{"s1"}}); err == nil || err.Error() != "apple provider has no client" {
 		t.Errorf("沒有 client:%v", err)
-	}
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[{"id":"s1","attributes":{"name":"x"}}]}`))
-	})
-	if err := (&Provider{c: c, storefront: "tw"}).Play(ctx, provider.PlayRequest{TrackIDs: []string{"s1"}}); err == nil || err.Error() != "Apple returned no song URL (id=s1)" {
-		t.Errorf("沒有 URL:%v", err)
 	}
 	if len(*scripts) != 0 {
 		t.Errorf("出錯的路徑不得執行 AppleScript:%v", *scripts)

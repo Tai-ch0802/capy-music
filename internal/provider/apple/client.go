@@ -322,7 +322,7 @@ func (c *Client) ArtistTopSongs(ctx context.Context, storefront, id string) ([]p
 	return out, nil
 }
 
-// Song 取單曲(含 attributes.url,macOS 播放用;不自己拼 URL)。
+// Song 取單曲與它的 attributes.url(GetSong 只要曲目;macOS 播放自決策 52 起自己拼單曲網址,見 player_darwin.go)。
 func (c *Client) Song(ctx context.Context, storefront, id string) (provider.Track, string, error) {
 	var resp struct {
 		Data []songJSON `json:"data"`

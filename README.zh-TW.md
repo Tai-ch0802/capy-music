@@ -72,7 +72,7 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 3. 複製 `authorization`(`Bearer eyJ…`)與 `media-user-token` 兩個值
 4. 執行 `capy auth login apple`,依精靈貼上(非互動環境用 `CAPY_APPLE_DEVELOPER_TOKEN` / `CAPY_APPLE_USER_TOKEN` 環境變數並加 `--i-understand`)
 
-需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app);搜尋與播放清單在 macOS / Windows 皆可用。寫入播放清單(建清單、加歌、移除、換序、改名)只對你自己建的清單;加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你在 Apple Music 裡的設定——這是 Apple 的行為,capy 不另外加;2026-09-23 實測的帳號,清單裡本來就有很多歌不在資料庫,capy 加進清單的歌也沒有進資料庫。
+需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app),而且 capy 只能替你播資料庫裡有的歌:Music.app 的腳本介面播不了其他的歌。capy 會在你電腦上的 Music 資料庫裡找那一首(只讀不寫),剛好對到一首就直接播,並確認真的開始播了。其他的歌,`capy play`(以及 `capy --web` 搜尋頁的「**在 Music.app 開啟**」按鈕)會在 Music.app 打開那一首並標出來,請你在那裡對它點兩下;這時命令一樣回 exit 0,但不印 ▶。搜尋與播放清單在 macOS / Windows 皆可用。寫入播放清單(建清單、加歌、移除、換序、改名)只對你自己建的清單;加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你在 Apple Music 裡的設定——這是 Apple 的行為,capy 不另外加;2026-09-23 實測的帳號,清單裡本來就有很多歌不在資料庫,capy 加進清單的歌也沒有進資料庫。
 
 ## 本機曲庫(local,選用):M3U 清單 + library.json
 

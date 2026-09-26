@@ -207,7 +207,7 @@ p.JL68l7EhogEeXd  冬日暖調          -
           <tr>
             <th scope="row">播放遙控</th>
             <td class="yes">Connect</td>
-            <td class="part">只有 macOS</td>
+            <td class="part">只有 macOS;不在資料庫的歌只會在 Music.app 打開</td>
             <td class="no">不支援</td>
           </tr>
           <tr>
@@ -319,6 +319,10 @@ p.JL68l7EhogEeXd  冬日暖調          -
       <div class="note">
         <h3>Apple Music 也能寫了,但只寫你自己建的清單</h3>
         <p>加歌走 Apple 文件化的端點;移除、換序、改名走網頁播放器自己用的端點,Apple 沒有正式承諾,哪天改了就會壞。Apple 精選、喜好歌曲、已購買的音樂不能寫,capy 會擋下、零寫入;協作播放清單目前 capy 完全不寫(Apple 對它的整批取代回 500),同步時會跳過那一格並說明;先複製成一般清單再連結通常可以(未實測)。加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你在 Apple Music 裡的設定,這是 Apple 的行為。移除與換序是整批取代:清單順序一定照正本,Mac 版 Music app 顯示的「加入日期」會不會被重設還沒驗證。</p>
+      </div>
+      <div class="note">
+        <h3>Apple Music 只能替你播資料庫裡的歌</h3>
+        <p>Music app 的腳本介面只能播資料庫裡的曲目,所以你播 Apple Music 的歌時(<code>capy play</code>,或網頁介面的搜尋頁),capy 會先用歌名、歌手、時長在你電腦上的 Music 資料庫裡找,有好幾份時再比專輯。找到唯一一首就直接播,並確認真的開始播了;否則會在 Music app 打開那首歌並標出來,請你在那裡對它點兩下(按播放鍵會播回原本的那首):這時命令一樣回結束碼 0,但不會印 ▶;網頁搜尋頁上 Apple Music 那一列的按鈕叫「在 Music.app 開啟」。capy 不會為了能播而把歌加進你的資料庫。</p>
       </div>
       <div class="note">
         <h3>每個命令都能放進管線</h3>

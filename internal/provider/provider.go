@@ -55,7 +55,16 @@ var (
 	// ErrVolumeNotAllowed:這個裝置不給遠端調音量(手機、部分喇叭)。是裝置的限制,不是授權問題,
 	// 也不是「平台不支援」——同一個平台換一台裝置就可以。
 	ErrVolumeNotAllowed = i18n.Errorf("provider.err.volume_not_allowed")
+	// ErrOpenedNotPlaying:Play 只把曲目在播放器裡打開(標出來),沒有開始播——每次呼叫各自回報的結果,不是失敗,
+	// 所以不是能力位(決策 52:Apple 資料庫裡有的歌會真的播,其他的只能打開)。CLI 看到它就照實說、不印 ▶、exit 0。
+	ErrOpenedNotPlaying = i18n.Errorf("provider.err.opened_not_playing")
 )
+
+// OpenedError:同 ErrOpenedNotPlaying(errors.Is 成立),多帶平台查到的「歌名 — 歌手」——play --id 時 CLI 手上只有 id。
+type OpenedError struct{ Label string }
+
+func (e *OpenedError) Error() string        { return ErrOpenedNotPlaying.Error() }
+func (e *OpenedError) Is(target error) bool { return target == ErrOpenedNotPlaying }
 
 type Track struct {
 	ProviderID string
