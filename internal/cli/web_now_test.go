@@ -861,7 +861,7 @@ func TestWebNowDropDuringRoundDiscardsResult(t *testing.T) {
 	}
 	waitRound(t, s)
 	if snap := s.lastNow.Load(); snap != nil {
-		t.Errorf("也不可以寫回快照:%+v", snap.resp.Track)
+		t.Errorf("也不可以寫回快照:%+v", snap.res.st)
 	}
 	c.now("")
 	if n := f.calls.Load(); n != 3 {
