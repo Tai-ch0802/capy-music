@@ -410,7 +410,7 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		m.st, m.errShort, m.fails, m.lastErr = nil, i18n.T("tui.status.player_not_running"), 0, msg.err.Error()
 		return m, tick()
 	case errors.As(msg.err, &rl): // 照常每 2 秒問:冷卻期內 tracker 只端出快取,不會真的打(Retry-After 由它守)
-		m.errShort, m.fails, m.lastErr = i18n.T("tui.status.rate_limited"), 0, msg.err.Error()
+		m.errShort, m.fails, m.lastErr = i18n.T("tui.status.rate_limited", "time", msg.retryAt.Local().Format("15:04:05")), 0, msg.err.Error()
 		return m, tick()
 	}
 	if msg.err != nil {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -158,8 +159,9 @@ func TestEnglishTUIStatusLine(t *testing.T) {
 			return step(t, m, tuiStateMsg{err: boom, gen: m.gen}, false)
 		}, "  Can't read playback state (r to retry)"},
 		{"rate limited", func(m tuiModel) tuiModel {
-			return step(t, m, tuiStateMsg{st: m.st, err: &provider.RateLimitError{Seconds: 30}, gen: m.gen}, false)
-		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · Rate limited; waiting to retry"},
+			at := time.Date(2026, 9, 27, 14, 5, 0, 0, time.Local)
+			return step(t, m, tuiStateMsg{st: m.st, err: &provider.RateLimitError{Seconds: 30}, retryAt: at, gen: m.gen}, false)
+		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · Rate limited; retrying at 14:05:00"},
 		{"control failed", func(m tuiModel) tuiModel {
 			return step(t, m, tuiStateMsg{err: boom, fromCtl: true, gen: m.gen}, false)
 		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · That action failed (see above)"},

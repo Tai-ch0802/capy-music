@@ -258,9 +258,12 @@ func TestEnglishWatchView(t *testing.T) {
 		t.Errorf("無內容與錯誤列:\n%s", v)
 	}
 
+	before := time.Now()
 	next, _ := m.Update(watchStateMsg{err: &provider.RateLimitError{Seconds: 90, Message: "retry in 90 s"}})
-	if v := ansi.Strip(next.(watchModel).View().Content); !strings.Contains(v, "⚠ rate limited, waiting… (retry in 90 s)\n") {
-		t.Errorf("限流:\n%s", v)
+	v = ansi.Strip(next.(watchModel).View().Content)
+	if !strings.Contains(v, "⚠ rate limited; retrying at "+before.Add(90*time.Second).Format("15:04:05")+" (retry in 90 s)\n") &&
+		!strings.Contains(v, "⚠ rate limited; retrying at "+time.Now().Add(90*time.Second).Format("15:04:05")+" (retry in 90 s)\n") {
+		t.Errorf("限流要說幾點再試:\n%s", v)
 	}
 
 	boom := errors.New("boom")

@@ -96,8 +96,10 @@ func TestTUIRateLimitCooldownIsTheTrackers(t *testing.T) {
 	if n := f.calls.Load(); n != 1 {
 		t.Errorf("冷卻期內不可以再打:%d 次", n)
 	}
-	if m.stalled || m.fails != 0 || !strings.Contains(m.statusLine(99), "限流") {
-		t.Errorf("限流是狀態不是失敗:fails=%d stalled=%v %q", m.fails, m.stalled, ansi.Strip(m.statusLine(99)))
+	// 幾點再試是 tracker 冷卻的終點(第一次被限流的時間 + 120 秒),快取端出來的那一輪也一樣——不是 TUI 自己從現在往後算。
+	want := "限流中," + time.Date(2026, 9, 24, 12, 2, 0, 0, time.UTC).Local().Format("15:04:05") + " 再試"
+	if m.stalled || m.fails != 0 || !strings.Contains(ansi.Strip(m.statusLine(99)), want) {
+		t.Errorf("限流是狀態不是失敗,並說幾點再試(%s):fails=%d stalled=%v %q", want, m.fails, m.stalled, ansi.Strip(m.statusLine(99)))
 	}
 	advance(61 * time.Second)
 	pollOnce(t, m)
