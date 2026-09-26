@@ -893,7 +893,6 @@
   "tui.status.rate_limited": "限流中,等待重試",
   "tui.status.stalled": "已停止輪詢(r 重試)",
   "tui.status.state_unavailable": "讀不到播放狀態(r 重試)",
-  "tui.status.unsupported": "這個平台不支援",
   "tui.status.volume": "音量 {pct}",
   "ui.err.interrupted": "已中斷",
   "ui.pager.status": "第 {top}–{bottom} 列 / {rows} · 欄 {col_from}–{col_to} / {cols} · ←→ 橫向 ↑↓ 上下 g/G 頭尾 q 離開",

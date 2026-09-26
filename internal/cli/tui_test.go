@@ -18,11 +18,24 @@ import (
 
 func newTestTUI(t *testing.T, f *watchFake) tuiModel {
 	t.Helper()
-	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", f, nil, watchPollSpotify)
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", testTracker(t, "spotify", f), watchPollSpotify)
 	m.width = 100
 	m.st = f.st     // 正式路徑是第一次 poll 帶進來的;測試直接給,免得每個案例都要先跑一次輪詢
 	m.frozen = true // 開場只有前三秒左右;要驗開場的案例自己把它關掉
 	return m
+}
+
+// testTracker:id 的 controller 已經建好(= pc);其他平台一律建不起來(= 沒登入),config 是空的暫存目錄(預設 spotify)——
+// 沒釘住的那一輪會去問別家,不能碰到真的 Music.app、keychain 或使用者的 config。
+func testTracker(t *testing.T, id string, pc provider.PlaybackController) *nowTracker {
+	t.Helper()
+	setCLITestConfig(t)
+	orig := newProvider
+	newProvider = func(_ context.Context, id string) (provider.Provider, error) {
+		return nil, errors.New(id + ":沒登入")
+	}
+	t.Cleanup(func() { newProvider = orig })
+	return &nowTracker{ctx: context.Background(), now: map[string]provider.PlaybackController{id: pc}}
 }
 
 // recordPrintln:把推進捲動區的行記下來(tea.Println 產生的是 bubbletea 的私有型別,認不出來)。
@@ -345,7 +358,7 @@ func TestTUIPassesProviderFlagToSubcommands(t *testing.T) {
 	}
 	t.Cleanup(func() { tuiExecProcess = orig })
 
-	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", &watchFake{}, nil, watchPollApple)
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", testTracker(t, "apple", &watchFake{}), watchPollApple)
 	m.width = 100
 	run := func(line string) {
 		m.typing = true
@@ -437,8 +450,9 @@ func TestTUINarrowSkipsTheIntro(t *testing.T) {
 
 // 沒有播放遙控(沒登入、平台不支援)不該讓介面開不起來:狀態區說明原因,命令列照樣可用。
 func TestTUIWithoutPlaybackStillUsable(t *testing.T) {
-	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "local", "", nil, provider.ErrNotSupported, watchPollSpotify)
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "local", "", testTracker(t, "spotify", &watchFake{}), watchPollSpotify)
 	m.width = 100
+	m.pcErr = provider.ErrNotSupported
 	m.frozen = true
 	if got := m.View().Content; !strings.Contains(got, "沒有播放遙控") || !strings.Contains(got, "/ 命令") {
 		t.Errorf("要說明原因並保留命令列:%q", got)

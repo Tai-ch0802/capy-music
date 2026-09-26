@@ -958,7 +958,6 @@
   "tui.status.rate_limited": "Rate limited; waiting to retry",
   "tui.status.stalled": "Polling stopped (r to retry)",
   "tui.status.state_unavailable": "Can't read playback state (r to retry)",
-  "tui.status.unsupported": "not supported by this platform",
   "tui.status.volume": "volume {pct}",
   "ui.err.interrupted": "interrupted",
   "ui.pager.status": "rows {top}–{bottom}/{rows} · cols {col_from}–{col_to}/{cols} · ←→ ↑↓ scroll g/G top/end q quit",

@@ -60,12 +60,19 @@ type (
 	// 為了讓畫面立刻跟上會另外起一次讀取。沒有世代編號的話那次讀取會長出第二條鏈,而舊鏈沒人取消——
 	// 方向鍵會自動重複,按住兩秒就是三十幾條鏈同時打 /me/player,穩定觸發 429(PR #41 review)。
 	// 控制鍵讓 gen 前進,舊鏈的 tick 到期時發現世代不符就停下來。
-	tuiPollMsg  struct{ gen int }
+	tuiPollMsg struct{ gen int }
+	// provider / retryAt / cached 來自 nowTracker:provider 是這一輪顯示的平台(跟隨規則,決策 51;空 = 不換),
+	// retryAt 是限流冷卻結束的時間,cached = 這份是快取、不是這一次真的問到的(不計入 fails)。
+	// dropped:問的期間 dropNow 過(命令列跑了 auth / config set),這一輪作廢。
 	tuiStateMsg struct {
-		st      *provider.PlaybackState
-		err     error
-		fromCtl bool // 控制指令的錯:顯示但不計入 fails(那個預算是給「連不上」用的)
-		gen     int
+		st       *provider.PlaybackState
+		err      error
+		fromCtl  bool // 控制指令的錯:顯示但不計入 fails(那個預算是給「連不上」用的)
+		gen      int
+		provider string
+		retryAt  time.Time
+		cached   bool
+		dropped  bool
 	}
 	tuiExecMsg struct {
 		args []string
@@ -77,10 +84,10 @@ type tuiModel struct {
 	ctx       context.Context
 	theme     ui.Theme
 	exe       string // 重新執行自己用;空 = 取不到,命令列停用
-	provID    string
-	provFlag  string // 使用者在 capy --provider X 明指的平台;命令列要把它一起帶給子命令
-	pc        provider.PlaybackController
-	pcErr     error // 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
+	provID    string // 狀態列顯示的平台:明指就是它,否則跟著正在播的那一家走(決策 51;Q64)。控制鍵送給它
+	provFlag  string // 使用者在 capy --provider X 明指的平台:釘住狀態列,命令列也要把它一起帶給子命令
+	trk       *nowTracker
+	pcErr     error // provID 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
 	interval  time.Duration
 	width     int
 	height    int  // 0 = 還沒收到 WindowSizeMsg:當作不夠高(不常駐),等知道了再說
@@ -105,7 +112,7 @@ type tuiModel struct {
 	histDraft string   // 開始翻之前打到一半的那行,翻回最新時要拿回來(shell 的行為)
 }
 
-func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, pc provider.PlaybackController, pcErr error, interval time.Duration) tuiModel {
+func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, trk *nowTracker, interval time.Duration) tuiModel {
 	in := textinput.New()
 	// 提示符刻意用 ASCII:textinput 會把整行填滿到它自己算的 w-1,而 › 是 East Asian Ambiguous,
 	// 在 CJK 終端機多佔一欄 = 剛好寫滿最後一欄 = 多換一行,底部就變五行(設計文件 §1 的第四個問題)。
@@ -121,7 +128,7 @@ func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag stri
 	st.Cursor.Color = theme.Accent
 	in.SetStyles(st)
 	return tuiModel{
-		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, pc: pc, pcErr: pcErr,
+		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, trk: trk,
 		interval: interval, width: 80, input: in, motion: os.Getenv("CAPY_MOTION") != "never",
 	}
 }
@@ -144,32 +151,52 @@ func (m tuiModel) pollTickAfter(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
 
+// poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
+// 不是由這裡每 2 秒一次決定——限流時也照常每 2 秒問,冷卻期內 tracker 只端出快取。
 func (m tuiModel) poll() tea.Cmd {
-	ctx, pc, interval, gen := m.ctx, m.pc, m.interval, m.gen
-	if pc == nil {
-		return nil
-	}
+	trk, pin, gen := m.trk, m.provFlag, m.gen
 	return func() tea.Msg {
-		c, cancel := context.WithTimeout(ctx, pollTimeout(interval))
-		defer cancel()
-		st, err := pc.State(c)
-		return tuiStateMsg{st: st, err: err, gen: gen}
+		g := trk.nowGen.Load()
+		res := trk.pollRound(pin)
+		if !trk.setNow(res, pin == "", g) {
+			return tuiStateMsg{gen: gen, dropped: true}
+		}
+		return tuiStateMsg{provider: res.provider, st: res.st, err: res.err, retryAt: res.retryAt, cached: !res.fresh, gen: gen}
 	}
 }
 
-// control:送控制指令後立刻重新輪詢,畫面才會跟上。呼叫端要先把 gen 推進(newChain),
-// 這次讀取才會取代舊鏈而不是疊上去。
-func (m tuiModel) control(f func(context.Context) error) tea.Cmd {
-	ctx, gen := m.ctx, m.gen
+// control:把控制指令送給狀態列上的那個平台(applyState 記下的 provID,不是按鍵當下才去問 tracker——
+// 那時 tracker 可能已經換到畫面還沒顯示的另一家),送完進安定期、立刻重新輪詢,畫面才會跟上。
+// 呼叫端要先把 gen 推進(newChain),這次讀取才會取代舊鏈而不是疊上去。
+func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error) tea.Cmd {
+	ctx, gen, trk, id := m.ctx, m.gen, m.trk, m.provID
 	poll := m.poll()
 	return func() tea.Msg {
-		if err := f(ctx); err != nil {
+		pc, err := trk.playback(id)
+		if err == nil {
+			err = f(pc, ctx)
+		}
+		if err != nil {
 			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 		}
-		if poll == nil {
-			return nil
-		}
+		trk.settleNow()
 		return poll()
+	}
+}
+
+// afterExec:命令列跑完的子命令換了帳號、預設平台或播放狀態——收尾跟 web 的 /api/run 同一套(決策 51)。
+// 不然 play 之後狀態列要等 Spotify 閒置的有效期(15 秒)過了才跟上,auth login 之後要等一分鐘。
+func (m tuiModel) afterExec(args []string) {
+	c, _, err := newRootCmd().Find(args)
+	if err != nil {
+		return
+	}
+	path := c.CommandPath()
+	if webNowInvalidatedBy(path) {
+		m.trk.dropNow(webNowResetsShown(path, args))
+	}
+	if webNowSettledBy(path) {
+		m.trk.settleNow()
 	}
 }
 
@@ -327,6 +354,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 不重排 tick:tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer(各自的 goroutine)。
 		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
 		m.running = false // 底部區恢復四行:從游標所在的那行(子命令輸出的下一行)往下畫
+		m.afterExec(msg.args)
 		return m, m.execResult(msg)
 	case tea.KeyPressMsg:
 		// 命令清單第一次按鍵才建。放進 newTUIModel 會形成初始化循環:tuiCommands → newRootCmd →
@@ -363,6 +391,17 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
 		return m, nil
 	}
+	if msg.dropped { // 已登出 / 換掉的帳號的結果:不顯示,鏈照走
+		return m, tick()
+	}
+	if msg.provider != "" {
+		m.provID = msg.provider
+	}
+	var be nowBuildErr
+	if m.pcErr = nil; errors.As(msg.err, &be) { // 沒登入、平台不支援:不是連不上,不計 fails、不進捲動區,狀態列說原因
+		m.st, m.pcErr, m.errShort, m.fails = nil, be.error, "", 0
+		return m, tick()
+	}
 	// 這兩條是狀態不是失敗,不進捲動區(Music.app 沒開、被限流都會持續好一陣子),但狀態列要說。
 	// lastErr 仍然記帳:換過狀態再換回同一則錯誤,是新的一件事,要能再印一次。
 	var rl *provider.RateLimitError
@@ -370,12 +409,14 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	case errors.Is(msg.err, provider.ErrPlayerNotRunning):
 		m.st, m.errShort, m.fails, m.lastErr = nil, i18n.T("tui.status.player_not_running"), 0, msg.err.Error()
 		return m, tick()
-	case errors.As(msg.err, &rl): // 下一次照 Retry-After 等(rateLimitDelay),不是照常每 2 秒再打
+	case errors.As(msg.err, &rl): // 照常每 2 秒問:冷卻期內 tracker 只端出快取,不會真的打(Retry-After 由它守)
 		m.errShort, m.fails, m.lastErr = i18n.T("tui.status.rate_limited"), 0, msg.err.Error()
-		return m, tickAfter(rateLimitDelay(m.interval, rl))
+		return m, tick()
 	}
 	if msg.err != nil {
-		m.fails++
+		if !msg.cached { // 快取裡的同一則錯誤不重複算:Spotify 出錯的結果留 15 秒,每 2 秒算一次的話不到十秒就停擺
+			m.fails++
+		}
 		m.errShort = i18n.T("tui.status.state_unavailable")
 		// 整段錯誤推進捲動區(第一次、或內容變了才印),狀態列只留短版:
 		// 前一版把整段留在畫面上,osascript 那種長訊息會一直佔著看不到別的。
@@ -549,7 +590,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
 		return m, m.printBlock(tuiKeymap(), m.theme.Mutedly)
 	}
-	if m.pc == nil {
+	if m.pcErr != nil {
 		return m, nil
 	}
 	switch msg.String() {
@@ -562,29 +603,31 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case "space":
 		m = m.newChain()
 		if m.st != nil && m.st.Playing {
-			return m, m.control(m.pc.Pause)
+			return m, m.control(provider.PlaybackController.Pause)
 		}
-		return m, m.control(func(ctx context.Context) error { return m.pc.Play(ctx, provider.PlayRequest{}) })
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+			return pc.Play(ctx, provider.PlayRequest{})
+		})
 	case "n":
 		m = m.newChain()
-		return m, m.control(m.pc.Next)
+		return m, m.control(provider.PlaybackController.Next)
 	case "p":
 		m = m.newChain()
-		return m, m.control(m.pc.Prev)
+		return m, m.control(provider.PlaybackController.Prev)
 	case "left", "right":
 		pos, ok := m.seekTarget(msg.String() == "right")
 		if !ok {
 			return m, nil
 		}
 		m = m.newChain() // 不印提示:下一次輪詢就會把新位置寫進狀態列,那才是真的發生了
-		return m, m.control(func(ctx context.Context) error { return m.pc.Seek(ctx, pos) })
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.Seek(ctx, pos) })
 	case "+", "=", "-":
 		pct, ok := m.volTarget(msg.String() != "-")
 		if !ok {
 			return m, nil
 		}
 		m = m.newChain() // 同上:狀態列的「音量 N」會跟著更新
-		return m, m.control(func(ctx context.Context) error { return m.pc.SetVolume(ctx, pct) })
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.SetVolume(ctx, pct) })
 	}
 	return m, nil
 }
@@ -738,8 +781,8 @@ func (m tuiModel) intro() string {
 // 短版要能接在曲目後面:限流時上一首歌還在播,只換掉整行的話畫面看起來一切正常,實際上正在被限流。
 func (m tuiModel) statusLine(w int) string {
 	t := m.theme
-	if m.pc == nil {
-		return tuiJoin(w, tuiSeg{"  " + i18n.T("tui.status.no_playback", "reason", errText(m.pcErr, i18n.T("tui.status.unsupported"))), t.Mutedly})
+	if m.pcErr != nil {
+		return tuiJoin(w, tuiSeg{"  " + i18n.T("tui.status.no_playback", "reason", m.pcErr.Error()), t.Mutedly})
 	}
 	short := m.errShort
 	if m.stalled {
@@ -796,20 +839,13 @@ func (m tuiModel) hints() string {
 	if m.typing {
 		return i18n.T("tui.hint.typing")
 	}
-	if m.pc == nil {
+	if m.pcErr != nil {
 		return i18n.T("tui.hint.no_playback")
 	}
 	if m.stalled {
 		return i18n.T("tui.hint.stalled")
 	}
 	return i18n.T("tui.hint.playing")
-}
-
-func errText(err error, fallback string) string {
-	if err == nil {
-		return fallback
-	}
-	return err.Error()
 }
 
 // runTUI:互動式介面的進入點。取不到 provider 或播放遙控都不致命——介面照開,使用者可以在命令列
@@ -820,27 +856,16 @@ var runTUI = func(cmd *cobra.Command) error {
 	if err != nil {
 		exe = "" // 命令列停用,其餘照常
 	}
-	provID, pcErr := "", error(nil)
-	var pc provider.PlaybackController
-	interval := watchPollSpotify
-	if p, err := getProvider(cmd); err != nil {
-		pcErr = err
-	} else {
-		provID = p.ID()
-		if p.ID() == "apple" {
-			interval = watchPollApple
-		}
-		if c, err := asPlayback(p); err != nil {
-			pcErr = err
-		} else {
-			pc = c
-		}
-	}
 	provFlag := ""
 	if cmd.Flags().Changed(flagProvider) {
 		provFlag, _ = cmd.Flags().GetString(flagProvider)
 	}
-	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, pc, pcErr, interval)
+	provID := provFlag
+	if provID == "" {
+		provID = loadDefaultProvider() // 第一輪回來之前先顯示預設平台
+	}
+	trk := &nowTracker{ctx: ctx, timeout: pollTimeout(watchPollSpotify)}
+	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, trk, watchPollSpotify)
 	origStderr := provider.BackoffStderr // 429 退避的提示不能印進畫面
 	provider.BackoffStderr = io.Discard
 	defer func() { provider.BackoffStderr = origStderr }()

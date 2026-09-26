@@ -69,6 +69,7 @@ func (e nowBuildErr) Unwrap() error { return e.error }
 // pollRound / consult 同時只能有一個在跑(web 用 pollMu 單飛,TUI 只有一條輪詢鏈)。
 type nowTracker struct {
 	ctx         context.Context
+	timeout     time.Duration // 每次 State 的上限;0 = 不設(web:handler 自己有 webNowWait,卡住的那一輪由 staleNow 承擔)
 	nowMu       sync.Mutex
 	now         map[string]provider.PlaybackController
 	nowCache    map[string]nowEntry
@@ -214,7 +215,13 @@ func (t *nowTracker) pollNow(id string) (*provider.PlaybackState, error) {
 	if err != nil {
 		return nil, nowBuildErr{err}
 	}
-	st, err := pc.State(provider.WithoutWait(t.ctx))
+	ctx := provider.WithoutWait(t.ctx)
+	if t.timeout > 0 { // TUI:osascript 或 HTTP 卡住時這一輪要回錯(fails → 停擺、按 r 重試),不是讓狀態列永遠停在上一首
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.timeout)
+		defer cancel()
+	}
+	st, err := pc.State(ctx)
 	if err != nil {
 		if errors.Is(err, provider.ErrAuthExpired) {
 			t.nowMu.Lock()
