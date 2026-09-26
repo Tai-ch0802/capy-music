@@ -247,17 +247,19 @@ func TestPlayOpenedNotPlayingIsHonest(t *testing.T) {
 	if !strings.Contains(out, "「Radioactivity — Kraftwerk」") || !strings.Contains(out, "點兩下") || strings.Contains(out, "700050031") {
 		t.Errorf("--id 時要用平台查到的歌名,並說去 Music.app 點兩下:%q", out)
 	}
-	f.playErr = &provider.OpenedError{Label: "別的 — 名字"} // 查詢播放時 CLI 自己的 label 比較完整(artist: 會說只取第一首),不換
-	out, err = runCLI(t, "play", "track:派對動物")
-	if err != nil || strings.Contains(out, "▶") || !strings.Contains(out, "「派對動物 — 五月天」") {
-		t.Errorf("查詢播放的 label:%v %q", err, out)
+	f.caps &^= provider.CapPlayQueue // = Apple:artist: 的 label 是「藝人:歌名(只取第一首…)」整句
+	f.top = []provider.Track{{ProviderID: "h1", Title: "知足"}, {ProviderID: "h2", Title: "乾杯"}}
+	f.playErr = &provider.OpenedError{Label: "知足 — 五月天"}
+	out, err = runCLI(t, "play", "artist:五月天")
+	if err != nil || strings.Contains(out, "▶") || !strings.Contains(out, "「知足 — 五月天」") || strings.Contains(out, "只取第一首") {
+		t.Errorf("artist: 也用平台查到的歌名,不要括號套括號(#96 review):%v %q", err, out)
 	}
 	f.playErr = &provider.OpenedError{} // 平台沒查到歌名:退回 id,不印「」
 	if out, err := runCLI(t, "play", "--id", "700050031"); err != nil || !strings.Contains(out, "「700050031」") {
 		t.Errorf("沒有歌名時用 id:%v %q", err, out)
 	}
-	if recent := cache.Load().Recent; len(recent) == 0 || recent[0].ID != "t1" {
-		t.Errorf("使用者選了這首:照樣記進最近播放:%+v", recent)
+	if recent := cache.Load().Recent; len(recent) == 0 || recent[0].ID != "a1" {
+		t.Errorf("使用者選了這個藝人:照樣記進最近播放:%+v", recent)
 	}
 	f.playErr = nil
 	if out, err := runCLI(t, "play", "--id", "t1"); err != nil || !strings.HasPrefix(out, "▶ ") {

@@ -143,9 +143,11 @@ func newPlayCmd() *cobra.Command {
 				rememberRecent(p.ID(), *chosen)
 			}
 			if opened { // 照實說、不印 ▶、exit 0:web 搜尋頁看「不以 ▶ 開頭」把這句顯示出來(search.js)
+				// 平台查到的「歌名 — 歌手」優先:--id 時 label 只是 id;artist: 的 label 是「藝人:歌名(只取第一首…)」整句,
+				// 包進這句話會括號套括號,而且沒開始播,「只取第一首」在這裡也沒意義(#96 review)。
 				var oe *provider.OpenedError
-				if id != "" && errors.As(playErr, &oe) && oe.Label != "" {
-					label = oe.Label // --id 時 label 只是 id:換成平台查到的歌名
+				if errors.As(playErr, &oe) && oe.Label != "" {
+					label = oe.Label
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("play.opened_not_playing", "label", label))
 				return nil
