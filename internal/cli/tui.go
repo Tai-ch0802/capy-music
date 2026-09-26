@@ -144,11 +144,9 @@ func (m tuiModel) frameTick() tea.Cmd {
 	return tea.Tick(tuiFrameInterval, func(t time.Time) tea.Msg { return tuiFrameMsg(t) })
 }
 
-func (m tuiModel) pollTick() tea.Cmd { return m.pollTickAfter(m.interval) }
-
-func (m tuiModel) pollTickAfter(d time.Duration) tea.Cmd {
+func (m tuiModel) pollTick() tea.Cmd {
 	gen := m.gen
-	return tea.Tick(d, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
+	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
 
 // poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
@@ -156,6 +154,8 @@ func (m tuiModel) pollTickAfter(d time.Duration) tea.Cmd {
 func (m tuiModel) poll() tea.Cmd {
 	trk, pin, gen := m.trk, m.provFlag, m.gen
 	return func() tea.Msg {
+		trk.pollMu.Lock()
+		defer trk.pollMu.Unlock()
 		g := trk.nowGen.Load()
 		res := trk.pollRound(pin)
 		if !trk.setNow(res, pin == "", g) {
@@ -375,13 +375,12 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	// (鏈愈多愈容易 429,愈常走那條路徑,鏈又愈多)。停擺中同理:一則遲到的訊息不該把輪詢默默接回去,
 	// 畫面卻還在叫使用者按 r(PR #42 review)。
 	stale := msg.gen != m.gen
-	tickAfter := func(d time.Duration) tea.Cmd {
+	tick := func() tea.Cmd {
 		if stale || m.stalled {
 			return nil
 		}
-		return m.pollTickAfter(d)
+		return m.pollTick()
 	}
-	tick := func() tea.Cmd { return tickAfter(m.interval) }
 	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
 		pr := m.printErr(msg.err) // printErr 是指標 receiver,先叫再 return:
@@ -398,7 +397,8 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		m.provID = msg.provider
 	}
 	var be nowBuildErr
-	if m.pcErr = nil; errors.As(msg.err, &be) { // 沒登入、平台不支援:不是連不上,不計 fails、不進捲動區,狀態列說原因
+	m.pcErr = nil
+	if errors.As(msg.err, &be) { // 沒登入、平台不支援:不是連不上,不計 fails、不進捲動區,狀態列說原因
 		m.st, m.pcErr, m.errShort, m.fails = nil, be.error, "", 0
 		return m, tick()
 	}

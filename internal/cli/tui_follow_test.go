@@ -179,3 +179,30 @@ func TestTUIDropDuringRoundDiscardsIt(t *testing.T) {
 		t.Error("輪詢鏈要照走")
 	}
 }
+
+// TestTUIRoundsAreSingleFlight:控制鍵起的那一輪要等舊鏈在飛的那一輪做完,看得到它剛寫的快取——不然按一次鍵就對 Spotify
+// 多打一次,晚到的那一輪還會蓋掉 tracker 的 shown / lastNow(web 用 pollMu.TryLock,TUI 用同一把鎖)。
+func TestTUIRoundsAreSingleFlight(t *testing.T) {
+	f := newNowFake()
+	f.set(nil, nil) // 閒置:有效期 15 秒
+	blk := make(chan struct{})
+	f.blockOn(blk)
+	m := newTestTUI(t, &watchFake{})
+	m.trk.now["spotify"] = f
+	first := make(chan tea.Msg, 1)
+	go func() { first <- m.poll()() }()
+	for deadline := time.Now().Add(5 * time.Second); f.calls.Load() < 1; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("第一輪沒有進到 State")
+		}
+	}
+	second := make(chan tea.Msg, 1)
+	go func() { second <- m.poll()() }()
+	time.Sleep(50 * time.Millisecond) // 沒有鎖的話,第二輪這時已經進到 State 了
+	close(blk)
+	<-first
+	<-second
+	if n := f.calls.Load(); n != 1 {
+		t.Errorf("第二輪要用第一輪剛寫的快取:State %d 次", n)
+	}
+}

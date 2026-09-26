@@ -66,10 +66,12 @@ func (e nowBuildErr) Unwrap() error { return e.error }
 // 最近一次真的問到的結果與有效期,兩者都由 nowMu 守。lastNow 是上一輪顯示的那份,shown 是上一輪顯示的平台(跟隨規則的 base;
 // 只有換帳號、換預設平台時 dropNow 才清)。nowGen 由 dropNow 遞增,在飛的那一輪拿舊世代的結果就不寫回快取與快照;
 // settleUntil 是播放命令後的安定期,settleSeq 每次 settleNow 加一(在飛的那一輪若跨過一個播放命令,它讀到的不快取)。
-// pollRound / consult 同時只能有一個在跑(web 用 pollMu 單飛,TUI 只有一條輪詢鏈)。
+// pollMu:pollRound / consult 同時只能有一個在跑——呼叫端拿著它問一輪並 setNow(web 用 TryLock 單飛,
+// TUI 用 Lock:控制鍵起的那一輪等舊鏈在飛的那一輪做完,才看得到它剛寫的快取,不會對同一家重打一次)。
 type nowTracker struct {
 	ctx         context.Context
 	timeout     time.Duration // 每次 State 的上限;0 = 不設(web:handler 自己有 webNowWait,卡住的那一輪由 staleNow 承擔)
+	pollMu      sync.Mutex
 	nowMu       sync.Mutex
 	now         map[string]provider.PlaybackController
 	nowCache    map[string]nowEntry
@@ -112,7 +114,7 @@ func (t *nowTracker) pollRound(pin string) nowResult {
 	return res
 }
 
-// consult:問一家。快取沒過期就用快取;否則真的問,並依結果定有效期。只在單飛的那一輪裡被呼叫,
+// consult:問一家。快取沒過期就用快取;否則真的問,並依結果定有效期。只在 pollMu 裡被呼叫,
 // 所以讀快取與寫快取之間只需要防 dropNow——用世代號。
 func (t *nowTracker) consult(id string) nowResult {
 	now := webNowClock()

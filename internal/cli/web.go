@@ -70,9 +70,8 @@ type webServer struct {
 	fallbackStderr io.Writer // webGlobalStderr 沒有 job 時的去處(os.Stderr;測試換 buffer)
 
 	// 播放面板(web_api.go;決策 51):provFlag 是啟動時的 --provider(有明指才算,釘住面板)。跟隨規則、每家的 controller
-	// 與結果快取、安定期都在 nowTracker(now_tracker.go,跟 TUI 共用);它的 ctx 就是伺服器 ctx。pollMu 讓同時只有一輪在問平台。
+	// 與結果快取、安定期、單飛的 pollMu 都在 nowTracker(now_tracker.go,跟 TUI 共用);它的 ctx 就是伺服器 ctx。
 	provFlag string
-	pollMu   sync.Mutex
 	nowTracker
 }
 
