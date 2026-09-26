@@ -874,10 +874,17 @@ await scenario('13b', async () => {
   check(a?.tagName === 'A' && a.href === 'https://open.spotify.com/track/x' && a.target === '_blank' && a.rel === 'noopener noreferrer' && a.textContent === 'Song',
     `曲名要連回 Spotify:${JSON.stringify({ tag: a?.tagName, href: a?.href, rel: a?.rel })}`);
   check(line.textContent === 'Spotify · ▶ Song — A · 0:00 / 3:20', `有連結也是同一行字:「${line.textContent}」`);
+  // 每 2.5 秒一輪:同一個連結原地改字,不重建(重建會把停在連結上的鍵盤焦點丟掉)
+  player.render({ provider: 'spotify', playing: true, position_ms: 2500, track: { ...song, url: 'https://open.spotify.com/track/x' } });
+  check(line.children[1] === a && line.textContent === 'Spotify · ▶ Song — A · 0:02 / 3:20', `下一輪要沿用同一個連結節點:「${line.textContent}」`);
   player.render({ provider: 'spotify', playing: true, position_ms: 0, track: { ...song, url: 'javascript:alert(1)' } });
   check(line.children[1]?.tagName !== 'A', '不是 https 的網址不可以變成連結');
   player.render({ provider: 'spotify', playing: true, track: null, device: { name: 'iPhone' } });
   check(line.textContent === 'Spotify · ▶', `podcast / 廣告在播:「${line.textContent}」`);
+  player.render({ provider: 'spotify', playing: true, track: null, stale: true, stale_ms: 8000 });
+  check(line.textContent === 'Spotify · ▶ · 8 秒前', `podcast 那行也要說多久沒更新:「${line.textContent}」`);
+  player.render({ provider: 'spotify', playing: true, position_ms: 0, track: { ...song, url: 'https://open.spotify.com/track/x' } });
+  check(line.children[1]?.tagName === 'A' && line.textContent === 'Spotify · ▶ Song — A · 0:00 / 3:20', `純文字行之後要把曲目那行接回來:「${line.textContent}」`);
 });
 
 await scenario('14', async () => {

@@ -32,6 +32,12 @@ const (
 // ctx 砍掉、畫面只看到 deadline exceeded、五次後整個 TUI 消失。Ctrl-C 仍能中斷(Wait 吃 ctx)。
 func pollTimeout(interval time.Duration) time.Duration { return interval + provider.MaxBackoff }
 
+// rateLimitDelay:被限流時,下一次輪詢照 Retry-After 等(QUOTA_EXCEEDED 沒帶就是 client 給的預設),不比平常的間隔短。
+// 限流是狀態不是失敗(不計入 fails),但「狀態」不等於「照常每 2 秒再打一次」——那正是 Spotify 指南禁止的緊密重試。
+func rateLimitDelay(interval time.Duration, rl *provider.RateLimitError) time.Duration {
+	return max(interval, time.Duration(rl.Seconds)*time.Second)
+}
+
 type (
 	watchTickMsg  time.Time
 	watchStateMsg struct {
@@ -72,8 +78,10 @@ func (m watchModel) poll() tea.Cmd {
 	}
 }
 
-func (m watchModel) tick() tea.Cmd {
-	return tea.Tick(m.interval, func(t time.Time) tea.Msg { return watchTickMsg(t) })
+func (m watchModel) tick() tea.Cmd { return m.tickAfter(m.interval) }
+
+func (m watchModel) tickAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return watchTickMsg(t) })
 }
 
 // control:送控制指令後立刻重新輪詢,畫面才會跟上。
@@ -99,9 +107,9 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗:留在畫面上、繼續輪詢,app 開了畫面就活過來
 			m.st, m.err, m.fails = nil, msg.err, 0
 			return m, m.tick()
-		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失
+		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失;下一次照 Retry-After 等
 			m.err, m.fails = i18n.Errorf("watch.rate_limited", "message", rl.Message), 0
-			return m, m.tick()
+			return m, m.tickAfter(rateLimitDelay(m.interval, rl))
 		case msg.fromCtl && msg.err != nil:
 			m.err = msg.err
 			return m, m.tick()

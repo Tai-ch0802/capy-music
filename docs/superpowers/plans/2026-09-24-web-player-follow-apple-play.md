@@ -9,6 +9,8 @@
 
 使用者另外要求:先讀 Spotify 的 [Building with AI](https://developer.spotify.com/documentation/web-api/tutorials/building-with-ai) 指南,找比每分鐘打 24 次 API 更有效的做法。這份指南本身沒談輪詢,但它連到的 Rate limits、Quota modes、Developer Terms、Developer Policy 和 OpenAPI 規格都有相關規定。結論在 §1.2 與 §1.5,依指南檢查 capy 整個 Spotify 串接的結果在 §1.7。
 
+**2026-09-26 推 PR 前的對抗式審查**(四個視角、每則再派一個 agent 試著推翻)確認並修掉:TUI 與 `now --watch` 在 `QUOTA_EXCEEDED` / 長 `Retry-After` 時每 2 秒重打(現在照 `Retry-After` 等);唯讀的 `auth status` 與 `dropNow` 會清掉限流的冷卻;安定期越過限流的冷卻、也沒讓命令之前的快取過期;`dropNow` 時在飛的那一輪結果寫回快照;Apple 的 State 錯誤被快取 60 秒;登出後面板一直停在「未登入」;安定期用牆上時鐘比對;曲名連結每 2.5 秒重建而丟掉鍵盤焦點、stale 時不變色、podcast 那行少了 stale 秒數。每一則都有修之前會 fail 的測試。
+
 研究方式:兩輪 workflow。第一輪兩路追程式碼、兩路查 Apple 播放的外部資料,每個 Apple 做法各派一個 agent 試著推翻它。第二輪一路依指南檢查 Spotify 串接、一路找輪詢的替代方案,兩路各有一個驗證 agent 反查。探測(§2.2)是 2026-09-24 在使用者的 Mac 上跑的,macOS 26.5.1,Music.app 的實際畫面由使用者目視回報。
 
 ---
@@ -43,8 +45,9 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
 
   | 情況 | 有效期 | 理由 |
   |---|---|---|
-  | apple 正常回應(含 Music.app 沒開) | 0,每輪都問 | osascript 在本機跑,不花配額;Music.app 開始播放 2.5 秒內就看得到 |
-  | 任何平台建構失敗或回錯誤(沒登入、5xx) | 60 秒 | 沒登入 Apple 的人不會每 2.5 秒讀一次 keychain |
+  | apple 的 State(含 Music.app 沒開、osascript 回錯) | 0,每輪都問 | osascript 在本機跑,不花配額;Music.app 開始播放 2.5 秒內就看得到 |
+  | 任何平台建不起來(沒登入、不支援播放) | 60 秒 | 沒登入 Apple 的人不會每 2.5 秒讀一次 keychain |
+  | 其他平台的 State 回錯(5xx) | 60 秒 | 每次都是一次 Web API 呼叫 |
   | 被限流(429) | max(60 秒, `Retry-After`) | 照指南等 `Retry-After`,不重試 |
   | spotify 閒置(204)或暫停中 | **15 秒**(Q65) | 在手機上開始播,最慢 15 秒內會出現 |
   | spotify 正在播 | min(10 秒, 離這首結束的時間 + 1 秒) | 換歌約 1 秒內更新 |

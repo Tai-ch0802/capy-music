@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -249,10 +250,17 @@ type nowSnapshot struct {
 }
 
 // nowEntry:某個 provider 最近一次真的問到的結果;until 之前用它回答(正在播的進度依經過時間往前推)。
+// cooldown:這是限流(429 / QUOTA_EXCEEDED)的冷卻——安定期、dropNow 都不縮短它,冷卻期內重問就違反 Retry-After。
 type nowEntry struct {
 	resp      *nowResponse
 	at, until time.Time
+	cooldown  bool
 }
+
+// nowBuildErr:建不起來(沒登入、平台不支援播放)——跟 State 回錯分開,有效期不同(見 nowTTL)。
+type nowBuildErr struct{ error }
+
+func (e nowBuildErr) Unwrap() error { return e.error }
 
 func (s *webServer) handleNow(w http.ResponseWriter, r *http.Request) {
 	pin := r.URL.Query().Get("provider") // 有明指(?provider= 或 --web --provider)就釘住;否則跟隨正在播的平台
@@ -271,8 +279,11 @@ func (s *webServer) handleNow(w http.ResponseWriter, r *http.Request) {
 	done := make(chan *nowResponse, 1)
 	go func() {
 		defer s.pollMu.Unlock()
+		gen := s.nowGen.Load()
 		resp := s.pollRound(pin)
-		s.setNow(resp, pin == "")
+		if !s.setNow(resp, pin == "", gen) { // 問的期間 dropNow 過(登出、換帳號):舊帳號的結果不記、也不送
+			resp = s.staleNow(pin)
+		}
 		done <- resp
 	}()
 	select {
@@ -324,22 +335,24 @@ func (s *webServer) consult(id string) *nowResponse {
 	s.nowMu.Lock()
 	e, ok := s.nowCache[id]
 	s.nowMu.Unlock()
-	if ok && now.UnixNano() >= s.settleUntil.Load() && now.Before(e.until) {
+	// 安定期只跳過沒出錯的快取:出錯的(沒登入)與限流的冷卻照樣守——冷卻期內重問就違反 Retry-After。
+	if ok && now.Before(e.until) && (e.resp.Error != "" || !s.settling(now)) {
 		return advance(e.resp, now.Sub(e.at))
 	}
 	gen := s.nowGen.Load()
 	resp, err := s.pollNow(id)
 	at := webNowClock()
 	until := at.Add(nowTTL(id, resp, err))
-	if at.UnixNano() < s.settleUntil.Load() {
+	if err == nil && s.settling(at) {
 		until = at // 安定期內讀到的可能還是命令之前的狀態:不留,安定期一過就重問
 	}
+	var rl *provider.RateLimitError
 	s.nowMu.Lock()
 	if s.nowGen.Load() == gen { // 問的期間 dropNow 過(登出、換帳號):舊世代的結果不寫回
 		if s.nowCache == nil {
 			s.nowCache = map[string]nowEntry{}
 		}
-		s.nowCache[id] = nowEntry{resp: resp, at: at, until: until}
+		s.nowCache[id] = nowEntry{resp: resp, at: at, until: until, cooldown: errors.As(err, &rl)}
 	}
 	s.nowMu.Unlock()
 	return resp
@@ -370,19 +383,20 @@ func advance(r *nowResponse, age time.Duration) *nowResponse {
 	return &cp
 }
 
-// nowTTL:這份結果可以用多久。Apple 的 State 是本機 osascript、不花配額,每輪都問(Music.app 的變化 2.5 秒內看得到);
-// 其他平台的每一問都是一次 Web API 呼叫。
+// nowTTL:這份結果可以用多久。Apple 的 State 是本機 osascript、不花配額,每輪都問——包括回錯的時候(Music.app 沒開、
+// 放的是沒有時長的串流):下一輪就看得到變化。建不起來的(沒登入)一分鐘才重試:那要讀 keychain。其他平台的每一問都是一次 Web API 呼叫。
 func nowTTL(id string, r *nowResponse, err error) time.Duration {
 	var rl *provider.RateLimitError
+	var be nowBuildErr
 	switch {
 	case errors.As(err, &rl):
 		return max(webNowFailTTL, time.Duration(rl.Seconds)*time.Second) // 照 Retry-After:冷卻期內不重試
-	case errors.Is(err, provider.ErrPlayerNotRunning):
-		return 0 // 狀態不是錯:Music.app 一打開,下一輪就看得到
-	case err != nil:
+	case errors.As(err, &be):
 		return webNowFailTTL
 	case id == "apple":
 		return 0
+	case err != nil:
+		return webNowFailTTL
 	case !r.Playing:
 		return webNowIdleTTL
 	case r.Track == nil || r.Track.DurationMS <= 0:
@@ -401,7 +415,7 @@ func (s *webServer) pollNow(id string) (*nowResponse, error) {
 	pc, err := s.playback(id)
 	if err != nil {
 		resp.Error = friendlyErr(id, err).Error()
-		return resp, err
+		return resp, nowBuildErr{err}
 	}
 	st, err := pc.State(provider.WithoutWait(s.ctx))
 	if err != nil {
@@ -464,25 +478,44 @@ func (s *webServer) playback(id string) (provider.PlaybackController, error) {
 	return built, nil
 }
 
-// dropNow:作廢快取的 controller 與結果。時機:auth 相關命令或 config set 結束後(帳號 / 預設平台換了)。
-// shown 不清:config set language 也會走到這裡,換語系不該讓面板從 Spotify 跳回預設平台。
-func (s *webServer) dropNow() {
+// dropNow:作廢快取的 controller 與結果。時機:auth login / logout 或 config set 結束後(帳號 / 預設平台換了)。
+// 限流的冷卻留著(換帳號、換設定都不會讓 Spotify 的 Retry-After 歸零)。resetShown:換帳號、換預設平台時面板回到預設平台
+// 重新開始(不然登出 Spotify 之後,面板會一直停在「Spotify 未登入」);換語系不算,那不該讓面板跳平台。
+// 全部在 nowMu 裡做(含 lastNow):在飛的那一輪用世代號比對後才寫 lastNow,兩者之間不能有縫。
+func (s *webServer) dropNow(resetShown bool) {
+	now := webNowClock()
 	s.nowMu.Lock()
+	defer s.nowMu.Unlock()
 	s.nowGen.Add(1)
 	s.now = nil
-	s.nowCache = nil
-	s.nowMu.Unlock()
+	kept := map[string]nowEntry{}
+	for id, e := range s.nowCache {
+		if e.cooldown && now.Before(e.until) {
+			kept[id] = e
+		}
+	}
+	s.nowCache = kept
 	s.lastNow.Store(nil) // 快照一起丟:否則 auth logout 之後,已登出帳號的那首歌還會被 staleNow 端出來一次
+	if resetShown {
+		s.shown.Store(nil)
+	}
 }
 
 // setNow:每一輪都記(包括全用快取回答的那幾輪),stale_ms 才是「距離上一輪多久」——若是「距離上次真的打 Spotify 多久」,
 // 碰上 15 秒的有效期,一次 TryLock 失敗就會超過 STALE_DEAD_MS,面板誤判失聯。follow:自動模式才記 shown(釘住的那一輪不算)。
-func (s *webServer) setNow(resp *nowResponse, follow bool) {
+// gen 是這一輪開始時的世代:問的期間 dropNow 過就不記,回 false(已登出帳號的那首歌不能回到快照裡)。
+func (s *webServer) setNow(resp *nowResponse, follow bool, gen uint64) bool {
+	s.nowMu.Lock()
+	defer s.nowMu.Unlock()
+	if s.nowGen.Load() != gen {
+		return false
+	}
 	s.lastNow.Store(&nowSnapshot{resp: resp, at: webNowClock()})
 	if follow {
 		p := resp.Provider
 		s.shown.Store(&p)
 	}
+	return true
 }
 
 // staleNow:上一輪的結果加 stale 標記;正在播的進度照樣往前推(不然一次 TryLock 失敗,進度條就倒退)。
@@ -507,9 +540,16 @@ func (s *webServer) staleNow(pin string) *nowResponse {
 	return &cp
 }
 
-// webNowInvalidatedBy:這個命令跑完要不要作廢快取的 controller(帳號或設定變了)。
+// webNowInvalidatedBy:這個命令跑完要不要作廢快取的 controller 與結果(帳號或設定變了)。auth status 是唯讀的——
+// 首頁與帳號頁每次載入都會跑,不能每次都把 controller 丟掉重建、再多打一次平台。
 func webNowInvalidatedBy(path string) bool {
-	return strings.HasPrefix(path, "capy auth") || path == "capy config set"
+	return strings.HasPrefix(path, "capy auth login") || strings.HasPrefix(path, "capy auth logout") || path == "capy config set"
+}
+
+// webNowResetsShown:換帳號或換預設平台——面板回到預設平台重新開始(dropNow 的 resetShown)。config set 只有動
+// default_provider 才算:換語系(語言選單跑的也是 config set)不該讓面板跳平台。
+func webNowResetsShown(path string, args []string) bool {
+	return strings.HasPrefix(path, "capy auth ") || (path == "capy config set" && slices.Contains(args, "default_provider"))
 }
 
 // webNowSettledBy:這個命令會改變播放狀態——跑完後進安定期(播放列按鈕、快捷鍵、搜尋頁的 play --id、主控台都經過這裡)。
@@ -521,6 +561,16 @@ func webNowSettledBy(path string) bool {
 	return false
 }
 
+// settleNow:進安定期,並讓命令之前讀到的(沒出錯的)快取立刻過期——不然這幾秒剛好沒有一輪的話,
+// 安定期一過,命令之前的「在播」還會被當成新鮮的端出來。出錯的與限流的冷卻不動。
 func (s *webServer) settleNow() {
-	s.settleUntil.Store(webNowClock().Add(webNowSettle).UnixNano())
+	t := webNowClock().Add(webNowSettle)
+	s.settleUntil.Store(&t)
+	s.expireExcept("")
+}
+
+// settling:t 還在安定期內。存的是帶單調時鐘的 time.Time,牆上時鐘被往回調也不會把安定期拉長。
+func (s *webServer) settling(t time.Time) bool {
+	p := s.settleUntil.Load()
+	return p != nil && t.Before(*p)
 }

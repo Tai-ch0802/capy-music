@@ -66,31 +66,43 @@ export class Player {
     this.root.dataset.playing = String(!!d.playing);
     this.root.dataset.stale = d.stale ? 'true' : '';
     const name = providerName(d.provider); // 面板會自己換平台:每一行都先說是哪個平台
+    const age = d.stale ? ' · ' + t('webui.player.age', { count: Math.round((d.stale_ms || 0) / 1000) }) : '';
     if (d.error) {
-      this.line.textContent = t('webui.player.error', { provider: name, error: d.error });
+      this.plain(t('webui.player.error', { provider: name, error: d.error }));
       return;
     }
     if (!d.track) { // 在播卻沒有曲目 = Spotify 的 podcast 或廣告(item 是 null)
-      this.line.textContent = d.playing ? `${name} · ▶` : t('webui.player.idle', { provider: name });
+      this.plain(d.playing ? `${name} · ▶${age}` : t('webui.player.idle', { provider: name }));
       return;
     }
     const tr = d.track;
     const dev = d.device ? ` · ${d.device.name}${d.device.volume_known ? ` · 🔊 ${d.device.volume_pct}` : ''}` : '';
-    const age = d.stale ? ' · ' + t('webui.player.age', { count: Math.round((d.stale_ms || 0) / 1000) }) : '';
-    // 曲名連回平台(Spotify Developer Policy II:顯示 Spotify 的內容要附連回去的連結)。只收 https,不讓 javascript: 之類進 href。
-    let title = document.createElement('span');
-    if (/^https:\/\//.test(tr.url || '')) {
-      title = document.createElement('a');
-      title.href = tr.url;
-      title.target = '_blank';
-      title.rel = 'noopener noreferrer';
+    this.trackLine(`${name} · ${d.playing ? '▶' : '⏸'} `, tr.title, /^https:\/\//.test(tr.url || '') ? tr.url : '',
+      ` — ${(tr.artists || []).join(', ')} · ${mmss(d.position_ms)} / ${mmss(tr.duration_ms)}${dev}${age}`);
+  }
+
+  plain(text) {
+    this.line.textContent = text;
+    this.parts = null;
+  }
+
+  // 曲目那行:三段節點建一次、之後原地改字——每 2.5 秒整行重建的話,用鍵盤停在曲名連結上時焦點會被丟掉。
+  // 曲名連回平台(Spotify Developer Policy II:顯示 Spotify 的內容要附連回去的連結);呼叫端只給 https,javascript: 之類進不了 href。
+  trackLine(head, title, url, tail) {
+    let p = this.parts;
+    if (!p || (p.title.tagName === 'A') !== !!url) { // 第一次、或曲名要在連結與純文字之間換
+      const el = document.createElement(url ? 'a' : 'span');
+      if (url) {
+        el.target = '_blank';
+        el.rel = 'noopener noreferrer';
+      }
+      p = this.parts = { head: document.createElement('span'), title: el, tail: document.createElement('span') };
+      this.line.replaceChildren(p.head, p.title, p.tail);
     }
-    title.textContent = tr.title;
-    const head = document.createElement('span');
-    head.textContent = `${name} · ${d.playing ? '▶' : '⏸'} `;
-    const tail = document.createElement('span');
-    tail.textContent = ` — ${(tr.artists || []).join(', ')} · ${mmss(d.position_ms)} / ${mmss(tr.duration_ms)}${dev}${age}`;
-    this.line.replaceChildren(head, title, tail);
+    if (url) p.title.href = url;
+    p.head.textContent = head;
+    p.title.textContent = title;
+    p.tail.textContent = tail;
   }
 
   // 前後各十秒、音量升降五格:鏡射 TUI 的鍵位。沒有最後一份狀態就不動作(算不出絕對值)。

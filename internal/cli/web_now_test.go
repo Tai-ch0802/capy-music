@@ -200,7 +200,7 @@ func TestWebNowUsesCachedControllerAndInvalidatesOnlyAfterAuthOrConfigSet(t *tes
 		path string
 		want bool
 	}{
-		{"capy auth login spotify", true}, {"capy auth logout google", true}, {"capy auth status", true},
+		{"capy auth login spotify", true}, {"capy auth logout google", true}, {"capy auth status", false},
 		{"capy config set", true}, {"capy config list", false}, {"capy search", false}, {"capy pl pull", false},
 	} {
 		if got := webNowInvalidatedBy(tc.path); got != tc.want {
@@ -335,7 +335,7 @@ func TestWebNowDropAlsoClearsSnapshot(t *testing.T) {
 	if m := c.now(""); m["track"] == nil {
 		t.Fatal("先要有快照")
 	}
-	s.dropNow()
+	s.dropNow(false)
 	if got := s.staleNow("spotify"); got.Track != nil {
 		t.Errorf("dropNow 之後不可以還端得出已登出帳號的那首歌:%+v", got.Track)
 	}
@@ -365,7 +365,7 @@ func TestWebNowBuildsProviderOutsideLock(t *testing.T) {
 		t.Fatal("poll 沒進到 newProvider")
 	}
 	done := make(chan struct{})
-	go func() { s.dropNow(); close(done) }()
+	go func() { s.dropNow(false); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
@@ -714,8 +714,158 @@ func TestWebNowDropKeepsShownProvider(t *testing.T) {
 	s, c := startWeb(t)
 	c.now("")
 	sp.set(nowTrack(false, "s", 0, 200000), nil)
-	s.dropNow()
+	s.dropNow(false)
 	if m := c.now(""); m["provider"] != "spotify" {
 		t.Errorf("dropNow 之後還是留在上一輪顯示的 Spotify:%v", m)
+	}
+}
+
+// ── 2026-09-26 對抗式審查補的回歸測試 ──
+
+// TestWebNowCooldownSurvivesAuthStatusAndDrop:【fails-before-fix】限流的冷卻不因唯讀的 auth status(首頁、帳號頁每次載入都會跑)
+// 或換帳號(dropNow)而歸零——以前兩者都會把冷卻丟掉,下一輪就在 Retry-After 之內再打一次 Spotify。
+func TestWebNowCooldownSurvivesAuthStatusAndDrop(t *testing.T) {
+	setCLITestConfig(t)
+	advance := fakeNowClock(t)
+	sp := newNowFakeAs("spotify", nil)
+	sp.set(nil, &provider.RateLimitError{Seconds: 120, Message: "rate limited"})
+	swapNowByID(t, map[string]*nowFake{"spotify": sp})
+	s, c := startWeb(t)
+	c.now("")
+	if _, ev, _ := c.run(map[string]any{"args": []string{"auth", "status", "--json"}}); evExit(t, ev) == nil {
+		t.Fatal(ev)
+	}
+	advance(2500 * time.Millisecond)
+	c.now("")
+	s.dropNow(true) // = auth login / logout 跑完
+	advance(2500 * time.Millisecond)
+	c.now("")
+	if n := sp.calls.Load(); n != 1 {
+		t.Errorf("120 秒的冷卻內不再打 Spotify:%d 次", n)
+	}
+}
+
+// TestWebNowSettleKeepsCooldown:【fails-before-fix】播放命令後的安定期只跳過沒出錯的快取——限流的冷卻照樣守,
+// 安定期內讀到的限流也不縮短。以前在 Apple 上按一次暫停,就會在 Spotify 的冷卻期內多打兩三次。
+func TestWebNowSettleKeepsCooldown(t *testing.T) {
+	setCLITestConfig(t)
+	setDefaultProvider(t, "apple")
+	advance := fakeNowClock(t)
+	apple := newNowFakeAs("apple", nowTrack(false, "a", 0, 200000))
+	sp := newNowFakeAs("spotify", nil)
+	sp.set(nil, &provider.RateLimitError{Seconds: 120, Message: "rate limited"})
+	swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": sp})
+	s, c := startWeb(t)
+	c.now("")
+	s.settleNow() // = 在 Apple 上按了暫停
+	c.now("")
+	advance(2500 * time.Millisecond)
+	c.now("")
+	advance(2500 * time.Millisecond) // 安定期過了
+	c.now("")
+	if n := sp.calls.Load(); n != 1 {
+		t.Errorf("安定期不可以越過限流的冷卻:Spotify %d 次", n)
+	}
+	if n := apple.calls.Load(); n != 4 {
+		t.Errorf("Apple 照常每輪都問:%d 次", n)
+	}
+}
+
+// TestWebNowSettleExpiresPreCommandCache:【fails-before-fix】命令之前讀到的「在播」在安定期結束後不可以還當新鮮的用——
+// 安定期那幾秒剛好沒有一輪(控制鈕的立即輪詢撞到 TryLock)時,以前會再顯示 ▶ 最多 7 秒,空白鍵就送出相反的命令。
+func TestWebNowSettleExpiresPreCommandCache(t *testing.T) {
+	setCLITestConfig(t)
+	advance := fakeNowClock(t)
+	f := newNowFake()
+	swapNowByID(t, map[string]*nowFake{"spotify": f})
+	s, c := startWeb(t)
+	c.now("")
+	s.settleNow()
+	advance(webNowSettle + time.Second) // 安定期內沒有任何一輪
+	c.now("")
+	if n := f.calls.Load(); n != 2 {
+		t.Errorf("命令之前的快取要作廢:State %d 次", n)
+	}
+}
+
+// TestWebNowDropDuringRoundDiscardsResult:【fails-before-fix】登出(dropNow)時正在飛的那一輪,結果不可以回到快照——
+// 不然已登出帳號的那首歌會被當成新鮮的端出來,dropNow 的註解說要防的正是這個。
+func TestWebNowDropDuringRoundDiscardsResult(t *testing.T) {
+	setCLITestConfig(t)
+	origWait := webNowWait
+	webNowWait = 100 * time.Millisecond
+	t.Cleanup(func() { webNowWait = origWait })
+	advance := fakeNowClock(t)
+	f := newNowFake()
+	swapNowByID(t, map[string]*nowFake{"spotify": f})
+	s, c := startWeb(t)
+	c.now("")
+	advance(11 * time.Second)
+	blk := make(chan struct{})
+	f.blockOn(blk)
+	c.now("") // 這一輪卡在 State,handler 先回 stale
+	s.dropNow(true)
+	close(blk)
+	f.blockOn(nil)
+	for deadline := time.Now().Add(5 * time.Second); !s.pollMu.TryLock(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("卡住的那一輪沒有收尾")
+		}
+	}
+	s.pollMu.Unlock()
+	if snap := s.lastNow.Load(); snap != nil {
+		t.Errorf("dropNow 之前開始的那一輪不可以寫回快照:%+v", snap.resp.Track)
+	}
+}
+
+// TestWebNowAppleStateErrorRetriedNextRound:【fails-before-fix】Apple 的 State 回錯(osascript 失敗、串流沒有時長)下一輪就再問——
+// osascript 在本機、不花配額;一分鐘的有效期只給建不起來的(那要讀 keychain)。
+func TestWebNowAppleStateErrorRetriedNextRound(t *testing.T) {
+	setCLITestConfig(t)
+	setDefaultProvider(t, "apple")
+	advance := fakeNowClock(t)
+	apple := newNowFakeAs("apple", nil)
+	apple.set(nil, errors.New("osascript: missing value"))
+	swapNowByID(t, map[string]*nowFake{"apple": apple})
+	_, c := startWeb(t)
+	c.now("")
+	apple.set(nowTrack(true, "a", 0, 200000), nil)
+	advance(2500 * time.Millisecond)
+	if m := c.now(""); m["provider"] != "apple" || m["playing"] != true {
+		t.Errorf("Apple 回錯後下一輪就要再問:%v", m)
+	}
+}
+
+// TestWebNowLogoutResetsShown:【fails-before-fix】登出面板正在顯示的平台之後,面板回到預設平台——以前會一直停在「Spotify 未登入」。
+// 換語系(config set language)不算。
+func TestWebNowLogoutResetsShown(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		args []string
+		want bool
+	}{
+		{"capy auth logout", []string{"auth", "logout", "spotify"}, true},
+		{"capy auth login", []string{"auth", "login", "apple"}, true},
+		{"capy config set", []string{"config", "set", "default_provider", "spotify"}, true},
+		{"capy config set", []string{"config", "set", "language", "en"}, false},
+	} {
+		if got := webNowResetsShown(tc.path, tc.args); got != tc.want {
+			t.Errorf("%v → %v,要 %v", tc.args, got, tc.want)
+		}
+	}
+	setCLITestConfig(t)
+	setDefaultProvider(t, "apple")
+	fakeNowClock(t)
+	apple := newNowFakeAs("apple", nowTrack(false, "a", 0, 200000))
+	sp := newNowFakeAs("spotify", nowTrack(true, "s", 0, 200000))
+	swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": sp})
+	s, c := startWeb(t)
+	if m := c.now(""); m["provider"] != "spotify" {
+		t.Fatalf("%v", m)
+	}
+	sp.set(nil, errors.New("spotify:沒登入"))
+	s.dropNow(true) // = auth logout spotify 跑完
+	if m := c.now(""); m["provider"] != "apple" {
+		t.Errorf("登出之後面板回到預設平台:%v", m)
 	}
 }

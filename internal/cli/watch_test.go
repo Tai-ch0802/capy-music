@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -219,7 +220,8 @@ func TestNowSingleShotAppleNotRunningIsExitZero(t *testing.T) {
 }
 
 func TestWatchRateLimitIsStatusAndTimeoutCoversBackoff(t *testing.T) {
-	f := &watchFake{err: &provider.RateLimitError{Seconds: 90, Message: "伺服器要求等待 90 秒"}}
+	// Seconds 0:這裡驗「是狀態、會繼續 tick」;照 Retry-After 等多久由 TestRateLimitPollWaitsForRetryAfter 驗(不然 runCmd 真的會等 90 秒)。
+	f := &watchFake{err: &provider.RateLimitError{Message: "伺服器要求等待 90 秒"}}
 	m := newWatchModel(context.Background(), f, time.Millisecond)
 	var cmd tea.Cmd
 	for i := 0; i < 2*watchMaxFails; i++ {
@@ -261,4 +263,40 @@ func TestWatchControlErrorsDoNotCountAsFailures(t *testing.T) {
 	if v := ansi.Strip(m.View().Content); !strings.Contains(v, provider.ErrNoActiveDevice.Error()) {
 		t.Errorf("控制錯誤要顯示:\n%s", v)
 	}
+}
+
+// TestRateLimitPollWaitsForRetryAfter:【fails-before-fix】限流是狀態,但下一次輪詢要照 Retry-After 等。Spotify 的 429 秒數以前在
+// client 被丟掉,TUI 與 now --watch 的限流分支從沒走到過;秒數接上之後若照常每 2 秒 tick,QUOTA_EXCEEDED(不重試、冷卻 10 分鐘)
+// 就變成每 2 秒打一次 /me/player——Spotify 指南禁止的緊密重試(計畫 2026-09-24 審查)。
+func TestRateLimitPollWaitsForRetryAfter(t *testing.T) {
+	if d := rateLimitDelay(2*time.Second, &provider.RateLimitError{Seconds: 600}); d != 600*time.Second {
+		t.Errorf("照 Retry-After:%v", d)
+	}
+	if d := rateLimitDelay(2*time.Second, &provider.RateLimitError{}); d != 2*time.Second {
+		t.Errorf("沒帶秒數就照平常的間隔:%v", d)
+	}
+	rl := &provider.RateLimitError{Seconds: 1, Message: "429"}
+	f := &watchFake{err: rl}
+	w := newWatchModel(context.Background(), f, time.Millisecond)
+	_, wcmd := w.Update(watchStateMsg{err: rl})
+	tm := newTestTUI(t, f)
+	tm.interval = time.Millisecond
+	_, tcmd := tm.Update(tuiStateMsg{err: rl, gen: tm.gen})
+	var wg sync.WaitGroup
+	for name, cmd := range map[string]tea.Cmd{"now --watch": wcmd, "TUI": tcmd} {
+		if cmd == nil {
+			t.Errorf("%s:限流後要繼續輪詢", name)
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			runCmd(cmd)
+			if el := time.Since(start); el < 900*time.Millisecond {
+				t.Errorf("%s:Retry-After 1 秒,下一次輪詢卻只等了 %v", name, el)
+			}
+		}()
+	}
+	wg.Wait()
 }

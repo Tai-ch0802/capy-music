@@ -137,9 +137,11 @@ func (m tuiModel) frameTick() tea.Cmd {
 	return tea.Tick(tuiFrameInterval, func(t time.Time) tea.Msg { return tuiFrameMsg(t) })
 }
 
-func (m tuiModel) pollTick() tea.Cmd {
+func (m tuiModel) pollTick() tea.Cmd { return m.pollTickAfter(m.interval) }
+
+func (m tuiModel) pollTickAfter(d time.Duration) tea.Cmd {
 	gen := m.gen
-	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
+	return tea.Tick(d, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
 
 func (m tuiModel) poll() tea.Cmd {
@@ -345,12 +347,13 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	// (鏈愈多愈容易 429,愈常走那條路徑,鏈又愈多)。停擺中同理:一則遲到的訊息不該把輪詢默默接回去,
 	// 畫面卻還在叫使用者按 r(PR #42 review)。
 	stale := msg.gen != m.gen
-	tick := func() tea.Cmd {
+	tickAfter := func(d time.Duration) tea.Cmd {
 		if stale || m.stalled {
 			return nil
 		}
-		return m.pollTick()
+		return m.pollTickAfter(d)
 	}
+	tick := func() tea.Cmd { return tickAfter(m.interval) }
 	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
 		pr := m.printErr(msg.err) // printErr 是指標 receiver,先叫再 return:
@@ -367,9 +370,9 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	case errors.Is(msg.err, provider.ErrPlayerNotRunning):
 		m.st, m.errShort, m.fails, m.lastErr = nil, i18n.T("tui.status.player_not_running"), 0, msg.err.Error()
 		return m, tick()
-	case errors.As(msg.err, &rl):
+	case errors.As(msg.err, &rl): // 下一次照 Retry-After 等(rateLimitDelay),不是照常每 2 秒再打
 		m.errShort, m.fails, m.lastErr = i18n.T("tui.status.rate_limited"), 0, msg.err.Error()
-		return m, tick()
+		return m, tickAfter(rateLimitDelay(m.interval, rl))
 	}
 	if msg.err != nil {
 		m.fails++
