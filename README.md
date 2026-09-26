@@ -165,6 +165,7 @@ capy update [--dev]                      # see "Updating" above
 
 Running `capy` in a terminal with no arguments opens interactive mode. When the terminal is big enough (at least 30 rows tall), the capybara stays at the bottom of the screen and keeps moving (blinking now and then, flicking its ears, and eating a stalk of hay every so often; it steps aside when you open the menu with `/`). In a smaller terminal it plays for about three seconds at the start (press any key to skip) and then freezes into the scrollback. If you don't want any animation (screen readers, slow SSH connections, screen recordings), set `CAPY_MOTION=never`: the capybara is drawn still and never moves.
 Apart from the capybara, the TUI only manages the **bottom four lines**: a divider, what's playing, the input line and key hints.
+Like the web now-playing bar, the "what's playing" line follows whichever platform is actually playing (only a platform that is playing takes it over, a paused one doesn't), the playback keys act on the platform it shows, and `capy --provider X` pins it to one platform.
 
 ```
 -------------------------------------------------------------------------------
