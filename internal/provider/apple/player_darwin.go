@@ -111,6 +111,8 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 	}
 	// osascript 的錯(沒有自動化權限 -1743、Music.app 剛啟動、資料庫那份已下架)一律退回打開頁面,不當失敗;錯誤訊息是在地化的,不解析。
 	// 但每一步之前先看 ctx:終端機的 Ctrl-C 會連 osascript 一起殺掉,那不是「沒找到」——使用者喊停之後不再開始播放、不再打開 Music.app。
+	// web 的「中止」不會殺掉 osascript(runOSA 不吃 ctx):查資料庫那一步照樣跑完,但下一步之前的檢查一樣擋得住;確認迴圈裡的 play
+	// 在腳本第一行就送出了,殺掉也收不回,所以這段不吃取消(同 web_run.go 的 webExitReason)。
 	if pid := libraryMatch(tr); pid != "" {
 		if err := ctx.Err(); err != nil {
 			return err
