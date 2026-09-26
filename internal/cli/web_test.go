@@ -1351,6 +1351,10 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(search, "quote(id)") {
 		t.Error("play --id 要 quote")
 	}
+	// Apple 只打開、沒開始播時,搜尋頁靠「不以 ▶ 開頭」把命令那句顯示出來——另一端是 player.go 印 ▶ 的那一行(決策 52)。
+	if !strings.Contains(search, "startsWith('▶')") {
+		t.Error("搜尋頁要用「不以 ▶ 開頭」分辨只打開、沒開始播的結果")
+	}
 	// 從別頁按鈕發出的命令,區塊在被 hidden 的主控台頁裡:提示與授權連結不切回主控台就看不到,命令卡到逾時,
 	// Apple 的揭露只剩伺服器端「送出過」(review #62 第 5 點)。
 	if !strings.Contains(between("prompt(ev, b) {", "reveal(host) {"), "this.reveal(host)") { // 結束標記貼著 prompt() 的尾巴(review #64)
@@ -1657,5 +1661,24 @@ func TestWebNonTTYPrintsURLAndDoesNotOpenBrowser(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("伺服器沒在 ctx 取消後結束")
+	}
+}
+
+// TestWebPlayOpenedLineIsStdout:只打開、沒開始播的那句(決策 52)要是 stdout 事件——搜尋頁只接 stdout(console.js 沒有
+// stderr 的掛鉤),送到 stderr 的話頁面什麼都不說。exit 0、reason done,而且不以 ▶ 開頭(搜尋頁靠這個分辨)。
+func TestWebPlayOpenedLineIsStdout(t *testing.T) {
+	f := newPlayFake(t)
+	f.playErr = &provider.OpenedError{Label: "Radioactivity — Kraftwerk"}
+	_, c := startWeb(t)
+	_, ev, _ := c.run(map[string]any{"args": []string{"play", "--id", "700050031"}})
+	out := evFirst(ev, "stdout")
+	if out == nil {
+		t.Fatalf("那句要是 stdout 事件:%v", ev)
+	}
+	if text := out["text"].(string); strings.HasPrefix(text, "▶") || !strings.Contains(text, "Radioactivity — Kraftwerk") {
+		t.Errorf("只打開了:不以 ▶ 開頭、用平台查到的歌名:%q", text)
+	}
+	if ex := evExit(t, ev); ex["code"] != float64(0) || ex["reason"] != "done" {
+		t.Errorf("exit 0、done:%v", ex)
 	}
 }

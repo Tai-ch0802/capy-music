@@ -477,7 +477,7 @@ p.JL68l7EhogEeXd  Winter Warmth    -
           <tr>
             <th scope="row">Playback control</th>
             <td class="yes">Connect</td>
-            <td class="part">macOS only</td>
+            <td class="part">macOS only; songs not in your library only open in Music.app</td>
             <td class="no">Not supported</td>
           </tr>
           <tr>
@@ -589,6 +589,10 @@ p.JL68l7EhogEeXd  Winter Warmth    -
       <div class="note">
         <h3>Apple Music can be written to, but only playlists you created</h3>
         <p>Adding tracks uses Apple's documented endpoint; removing, reordering and renaming use the endpoints Apple's own web player uses, which Apple has made no promises about, so they'll break if Apple changes them. Apple-curated playlists, Favorite Songs and Purchased Music can't be written: capy stops and writes nothing. capy doesn't write collaborative playlists at all for now (Apple returns a 500 error when their contents are replaced), and sync skips such a playlist and says why; copying it into a regular playlist first and linking that one usually works (not tested). Whether tracks added to a playlist are also added to your Apple Music library depends on your settings in Apple Music; that's Apple's behavior. Removing and reordering replace the whole track list: the playlist order always follows the master copy, and whether the Date Added shown in the Mac Music app gets reset hasn't been verified.</p>
+      </div>
+      <div class="note">
+        <h3>Apple Music only plays songs in your library</h3>
+        <p>The Music app's scripting interface can only play tracks that are in your library. So when you play an Apple Music song (<code>capy play</code>, or the Search page of the web UI), capy first looks for it in the Music library on your computer, by title, artist and duration, and by album when that leaves more than one. If it finds exactly one, it plays it and checks that playback really started. Otherwise it opens the song in the Music app with the song highlighted, and you double-click it there (the Play button would resume whatever was playing before): the command still exits 0 but doesn't print ▶, and on the web UI's Search page the button for Apple Music songs says Open in Music.app. capy never adds songs to your library to get around this.</p>
       </div>
       <div class="note">
         <h3>Every command works in a pipeline</h3>

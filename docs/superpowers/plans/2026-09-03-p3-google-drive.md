@@ -143,7 +143,7 @@ canonical 的 playlist item 用自己的 ULID(`iid`)當鍵、`cid` 當屬性,同
 |---|---|---|
 | **C-0** | **主機/標頭真值表(前提,壞了後面全免)**:`amp-api.music.apple.com/v1` base、`Origin: https://music.apple.com`、`Media-User-Token` 標頭全是依 gamdl 推定,沒用真 token 打過。preflight 401 → 試 `CAPY_APPLE_API_BASE=https://api.music.apple.com/v1`;storefront 403/404 → MUT 改 cookie 形式或改用 `GET /me/account?meta=subscription`。**歸因檢查**:故意弄壞各一顆 token,訊息要怪對的那顆。定案後把贏家寫死、刪掉 `client.go` 的 `ponytail:` 註解 | 整個 Apple 端建立在這個假設上 |
 | C-1 | 手動抓 token + 精靈:記錄 DevTools 實際欄位名、JWT `exp` 距今多久(輪替週期估計);**親眼確認**揭露頁預設停在「取消」、重登頁預設停在「只更新 developer token」(huh 渲染行為,單元測試碰不到) | R-6 的緩解成本估計 |
-| C-2 | `search --provider apple`、`pl list`、`pl show`、`play --id`;**play 機制 A/B 決勝**(A = AppleScript `open location`,B = `CAPY_APPLE_PLAY_MECHANISM=open`)。決勝後硬編勝者、刪環境變數、加 `player state` 輪詢讓 ▶ 不再假成功 | ▶ 目前只代表 Music.app 接受了 URL |
+| C-2 | `search --provider apple`、`pl list`、`pl show`、`play --id`;**play 機制 A/B 決勝**(A = AppleScript `open location`,B = `CAPY_APPLE_PLAY_MECHANISM=open`)。決勝後硬編勝者、刪環境變數、加 `player state` 輪詢讓 ▶ 不再假成功(2026-09-24 已決勝:A、B 都不會播;改為資料庫比對後播放、否則開單曲網址並不印 ▶,環境變數已刪,見 ARCHITECTURE 決策 52) | ▶ 目前只代表 Music.app 接受了 URL |
 | C-3 | 非 TTY:`CAPY_APPLE_DEVELOPER_TOKEN=… CAPY_APPLE_USER_TOKEN=… capy auth login apple --i-understand < /dev/null`;缺 `--i-understand` 要被拒且訊息含聲明 | 可腳本化是核心價值 |
 | C-4 | 只更新 developer token:精靈預設「只更新」→ 只貼一顆;`auth status` 的 user token 不變 | Apple 輪替時的常態路徑 |
 | C-6 | 過期行為:把 keychain 紀錄的 `exp` 改到過去 → `search --provider apple` 指向 login 且訊息含「過期」;`doctor --provider apple` ❌;`auth status` 顯示已過期 | 誤導訊息會讓使用者亂重登 |

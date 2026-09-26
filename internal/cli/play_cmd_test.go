@@ -19,6 +19,7 @@ type playFake struct {
 	tracks  []provider.Track
 	top     []provider.Track
 	played  []provider.PlayRequest
+	playErr error // Play 回它(例如 Apple 只打開頁面時的 *provider.OpenedError)
 }
 
 func (f *playFake) ID() string { return "spotify" }
@@ -38,7 +39,7 @@ func (f *playFake) Devices(context.Context) ([]provider.Device, error)     { ret
 func (f *playFake) State(context.Context) (*provider.PlaybackState, error) { return nil, nil }
 func (f *playFake) Play(_ context.Context, r provider.PlayRequest) error {
 	f.played = append(f.played, r)
-	return nil
+	return f.playErr
 }
 func (f *playFake) Pause(context.Context) error          { return nil }
 func (f *playFake) Next(context.Context) error           { return nil }
@@ -229,7 +230,33 @@ func TestArtistLabelHonestWhenProviderCannotQueue(t *testing.T) {
 	f.caps &^= provider.CapPlayQueue
 	f.top = []provider.Track{{ProviderID: "h1", Title: "知足"}, {ProviderID: "h2", Title: "乾杯"}}
 	out, err := runCLI(t, "play", "artist:五月天")
-	if err != nil || !strings.Contains(out, "五月天:知足(Fake 一次只播一首") || strings.Contains(out, "2 首") {
+	if err != nil || !strings.Contains(out, "五月天:知足(Fake 不能排佇列") || strings.Contains(out, "2 首") {
 		t.Fatalf("不能排佇列的平台,標籤不得說「N 首」:%v %q", err, out)
+	}
+}
+
+// TestPlayOpenedNotPlayingIsHonest:【fails-before-fix】平台只把歌打開、沒開始播(Apple 資料庫裡沒有的目錄歌曲,決策 52):
+// exit 0、不印 ▶,照實說要去 Music.app 點兩下;--id 時用平台查到的歌名,不是 id。以前 Apple 永遠印 ▶。
+func TestPlayOpenedNotPlayingIsHonest(t *testing.T) {
+	f := newPlayFake(t)
+	f.playErr = &provider.OpenedError{Label: "Radioactivity — Kraftwerk"}
+	out, err := runCLI(t, "play", "--id", "700050031")
+	if err != nil || strings.Contains(out, "▶") {
+		t.Fatalf("只打開了:exit 0、不印 ▶:%v %q", err, out)
+	}
+	if !strings.Contains(out, "「Radioactivity — Kraftwerk」") || !strings.Contains(out, "點兩下") || strings.Contains(out, "700050031") {
+		t.Errorf("--id 時要用平台查到的歌名,並說去 Music.app 點兩下:%q", out)
+	}
+	f.playErr = provider.ErrOpenedNotPlaying // 沒帶歌名:用 CLI 自己的 label
+	out, err = runCLI(t, "play", "track:派對動物")
+	if err != nil || strings.Contains(out, "▶") || !strings.Contains(out, "「派對動物 — 五月天」") {
+		t.Errorf("查詢播放的 label:%v %q", err, out)
+	}
+	if recent := cache.Load().Recent; len(recent) == 0 || recent[0].ID != "t1" {
+		t.Errorf("使用者選了這首:照樣記進最近播放:%+v", recent)
+	}
+	f.playErr = nil
+	if out, err := runCLI(t, "play", "--id", "t1"); err != nil || !strings.HasPrefix(out, "▶ ") {
+		t.Errorf("真的播了照舊印 ▶(web 搜尋頁靠這個分辨):%v %q", err, out)
 	}
 }

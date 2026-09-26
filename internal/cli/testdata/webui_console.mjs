@@ -653,7 +653,7 @@ await scenario('8k', async () => {
   const zh = await paint();
   want(zh, 'zh-TW', ['我的清單', 'capy 替你保管的清單(正本在你的 Google Drive),以及各平台上現有的清單。', '重新整理', '平台上現有的清單', '平台', '本機曲庫', '列出來',
     'road trip(2 首)', '(本機沒有這首的資料)', '看 Spotify 上的內容', '還沒有清單。到「搬家」搬一個過來,或到「同步」把平台上的清單連起來。',
-    '搜尋', '在平台上找歌,找到了可以直接播。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
+    '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music 只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
     '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
     '從平台更新', '推到平台', '雙向同步', '去除重複',
@@ -681,6 +681,58 @@ await scenario('8k', async () => {
     check(JSON.stringify(en.rowsDrawn) === JSON.stringify([['sp1', 'Song One', 'Play']]), `en 的搜尋結果表:${JSON.stringify(en.rowsDrawn)}`);
     const enChecking = await checking();
     check(enChecking === 'Checking…', `en 診斷頁的 data-running:「${enChecking}」`);
+  } finally {
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
+});
+
+// 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,
+//     那句話原樣進底部的 notice——不然它只進看不到的主控台頁;真的播了(▶,播放列會換成 Apple)或失敗(Console.report 會說)都不多說。
+await scenario('8l', async () => {
+  const { initSearch } = await import('./pages/search.mjs');
+  const honest = '已在 Music.app 打開「Radioactivity — Kraftwerk」並標出那一首。';
+  const paint = async () => {
+    reset();
+    const said = [];
+    const labels = [];
+    const pending = [];
+    con.run = (line, hooks, opts = {}) => { labels.push(opts.label); const p = Console.prototype.run.call(con, line, hooks, opts); pending.push(p); return p; };
+    const settle = async () => { while (pending.length) await pending.shift(); };
+    try {
+      script = {
+        'search k --provider apple --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [['700050031', 'Radioactivity'], ['111', 'Lost Stars'], ['222', 'Boom']] }, done] },
+        'play --id 700050031 --provider apple': { events: [{ type: 'stdout', text: honest + '\n' }, done] },
+        'play --id 111 --provider apple': { events: [{ type: 'stdout', text: '▶ Lost Stars — Adam Levine\n' }, done] },
+        'play --id 222 --provider apple': { events: [{ type: 'stdout', text: 'partial\n' }, { type: 'exit', code: 1, message: 'Error: boom', reason: 'done' }] },
+      };
+      const r = mk();
+      initSearch(r, api, con, (s) => said.push(s), { list: ['spotify', 'apple'], current: 'apple' });
+      r.querySelector('input').value = 'k';
+      r.querySelector('.btn--primary').click();
+      await settle();
+      const btns = r.querySelector('.tbl-wrap').querySelectorAll('tbody tr').map((tr) => tr.querySelector('.btn--ghost')); // 替身的 querySelectorAll 只認 'tbody tr' 這種
+      const after = [];
+      for (const b of btns) { b.click(); await settle(); after.push([...said]); }
+      return { buttons: btns.map((b) => b.textContent), labels: labels.slice(1), calls: calls.slice(1), after };
+    } finally {
+      delete con.run;
+    }
+  };
+  const plays = ['play --id 700050031 --provider apple', 'play --id 111 --provider apple', 'play --id 222 --provider apple'];
+  const zh = await paint();
+  check(zh.buttons.length === 3 && zh.buttons.every((b) => b === '在 Music.app 開啟'), `zh-TW:Apple 列的按鈕:${JSON.stringify(zh.buttons)}`);
+  check(JSON.stringify(zh.calls) === JSON.stringify(plays), `送出的命令不變:${JSON.stringify(zh.calls)}`);
+  check(zh.labels[0] === '在 Music.app 開啟「Radioactivity」', `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
+  check(JSON.stringify(zh.after) === JSON.stringify([[honest], [honest], [honest]]), `只打開的那句要進 notice,▶ 與失敗不多說:${JSON.stringify(zh.after)}`);
+
+  i18nFile = './i18n-en.json';
+  try {
+    await loadI18n(api);
+    const en = await paint();
+    const CJK = /[　-〿㐀-鿿＀-￯]/;
+    check(en.buttons.every((b) => b === 'Open in Music.app'), `en:Apple 列的按鈕:${JSON.stringify(en.buttons)}`);
+    check(en.labels[0] === 'Opening "Radioactivity" in Music.app' && en.labels.every((l) => /^[A-Z][a-z]*ing /.test(l) && !CJK.test(l)), `en 的 label:${JSON.stringify(en.labels)}`);
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);
