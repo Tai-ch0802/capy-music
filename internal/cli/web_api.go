@@ -394,7 +394,7 @@ func nowTTL(id string, r *nowResponse, err error) time.Duration {
 		return max(webNowFailTTL, time.Duration(rl.Seconds)*time.Second) // 照 Retry-After:冷卻期內不重試
 	case errors.As(err, &be):
 		return webNowFailTTL
-	case id == "apple":
+	case id == "apple": // Apple 的 State 錯只會來自 osascript(Music.app 沒開、沒有時長的串流),不會是 ErrAuthExpired
 		return 0
 	case err != nil:
 		return webNowFailTTL
