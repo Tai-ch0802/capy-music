@@ -1244,6 +1244,9 @@ func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
 			if err := os.WriteFile(live+".v1", nil, 0o600); err != nil { // 很舊的舊檔:沒有這兩張表
 				t.Fatal(err)
 			}
+			if err := os.WriteFile(live+".v2", []byte(strings.Repeat("not a database ", 512)), 0o600); err != nil { // 壞掉的舊檔
+				t.Fatal(err)
+			}
 			seed(t)
 			out, err := runCLI(t, "auth", "logout", tc.logout)
 			if err != nil || strings.Contains(out, "沒能清掉") {
@@ -1254,6 +1257,17 @@ func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
 				if !got[tc.keep] || (tc.gone != "" && got[tc.gone]) || (tc.gone == "" && !got["apple"]) {
 					t.Errorf("%s:只刪登出的那個平台(%s):%v", filepath.Base(p), tc.gone, got)
 				}
+			}
+			// 真的刪掉:SQLite 預設只把刪掉的列標成空頁,內容還留在檔案裡(#102 review)。
+			if gone := map[string]string{"spotify": "派對動物", "apple": "冬日暖調"}[tc.gone]; gone != "" {
+				for _, p := range []string{live, live + ".v3"} {
+					if b, err := os.ReadFile(p); err != nil || bytes.Contains(b, []byte(gone)) {
+						t.Errorf("%s:刪掉的內容不可以還留在檔案裡(%q):%v", filepath.Base(p), gone, err)
+					}
+				}
+			}
+			if _, err := os.Stat(live + ".v2"); tc.gone != "" && !os.IsNotExist(err) {
+				t.Errorf("壞掉的舊檔要刪掉(不然每次登出都會說沒能清掉):%v", err)
 			}
 		})
 	}
