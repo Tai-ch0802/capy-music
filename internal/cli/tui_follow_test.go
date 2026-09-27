@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -584,5 +585,98 @@ func TestTUIRetryWorksWithoutPlayback(t *testing.T) {
 	m = pollOnce(t, m)
 	if m.pcErr != nil {
 		t.Errorf("別處登入後按 r 要馬上恢復:%v", m.pcErr)
+	}
+}
+
+// ctlFake:Next 由測試決定怎麼回(卡到 ctx 結束、被限流…)。
+type ctlFake struct {
+	*nowFake
+	next func(context.Context) error
+}
+
+func (c ctlFake) Next(ctx context.Context) error { return c.next(ctx) }
+
+// TestTUIControlSendHasDeadline:【第三次審查】送出本身也從按鍵起限時:卡住的 Next(token 換發卡在鎖上、Music.app 卡住)
+// 到期就放棄、照實說「不一定有生效」——不是等鎖放開才送出去,連按五次就一口氣跳五首。
+func TestTUIControlSendHasDeadline(t *testing.T) {
+	shrinkRoundWait(t, 30*time.Millisecond)
+	got := recordPrintln(t)
+	var sent atomic.Int32
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.trk.now["spotify"] = ctlFake{newNowFake(), func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+			sent.Add(1)
+			return nil
+		}
+	}}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	m = applyAll(t, next.(tuiModel), within(t, 2*time.Second, "按鍵", cmd))
+	if sent.Load() != 0 || !strings.Contains(joined(got), "不一定有生效") {
+		t.Errorf("到期就放棄並照實說:sent=%d %q", sent.Load(), joined(got))
+	}
+}
+
+// TestTUIControlSendDoesNotSleepOnRateLimit:【第三次審查】按鍵碰到 429 不睡在 Retry-After 裡(睡醒才送就是晚到的那一下):
+// 馬上照實說被限流,冷卻交給 tracker。
+func TestTUIControlSendDoesNotSleepOnRateLimit(t *testing.T) {
+	shrinkRoundWait(t, 1500*time.Millisecond)
+	got := recordPrintln(t)
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"2"}}}
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.trk.now["spotify"] = ctlFake{newNowFake(), func(ctx context.Context) error { return provider.Backoff(ctx, resp, 0) }}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	msg := within(t, 5*time.Second, "按鍵", cmd)
+	if sm := msg.(tuiStateMsg); sm.slow || !sm.fromCtl {
+		t.Fatalf("限流要馬上回,不是睡到截止時間:%+v", sm)
+	}
+	applyAll(t, next.(tuiModel), msg)
+	if s := joined(got); strings.Contains(s, "不一定有生效") || !strings.Contains(s, "2") {
+		t.Errorf("要說被限流,不是逾時:%q", s)
+	}
+}
+
+// TestTUIStaleSlowControlStillReports:【第三次審查】等太久的那個鍵,期間又按了一次(舊的變 stale):它的結果照樣要收——
+// 控制指令自己的錯要說,不能因為過期就連同 pending 一起丟掉。
+func TestTUIStaleSlowControlStillReports(t *testing.T) {
+	shrinkRoundWait(t, 30*time.Millisecond)
+	got := recordPrintln(t)
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.trk.now["spotify"] = ctlFake{newNowFake(), func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	m = next.(tuiModel)
+	slow := within(t, 2*time.Second, "第一個鍵", cmd)
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'n'}) // 再按一次:第一個鍵的結果變 stale
+	m = next.(tuiModel)
+	next, pend := m.Update(slow)
+	if pend == nil {
+		t.Fatal("過期的「等太久」也要接著等它的結果")
+	}
+	if st := ansi.Strip(next.(tuiModel).statusLine(99)); strings.Contains(st, "等待平台回應") {
+		t.Errorf("過期的那個不說「等待」(那是舊鏈的事,畫面上的是新鏈):%q", st)
+	}
+	applyAll(t, next.(tuiModel), within(t, 2*time.Second, "第一個鍵的結果", pend))
+	if !strings.Contains(joined(got), "不一定有生效") {
+		t.Errorf("過期的控制錯誤照樣要說:%q", joined(got))
+	}
+}
+
+// TestTUISlowBranchRepanics:【第三次審查】等太久之後才 panic 的:applyState 接著等的那個 Cmd 要把 panic 再丟出來。
+func TestTUISlowBranchRepanics(t *testing.T) {
+	shrinkRoundWait(t, 20*time.Millisecond)
+	m := newTestTUI(t, &watchFake{})
+	gate := make(chan struct{})
+	msg := tuiAwait(m.gen, func() tuiStateMsg { <-gate; panic("late boom") })
+	_, cmd := m.Update(msg)
+	close(gate)
+	var r any
+	func() { // 在這個 goroutine 裡跑(within 的 goroutine 裡 panic 會直接讓測試程式死掉);gate 已經關了,馬上回來
+		defer func() { r = recover() }()
+		cmd()
+	}()
+	if r == nil || !strings.Contains(fmt.Sprint(r), "late boom") {
+		t.Errorf("applyState 接著等的那個 Cmd 要再丟 panic:%v", r)
 	}
 }

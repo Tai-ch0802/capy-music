@@ -219,8 +219,10 @@ func (m tuiModel) round() func() tuiStateMsg {
 // control:把控制指令送給狀態列上的那個平台(applyState 記下的 provID,不是按鍵當下才去問 tracker——
 // 那時 tracker 可能已經換到畫面還沒顯示的另一家),送完進安定期、立刻重新輪詢,畫面才會跟上。
 // 呼叫端要先把 gen 推進(newChain),這次讀取才會取代舊鏈而不是疊上去。
-// controller 還沒建好時(ErrAuthExpired、dropNow 之後)要等建構,沒有上限;等超過 tuiRoundWait 才建好就不送了——
-// 使用者早就不等這個鍵,連按五次 n 不該在鎖放開的那一刻一口氣跳五首(#97 review)。
+// 一個鍵從按下起最多等 tuiRoundWait:controller 還沒建好時(ErrAuthExpired、dropNow 之後)要等建構,沒有上限,
+// 等超過才建好就不送了;送出本身也帶同一個截止時間與 WithoutWait——429 不睡在這裡(睡醒才送就是晚到的那一下),
+// token 換發卡住時請求在送出前就被擋下(net/http 送出前看 ctx),Music.app 卡住時 osascript 會被殺掉。
+// 使用者早就不等這個鍵了:連按五次 n,不該在鎖放開或冷卻結束那一刻一口氣跳五首(#97 review)。
 func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error) tea.Cmd {
 	ctx, gen, trk, id, round := m.ctx, m.gen, m.trk, m.provID, m.round()
 	return func() tea.Msg {
@@ -233,7 +235,12 @@ func (m tuiModel) control(f func(provider.PlaybackController, context.Context) e
 			if err != nil {
 				return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 			}
-			if err := f(pc, ctx); err != nil {
+			fctx, cancel := context.WithDeadline(provider.WithoutWait(ctx), start.Add(tuiRoundWait))
+			defer cancel()
+			if err := f(pc, fctx); err != nil {
+				if fctx.Err() != nil && ctx.Err() == nil {
+					err = i18n.Errorf("tui.err.ctl_timeout") // 可能已經送到了,只是回得太慢:不說「沒送」
+				}
 				trk.expireExcept("") // 送不出去(例如沒有作用中的裝置):快取的狀態可能就是錯的,下一輪重問,不要照它再按一次同樣的鍵
 				return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 			}
@@ -451,6 +458,15 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.pollTick()
 	}
+	// 等太久了:接著等同一個結果——過期的也要等,那個結果可能是控制指令自己的錯(下面照樣要說)或 panic(要再丟)。
+	// 只有目前這條鏈的才說「等待平台回應」,畫面照舊;結果回來照常套用(失敗照算,過期的照樣丟)。
+	if msg.slow {
+		if !stale {
+			m.errShort = i18n.T("tui.status.waiting")
+		}
+		pending := msg.pending
+		return m, func() tea.Msg { return (<-pending).repanic() }
+	}
 	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
 		pr := m.printErr(msg.err) // printErr 是指標 receiver,先叫再 return:
@@ -462,11 +478,6 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.dropped { // 已登出 / 換掉的帳號的結果:不顯示,鏈照走
 		return m, tick()
-	}
-	if msg.slow { // 等太久了:先說一聲、畫面照舊,接著等同一個結果(回來之後照常套用,失敗照算)
-		m.errShort = i18n.T("tui.status.waiting")
-		pending := msg.pending
-		return m, func() tea.Msg { return (<-pending).repanic() }
 	}
 	if msg.provider != "" && msg.provider != m.provID { // 換平台:上一家的曲目與失敗次數不能掛在這一家名下(限流、出錯的分支都不動 st)
 		m.provID, m.st, m.fails = msg.provider, nil, 0

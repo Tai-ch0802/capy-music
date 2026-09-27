@@ -18,9 +18,11 @@ const playbackSupported = true
 
 // 測試替換點。runOSA 的 args 經 argv 傳進腳本的 `on run argv`,前面一定加 "--":值(歌名、歌手)不進腳本原始碼、
 // 不必跳脫;沒有 "--" 的話,開頭是 "-" 的值會被 osascript 當成旗標,"-e" 甚至會被當成更多原始碼(2026-09-27 實測)。
+// ctx 到期或取消就殺掉 osascript:Music.app 卡住(轉圈圈)時,一次 AppleEvent 要等一兩分鐘才自己逾時,TUI 與 web 的
+// 輪詢拿著單飛鎖等它,所有平台的狀態都跟著停住(決策 53)。Play 的兩支腳本刻意不吃取消,見 Play 的註解。
 var (
-	runOSA = func(script string, args ...string) (string, error) {
-		out, err := exec.Command("osascript", append([]string{"-e", script, "--"}, args...)...).Output()
+	runOSA = func(ctx context.Context, script string, args ...string) (string, error) {
+		out, err := exec.CommandContext(ctx, "osascript", append([]string{"-e", script, "--"}, args...)...).Output()
 		return strings.TrimSpace(string(out)), err
 	}
 	runOpen = func(u string) error { return exec.Command("open", u).Run() }
@@ -36,7 +38,10 @@ const musicDevice = "music.app"
 func StubOSAForTest(t interface{ Cleanup(func()) }) *[]string {
 	var calls []string
 	origOSA, origOpen := runOSA, runOpen
-	runOSA = func(script string, _ ...string) (string, error) { calls = append(calls, script); return "", nil }
+	runOSA = func(_ context.Context, script string, _ ...string) (string, error) {
+		calls = append(calls, script)
+		return "", nil
+	}
 	runOpen = func(u string) error { calls = append(calls, "open "+u); return nil }
 	t.Cleanup(func() { runOSA, runOpen = origOSA, origOpen })
 	return &calls
@@ -59,8 +64,8 @@ tell application "Music"
 	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer)
 end tell`
 
-func (p *Provider) State(context.Context) (*provider.PlaybackState, error) {
-	out, err := runOSA(stateScript)
+func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
+	out, err := runOSA(ctx, stateScript)
 	if err != nil {
 		return nil, i18n.Errorf("apple.player.err.osascript_failed", "err", err)
 	}
@@ -98,7 +103,7 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 		return i18n.Errorf("apple.player.err.playlist_unsupported", "err", provider.ErrNotSupported)
 	}
 	if len(req.TrackIDs) == 0 {
-		_, err := runOSA(`tell application "Music" to play`)
+		_, err := runOSA(ctx, `tell application "Music" to play`)
 		return err
 	}
 	if p.c == nil {
@@ -111,13 +116,13 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 	}
 	// osascript 的錯(沒有自動化權限 -1743、Music.app 剛啟動、資料庫那份已下架)一律退回打開頁面,不當失敗;錯誤訊息是在地化的,不解析。
 	// 但每一步之前先看 ctx:終端機的 Ctrl-C 會連 osascript 一起殺掉,那不是「沒找到」——使用者喊停之後不再開始播放、不再打開 Music.app。
-	// web 的「中止」不會殺掉 osascript(runOSA 不吃 ctx):查資料庫那一步照樣跑完,但下一步之前的檢查一樣擋得住;確認迴圈裡的 play
-	// 在腳本第一行就送出了,殺掉也收不回,所以這段不吃取消(同 web_run.go 的 webExitReason)。
+	// web 的「中止」不會殺掉 osascript(這兩支腳本給 runOSA 的是 context.Background()):查資料庫那一步照樣跑完,但下一步之前的
+	// 檢查一樣擋得住;確認迴圈裡的 play 在腳本第一行就送出了,殺掉也收不回,所以這段不吃取消(同 web_run.go 的 webExitReason)。
 	if pid := libraryMatch(tr); pid != "" {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if out, err := runOSA(playLibraryScript, pid); err == nil && out == "pid" {
+		if out, err := runOSA(context.Background(), playLibraryScript, pid); err == nil && out == "pid" {
 			return nil
 		}
 	}
@@ -187,7 +192,7 @@ func libraryMatch(tr provider.Track) string {
 	if tr.Title == "" || len(tr.Artists) == 0 || tr.Artists[0] == "" || tr.DurationMS <= 0 {
 		return ""
 	}
-	out, err := runOSA(libraryMatchScript, tr.Title, tr.Artists[0], tr.Album)
+	out, err := runOSA(context.Background(), libraryMatchScript, tr.Title, tr.Artists[0], tr.Album) // 不吃取消:見 Play
 	if err != nil || out == "" {
 		return ""
 	}
@@ -215,29 +220,29 @@ func libraryMatch(tr provider.Track) string {
 	return ""
 }
 
-func (p *Provider) Pause(context.Context) error {
-	_, err := runOSA(`tell application "Music" to pause`)
+func (p *Provider) Pause(ctx context.Context) error {
+	_, err := runOSA(ctx, `tell application "Music" to pause`)
 	return err
 }
 
-func (p *Provider) Next(context.Context) error {
-	_, err := runOSA(`tell application "Music" to next track`)
+func (p *Provider) Next(ctx context.Context) error {
+	_, err := runOSA(ctx, `tell application "Music" to next track`)
 	return err
 }
 
-func (p *Provider) Prev(context.Context) error {
-	_, err := runOSA(`tell application "Music" to previous track`)
+func (p *Provider) Prev(ctx context.Context) error {
+	_, err := runOSA(ctx, `tell application "Music" to previous track`)
 	return err
 }
 
 // Seek / SetVolume:Music.app 的 player position 單位是秒、sound volume 是 0-100。
 // 位置取整到秒(mm:ss 本來就是秒精度),順便避開小數點在非 en-US locale 的格式疑慮(見 stateScript 的註解)。
-func (p *Provider) Seek(_ context.Context, posMS int) error {
-	_, err := runOSA(fmt.Sprintf(`tell application "Music" to set player position to %d`, (posMS+500)/1000))
+func (p *Provider) Seek(ctx context.Context, posMS int) error {
+	_, err := runOSA(ctx, fmt.Sprintf(`tell application "Music" to set player position to %d`, (posMS+500)/1000))
 	return err
 }
 
-func (p *Provider) SetVolume(_ context.Context, pct int) error {
-	_, err := runOSA(fmt.Sprintf(`tell application "Music" to set sound volume to %d`, pct))
+func (p *Provider) SetVolume(ctx context.Context, pct int) error {
+	_, err := runOSA(ctx, fmt.Sprintf(`tell application "Music" to set sound volume to %d`, pct))
 	return err
 }

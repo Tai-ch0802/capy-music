@@ -939,6 +939,7 @@
   "sync.err.force_with_all": "--force works with a single playlist only (capy pl sync <name> --force), not with --all",
   "sync.next": "run capy pl sync again (its pull half absorbs what was already pushed as platform changes, so nothing is duplicated)",
   "sync.next_after_half": "then run capy pl sync again",
+  "tui.err.ctl_timeout": "The platform took too long to respond; that key may not have taken effect",
   "tui.err.ctl_too_late": "The platform took too long to respond, so that key was ignored (it would have arrived late)",
   "tui.err.no_executable": "Can't find capy's own executable, so the command line is disabled",
   "tui.exit_code": "{cmd} exited with code {code}",

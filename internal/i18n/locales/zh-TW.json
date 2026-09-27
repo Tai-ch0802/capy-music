@@ -874,6 +874,7 @@
   "sync.err.force_with_all": "--force 只能配單一清單(capy pl sync <name> --force),不能配 --all",
   "sync.next": "重跑 capy pl sync(pull 半邊會把已推到平台的變更當平台變更再吸收一次,不會重複)",
   "sync.next_after_half": "再重跑 capy pl sync",
+  "tui.err.ctl_timeout": "平台太久沒回應,這個按鍵不一定有生效",
   "tui.err.ctl_too_late": "平台太久沒回應,這個按鍵已略過(送出去也晚了)",
   "tui.err.no_executable": "找不到 capy 自己的執行檔,命令列停用",
   "tui.exit_code": "{cmd} 結束碼 {code}",
