@@ -44,8 +44,9 @@ export function initSearch(root, api, con, notice, providers) {
 const SPOTIFY_TRACK_ID = /^[0-9A-Za-z]{22}$/;
 
 // resultTable:沿用 table.js 的表格(同一份原子欄與時長規則),再補一欄常駐的列動作。
-// Spotify 的每一列連回 Spotify(Spotify 的設計規範:顯示 Spotify 的曲名、歌手就要連回 Spotify,而且要帶 Spotify 的名稱;
-// 計畫 2026-09-24 §1.7 S7):連結寫著「在 Spotify 上聽」,開在新分頁,同 player.js 的曲名連結。
+// Spotify 的每一列連回 Spotify(Spotify 的設計規範:顯示 Spotify 的曲名、歌手就要連回 Spotify;計畫 2026-09-24 §1.7 S7):
+// 連結的字用規範核可的「LISTEN ON SPOTIFY」,開在新分頁,同 player.js 的曲名連結。規範也要求用 Spotify 的 logo 或 icon 標示
+// 來源,這一點刻意不照做:決策 48 不內嵌官方 logo(開源專案內嵌是商標風險),只用文字。
 // Apple 那一列叫「在 Music.app 開啟」(決策 52):搜尋結果多半是資料庫裡沒有的目錄歌曲,capy 只能在 Music.app 打開並標出那首;
 // 資料庫裡有的會真的播,這時底部的播放列換成 Apple 就是確認,說「開啟」只是少說,不會說謊。
 function resultTable(header, rows, prov, con, notice) {

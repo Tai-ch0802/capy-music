@@ -784,6 +784,18 @@ await scenario('8m', async () => {
   check(sp[1].link === null, 'local file 沒有 Spotify 上的頁面:不給連結');
   const ap = await paint('apple', [['700050031', 'Radioactivity']]);
   check(ap[0].link === null, 'Apple 列沒有 Spotify 連結');
+
+  // 報讀名稱要以看得到的字開頭(WCAG 2.5.3 Label in Name):用語音控制說「Listen on Spotify」的人才點得到。英文是正式預設。
+  i18nFile = './i18n-en.json';
+  try {
+    await loadI18n(api);
+    const en = (await paint('spotify', [['4uLU6hMCjMI75M1A2tKUQC', 'Never Gonna']]))[0].link;
+    check(en && en.textContent === 'Listen on Spotify' && en.getAttribute('aria-label').startsWith(en.textContent) && en.getAttribute('aria-label').includes('Never Gonna'),
+      `en:報讀名稱要以看得到的字開頭:${en && en.textContent} / ${en && en.getAttribute('aria-label')}`);
+  } finally {
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
 });
 
 // 9. 被伺服器拒絕(別的分頁佔著槽):說一句,並回報 refused 讓命令列把那行還給使用者。

@@ -1322,7 +1322,7 @@
   "webui.search.lead": "Find songs on a platform. Spotify plays them right away; on macOS, Apple Music plays songs already in your library and opens the rest in Music.app with the song highlighted.",
   "webui.search.limit": "Number of results",
   "webui.search.listen_on_spotify": "Listen on Spotify",
-  "webui.search.listen_on_spotify_label": "Listen to \"{title}\" on Spotify",
+  "webui.search.listen_on_spotify_label": "Listen on Spotify: \"{title}\"",
   "webui.search.not_found": "Nothing found for \"{query}\" on {platform}. Try other keywords or another platform.",
   "webui.search.open_music": "Open in Music.app",
   "webui.search.open_music_label": "Opening \"{title}\" in Music.app",
