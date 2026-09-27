@@ -710,7 +710,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | 不可對 Apple Music 存取收費 | 永久免費 + 開源。這也正是專案初衷。 |
 | MusicKit Content 不可與其他內容 synchronized | ⚠️ 灰色地帶。保守做法:**只同步使用者自建的 library playlist**;不觸碰 Apple 編輯清單/目錄;不把 Apple cover art 用在播放脈絡或連回 Apple Music 的脈絡以外(2026-09-17,決策 42:ISRC 頁的封面永遠與「在 Apple Music 開啟」連結並列,播放面板的封面是播放脈絡) |
 | 不可下載/修改 MusicKit Content | 我們只碰 metadata,不碰音訊 |
-| Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規 |
+| Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規;web 介面顯示 Spotify 的曲目或清單的地方都連回 Spotify(Policy II.4.b,連結字用設計規範核可的「Listen on Spotify」;規範要的 logo 依決策 48 不放,計畫 2026-09-24 §1.7 S7) |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
 
 本專案沒有任何遠端伺服器端元件(v0.5 起 Worker 已移除;`capy --web` 只在使用者自己的電腦 127.0.0.1 起 HTTP,不對外、資料不離開那台電腦、不經過我們):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google OAuth 同意畫面與 basic verification 需要的 URL)掛在品牌網站 <https://capy.taislife.work>(2026-09-21;首頁 / `/privacy` / `/terms`,中英各一份,原始檔在 `site/`):Cloudflare Workers 的**純靜態資產**——沒有 Worker 程式、沒有 binding、零外部資源、沒有 cookie 與分析,不構成「伺服器端元件」。政策的核心就是上面那一句;`site/site_test.go` 釘住「政策揭露的 scope = `auth.GoogleScopes`」,兩邊不一致測試會紅。

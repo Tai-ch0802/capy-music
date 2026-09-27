@@ -1,5 +1,5 @@
 // console.js:POST /api/run 的 SSE 串流 → 區塊(回聲 / stdout / stderr / table / exit)。
-import { renderTable } from './table.js';
+import { renderTable, linkColumn, byProvider } from './table.js';
 import { t } from './i18n.js';
 
 // CAPYBARA:與 tui_capybara.go 的 capybaraStill() 逐字元相同(TestWebCapybaraMatchesTUI 釘住)。
@@ -338,7 +338,14 @@ export class Console {
         break;
       case 'stdout': this.append(b, 'block__out', ev.text); this.hooks.onStdout?.(ev.text); break;
       case 'stderr': this.append(b, 'block__err', ev.text); this.activity(ev.text); break;
-      case 'table': b.appendChild(renderTable(ev.header, ev.rows)); this.hooks.onTable?.(ev.header, ev.rows); break;
+      case 'table': { // 每一列自己帶 PROVIDER 的表(同步、搬家、resolve)跟頁面上一樣連回 Spotify;搜尋、pl list / pl show 的表不帶平台,
+        // 這裡猜不出是哪一家,不連(頁面上的那一份有)
+        const tbl = renderTable(ev.header, ev.rows);
+        const pick = byProvider(ev.header);
+        b.appendChild(pick ? linkColumn(tbl, ev.rows, pick) : tbl);
+        this.hooks.onTable?.(ev.header, ev.rows);
+        break;
+      }
       case 'progress': this.progress(ev); this.hooks.onProgress?.(ev); break;
       // onExit 不在這裡叫,由 run() 在串流收尾後叫(理由見 run())。
       case 'exit': this.exit(b, ev.code, ev.message, ev.reason); this.ex = [ev.code, ev.message, ev.reason]; break;

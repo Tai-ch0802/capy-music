@@ -1,7 +1,7 @@
 // sync.js:#/sync —— 表單只組出一條命令,確認與變更表都在 dock 的區塊裡(寫入的確認是提示橋的 confirm,
 // 頁面絕不代加 --yes、絕不代加 --force)。這一頁再把同一份變更表畫大一點。
 import { el, quote, btn, field, input, select, providerOptions, emptyState, pageHead } from './common.js';
-import { renderTable } from '../table.js';
+import { renderTable, linkColumn, byProvider } from '../table.js';
 import { t } from '../i18n.js';
 
 export function initSync(root, api, con, notice, providers) {
@@ -56,9 +56,12 @@ export function initSync(root, api, con, notice, providers) {
   out.appendChild(emptyState(t('webui.sync.empty', { button: t('webui.sync.sync') })));
 
   // 同步表(最後一欄是 REASON_CODE):自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
+  // Spotify 的那幾列在最後補一欄連回 Spotify(table.js 的 byProvider;平台清單的去重報告沒有 PROVIDER 欄,不補)。
   function table(header, rows) {
     const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
     const tbl = renderTable(header, rows);
+    const pick = byProvider(header);
+    if (pick) linkColumn(tbl, rows, pick);
     const ai = header.indexOf('ACTION');
     if (ai >= 0) {
       for (const tr of tbl.querySelectorAll('tbody tr')) {
