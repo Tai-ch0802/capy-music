@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -67,8 +69,8 @@ type (
 	tuiPollMsg struct{ gen int }
 	// provider / retryAt / cached 來自 nowTracker:provider 是這一輪顯示的平台(跟隨規則,決策 51;空 = 不換),
 	// retryAt 是限流冷卻結束的時間,cached = 這份是快取、不是這一次真的問到的(不計入 fails)。
-	// dropped:問的期間 dropNow 過(命令列跑了 auth / config set),這一輪作廢。busy:上一輪還沒做完,這次沒問;
-	// slow:這次問了,但等了 tuiRoundWait 還沒回來(那一輪在背景繼續做完、寫回快取)。
+	// dropped:問的期間 dropNow 過(命令列跑了 auth / config set),這一輪作廢。slow:等了 tuiRoundWait 還沒回來,
+	// 結果之後從 pending 送到。panicked:run 裡的 panic,由 repanic 在 Cmd 的 goroutine 裡再丟。
 	tuiStateMsg struct {
 		st       *provider.PlaybackState
 		err      error
@@ -78,8 +80,9 @@ type (
 		retryAt  time.Time
 		cached   bool
 		dropped  bool
-		busy     bool
 		slow     bool
+		pending  chan tuiStateMsg
+		panicked any
 	}
 	tuiExecMsg struct {
 		args []string
@@ -151,69 +154,92 @@ func (m tuiModel) frameTick() tea.Cmd {
 	return tea.Tick(tuiFrameInterval, func(t time.Time) tea.Msg { return tuiFrameMsg(t) })
 }
 
-func (m tuiModel) pollTick() tea.Cmd { return m.pollTickAfter(m.interval) }
-
-func (m tuiModel) pollTickAfter(d time.Duration) tea.Cmd {
+func (m tuiModel) pollTick() tea.Cmd {
 	gen := m.gen
-	return tea.Tick(d, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
+	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
 
-// tuiRoundWait:poll 等一輪的上限。建 provider 要等 <key>.token.lock(沒有上限,持有者可能停在 keychain 授權對話框),
-// 而那個 ctx 得留給 TokenSource 之後每次換發用,不能給它期限——所以跟 web 的 webNowWait 一樣只限「等」:
-// 超過就先說「等待平台回應」,那一輪在背景做完、寫回快取。測試替換點。
+// tuiRoundWait:畫面等一輪(或一個控制鍵)的上限。建 provider 要等 <key>.token.lock,沒有上限(持有者可能停在 keychain
+// 授權對話框),而那個 ctx 得留給 TokenSource 之後每次換發用,不能給它期限——所以只限「等」(同 web 的 webNowWait):
+// 超過就先說「等待平台回應」,結果回來照常套用(失敗照算)。測試替換點。
 var tuiRoundWait = 3 * time.Second
 
-// tuiBusyRetry:上一輪還沒做完時,多久再試一次(只是 TryLock,不問平台)。比輪詢間隔短:按鍵剛好撞上一輪時,畫面不必多等兩秒。
-const tuiBusyRetry = 200 * time.Millisecond
+// tuiAwait:在 tuiRoundWait 內等 run 的結果;等不到就先回 slow,帶著 pending 讓 applyState 接著等。run 在自己的 goroutine 裡跑,
+// 它的 panic 帶回呼叫端再丟——Cmd 的 goroutine 裡丟,bubbletea 才會還原終端機。
+func tuiAwait(gen int, run func() tuiStateMsg) tuiStateMsg {
+	done := make(chan tuiStateMsg, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- tuiStateMsg{gen: gen, panicked: fmt.Sprintf("%v\n%s", r, debug.Stack())}
+			}
+		}()
+		done <- run()
+	}()
+	wait := time.NewTimer(tuiRoundWait)
+	defer wait.Stop()
+	select {
+	case msg := <-done:
+		return msg.repanic()
+	case <-wait.C:
+		return tuiStateMsg{gen: gen, slow: true, pending: done}
+	}
+}
+
+func (msg tuiStateMsg) repanic() tuiStateMsg {
+	if msg.panicked != nil {
+		panic(msg.panicked)
+	}
+	return msg
+}
 
 // poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
 // 不是由這裡每 2 秒一次決定——限流時也照常每 2 秒問,冷卻期內 tracker 只端出快取。
-// 單飛同 web 的 /api/now:上一輪還沒做完就不排隊(TryLock),卡住的那一輪不會讓按鍵堆出一串等鎖的 goroutine。
 func (m tuiModel) poll() tea.Cmd {
+	gen, round := m.gen, m.round()
+	return func() tea.Msg { return tuiAwait(gen, round) }
+}
+
+// round:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖)。卡住的那一輪期間按鍵起的輪詢會排在這裡——
+// 一輪是冪等的(問、寫快取),排隊的那幾輪做完各自依世代號丟棄,不會重播任何控制指令。
+func (m tuiModel) round() func() tuiStateMsg {
 	trk, pin, gen := m.trk, m.provFlag, m.gen
-	return func() tea.Msg {
-		if !trk.pollMu.TryLock() {
-			return tuiStateMsg{gen: gen, busy: true}
+	return func() tuiStateMsg {
+		trk.pollMu.Lock()
+		defer trk.pollMu.Unlock()
+		g := trk.nowGen.Load()
+		res := trk.pollRound(pin)
+		if !trk.setNow(res, pin == "", g) {
+			return tuiStateMsg{gen: gen, dropped: true}
 		}
-		done := make(chan tuiStateMsg, 1)
-		go func() {
-			g := trk.nowGen.Load()
-			res := trk.pollRound(pin)
-			msg := tuiStateMsg{gen: gen, dropped: true}
-			if trk.setNow(res, pin == "", g) {
-				msg = tuiStateMsg{provider: res.provider, st: res.st, err: res.err, retryAt: res.retryAt, cached: !res.fresh, gen: gen}
-			}
-			trk.pollMu.Unlock() // 先放鎖再送:收到結果的一方緊接著再問一輪時,不會撞上剛做完的這一輪而拿到 busy
-			done <- msg
-		}()
-		wait := time.NewTimer(tuiRoundWait)
-		defer wait.Stop()
-		select {
-		case msg := <-done:
-			return msg
-		case <-wait.C:
-			return tuiStateMsg{gen: gen, busy: true, slow: true}
-		}
+		return tuiStateMsg{provider: res.provider, st: res.st, err: res.err, retryAt: res.retryAt, cached: !res.fresh, gen: gen}
 	}
 }
 
 // control:把控制指令送給狀態列上的那個平台(applyState 記下的 provID,不是按鍵當下才去問 tracker——
 // 那時 tracker 可能已經換到畫面還沒顯示的另一家),送完進安定期、立刻重新輪詢,畫面才會跟上。
 // 呼叫端要先把 gen 推進(newChain),這次讀取才會取代舊鏈而不是疊上去。
+// controller 還沒建好時(ErrAuthExpired、dropNow 之後)要等建構,沒有上限;等超過 tuiRoundWait 才建好就不送了——
+// 使用者早就不等這個鍵,連按五次 n 不該在鎖放開的那一刻一口氣跳五首(#97 review)。
 func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error) tea.Cmd {
-	ctx, gen, trk, id := m.ctx, m.gen, m.trk, m.provID
-	poll := m.poll()
+	ctx, gen, trk, id, round := m.ctx, m.gen, m.trk, m.provID, m.round()
 	return func() tea.Msg {
-		pc, err := trk.playback(id)
-		if err != nil {
-			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
-		}
-		if err := f(pc, ctx); err != nil {
-			trk.expireExcept("") // 送不出去(例如沒有作用中的裝置):快取的狀態可能就是錯的,下一輪重問,不要照它再按一次同樣的鍵
-			return tuiStateMsg{err: err, fromCtl: true, gen: gen}
-		}
-		trk.settleNow()
-		return poll()
+		return tuiAwait(gen, func() tuiStateMsg {
+			start := time.Now()
+			pc, err := trk.playback(id)
+			if err == nil && time.Since(start) > tuiRoundWait {
+				err = i18n.Errorf("tui.err.ctl_too_late")
+			}
+			if err != nil {
+				return tuiStateMsg{err: err, fromCtl: true, gen: gen}
+			}
+			if err := f(pc, ctx); err != nil {
+				trk.expireExcept("") // 送不出去(例如沒有作用中的裝置):快取的狀態可能就是錯的,下一輪重問,不要照它再按一次同樣的鍵
+				return tuiStateMsg{err: err, fromCtl: true, gen: gen}
+			}
+			trk.settleNow()
+			return round()
+		})
 	}
 }
 
@@ -437,14 +463,10 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	if msg.dropped { // 已登出 / 換掉的帳號的結果:不顯示,鏈照走
 		return m, tick()
 	}
-	if msg.busy { // 上一輪還沒做完:畫面照舊(等太久就說一聲,直到真的結果蓋掉它),很快再試;不算 fails
-		if msg.slow {
-			m.errShort = i18n.T("tui.status.waiting")
-		}
-		if m.stalled {
-			return m, nil
-		}
-		return m, m.pollTickAfter(tuiBusyRetry)
+	if msg.slow { // 等太久了:先說一聲、畫面照舊,接著等同一個結果(回來之後照常套用,失敗照算)
+		m.errShort = i18n.T("tui.status.waiting")
+		pending := msg.pending
+		return m, func() tea.Msg { return (<-pending).repanic() }
 	}
 	if msg.provider != "" && msg.provider != m.provID { // 換平台:上一家的曲目與失敗次數不能掛在這一家名下(限流、出錯的分支都不動 st)
 		m.provID, m.st, m.fails = msg.provider, nil, 0
@@ -912,6 +934,9 @@ func tuiQuietStderr() func() {
 	return func() { provider.BackoffStderr, auth.LockStderr = origBackoff, origLock }
 }
 
+// tuiRunProgram:runProgram 的測試替換點(驗 runTUI 在程式執行期間把提示丟掉)。
+var tuiRunProgram = runProgram
+
 // runTUI:互動式介面的進入點。取不到 provider 或播放遙控都不致命——介面照開,使用者可以在命令列
 // 跑 capy auth login。測試替換點。
 var runTUI = func(cmd *cobra.Command) error {
@@ -933,6 +958,6 @@ var runTUI = func(cmd *cobra.Command) error {
 	defer tuiQuietStderr()()
 	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
 	// 離開一律是使用者按 q / Esc(exit 0)、按 Ctrl-C 或從外面來的訊號(exit 130 / 143)——收尾在 runProgram。
-	_, err = runProgram(ctx, m, cmd.OutOrStdout())
+	_, err = tuiRunProgram(ctx, m, cmd.OutOrStdout())
 	return err
 }

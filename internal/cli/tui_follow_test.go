@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -198,8 +201,8 @@ func TestTUIDropDuringRoundDiscardsIt(t *testing.T) {
 	}
 }
 
-// TestTUIRoundsAreSingleFlight:舊鏈的那一輪還在飛時,控制鍵起的那一輪不另外問(TryLock 拿不到就讓,稍後再試)——
-// 不然按一次鍵就對 Spotify 多打一次,晚到的那一輪還會蓋掉 tracker 的 shown / lastNow(web 的 /api/now 用同一把鎖)。
+// TestTUIRoundsAreSingleFlight:控制鍵起的那一輪要等舊鏈在飛的那一輪做完,看得到它剛寫的快取——不然按一次鍵就對 Spotify
+// 多打一次,晚到的那一輪還會蓋掉 tracker 的 shown / lastNow(web 的 /api/now 用同一把鎖)。
 func TestTUIRoundsAreSingleFlight(t *testing.T) {
 	f := newNowFake()
 	f.set(nil, nil) // 閒置:有效期 15 秒
@@ -359,61 +362,186 @@ func within(t *testing.T, d time.Duration, what string, f func() tea.Msg) tea.Ms
 	}
 }
 
-// TestTUISlowRoundSaysSoAndDoesNotQueue:【#97 review 第 1 點】建 provider 要等 token 鎖(沒有上限,持有者可能停在 keychain
-// 對話框),那個 ctx 又不能給期限。所以跟 web 一樣只限「等」:等了 tuiRoundWait 還沒回來,狀態列說「等待平台回應」;
-// 之後的輪詢不排隊(拿不到鎖就讓),卡住的那一輪做完後恢復正常。
-func TestTUISlowRoundSaysSoAndDoesNotQueue(t *testing.T) {
+// shrinkRoundWait:把 tuiRoundWait 縮短(正式是 3 秒)。
+func shrinkRoundWait(t *testing.T, d time.Duration) {
+	t.Helper()
 	orig := tuiRoundWait
-	tuiRoundWait = 50 * time.Millisecond
+	tuiRoundWait = d
 	t.Cleanup(func() { tuiRoundWait = orig })
+}
+
+// applyAll:送一個訊息、套用;回來的是「等太久」就接著等 pending 的那個結果再套用(applyState 回的 Cmd 就是在等它)。
+func applyAll(t *testing.T, m tuiModel, msg tea.Msg) tuiModel {
+	t.Helper()
+	next, cmd := m.Update(msg)
+	m = next.(tuiModel)
+	if sm, ok := msg.(tuiStateMsg); ok && sm.slow {
+		m = applyAll(t, m, within(t, 5*time.Second, "pending 的結果", cmd))
+	}
+	return m
+}
+
+// TestTUISlowRoundSaysSoThenDelivers:【#97 review 第 1 點】建 provider 要等 token 鎖(沒有上限,持有者可能停在 keychain
+// 對話框),那個 ctx 又不能給期限。所以跟 web 一樣只限「等」:等了 tuiRoundWait 還沒回來,狀態列先說「等待平台回應」;
+// 結果回來照常套用。按 r 或控制鍵起的那一輪排在後面,等的時候也說;不會另外去問平台。
+func TestTUISlowRoundSaysSoThenDelivers(t *testing.T) {
+	shrinkRoundWait(t, 50*time.Millisecond)
 	f := newNowFake()
 	blk := make(chan struct{})
 	f.blockOn(blk)
 	m := newTestTUI(t, &watchFake{})
+	m.st = nil
 	m.trk.now["spotify"] = f
 	released := false
 	t.Cleanup(func() {
 		if !released {
 			close(blk)
 		}
-		for deadline := time.Now().Add(5 * time.Second); !m.trk.pollMu.TryLock(); time.Sleep(5 * time.Millisecond) {
-			if time.Now().After(deadline) {
-				t.Error("卡住的那一輪沒有收尾")
-				return
-			}
-		}
-		m.trk.pollMu.Unlock()
 	})
 
 	msg := within(t, 2*time.Second, "第一輪", m.poll())
-	next, cmd := m.Update(msg)
+	next, pend := m.Update(msg)
 	m = next.(tuiModel)
-	if !strings.Contains(m.statusLine(99), "等待平台回應") || cmd == nil {
-		t.Fatalf("等太久要說一聲、鏈照走:%q cmd=%v", ansi.Strip(m.statusLine(99)), cmd)
+	if !strings.Contains(m.statusLine(99), "等待平台回應") || pend == nil {
+		t.Fatalf("等太久要說一聲、接著等結果:%q", ansi.Strip(m.statusLine(99)))
 	}
-	msg = within(t, 2*time.Second, "第二輪(不可以排隊等鎖)", m.poll())
-	next, cmd = m.Update(msg)
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, false) // r 清掉那句、開新鏈
+	msg2 := within(t, 2*time.Second, "r 起的那一輪", m.poll())
+	next, pend2 := m.Update(msg2)
 	m = next.(tuiModel)
-	if n := f.calls.Load(); n != 1 || cmd == nil || m.fails != 0 {
-		t.Errorf("上一輪還在飛:不另外問、鏈照走、不算失敗:State %d 次 cmd=%v fails=%d", n, cmd, m.fails)
-	}
-	if !strings.Contains(m.statusLine(99), "等待平台回應") {
-		t.Errorf("真的結果回來之前,那句話要留著:%q", ansi.Strip(m.statusLine(99)))
+	if !strings.Contains(m.statusLine(99), "等待平台回應") || f.calls.Load() != 1 {
+		t.Errorf("排在後面的那一輪也要說,而且不另外問:State %d 次 %q", f.calls.Load(), ansi.Strip(m.statusLine(99)))
 	}
 
 	close(blk)
 	released = true
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
-		if m.trk.pollMu.TryLock() {
-			m.trk.pollMu.Unlock()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("卡住的那一輪沒有收尾")
-		}
+	m = applyAll(t, m, within(t, 5*time.Second, "舊鏈的結果", pend)) // 舊世代:丟掉
+	m = applyAll(t, m, within(t, 5*time.Second, "新鏈的結果", pend2))
+	if st := ansi.Strip(m.statusLine(99)); strings.Contains(st, "等待平台回應") || !strings.Contains(st, "派對動物") {
+		t.Errorf("結果回來要照常顯示:%q", st)
 	}
-	if m = pollOnce(t, m); strings.Contains(m.statusLine(99), "等待平台回應") || !strings.Contains(m.statusLine(99), "派對動物") {
-		t.Errorf("恢復後顯示真的結果:%q", ansi.Strip(m.statusLine(99)))
+}
+
+// TestTUIHungStateStillStalls:【delta 審查】State 卡到逾時(10 s)比畫面等的上限(3 s)久:那一輪的錯誤也要送到、照算失敗,
+// 連續幾次就停擺、叫使用者按 r——不能只是一直說「等待平台回應」。Apple 的結果不快取(有效期 0),每輪都是真的問到的。
+func TestTUIHungStateStillStalls(t *testing.T) {
+	shrinkRoundWait(t, 10*time.Millisecond)
+	recordPrintln(t)
+	f := newNowFakeAs("apple", nil)
+	blk := make(chan struct{})
+	t.Cleanup(func() { close(blk) })
+	f.blockOn(blk) // 永遠不放:每一輪都卡到 trk.timeout
+	trk := testTracker(t, "apple", f)
+	trk.timeout = 40 * time.Millisecond
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", trk, watchPollSpotify)
+	m.frozen = true
+	for range tuiMaxFails {
+		m = applyAll(t, m, within(t, 5*time.Second, "一輪", m.poll()))
+	}
+	if !m.stalled || m.fails != tuiMaxFails {
+		t.Errorf("卡住的平台要照算失敗、停擺:fails=%d stalled=%v %q", m.fails, m.stalled, ansi.Strip(m.statusLine(99)))
+	}
+}
+
+// countingNext:Next 記次數(看按鍵有沒有被送出去)。
+type countingNext struct {
+	*nowFake
+	next atomic.Int32
+}
+
+func (c *countingNext) Next(context.Context) error { c.next.Add(1); return nil }
+
+// TestTUILateControlIsDropped:【delta 審查】controller 還沒建好、建構又卡住(等 token 鎖):按鍵等超過 tuiRoundWait 才建好就不送了,
+// 照實說一聲——不然連按五次 n,鎖一放開就一口氣跳五首。等的期間狀態列說「等待平台回應」。
+func TestTUILateControlIsDropped(t *testing.T) {
+	shrinkRoundWait(t, 30*time.Millisecond)
+	recordPrintln(t)
+	c := &countingNext{nowFake: newNowFake()}
+	gate := make(chan struct{})
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	delete(m.trk.now, "spotify") // 還沒建(例如剛 dropNow 過)
+	stub := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "spotify" {
+			<-gate
+			return c, nil
+		}
+		return stub(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = stub })
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	m = next.(tuiModel)
+	msg := within(t, 2*time.Second, "按鍵", cmd)
+	next, pend := m.Update(msg)
+	m = next.(tuiModel)
+	if !strings.Contains(m.statusLine(99), "等待平台回應") {
+		t.Errorf("等的期間要說:%q", ansi.Strip(m.statusLine(99)))
+	}
+	time.Sleep(60 * time.Millisecond) // 建構卡得比 tuiRoundWait 久
+	close(gate)
+	m = applyAll(t, m, within(t, 5*time.Second, "按鍵的結果", pend))
+	if n := c.next.Load(); n != 0 {
+		t.Errorf("太晚才建好的按鍵不可以送出去:Next %d 次", n)
+	}
+	if !strings.Contains(m.statusLine(99), "剛才那個操作失敗") {
+		t.Errorf("要照實說這個鍵沒送:%q", ansi.Strip(m.statusLine(99)))
+	}
+}
+
+// TestTUIAwaitRepanics:【delta 審查】一輪在自己的 goroutine 裡跑;它的 panic 要帶回 Cmd 的 goroutine 再丟,bubbletea 才會還原終端機
+// (直接在裸 goroutine 裡 panic,程式死掉、終端機停在 raw mode)。等太久之後才 panic 的也一樣。
+func TestTUIAwaitRepanics(t *testing.T) {
+	shrinkRoundWait(t, 20*time.Millisecond)
+	caught := func(f func()) (r any) {
+		defer func() { r = recover() }()
+		f()
+		return nil
+	}
+	if r := caught(func() { tuiAwait(0, func() tuiStateMsg { panic("boom") }) }); r == nil || !strings.Contains(fmt.Sprint(r), "boom") {
+		t.Errorf("直接回來的那條要再丟:%v", r)
+	}
+	gate := make(chan struct{})
+	msg := tuiAwait(0, func() tuiStateMsg { <-gate; panic("late boom") })
+	if !msg.slow {
+		t.Fatalf("前提:等太久:%+v", msg)
+	}
+	close(gate)
+	var late tuiStateMsg
+	select {
+	case late = <-msg.pending:
+	case <-time.After(5 * time.Second):
+		t.Fatal("panic 之後 pending 要收到東西,不然等它的 Cmd 會永遠卡住")
+	}
+	if r := caught(func() { late.repanic() }); r == nil || !strings.Contains(fmt.Sprint(r), "late boom") {
+		t.Errorf("pending 那條也要再丟:%v", r)
+	}
+}
+
+// TestRunTUIQuietsStderrWhileRunning:【delta 審查】runTUI 在程式執行期間把兩個提示丟掉,結束後還原——只測 helper 的話,
+// runTUI 哪天漏叫它也不會有測試紅。
+func TestRunTUIQuietsStderrWhileRunning(t *testing.T) {
+	setCLITestConfig(t)
+	var lock, backoff bytes.Buffer
+	origLock, origBackoff := auth.LockStderr, provider.BackoffStderr
+	auth.LockStderr, provider.BackoffStderr = &lock, &backoff
+	t.Cleanup(func() { auth.LockStderr, provider.BackoffStderr = origLock, origBackoff })
+	origRun := tuiRunProgram
+	ran := false
+	tuiRunProgram = func(_ context.Context, m tea.Model, _ io.Writer, _ ...tea.ProgramOption) (tea.Model, error) {
+		ran = true
+		if auth.LockStderr != io.Discard || provider.BackoffStderr != io.Discard {
+			t.Errorf("程式執行期間兩個提示都要丟掉:lock=%T backoff=%T", auth.LockStderr, provider.BackoffStderr)
+		}
+		return m, nil
+	}
+	t.Cleanup(func() { tuiRunProgram = origRun })
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := runTUI(cmd); err != nil || !ran {
+		t.Fatalf("runTUI:%v ran=%v", err, ran)
+	}
+	if auth.LockStderr != &lock || provider.BackoffStderr != &backoff {
+		t.Error("結束後要還原")
 	}
 }
 
