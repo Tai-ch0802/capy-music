@@ -41,7 +41,7 @@ func TestAppleSongJSONDecodesRichFieldsAndArtworkSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := old.toTrack()
-	if got.ArtworkURL != "" || got.PreviewURL != "" || got.ReleaseDate != "" || got.Genres != nil || got.Popularity != 0 {
+	if got.ArtworkURL != "" || got.PreviewURL != "" || got.ReleaseDate != "" || got.Genres != nil {
 		t.Errorf("舊 fixture 沒有 artwork / previews:豐富欄位要是零值:%+v", got)
 	}
 	if got.URL != "https://music.apple.com/tw/album/x/1?i=o1" || got.ProviderID != "o1" {

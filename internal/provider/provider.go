@@ -81,8 +81,7 @@ type Track struct {
 	ArtworkURL  string   // 封面(Apple 已把 {w}x{h} 換成 600)
 	PreviewURL  string   // 試聽片段;Spotify 2024-11 起新建的 app 拿到 null
 	ReleaseDate string   // 平台給的字串原樣(YYYY-MM-DD,Spotify 可能只有 YYYY)
-	Popularity  int      // Spotify 0–100;Apple 沒有
-	Genres      []string // Apple genreNames;Spotify 曲目物件沒有(在 artist 上)
+	Genres      []string // Apple genreNames;Spotify 曲目物件沒有(在 artist 上)。Spotify 的 popularity 在 2026-02 從曲目物件移除,這裡也拿掉了
 	Raw         json.RawMessage
 }
 
@@ -172,11 +171,11 @@ func NormalizeISRC(s string) string {
 }
 
 // ArtistSearcher:藝人搜尋與熱門歌曲(CapArtistSearch)。
-// ArtistTopTracks 的實作可以回近似值(例如平台不開放熱門歌曲端點時,改用依熱門度排序的搜尋結果),
+// ArtistTopTracks 的實作可以回近似值(例如 Spotify 在 2026-02 移除了熱門歌曲端點,改用 artist:"<名稱>" 的搜尋結果),
 // 呼叫端不要把它當精確的「官方熱門榜」。
 type ArtistSearcher interface {
 	SearchArtists(ctx context.Context, q Query) ([]Artist, error)
-	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 的備案要用名稱
+	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 用名稱搜尋、用 id 過濾
 }
 
 type PlaylistReader interface {

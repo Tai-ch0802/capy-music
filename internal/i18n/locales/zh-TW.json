@@ -849,7 +849,6 @@
   "spotify.err.volume_not_allowed": "{not_allowed}(手機與部分喇叭會擋)— 請在該裝置上直接調:{err}",
   "spotify.err.write_forbidden": "Spotify 拒絕寫入清單 {id}(只有自己的或協作的清單可以寫):{err}",
   "spotify.err.write_not_found": "Spotify 找不到清單 {id}(或寫入端點不是 /items,見 spec §1.1):{err}",
-  "spotify.top_tracks_fallback": "Spotify:top-tracks 回 403(開發模式 app 拿不到),改用 artist:{artist} 搜尋近似",
   "spotify.unpushable_item": "第 {n} 首 {id}",
   "store.err.create_schema": "建 schema:{err}",
   "store.err.no_db": "本機沒有 state.db",

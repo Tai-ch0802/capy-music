@@ -401,21 +401,21 @@ func TestPlaylistItemsRestricted(t *testing.T) {
 	}
 }
 
+// TestSearchArtistsAndTopTracks:【fails-before-fix】Spotify 在 2026-02 移除了 /artists/{id}/top-tracks:藝人熱門歌曲直接走 artist 搜尋,
+// 不再先打那個端點(以前只有回 403 才退回搜尋,改回 404 或 410 就會直接失敗)。
 func TestSearchArtistsAndTopTracks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/search":
-			if q := r.URL.Query(); q.Get("type") != "artist" || q.Get("q") != "五月天" || q.Get("limit") != "5" {
+		switch q := r.URL.Query(); {
+		case r.URL.Path == "/search" && q.Get("type") == "artist":
+			if q.Get("q") != "五月天" || q.Get("limit") != "5" {
 				t.Errorf("artist search 查詢錯誤:%s", r.URL.RawQuery)
 			}
 			w.Write([]byte(`{"artists":{"items":[{"id":"a1","name":"五月天"},{"id":"a2","name":"五月天 Mayday"}]}}`))
-		case "/artists/a1/top-tracks":
-			if r.URL.Query().Get("market") != "from_token" {
-				t.Errorf("top-tracks 應帶 market=from_token:%s", r.URL.RawQuery)
-			}
-			w.Write([]byte(`{"tracks":[{"id":"t1","name":"派對動物","artists":[{"name":"五月天"}],"album":{"name":"自傳"},"duration_ms":249000}]}`))
+		case r.URL.Path == "/search" && q.Get("type") == "track":
+			w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"id":"a1","name":"五月天"}],"album":{"name":"自傳"},"duration_ms":249000}],"total":1}}`))
 		default:
-			t.Errorf("非預期路徑 %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			t.Errorf("非預期路徑(已移除的端點不可以再打):%s", r.URL.Path)
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -463,50 +463,56 @@ func TestPlayContextSendsContextURIOnly(t *testing.T) {
 	}
 }
 
-// 開發模式 app 打 top-tracks 會 403(2026-09 實測),要退回 artist:"<name>" 搜尋;其他錯誤照樣往上傳。
-func TestArtistTopTracksFallsBackToArtistSearchOn403(t *testing.T) {
+// TestArtistTopTracksFiltersToTheArtist:【#99 review】artist:"<name>" 搜尋(名稱裡的引號去掉)只留使用者挑的那一位藝人(比 id)的曲目——
+// 同名的另一位藝人(名稱一模一樣)與翻唱帳號都會混進搜尋結果。以前只比名稱,同名藝人濾不掉。
+func TestArtistTopTracksFiltersToTheArtist(t *testing.T) {
 	var searchQ string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/artists/a1/top-tracks":
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":{"status":403,"message":"Forbidden"}}`))
-		case "/search":
-			searchQ = r.URL.Query().Get("q")
-			if r.URL.Query().Get("type") != "track" {
-				t.Errorf("備案應搜曲目:%s", r.URL.RawQuery)
-			}
-			w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"name":"Mayday"}],"album":{"name":"自傳"}},{"id":"t9","name":"翻唱","artists":[{"name":"Mayday Cover Band"}],"album":{"name":"x"}}],"total":2}}`))
+		if r.URL.Path != "/search" || r.URL.Query().Get("type") != "track" {
+			t.Errorf("只搜曲目:%s?%s", r.URL.Path, r.URL.RawQuery)
 		}
+		searchQ = r.URL.Query().Get("q")
+		w.Write([]byte(`{"tracks":{"items":[
+			{"id":"t1","name":"派對動物","artists":[{"id":"a1","name":"Mayday"}],"album":{"name":"自傳"}},
+			{"id":"t8","name":"同名的另一位","artists":[{"id":"a2","name":"Mayday"}],"album":{"name":"y"}},
+			{"id":"t9","name":"翻唱","artists":[{"id":"a3","name":"Mayday Cover Band"}],"album":{"name":"x"}}],"total":3}}`))
 	}))
 	t.Cleanup(srv.Close)
-	var notice bytes.Buffer
-	origStderr := provider.BackoffStderr
-	provider.BackoffStderr = &notice
-	t.Cleanup(func() { provider.BackoffStderr = origStderr })
-	tracks, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: `May"day`})
+	c := NewClient(srv.Client(), srv.URL)
+	tracks, err := c.ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: `May"day`})
 	if err != nil || len(tracks) != 1 || tracks[0].ProviderID != "t1" {
-		t.Fatalf("403 應退回搜尋且只留藝人欄相符的曲目(同名/翻唱帳號要濾掉):%+v %v", tracks, err)
-	}
-	if !strings.Contains(notice.String(), "403") {
-		t.Errorf("退回時要留一行提示:%q", notice.String())
+		t.Fatalf("只留挑的那一位(比 id;同名藝人與翻唱帳號要濾掉):%+v %v", tracks, err)
 	}
 	if searchQ != `artist:"Mayday"` {
-		t.Errorf("備案查詢應為 artist:\"<name>\"(名稱裡的引號去掉):%q", searchQ)
+		t.Errorf("查詢應為 artist:\"<name>\"(名稱裡的引號去掉):%q", searchQ)
+	}
+	// 沒有 id(不該發生)才退回比名稱:同名的兩位都留,翻唱帳號濾掉。
+	if tracks, err := c.ArtistTopTracks(context.Background(), provider.Artist{Name: "Mayday"}); err != nil || len(tracks) != 2 {
+		t.Errorf("沒有 id 時比名稱:%+v %v", tracks, err)
 	}
 }
 
-func TestArtistTopTracksSurfacesNon403(t *testing.T) {
+// TestArtistTopTracksNeedsAName:沒有名稱(或只有引號)就不搜:artist:"" 會搜到什麼都不確定。
+func TestArtistTopTracksNeedsAName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/search" {
-			t.Fatal("非 403 不得退回搜尋")
+		t.Errorf("沒有名稱不該發請求:%s?%s", r.URL.Path, r.URL.RawQuery)
+	}))
+	t.Cleanup(srv.Close)
+	for _, n := range []string{"", `""`, ` " `} {
+		if tracks, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: n}); err != nil || tracks != nil {
+			t.Errorf("%q:要回空:%v %v", n, tracks, err)
 		}
+	}
+}
+
+func TestArtistTopTracksSurfacesSearchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error":{"status":500,"message":"boom"}}`))
 	}))
 	t.Cleanup(srv.Close)
 	if _, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: "x"}); err == nil {
-		t.Fatal("500 應回錯")
+		t.Fatal("搜尋失敗要回錯")
 	}
 }
 
