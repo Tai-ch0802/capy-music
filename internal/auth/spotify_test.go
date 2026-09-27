@@ -628,3 +628,19 @@ func TestSpotifyScopesExactly(t *testing.T) {
 		t.Errorf("Spotify scope 要恰好是決策 55 的 6 個:%v", SpotifyScopes)
 	}
 }
+
+// TestMigratedSpotifyTokenHasUnknownAuthorization:從舊鍵遷移來的記錄不知道當初何時授權:authorized_at 留零值,
+// 不假裝是現在(那會讓到期日往後推六個月、錯過提醒)。
+func TestMigratedSpotifyTokenHasUnknownAuthorization(t *testing.T) {
+	setTokenTest(t)
+	if err := secret.Set(KeySpotifyRefreshToken, "rt-legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrateSpotifyToken(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	at, err := SpotifyAuthorizedAt()
+	if err != nil || !at.IsZero() {
+		t.Errorf("遷移來的:授權時間不知道:%v %v", at, err)
+	}
+}

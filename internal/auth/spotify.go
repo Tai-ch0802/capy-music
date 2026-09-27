@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"golang.org/x/oauth2"
 
@@ -172,8 +173,8 @@ func migrateSpotifyToken(ctx context.Context) (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err // 含 ErrNotFound:兩個鍵都沒有 = 尚未登入
 	}
-	tok := &oauth2.Token{RefreshToken: rt} // 與剛寫進去的記錄等價(access token 空 → 首次 Token() 會 refresh)
-	if err := SaveToken(KeySpotifyToken, tok); err != nil {
+	tok := &oauth2.Token{RefreshToken: rt}                                // 與剛寫進去的記錄等價(access token 空 → 首次 Token() 會 refresh)
+	if err := writeToken(KeySpotifyToken, tok, time.Time{}); err != nil { // 舊鍵沒記授權時間:不知道,不假裝是現在
 		return nil, err
 	}
 	_ = secret.Delete(KeySpotifyRefreshToken)
@@ -191,4 +192,21 @@ func SpotifyStored() error {
 	}
 	_, err := secret.Get(KeySpotifyRefreshToken)
 	return err
+}
+
+// SpotifyRefreshLifetime:Spotify 的 refresh token 從授權起六個月失效,refresh 不延長(官方 Refreshing tokens 文件,
+// 2026-09-27 對照;決策 56)。取 180 天:比任何六個曆月都短,提醒一定落在真的到期之前。
+const SpotifyRefreshLifetime = 180 * 24 * time.Hour
+
+// SpotifyRenewWarn:剩這麼多天以內就提醒重新登入(計畫 2026-09-24 §1.7 S4 的「第 170 天左右」)。
+const SpotifyRenewWarn = 10 * 24 * time.Hour
+
+// SpotifyAuthorizedAt:這台電腦上 Spotify 登入授權的時間;零值 = 不知道(這個版本之前登入的、從舊鍵遷移來的)。
+// 沒登入時原樣透傳 secret.ErrNotFound。
+func SpotifyAuthorizedAt() (time.Time, error) {
+	st, err := loadStored(KeySpotifyToken)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return st.AuthorizedAt, nil
 }
