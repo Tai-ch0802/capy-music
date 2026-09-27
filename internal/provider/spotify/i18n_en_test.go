@@ -1,7 +1,6 @@
 package spotify
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -97,28 +96,5 @@ func TestUnpushableMessageZhTW(t *testing.T) {
 	_, err := c.ApplyOps(context.Background(), "p1", nil, []provider.PlaylistOp{{Kind: provider.OpAdd, ProviderID: "spotify:local:x", Pos: 0}, {Kind: provider.OpAdd, ProviderID: "", Pos: 1}})
 	if err == nil || err.Error() != `推不出去的曲目(local file 或空 id),整批不送:第 1 首 "spotify:local:x"、第 2 首 ""` {
 		t.Errorf("%v", err)
-	}
-}
-
-// top-tracks 403 時退回搜尋:提示是一行英文,藝人名以 Go 引號原樣帶出。
-func TestTopTracksFallbackNoticeEnglish(t *testing.T) {
-	withLanguage(t, "en")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/search" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		w.Write([]byte(`{"tracks":{"items":[],"total":0}}`))
-	}))
-	t.Cleanup(srv.Close)
-	var notice bytes.Buffer
-	orig := provider.BackoffStderr
-	provider.BackoffStderr = &notice
-	t.Cleanup(func() { provider.BackoffStderr = orig })
-	if _, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: "Mayday"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := notice.String(); got != "Spotify: top-tracks returned 403 (development-mode apps can't use it); approximating with an artist:\"Mayday\" search\n" {
-		t.Errorf("notice = %q", got)
 	}
 }

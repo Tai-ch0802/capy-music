@@ -912,7 +912,6 @@
   "spotify.err.volume_not_allowed": "{not_allowed} (phones and some speakers block it) — adjust the volume on the device itself: {err}",
   "spotify.err.write_forbidden": "Spotify refused to write to playlist {id} (only your own playlists and collaborative playlists can be written to): {err}",
   "spotify.err.write_not_found": "Spotify can't find playlist {id} (or the write endpoint isn't /items; see spec §1.1): {err}",
-  "spotify.top_tracks_fallback": "Spotify: top-tracks returned 403 (development-mode apps can't use it); approximating with an artist:{artist} search",
   "spotify.unpushable_item": "track {n} {id}",
   "store.err.create_schema": "creating the schema: {err}",
   "store.err.no_db": "there is no state.db on this computer",

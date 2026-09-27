@@ -72,7 +72,6 @@ function providerCard(id, data) {
     facts.appendChild(el('span', 'mono', tr.id));
     if (tr.duration_ms) facts.appendChild(el('span', 'mono', mmss(tr.duration_ms)));
     if (tr.release_date) facts.appendChild(el('span', 'mono', tr.release_date));
-    if (tr.popularity) facts.appendChild(el('span', 'mono', `popularity ${tr.popularity}`));
     for (const g of tr.genres || []) facts.appendChild(el('span', 'chip', g));
     meta.appendChild(facts);
     if (tr.url) {

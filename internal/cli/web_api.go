@@ -66,7 +66,6 @@ type webTrack struct {
 	ArtworkURL  string   `json:"artwork_url,omitempty"`
 	PreviewURL  string   `json:"preview_url,omitempty"`
 	ReleaseDate string   `json:"release_date,omitempty"`
-	Popularity  int      `json:"popularity,omitempty"`
 	Genres      []string `json:"genres,omitempty"`
 }
 
@@ -74,7 +73,7 @@ func toWebTrack(t provider.Track) webTrack {
 	return webTrack{
 		ID: t.ProviderID, ISRC: t.ISRC, Title: t.Title, Artists: nonNilStrings(t.Artists), Album: t.Album,
 		DurationMS: t.DurationMS, Explicit: t.Explicit, URL: t.URL, ArtworkURL: t.ArtworkURL,
-		PreviewURL: t.PreviewURL, ReleaseDate: t.ReleaseDate, Popularity: t.Popularity, Genres: t.Genres,
+		PreviewURL: t.PreviewURL, ReleaseDate: t.ReleaseDate, Genres: t.Genres,
 	}
 }
 

@@ -145,7 +145,6 @@ type trackJSON struct {
 	Name       string `json:"name"`
 	DurationMS int    `json:"duration_ms"`
 	Explicit   bool   `json:"explicit"`
-	Popularity int    `json:"popularity"`
 	PreviewURL string `json:"preview_url"` // 2024-11 起新建的 app 為 null
 	Album      struct {
 		Name        string `json:"name"`
@@ -192,7 +191,6 @@ func (t *trackJSON) toTrack() provider.Track {
 		ArtworkURL:  artwork,
 		PreviewURL:  t.PreviewURL,
 		ReleaseDate: t.Album.ReleaseDate,
-		Popularity:  t.Popularity,
 	}
 }
 
@@ -298,40 +296,25 @@ func (c *Client) SearchArtists(ctx context.Context, text string, limit int) ([]p
 	return out, nil
 }
 
-// ArtistTopTracks:先打 /artists/{id}/top-tracks(market=from_token)。開發模式 app 會被 403
-// (2026-09-07 實測:from_token / TW / 不帶 / country= 全部 403,不是 market 問題),此時退回
-// search q=artist:"<name>" type=track——Spotify 搜尋依熱門度排序,是「熱門歌曲」的可用近似。
+// ArtistTopTracks:Spotify 在 2026-02 移除了 GET /artists/{id}/top-tracks(開發模式 app 在那之前就一律 403,
+// 2026-09-07 實測),所以「藝人熱門歌曲」直接用 search q=artist:"<name>" type=track 近似(provider.ArtistSearcher 的契約
+// 本來就允許近似值)。以前每次 play artist: 都先打一次那個端點、只有回 403 才退回搜尋——端點改回 404 或 410 就會直接失敗。
 func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]provider.Track, error) {
-	var resp struct {
-		Tracks []trackJSON `json:"tracks"`
+	if a.Name == "" {
+		return nil, nil
 	}
-	path := "/artists/" + url.PathEscape(a.ProviderID) + "/top-tracks"
-	_, err := c.do(ctx, http.MethodGet, path, url.Values{"market": {"from_token"}}, nil, &resp)
-	var ae *apiError
-	if errors.As(err, &ae) && ae.Status == http.StatusForbidden && a.Name != "" {
-		// 留下痕跡:403 也可能是 scope 被撤或地區限制,不能讓人永遠只看到「播了一些歌」。
-		fmt.Fprintln(provider.BackoffStderr, i18n.T("spotify.top_tracks_fallback", "artist", strconv.Quote(a.Name)))
-		// 引號包起來就是字面詞組(AND/OR/NOT 與 artist: 這類語法在引號內不解析),只需去掉名稱裡自己的引號。
-		name := strings.ReplaceAll(a.Name, `"`, "")
-		ts, err := c.SearchTracks(ctx, `artist:"`+name+`"`, searchPageMax)
-		if err != nil {
-			return nil, err
-		}
-		// 只留藝人欄真的含這個名字的曲目:同名藝人與翻唱帳號會混進搜尋結果,使用者挑的是具體那一個。
-		out := ts[:0]
-		for _, t := range ts {
-			if slices.ContainsFunc(t.Artists, func(n string) bool { return strings.EqualFold(n, a.Name) || strings.EqualFold(n, name) }) {
-				out = append(out, t)
-			}
-		}
-		return out, nil
-	}
+	// 引號包起來就是字面詞組(AND/OR/NOT 與 artist: 這類語法在引號內不解析),只需去掉名稱裡自己的引號。
+	name := strings.ReplaceAll(a.Name, `"`, "")
+	ts, err := c.SearchTracks(ctx, `artist:"`+name+`"`, searchPageMax)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]provider.Track, len(resp.Tracks))
-	for i := range resp.Tracks {
-		out[i] = resp.Tracks[i].toTrack()
+	// 只留藝人欄真的含這個名字的曲目:同名藝人與翻唱帳號會混進搜尋結果,使用者挑的是具體那一個。
+	out := ts[:0]
+	for _, t := range ts {
+		if slices.ContainsFunc(t.Artists, func(n string) bool { return strings.EqualFold(n, a.Name) || strings.EqualFold(n, name) }) {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }

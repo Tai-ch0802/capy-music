@@ -131,7 +131,7 @@ Either way, `--client-id` / `--client-secret` always override the built-in value
 ```
 capy search yellow [--provider apple]
 capy play yellow                        # unified search: tracks, artists' top tracks, my playlists; opens a picker when ambiguous
-capy play coldplay / capy play Commute  # artist = play their top tracks (Spotify Development Mode apps can't get top-tracks, so capy falls back to a search sorted by popularity); exact playlist name = play the playlist (run capy pl list once first)
+capy play coldplay / capy play Commute  # artist = play their top tracks (Spotify removed top-tracks in February 2026, so capy approximates them with an artist: search); exact playlist name = play the playlist (run capy pl list once first)
 capy play --type track yellow           # for scripts: deterministic, always plays the first result; the prefixes artist: / pl: / track: do the same
 capy play --pick                        # open the picker right away (playlists and recent items from the local cache)
 capy                    # plain capy (in a terminal) = interactive mode; under a pipe / cron it still prints help
