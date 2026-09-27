@@ -1204,8 +1204,18 @@ func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
 		if err := c.Save(); err != nil {
 			t.Fatal(err)
 		}
+		st, err := store.Open(time.Second) // 同步記下的清單曲目(決策 57)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		for prov, it := range map[string][2]string{"spotify": {"p1", `[{"title":"派對動物"}]`}, "apple": {"p.a1", `[{"title":"冬日暖調"}]`}} {
+			if err := st.SavePlaylistItems(prov, it[0], store.PlaylistItems{Version: "v", Tracks: []byte(it[1]), FetchedAt: time.Now()}, time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	// providersIn:某個 state 檔裡還有哪些平台的快取列。
+	// providersIn:某個 state 檔裡還有哪些平台的快取列(清單列表、最近項目、清單曲目各自算)。
 	providersIn := func(t *testing.T, path string) map[string]bool {
 		t.Helper()
 		s, err := store.OpenAt(path, time.Second)
@@ -1223,6 +1233,11 @@ func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
 		}
 		for _, r := range recent {
 			got[r.Provider] = true
+		}
+		for prov, id := range map[string]string{"spotify": "p1", "apple": "p.a1"} {
+			if _, ok, err := s.CachedPlaylistItems(prov, id); err != nil || ok {
+				got[prov+" items"] = true
+			}
 		}
 		return got
 	}
@@ -1254,7 +1269,7 @@ func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
 			}
 			for _, p := range []string{live, live + ".v3"} {
 				got := providersIn(t, p)
-				if !got[tc.keep] || (tc.gone != "" && got[tc.gone]) || (tc.gone == "" && !got["apple"]) {
+				if !got[tc.keep] || !got[tc.keep+" items"] || (tc.gone != "" && (got[tc.gone] || got[tc.gone+" items"])) || (tc.gone == "" && (!got["apple"] || !got["apple items"])) {
 					t.Errorf("%s:只刪登出的那個平台(%s):%v", filepath.Base(p), tc.gone, got)
 				}
 			}

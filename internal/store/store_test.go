@@ -298,6 +298,34 @@ func TestCacheTablesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSavePlaylistItemsDropsExpired:存一份清單的曲目時順便刪掉過期的——解除連結的清單不會再被覆寫,不刪就永遠留著
+// (Spotify 只准暫時快取 metadata,決策 57)。沒過期的別家清單不動。
+func TestSavePlaylistItemsDropsExpired(t *testing.T) {
+	s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	t0 := time.Unix(1_790_000_000, 0)
+	for _, c := range []struct {
+		id string
+		at time.Time
+	}{{"old", t0}, {"fresh", t0.Add(6 * 24 * time.Hour)}} {
+		if err := s.SavePlaylistItems("spotify", c.id, PlaylistItems{Version: "v", Tracks: []byte("[]"), FetchedAt: c.at}, time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := t0.Add(8 * 24 * time.Hour)
+	if err := s.SavePlaylistItems("spotify", "new", PlaylistItems{Version: "v", Tracks: []byte("[]"), FetchedAt: now}, now.Add(-7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{"old": false, "fresh": true, "new": true} {
+		if _, ok, err := s.CachedPlaylistItems("spotify", id); err != nil || ok != want {
+			t.Errorf("%s:留著=%v,要 %v(%v)", id, ok, want, err)
+		}
+	}
+}
+
 // 唯讀開法:不建檔、版本不符不改名、壞檔不刪——逃生口不得有副作用。
 func TestOpenReadOnlyNeverTouchesFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")

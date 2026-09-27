@@ -1,5 +1,5 @@
 // Package store 是本機 SQLite(config.Dir()/state.db,spec §7)。它是 cache,不是 source of truth:只存 Drive 上有的
-// 東西的鏡像(canon 的 manifest / tracks / playlists / 各裝置 base)與純快取(provider 清單、最近項目)。
+// 東西的鏡像(canon 的 manifest / tracks / playlists / 各裝置 base)與純快取(provider 清單、最近項目、上次讀到的清單曲目)。
 // 刪掉整個 db 必須能從 Drive 完整重建(CLAUDE.md 硬約束,TestRebuildFromDrive)。不存憑證、不存 provider 原始 JSON。
 //
 // Migration 政策:PRAGMA user_version 不符就整檔丟棄重建,不寫 ALTER(spec §7)。
@@ -23,7 +23,7 @@ import (
 
 const (
 	fileName      = "state.db"
-	schemaVersion = 5 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at;v5(T2b,決策 21):加 merged。升版舊檔改名保留(T9)
+	schemaVersion = 6 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at;v5(T2b,決策 21):加 merged。升版舊檔改名保留(T9);v6(決策 57):加 playlist_items_cache
 )
 
 // schema v1。與 spec §7 的差異(2026-09-07,理由寫在 spec §7):tracks 多 artists / conflicts(JSON)、少 updated_at
@@ -41,6 +41,7 @@ CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT NOT NULL, last_seen 
 CREATE TABLE device_base (device_id TEXT NOT NULL, pid TEXT NOT NULL, provider TEXT NOT NULL, playlist_id TEXT NOT NULL, name TEXT NOT NULL, items TEXT NOT NULL, cids TEXT NOT NULL, observed_at INTEGER NOT NULL, PRIMARY KEY (device_id, pid, provider));
 CREATE TABLE provider_playlists (provider TEXT NOT NULL, position INTEGER NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, total INTEGER NOT NULL, PRIMARY KEY (provider, position));
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER NOT NULL, provider TEXT NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT NOT NULL);
+CREATE TABLE playlist_items_cache (provider TEXT NOT NULL, playlist_id TEXT NOT NULL, version TEXT NOT NULL, tracks TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY (provider, playlist_id));
 `
 
 type Store struct {

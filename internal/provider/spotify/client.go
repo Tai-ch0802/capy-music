@@ -452,9 +452,10 @@ func (c *Client) SetVolume(ctx context.Context, pct int) error {
 const playlistPageSize = 50
 
 type playlistJSON struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Owner struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	SnapshotID string `json:"snapshot_id"` // 清單版本:任何變動都會換(決策 57)
+	Owner      struct {
 		DisplayName string `json:"display_name"`
 	} `json:"owner"`
 	Items *struct {
@@ -473,7 +474,7 @@ func (p *playlistJSON) toRef() provider.PlaylistRef {
 	case p.Tracks != nil:
 		total = p.Tracks.Total
 	}
-	return provider.PlaylistRef{ID: p.ID, Name: p.Name, Owner: p.Owner.DisplayName, Total: total}
+	return provider.PlaylistRef{ID: p.ID, Name: p.Name, Owner: p.Owner.DisplayName, Total: total, Version: p.SnapshotID}
 }
 
 func (c *Client) MyPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {

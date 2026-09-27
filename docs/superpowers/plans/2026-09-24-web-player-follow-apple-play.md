@@ -154,7 +154,7 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
 |---|---|---|
 | S1 | 要了 9 個 scope,其中 `user-library-read`、`user-library-modify`、`user-read-currently-playing` 沒有任何呼叫點。指南寫「不要預先要求寬的 scope」,和 ARCHITECTURE §4.2「一次全要、免得重新授權」的決策衝突 | 拿掉這 3 個。這會推翻 §4.2,需要新決策。拿掉不必重新授權,但只有新登入的人會少拿這 3 個權限。✅ 2026-09-27 完成(決策 55) |
 | S2 | `GET /artists/{id}/top-tracks` 在 2026-02 已經移除,capy 每次 `play artist:` 還是先打它。只有回 403 才走 fallback,改回 404 或 410 就會直接失敗 | 直接走既有的搜尋 fallback,刪掉 `spotify.top_tracks_fallback` 這個 key;順便拿掉已移除的 `Track.popularity`。✅ 2026-09-27 完成(兩項都已對照 Spotify 的 February 2026 變更清單確認) |
-| S3 | pull / sync 每次都重抓每份清單的每一頁 | 記住 `snapshot_id`,沒變的清單就跳過。配額改成以開發者帳號計算之後,用 cron 同步的人最受惠 |
+| S3 | pull / sync 每次都重抓每份清單的每一頁 | 記住 `snapshot_id`,沒變的清單就跳過。配額改成以開發者帳號計算之後,用 cron 同步的人最受惠。✅ 2026-09-28(決策 57,設計見 §1.9) |
 | S4 | refresh token 從授權那天起算 6 個月就失效,refresh 不會延長 | 記錄 `authorized_at`,doctor 與 `auth status` 從第 170 天左右開始提醒。✅ 2026-09-27(決策 56;已對照官方 Refreshing tokens 文件) |
 | S5 | `auth logout spotify` 沒清掉本機快取裡的 Spotify 資料列(Developer Policy I 要求中斷連線時刪除) | logout 時一起清。✅ 2026-09-27:`auth logout spotify` / `apple` 刪掉快取裡那個平台的清單列表(`provider_playlists`)與最近項目(`recent`),schema 升版留下的舊檔(`state.db.v<N>`)與 T6 之前的 `cache.json` 也一起清;其他表是 Drive 正本的鏡像(使用者自己的清單,Developer Policy III 允許),不動 |
 | S6 | redirect 綁固定的 8888 埠 | 文件說 loopback 可以只註冊不帶埠號的網址,授權時再帶動態埠,但要先在真的 dashboard 上確認可行 |
@@ -166,6 +166,22 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
 - README.md:255、README.zh-TW.md:256、兩份指南各補一句:播放列跟著正在播的平台,控制鈕作用在它顯示的平台上,`capy --web --provider X` 可以釘住。改了指南就要跑 `go test ./site/ -run TestGuideOnSiteIsCurrent -update`、重發兩個指南 Artifact,合併後確認線上的 `/guide`、`/en/guide`、`/guide.css` 有更新。
 - 隱私權政策不用改:沒有新的外部服務。
 
+
+### 1.9 S3:同步不重讀沒變的清單(決策 57)
+
+- **版本從哪來**:Spotify 的清單列表(`/me/playlists`,pull / sync 本來就會打)每一份都附 `snapshot_id`,清單有任何變動就換。存成 `PlaylistRef.Version`,零額外呼叫。Apple 與 local 不給版本,照舊每輪都讀。
+- **什麼時候用快取**:版本非空、跟快取的相同、快取的曲目數等於列表的 Total、快取不到 7 天、快取的曲目跟 base 一模一樣。缺一就真的讀,讀到了記下,同時刪掉超過 7 天的列(解除連結的清單不會再被覆寫)。
+- **存哪裡、存什麼**:`state.db` 新表 `playlist_items_cache`(schema 5 → 6),只放同步要用的欄位。刪掉 db 只會多讀一次。
+- **列表的版本會落後**(寫完之後一陣子還回舊的 snapshot_id),所以有三道:
+  - 比 base:別台裝置剛推過,base 已前進、這台的快取還停在推之前。信快取的話,DERIVE 會把那次寫入讀成平台改回去,把使用者的修改撤銷到正本與對面平台(推 PR 前審查重現,`TestSyncIgnoresCacheBehindBase`)。
+  - 寫過就丟:push 寫過的清單(成功、半截、失敗都算)立刻刪掉那一列,不拿寫入回傳的版本記快取。寫成了但 Drive 的 COMMIT 失敗時 base 沒前進,只有這道擋得住(`TestPushForgetsCacheEvenIfCommitFails`)。
+  - stale 也丟:寫之前的重讀發現平台跟計畫對不上,計畫可能是照快取排的;不丟的話每一輪都照同一份舊的排、每一輪都 stale(`TestSyncForgetsCacheWhenStale`)。
+- **不動的**:push 寫之前的重讀(安全網)、L′ 的重讀都照舊真的讀。快取讀寫失敗不擋一輪。
+- **登出**:`auth logout spotify` / `apple` 連這張表一起清(S5 那套,含舊檔)。
+- **7 天上限**:Spotify Developer Terms IV.3.2 只准為了效能暫時快取 metadata、不可無限期。
+- **已知限制**:清單裡有空項目(已下架的曲目、podcast 單集)時,列表的 Total 比讀到的多,這種清單每輪照讀;不再同步的話,超過 7 天的列留到下次同步或登出才刪。
+- **研究過不採用**:ETag(就算平台給,也是每份清單每頁照打一次,省頻寬不省呼叫數)、逐份 `GET /playlists/{id}?fields=snapshot_id`(每份多一次呼叫)、放進 Drive 的裝置檔(Spotify metadata 只准暫時快取,跨裝置也沒好處)。
+- **隱私權政策不用改**:政策 §4 已寫「你的電腦:同一份資料的本機快取(SQLite 檔)」,快取的欄位都在 §3 的曲目資料裡(explicit 與 unpushable 是旗標);不是 Google scope、Drive 內容或外部服務的變動。
 ---
 
 ## 2. 問題二:Apple 搜尋結果按「播放」,Music.app 沒播
