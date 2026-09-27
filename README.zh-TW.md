@@ -99,7 +99,7 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
   5. ⚠️ Audience 按「Publish app」切到 In production —— 停在 Testing 的話 refresh token 7 天就過期,你會莫名被登出
   6. 把 Client ID 與 Client secret 貼進精靈。非互動環境用 `--client-id` / `--client-secret` 或 `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`。
 
-不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。`capy auth logout spotify` / `apple` 也會刪掉這台電腦快取裡那個平台的清單名稱與最近項目(Spotify 的 Developer Policy 要求你中斷連線時,應用程式要刪掉你的資料)。你自己 Google Drive 裡的清單正本不動:那是你的資料,放在你自己的空間。
+不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。`capy auth logout spotify` / `apple` 也會刪掉這台電腦快取裡那個平台的清單列表與最近項目(補全與 `play --pick` 用的),本機資料庫的舊檔也一起清(Spotify 的 Developer Policy 要求你中斷連線時,應用程式要刪掉你的資料)。你自己 Google Drive 裡的清單正本與它在這台電腦上的鏡像不動:那是你的資料,放在你自己的空間。
 
 ## 登入狀態給腳本讀:`capy auth status --json`
 

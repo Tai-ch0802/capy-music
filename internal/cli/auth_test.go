@@ -24,6 +24,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
 // cli 套件從本 task 起會在測試中觸碰 secret(keychain)——
@@ -1191,25 +1192,69 @@ func TestAuthStatusCorruptClientIDDoesNotPanic(t *testing.T) {
 }
 
 // TestAuthLogoutForgetsCachedProviderData:【fails-before-fix】登出一個平台時,這台電腦快取裡它的清單名稱與最近項目一起刪掉
-// (Spotify Developer Policy:中斷連線就刪掉快取的平台資料;計畫 2026-09-24 §1.7 S5)。別的平台的快取不動。
+// (Spotify Developer Policy I.1.b;計畫 2026-09-24 §1.7 S5)——包括 schema 升版時留下的舊檔(state.db.v<N>)。
+// 別的平台的快取不動;google 沒有快取的平台資料,什麼都不刪。沒有這兩張表的很舊的舊檔不算錯。
 func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
-	setCLITestConfig(t)
-	c := cache.Load()
-	c.SetPlaylists("spotify", []cache.Playlist{{ID: "p1", Name: "通勤", Total: 3}})
-	c.SetPlaylists("apple", []cache.Playlist{{ID: "p.a1", Name: "冬日暖調", Total: 5}})
-	c.AddRecent(cache.Recent{Provider: "apple", Type: cache.TypeTrack, ID: "a1", Label: "Sugar"})
-	c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypeTrack, ID: "s1", Label: "派對動物"})
-	if err := c.Save(); err != nil {
-		t.Fatal(err)
+	seed := func(t *testing.T) {
+		c := cache.Load()
+		c.SetPlaylists("spotify", []cache.Playlist{{ID: "p1", Name: "通勤", Total: 3}})
+		c.SetPlaylists("apple", []cache.Playlist{{ID: "p.a1", Name: "冬日暖調", Total: 5}})
+		c.AddRecent(cache.Recent{Provider: "apple", Type: cache.TypeTrack, ID: "a1", Label: "Sugar"})
+		c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypeTrack, ID: "s1", Label: "派對動物"})
+		if err := c.Save(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := runCLI(t, "auth", "logout", "spotify"); err != nil {
-		t.Fatal(err)
+	// providersIn:某個 state 檔裡還有哪些平台的快取列。
+	providersIn := func(t *testing.T, path string) map[string]bool {
+		t.Helper()
+		s, err := store.OpenAt(path, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		pls, recent, err := s.LoadCache()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for p := range pls {
+			got[p] = true
+		}
+		for _, r := range recent {
+			got[r.Provider] = true
+		}
+		return got
 	}
-	got := cache.Load()
-	if len(got.Playlists["spotify"]) != 0 || len(got.Playlists["apple"]) != 1 {
-		t.Errorf("只刪登出的那個平台的清單:%+v", got.Playlists)
-	}
-	if len(got.Recent) != 1 || got.Recent[0].Provider != "apple" {
-		t.Errorf("只刪登出的那個平台的最近項目:%+v", got.Recent)
+	for _, tc := range []struct{ logout, keep, gone string }{
+		{"spotify", "apple", "spotify"},
+		{"apple", "spotify", "apple"},
+		{"google", "spotify", ""},
+	} {
+		t.Run(tc.logout, func(t *testing.T) {
+			setCLITestConfig(t)
+			live, err := store.Path()
+			if err != nil {
+				t.Fatal(err)
+			}
+			seed(t) // 先種一份、退役成舊檔,再種一份當 live db
+			if err := os.Rename(live, live+".v3"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(live+".v1", nil, 0o600); err != nil { // 很舊的舊檔:沒有這兩張表
+				t.Fatal(err)
+			}
+			seed(t)
+			out, err := runCLI(t, "auth", "logout", tc.logout)
+			if err != nil || strings.Contains(out, "沒能清掉") {
+				t.Fatalf("logout:%v\n%s", err, out)
+			}
+			for _, p := range []string{live, live + ".v3"} {
+				got := providersIn(t, p)
+				if !got[tc.keep] || (tc.gone != "" && got[tc.gone]) || (tc.gone == "" && !got["apple"]) {
+					t.Errorf("%s:只刪登出的那個平台(%s):%v", filepath.Base(p), tc.gone, got)
+				}
+			}
+		})
 	}
 }
