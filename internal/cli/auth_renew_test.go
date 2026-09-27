@@ -42,7 +42,7 @@ func TestSpotifyRenewalShown(t *testing.T) {
 	}{
 		{"known", 30 * 24 * time.Hour, "(剩 149 天)", true},
 		{"soon", 175 * 24 * time.Hour, "請在那之前執行 capy auth login spotify", true},
-		{"expired", 181 * 24 * time.Hour, "左右失效:執行 capy auth login spotify", true},
+		{"expired", 181 * 24 * time.Hour, "大概已在", true},
 		{"unknown", 0, "不知道(用舊版的 capy 登入的", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestDoctorSpotifyRenewal(t *testing.T) {
 	}{
 		{30 * 24 * time.Hour, true, "剩 149 天"},
 		{175 * 24 * time.Hour, true, "請在那之前執行 capy auth login spotify"},
-		{181 * 24 * time.Hour, false, "Spotify 的登入已在"},
+		{181 * 24 * time.Hour, true, "大概已在"}, // 180 天是保守估計:只說大概、照樣通過,真的死了沒由下一項實際換發來判
 		{0, true, ""},
 	} {
 		t.Run(fmt.Sprint(tc.ago), func(t *testing.T) {

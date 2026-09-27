@@ -125,7 +125,7 @@
     "one": "expires around {date} ({count} day left)",
     "other": "expires around {date} ({count} days left)"
   },
-  "auth.status.spotify_renew_expired": "expired around {date}: run capy auth login spotify",
+  "auth.status.spotify_renew_expired": "probably expired around {date}: run capy auth login spotify",
   "auth.status.spotify_renew_soon": {
     "one": "expires around {date} ({count} day left): run capy auth login spotify before then",
     "other": "expires around {date} ({count} days left): run capy auth login spotify before then"
@@ -395,13 +395,13 @@
   "doctor.port.err.in_use": "port 8888 is in use by another process — auth login will fail; free it first ({hint})",
   "doctor.port.err.listen": "can't open a listener: {err}",
   "doctor.port.ok": "8888 is free",
-  "doctor.refresh_token.err.expired": "the Spotify login expired around {date} (logins expire six months after you log in): run capy auth login spotify",
   "doctor.refresh_token.err.missing": "no refresh token in the keychain — run capy auth login spotify",
   "doctor.refresh_token.err.read": "can't read the keychain (access may have been denied, it's locked, or its contents are corrupted): {err}",
   "doctor.refresh_token.ok_until": {
     "one": "in keychain; the login expires around {date} ({count} day left)",
     "other": "in keychain; the login expires around {date} ({count} days left)"
   },
+  "doctor.refresh_token.probably_expired": "in keychain, but the login probably expired around {date} (logins expire six months after you log in): run capy auth login spotify (the next check tries an actual refresh)",
   "doctor.refresh_token.renew_soon": {
     "one": "in keychain, but the login expires around {date} ({count} day left): run capy auth login spotify before then",
     "other": "in keychain, but the login expires around {date} ({count} days left): run capy auth login spotify before then"
