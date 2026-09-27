@@ -32,6 +32,7 @@
   "apple.err.unwritable": "Apple 清單「{name}」({id})寫不了:{reason}",
   "apple.player.err.bad_number": "osascript 數值欄位無法解析:{output}",
   "apple.player.err.no_client": "apple provider 未初始化 client",
+  "apple.player.err.not_responding": "Music.app 沒有及時回應:{err}",
   "apple.player.err.osascript_failed": "osascript 失敗(Music.app 未安裝或未授權自動化?):{err}",
   "apple.player.err.playlist_unsupported": "Apple Music 暫不支援直接播放清單 — 用 capy pl show 取曲目後 play --id:{err}",
   "apple.player.err.unexpected_output": "osascript 輸出格式非預期:{output}",

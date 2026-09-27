@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -644,10 +645,14 @@ func TestTUIStaleSlowControlStillReports(t *testing.T) {
 	shrinkRoundWait(t, 30*time.Millisecond)
 	got := recordPrintln(t)
 	m := newTestTUI(t, &watchFake{st: playingState()})
-	m.trk.now["spotify"] = ctlFake{newNowFake(), func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }}
+	release := make(chan struct{}) // 拿到「等太久」之前不准回來:送出的截止時間與畫面等的上限一樣長,不擋的話誰先到是看排程
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	m.trk.now["spotify"] = ctlFake{newNowFake(), func(ctx context.Context) error { <-ctx.Done(); <-release; return ctx.Err() }}
 	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
 	m = next.(tuiModel)
 	slow := within(t, 2*time.Second, "第一個鍵", cmd)
+	once.Do(func() { close(release) })
 	next, _ = m.Update(tea.KeyPressMsg{Code: 'n'}) // 再按一次:第一個鍵的結果變 stale
 	m = next.(tuiModel)
 	next, pend := m.Update(slow)
@@ -678,5 +683,41 @@ func TestTUISlowBranchRepanics(t *testing.T) {
 	}()
 	if r == nil || !strings.Contains(fmt.Sprint(r), "late boom") {
 		t.Errorf("applyState 接著等的那個 Cmd 要再丟 panic:%v", r)
+	}
+}
+
+// playFakeSlow:Play 等 release 才回(模擬 Music.app 冷啟動);ctx 先到期就回錯。
+type playFakeSlow struct {
+	*nowFake
+	release chan struct{}
+	played  *atomic.Int32
+}
+
+func (p playFakeSlow) Play(ctx context.Context, _ provider.PlayRequest) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.release:
+		p.played.Add(1)
+		return nil
+	}
+}
+
+// TestTUIIdempotentKeysWait:【第四次審查】播放 / 暫停、±10 秒、音量是冪等的,晚到也是同一個結果:照樣等,不受 n / p 那個截止時間限制——
+// Music.app 沒開時按空白鍵要等它冷啟動完(可能超過三秒),那時殺掉 osascript,app 開了卻沒播。
+func TestTUIIdempotentKeysWait(t *testing.T) {
+	shrinkRoundWait(t, 30*time.Millisecond)
+	got := recordPrintln(t)
+	var played atomic.Int32
+	f := playFakeSlow{newNowFake(), make(chan struct{}), &played}
+	m := newTestTUI(t, &watchFake{})
+	m.st = nil // 沒在播:空白鍵 = 播放
+	m.trk.now["spotify"] = f
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	msg := within(t, 2*time.Second, "空白鍵", cmd)
+	go func() { time.Sleep(100 * time.Millisecond); close(f.release) }() // 比截止時間久得多
+	applyAll(t, next.(tuiModel), msg)
+	if played.Load() != 1 || strings.Contains(joined(got), "不一定有生效") {
+		t.Errorf("冪等的鍵照樣等到送出:played=%d %q", played.Load(), joined(got))
 	}
 }

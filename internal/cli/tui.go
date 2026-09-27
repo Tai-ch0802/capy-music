@@ -219,23 +219,28 @@ func (m tuiModel) round() func() tuiStateMsg {
 // control:把控制指令送給狀態列上的那個平台(applyState 記下的 provID,不是按鍵當下才去問 tracker——
 // 那時 tracker 可能已經換到畫面還沒顯示的另一家),送完進安定期、立刻重新輪詢,畫面才會跟上。
 // 呼叫端要先把 gen 推進(newChain),這次讀取才會取代舊鏈而不是疊上去。
-// 一個鍵從按下起最多等 tuiRoundWait:controller 還沒建好時(ErrAuthExpired、dropNow 之後)要等建構,沒有上限,
-// 等超過才建好就不送了;送出本身也帶同一個截止時間與 WithoutWait——429 不睡在這裡(睡醒才送就是晚到的那一下),
-// token 換發卡住時請求在送出前就被擋下(net/http 送出前看 ctx),Music.app 卡住時 osascript 會被殺掉。
-// 使用者早就不等這個鍵了:連按五次 n,不該在鎖放開或冷卻結束那一刻一口氣跳五首(#97 review)。
-func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error) tea.Cmd {
+// once:晚到就會多生效一次的鍵(n / p:每一下跳一首)。這種鍵從按下起最多等 tuiRoundWait——controller 等超過才建好
+// 就不送;送出本身也帶同一個截止時間(token 換發卡在鎖上的請求送出前就被擋下、Music.app 卡住時 osascript 被殺掉),
+// 到期照實說。連按五次 n,不該在鎖放開或 Music.app 回神那一刻一口氣跳五首(#97 review)。
+// 其他鍵(播放 / 暫停、±10 秒、音量)是冪等的:目標在按下時就算好了,晚到也是同一個結果,照樣等——而且 Music.app 沒開時
+// 的播放要等它啟動完(冷啟動可能超過三秒,那時殺掉 osascript,app 開了卻沒播)。
+// 所有鍵都帶 WithoutWait:429 不睡在 Retry-After 裡(睡醒才送也是晚到的),照實說被限流,冷卻交給 tracker。
+func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
 	ctx, gen, trk, id, round := m.ctx, m.gen, m.trk, m.provID, m.round()
 	return func() tea.Msg {
 		return tuiAwait(gen, func() tuiStateMsg {
 			start := time.Now()
 			pc, err := trk.playback(id)
-			if err == nil && time.Since(start) > tuiRoundWait {
+			if err == nil && once && time.Since(start) > tuiRoundWait {
 				err = i18n.Errorf("tui.err.ctl_too_late")
 			}
 			if err != nil {
 				return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 			}
-			fctx, cancel := context.WithDeadline(provider.WithoutWait(ctx), start.Add(tuiRoundWait))
+			fctx, cancel := provider.WithoutWait(ctx), context.CancelFunc(func() {})
+			if once {
+				fctx, cancel = context.WithDeadline(fctx, start.Add(tuiRoundWait))
+			}
 			defer cancel()
 			if err := f(pc, fctx); err != nil {
 				if fctx.Err() != nil && ctx.Err() == nil {
@@ -692,31 +697,31 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case "space":
 		m = m.newChain()
 		if m.st != nil && m.st.Playing {
-			return m, m.control(provider.PlaybackController.Pause)
+			return m, m.control(provider.PlaybackController.Pause, false)
 		}
 		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error {
 			return pc.Play(ctx, provider.PlayRequest{})
-		})
+		}, false)
 	case "n":
 		m = m.newChain()
-		return m, m.control(provider.PlaybackController.Next)
+		return m, m.control(provider.PlaybackController.Next, true)
 	case "p":
 		m = m.newChain()
-		return m, m.control(provider.PlaybackController.Prev)
+		return m, m.control(provider.PlaybackController.Prev, true)
 	case "left", "right":
 		pos, ok := m.seekTarget(msg.String() == "right")
 		if !ok {
 			return m, nil
 		}
 		m = m.newChain() // 不印提示:下一次輪詢就會把新位置寫進狀態列,那才是真的發生了
-		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.Seek(ctx, pos) })
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.Seek(ctx, pos) }, false)
 	case "+", "=", "-":
 		pct, ok := m.volTarget(msg.String() != "-")
 		if !ok {
 			return m, nil
 		}
 		m = m.newChain() // 同上:狀態列的「音量 N」會跟著更新
-		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.SetVolume(ctx, pct) })
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.SetVolume(ctx, pct) }, false)
 	}
 	return m, nil
 }

@@ -194,7 +194,7 @@ export class Console {
     // 會被上面的閘擋掉,或撞上伺服器還沒放的鎖(review #62 第 2 點)。
     let ex = this.ex || [1, t('webui.console.stream_ended'), 'disconnected'];
     // 使用者自己中止的:頁面拿到的是 cancelledMsg()(取消本身伺服器不送訊息;撞上的別的錯誤留在主控台)。
-    // exit 0 = 命令其實做完了(中止落在不吃取消的那一段,例如 osascript),照「完成」算。
+    // exit 0 = 命令其實做完了(中止落在不吃取消的那一段,例如 Apple 播放時的 osascript),照「完成」算。
     if (isCancelled(ex)) ex = [ex[0], cancelledMsg(), ex[2]];
     if (!quiet || this.barShown) this.announce(shown, ex); // 按一下暫停不必念「完成:pause」
     // 頁面的 onExit 與等著的自動讀取可能立刻接著跑下一個命令(它會清掉命令列上方那行):
@@ -598,8 +598,8 @@ export class Console {
     this.stopBtn.setAttribute('aria-disabled', 'true');
     this.stopBtn.textContent = t('webui.console.stopping');
     this.barAct.textContent = t('webui.console.stop_sent');
-    // 網路請求、等鎖、退避都會立刻停;已送出的 token 換發(最多 30 秒)、鑰匙圈與 Music.app 的 osascript
-    // 不吃取消,要等它們自己回來(review #65 第 3 點:換發是這個 PR 自己造出來的等待,要點名)。
+    // 網路請求、等鎖、退避、多數 osascript 都會立刻停;已送出的 token 換發(最多 30 秒)、鑰匙圈、Apple 播放時查資料庫
+    // 與確認播放的 osascript 不吃取消,要等它們自己回來(review #65 第 3 點:換發是這個 PR 自己造出來的等待,要點名)。
     this.stuck = setTimeout(() => {
       this.barAct.textContent = t('webui.console.stop_stuck');
     }, 8000);

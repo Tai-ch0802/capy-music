@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -345,8 +346,8 @@ func TestRunOSAKilledWhenCtxDone(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := runOSA(ctx, "delay 5"); err == nil {
-		t.Error("被殺掉要回錯")
+	if _, err := runOSA(ctx, "delay 5"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("被 ctx 殺掉要回逾時本身(結束碼 130 / 143、web 的「已中止」才認得),不是 signal: killed:%v", err)
 	}
 	if el := time.Since(start); el > 3*time.Second {
 		t.Errorf("ctx 到期就要結束,不是等腳本跑完:%v", el)
@@ -376,5 +377,21 @@ func TestStateAndControlsPassCtx(t *testing.T) {
 	_ = p.SetVolume(ctx, 50)
 	if len(got) != 7 || slices.Contains(got, false) {
 		t.Errorf("每一個都要帶呼叫端的 ctx:%v", got)
+	}
+}
+
+// TestStateSaysNotRespondingOnTimeout:State 等不下去(TUI 的逾時)是 Music.app 沒回應,不是「沒裝或沒授權自動化」。
+func TestStateSaysNotRespondingOnTimeout(t *testing.T) {
+	origOSA := runOSA
+	runOSA = func(c context.Context, _ string, _ ...string) (string, error) {
+		<-c.Done()
+		return "", fmt.Errorf("osascript: %w", c.Err())
+	}
+	t.Cleanup(func() { runOSA = origOSA })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := (&Provider{}).State(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), i18n.T("apple.player.err.osascript_failed", "err", "")) {
+		t.Errorf("要說沒回應、保留逾時本身:%v", err)
 	}
 }

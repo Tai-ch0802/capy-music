@@ -32,6 +32,7 @@
   "apple.err.unwritable": "can't write to Apple playlist \"{name}\" ({id}): {reason}",
   "apple.player.err.bad_number": "can't parse the numeric fields in osascript output: {output}",
   "apple.player.err.no_client": "apple provider has no client",
+  "apple.player.err.not_responding": "Music.app didn't respond in time: {err}",
   "apple.player.err.osascript_failed": "osascript failed (Music.app not installed, or automation not allowed?): {err}",
   "apple.player.err.playlist_unsupported": "capy can't start an Apple Music playlist yet — list its tracks with capy pl show, then use play --id: {err}",
   "apple.player.err.unexpected_output": "unexpected osascript output: {output}",

@@ -23,6 +23,9 @@ const playbackSupported = true
 var (
 	runOSA = func(ctx context.Context, script string, args ...string) (string, error) {
 		out, err := exec.CommandContext(ctx, "osascript", append([]string{"-e", script, "--"}, args...)...).Output()
+		if err != nil && ctx.Err() != nil { // 被 ctx 殺掉的:回取消 / 逾時本身,不是「signal: killed」——結束碼 130 / 143、web 的「已中止」都認得
+			return "", fmt.Errorf("osascript: %w", ctx.Err())
+		}
 		return strings.TrimSpace(string(out)), err
 	}
 	runOpen = func(u string) error { return exec.Command("open", u).Run() }
@@ -66,6 +69,9 @@ end tell`
 
 func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
 	out, err := runOSA(ctx, stateScript)
+	if err != nil && ctx.Err() != nil { // 是我們等不下去(TUI 的逾時),不是沒裝或沒授權
+		return nil, i18n.Errorf("apple.player.err.not_responding", "err", err)
+	}
 	if err != nil {
 		return nil, i18n.Errorf("apple.player.err.osascript_failed", "err", err)
 	}
