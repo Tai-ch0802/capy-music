@@ -44,6 +44,7 @@
 | `GET /me` | 移除 `country`、`email`、`product` | **無法從 API 判斷是否 Premium 或所在市場** |
 | Player 端點 | 全部保留(play/pause/next/seek/volume/devices/transfer/queue) | 遙控設計成立 ✅ |
 | refresh token 壽命 | Developer Dashboard 建的 app 發的 refresh token **從授權起 6 個月**失效,refresh 不延長([Refreshing tokens](https://developer.spotify.com/documentation/web-api/tutorials/refreshing-tokens),2026-09-27 對照) | 每半年要重新 `auth login spotify`;capy 記 `authorized_at` 提前提醒(決策 56) |
+| metadata 快取 | Developer Terms IV.3.2:只准為了效能暫時快取 metadata,不可無限期(2026-09-27 對照) | 同步記下的清單曲目最多用 7 天,存的時候順便刪掉過期的列(決策 57);清單有沒有變看清單列表本來就附的 `snapshot_id`,不多打 |
 | `GET /artists/{id}/top-tracks` | 開發模式 app **一律 403**(2026-09-07 實測:`market=from_token`、`TW`、不帶、`country=` 全部一樣);**2026-02 起從 API 移除**(2026-09-27 對照 Spotify 的 February 2026 變更清單) | 「藝人熱門歌曲」直接用 `GET /search?q=artist:"<name>"&type=track` 近似,不再打這個端點(2026-09-27,計畫 2026-09-24 §1.7 S2;以前只有回 403 才退回,改回 404 / 410 就會直接失敗);曲目物件的 `popularity` 也在同一批移除,`provider.Track` 已拿掉;Spotify-owned / 他人的編輯清單 `items` 也拿不到(2026-09-07 實測 29 個清單 9 個回「平台不提供此內容」),`pl pull` 只涵蓋 app 讀得到的清單 |
 
 ### 1.2 Apple Music
