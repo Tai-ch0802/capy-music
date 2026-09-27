@@ -613,3 +613,18 @@ func TestSpotifyTokenExchangeUsesParamsAuthStyle(t *testing.T) {
 		t.Errorf("token 端點應只被打 1 次且 client_id 在 body,實際 reqs=%d、body 帶 client_id=%d 次", reqs.Load(), withClientID.Load())
 	}
 }
+
+// TestSpotifyScopesExactly:【#100 review】索取的 scope 恰好是這 6 個(決策 55)。多加一個會讓所有人都得重新授權、
+// 而且要先有程式路徑用到它——加之前改這裡,並在 ARCHITECTURE §4.2 與決策列寫下理由。
+func TestSpotifyScopesExactly(t *testing.T) {
+	want := []string{
+		"user-read-playback-state", "user-modify-playback-state",
+		"playlist-read-private", "playlist-read-collaborative", "playlist-modify-private", "playlist-modify-public",
+	}
+	got := slices.Clone(SpotifyScopes)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("Spotify scope 要恰好是決策 55 的 6 個:%v", SpotifyScopes)
+	}
+}
