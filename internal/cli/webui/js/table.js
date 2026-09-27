@@ -48,10 +48,11 @@ const SPOTIFY_ID = /^[0-9A-Za-z]{22}$/;
 // 計畫 2026-09-24 §1.7 S7)。字用規範核可的「LISTEN ON SPOTIFY」,報讀名稱以它開頭、再說是哪一首(WCAG 2.5.3 Label in Name),
 // 開在新分頁,同 player.js 的曲名連結。規範也要求用 Spotify 的 logo 標示來源,這一點刻意不照做:決策 48 不內嵌官方 logo。
 // kind 是 'track' 或 'playlist',由呼叫端給(同一張表長得一樣也可能是清單或曲目,不從表頭猜);id 不像 Spotify 的就回 null。
-export function spotifyLink(kind, id, title) {
+// cls:預設長得跟列尾的按鈕一樣;放在一句話中間的(搬家精靈的「搬不過去的歌」)給文字連結的樣式,不然 .btn 的高度會撐開那一行。
+export function spotifyLink(kind, id, title, cls = 'btn btn--ghost') {
   if (!SPOTIFY_ID.test(id)) return null; // test() 先轉字串:undefined、物件、空字串都過不了
   const a = document.createElement('a');
-  a.className = 'btn btn--ghost';
+  a.className = cls;
   a.textContent = t('webui.spotify.listen');
   a.href = `https://open.spotify.com/${kind}/${id}`;
   a.target = '_blank';

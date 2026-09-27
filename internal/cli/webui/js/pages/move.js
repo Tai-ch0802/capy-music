@@ -236,7 +236,7 @@ export function initMove(root, api, con, notice, providers) {
     for (const m of missed) {
       const li = el('li', null, `${m.title} — ${m.artists}`);
       li.appendChild(el('span', 'muted', ` · ${m.reason}`));
-      const link = spotifyLink('track', m.spotify, m.title); // 表裡有它在 Spotify 的 id 才連(見 tally)
+      const link = spotifyLink('track', m.spotify, m.title, 'wiz__link'); // 表裡有它在 Spotify 的 id 才連(見 tally)
       if (link) li.appendChild(link);
       ul.appendChild(li);
     }

@@ -854,7 +854,7 @@ await scenario('8n', async () => {
   mig?.onTable(SH, [['migrate', 'add', 'spotify', 'Road trip', '0', 'a', T1, 'Song A', 'a', 'push to apple:x', 'push'],
     ['migrate', 'add', 'spotify', 'Road trip', '1', 'b', T2, 'Song B', 'b', 'no match on apple', 'no_mapping']]);
   const ml = anchors(mv.querySelector('.wiz__missed'));
-  check(ml.length === 1 && ml[0].href === track(T2) && label(ml[0]) === '在 Spotify 上聽「Song B」', `搬不過去的歌(Spotify 的曲名)連回去:${JSON.stringify(ml.map((a) => a.href))}`);
+  check(ml.length === 1 && ml[0].href === track(T2) && label(ml[0]) === '在 Spotify 上聽「Song B」' && ml[0].className === 'wiz__link', `搬不過去的歌(Spotify 的曲名)連回去,用文字連結的樣式:${JSON.stringify(ml.map((a) => [a.href, a.className]))}`);
   check(anchors(mv.querySelector('.wiz__more')).length === 2, '完整的表:兩首都是 Spotify 的列');
 });
 
