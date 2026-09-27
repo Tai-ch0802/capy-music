@@ -121,6 +121,16 @@
   "auth.status.keychain_read_failed": "couldn't read the keychain: {err}",
   "auth.status.not_set": "not set",
   "auth.status.present": "present",
+  "auth.status.spotify_renew_by": {
+    "one": "expires around {date} ({count} day left)",
+    "other": "expires around {date} ({count} days left)"
+  },
+  "auth.status.spotify_renew_expired": "expired around {date}: run capy auth login spotify",
+  "auth.status.spotify_renew_soon": {
+    "one": "expires around {date} ({count} day left): run capy auth login spotify before then",
+    "other": "expires around {date} ({count} days left): run capy auth login spotify before then"
+  },
+  "auth.status.spotify_renew_unknown": "unknown (you logged in with an older version of capy; Spotify logins expire after six months, and the date shows up after your next capy auth login spotify)",
   "auth.status.token_missing": "missing (run capy auth login {provider})",
   "auth.status.valid_until": "valid until {expiry}",
   "browser.err.unsupported_os": "unsupported platform {os} (only macOS and Windows are supported)",
@@ -385,8 +395,17 @@
   "doctor.port.err.in_use": "port 8888 is in use by another process — auth login will fail; free it first ({hint})",
   "doctor.port.err.listen": "can't open a listener: {err}",
   "doctor.port.ok": "8888 is free",
+  "doctor.refresh_token.err.expired": "the Spotify login expired around {date} (logins expire six months after you log in): run capy auth login spotify",
   "doctor.refresh_token.err.missing": "no refresh token in the keychain — run capy auth login spotify",
   "doctor.refresh_token.err.read": "can't read the keychain (access may have been denied, it's locked, or its contents are corrupted): {err}",
+  "doctor.refresh_token.ok_until": {
+    "one": "in keychain; the login expires around {date} ({count} day left)",
+    "other": "in keychain; the login expires around {date} ({count} days left)"
+  },
+  "doctor.refresh_token.renew_soon": {
+    "one": "in keychain, but the login expires around {date} ({count} day left): run capy auth login spotify before then",
+    "other": "in keychain, but the login expires around {date} ({count} days left): run capy auth login spotify before then"
+  },
   "doctor.token_refresh.err.needs_config": "the config file check has to pass first",
   "doctor.token_refresh.err.needs_refresh_token": "the refresh token check has to pass first",
   "doctor.token_refresh.err.refresh": "refresh failed (the token may have been revoked; run capy auth login spotify again): {err}",

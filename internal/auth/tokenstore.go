@@ -21,19 +21,23 @@ import (
 // storedToken 是寫進 keychain 的 JSON 形狀(spec §4.5、附錄 C 決策 11)。欄位明確列出:
 // 不放 id_token(Windows Credential Manager 值上限 2560 bytes);issued_at 是 refresh token 的發放時間,
 // oauth2.Token 沒有這個欄位,T3 的 ErrGoogleGrant 用它算 token 年齡(同 package 走 loadStored 讀)。
+// authorized_at 是使用者登入授權的時間(決策 56):Spotify 的 refresh token 從授權起六個月失效、refresh 不延長,
+// 而它每次 refresh 都輪替,issued_at 跟著重設——所以另記一個只在登入時寫、refresh 時照抄的時間。零值 = 不知道
+// (這個版本之前登入的、從舊鍵遷移來的)。
 type storedToken struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type"`
 	RefreshToken string    `json:"refresh_token"`
 	Expiry       time.Time `json:"expiry"`
 	IssuedAt     time.Time `json:"issued_at"`
+	AuthorizedAt time.Time `json:"authorized_at"`
 }
 
 // now:issued_at 用的時鐘。測試替換點。
 var now = time.Now
 
-// saveToken:token() 寫回 keychain 的入口。測試替換點(注入暫時性寫入失敗,驗證重試)。
-var saveToken = SaveToken
+// saveToken:token() 寫回 keychain 的入口(refresh 後,authorized_at 照抄換發前那一份)。測試替換點(注入暫時性寫入失敗,驗證重試)。
+var saveToken = writeToken
 
 // secretGet:loadStored 讀 keychain 的入口。測試替換點(數 keychain 讀取次數——
 // go-keyring 的 mock 沒有計數器,而每次讀在 macOS 都是 exec /usr/bin/security)。
@@ -69,13 +73,17 @@ func LoadToken(key string) (*oauth2.Token, error) {
 	return &oauth2.Token{AccessToken: st.AccessToken, TokenType: st.TokenType, RefreshToken: st.RefreshToken, Expiry: st.Expiry}, nil
 }
 
-// SaveToken 把 token 以 JSON 寫進 keychain。refresh token 為空一律拒絕——落地會把好的 RT 蓋掉,等於永久登出。
+// SaveToken:登入(authorization code 換到的第一顆)寫進 keychain,authorized_at 記現在(決策 56)。
+func SaveToken(key string, tok *oauth2.Token) error { return writeToken(key, tok, now()) }
+
+// writeToken 把 token 以 JSON 寫進 keychain。refresh token 為空一律拒絕——落地會把好的 RT 蓋掉,等於永久登出。
 // issued_at:RT 與 keychain 內現有的相同就延用(Google 的 RT 不輪替,access token 卻每小時換),否則取現在。
-func SaveToken(key string, tok *oauth2.Token) error {
+// authorizedAt:登入時是現在;refresh 後照抄換發前那一份;遷移來的舊記錄是零值(不知道)。
+func writeToken(key string, tok *oauth2.Token, authorizedAt time.Time) error {
 	if tok.RefreshToken == "" {
 		return i18n.Errorf("auth.err.save_without_refresh_token")
 	}
-	st := storedToken{AccessToken: tok.AccessToken, TokenType: tok.TokenType, RefreshToken: tok.RefreshToken, Expiry: tok.Expiry, IssuedAt: now()}
+	st := storedToken{AccessToken: tok.AccessToken, TokenType: tok.TokenType, RefreshToken: tok.RefreshToken, Expiry: tok.Expiry, IssuedAt: now(), AuthorizedAt: authorizedAt}
 	if prev, err := loadStored(key); err == nil && prev.RefreshToken == st.RefreshToken {
 		st.IssuedAt = prev.IssuedAt
 	}
@@ -244,7 +252,7 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 	if tok.RefreshToken == "" {
 		tok.RefreshToken = cur.RefreshToken // Google 不輪替:回應沒有 RT,沿用舊的
 	}
-	if err := saveToken(s.key, tok); err != nil {
+	if err := saveToken(s.key, tok, st.AuthorizedAt); err != nil {
 		// Spotify 的舊 RT 在 refresh 後已失效、新的只在記憶體裡,而 macOS 的寫入是 exec /usr/bin/security
 		// ——一次暫時性失敗就等於永久登出,所以隔一段時間重試一次再放棄。
 		// 這個間隔救得了的只有瞬時失敗(fork 失敗、keychain 守護程序剛好忙);keychain 被鎖住時
@@ -255,7 +263,7 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 		case <-s.ctx.Done():
 		case <-time.After(saveRetryInterval):
 		}
-		err = saveToken(s.key, tok)
+		err = saveToken(s.key, tok, st.AuthorizedAt)
 		if err != nil {
 			// 兩次都失敗:此刻舊 RT 在對方端已作廢、新 RT 只活在這個 return 就會丟掉的變數裡
 			// ——使用者是真的登出了,必須講明白並給下一步,不能只說「寫入失敗」。

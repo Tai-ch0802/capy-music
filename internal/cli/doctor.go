@@ -95,7 +95,18 @@ func checkPort8888(ctx context.Context) (string, error) {
 func checkRefreshToken(ctx context.Context) (string, error) {
 	switch err := auth.SpotifyStored(); {
 	case err == nil:
-		return i18n.T("doctor.in_keychain"), nil
+		// 決策 56:授權六個月失效、refresh 不延長。過了就不通過(refresh 一定會失敗);快到了照樣通過,但叫人重新登入。
+		exp, left, ok := spotifyRenewal(time.Now())
+		switch date, days := exp.Local().Format("2006-01-02"), int(left/(24*time.Hour)); {
+		case !ok:
+			return i18n.T("doctor.in_keychain"), nil
+		case left <= 0:
+			return "", i18n.Errorf("doctor.refresh_token.err.expired", "date", date)
+		case left <= auth.SpotifyRenewWarn:
+			return i18n.T("doctor.refresh_token.renew_soon", "date", date, "count", days), nil
+		default:
+			return i18n.T("doctor.refresh_token.ok_until", "date", date, "count", days), nil
+		}
 	case errors.Is(err, secret.ErrNotFound):
 		return "", i18n.Errorf("doctor.refresh_token.err.missing")
 	default:

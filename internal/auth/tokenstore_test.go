@@ -90,7 +90,7 @@ func TestSaveTokenJSONShapeAndSize(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"access_token", "token_type", "refresh_token", "expiry", "issued_at"}
+	want := []string{"access_token", "token_type", "refresh_token", "expiry", "issued_at", "authorized_at"}
 	for _, k := range want {
 		if _, ok := m[k]; !ok {
 			t.Errorf("JSON 缺欄位 %s", k)
@@ -299,11 +299,11 @@ func TestTokenSourceRetriesWriteBackOnce(t *testing.T) {
 	defer srv.Close()
 	var calls atomic.Int32
 	orig := saveToken
-	saveToken = func(key string, tok *oauth2.Token) error {
+	saveToken = func(key string, tok *oauth2.Token, at time.Time) error {
 		if calls.Add(1) == 1 {
 			return errors.New("暫時性失敗")
 		}
-		return orig(key, tok)
+		return orig(key, tok, at)
 	}
 	t.Cleanup(func() { saveToken = orig })
 
@@ -347,7 +347,7 @@ func TestTokenSourceWriteBackRetryGivesUpWhenContextCanceled(t *testing.T) {
 	defer cancel()
 	var calls atomic.Int32
 	origSave := saveToken
-	saveToken = func(key string, tok *oauth2.Token) error {
+	saveToken = func(key string, tok *oauth2.Token, _ time.Time) error {
 		calls.Add(1)
 		cancel() // 使用者在寫回失敗與重試之間按下 Ctrl-C
 		return errors.New("暫時性失敗")
@@ -837,5 +837,42 @@ func TestTokenSourceRefreshUsesReloadedRefreshToken(t *testing.T) {
 	}
 	if stored, err := LoadToken(testKey); err != nil || stored.RefreshToken != "rt3" {
 		t.Errorf("keychain 應含 rt3:(%+v, %v)", stored, err)
+	}
+}
+
+// TestAuthorizedAtSurvivesRefresh:【決策 56】authorized_at 只在登入時記,refresh(Spotify 每次都輪替 RT)照抄——
+// Spotify 的 refresh token 從授權起六個月失效、refresh 不延長,用 issued_at(每次輪替都重設)算會永遠算不到期。
+func TestAuthorizedAtSurvivesRefresh(t *testing.T) {
+	setTokenTest(t)
+	login := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	clock := login
+	orig := now
+	now = func() time.Time { return clock }
+	t.Cleanup(func() { now = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, tokenJSON("at-new", "rt2"))
+	}))
+	defer srv.Close()
+	if err := SaveToken(testKey, staleToken("rt1")); err != nil { // 登入
+		t.Fatal(err)
+	}
+	clock = login.Add(90 * 24 * time.Hour)
+	ts, err := NewTokenSource(context.Background(), testConf(srv.URL), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.Token(); err != nil { // refresh:RT 輪替成 rt2
+		t.Fatal(err)
+	}
+	st, err := loadStored(testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.RefreshToken != "rt2" || !st.IssuedAt.Equal(clock) {
+		t.Fatalf("前提:RT 輪替、issued_at 重設:%+v", st)
+	}
+	if !st.AuthorizedAt.Equal(login) {
+		t.Errorf("authorized_at 要照抄登入那一刻,不是 refresh 的時間:%v", st.AuthorizedAt)
 	}
 }

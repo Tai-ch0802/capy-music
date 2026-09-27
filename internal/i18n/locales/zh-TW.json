@@ -121,6 +121,14 @@
   "auth.status.keychain_read_failed": "讀取 keychain 失敗:{err}",
   "auth.status.not_set": "未設定",
   "auth.status.present": "存在",
+  "auth.status.spotify_renew_by": {
+    "other": "約 {date} 失效(剩 {count} 天)"
+  },
+  "auth.status.spotify_renew_expired": "已在 {date} 左右失效:執行 capy auth login spotify",
+  "auth.status.spotify_renew_soon": {
+    "other": "約 {date} 失效(剩 {count} 天):請在那之前執行 capy auth login spotify"
+  },
+  "auth.status.spotify_renew_unknown": "不知道(用舊版的 capy 登入的;Spotify 的登入六個月失效,下次執行 capy auth login spotify 之後就會顯示日期)",
   "auth.status.token_missing": "不存在(執行 capy auth login {provider})",
   "auth.status.valid_until": "有效至 {expiry}",
   "browser.err.unsupported_os": "不支援的平台 {os}(目前僅支援 macOS 與 Windows)",
@@ -367,8 +375,15 @@
   "doctor.port.err.in_use": "8888 被其他程序佔用 — auth login 會失敗,請先釋放({hint})",
   "doctor.port.err.listen": "無法建立 listener:{err}",
   "doctor.port.ok": "8888 可用",
+  "doctor.refresh_token.err.expired": "Spotify 的登入已在 {date} 左右失效(登入六個月後失效):執行 capy auth login spotify",
   "doctor.refresh_token.err.missing": "keychain 沒有 refresh token — 執行 capy auth login spotify",
   "doctor.refresh_token.err.read": "讀取 keychain 失敗(可能被拒絕存取、已鎖定或內容毀損):{err}",
+  "doctor.refresh_token.ok_until": {
+    "other": "在 keychain;登入約 {date} 失效(剩 {count} 天)"
+  },
+  "doctor.refresh_token.renew_soon": {
+    "other": "在 keychain,但登入約 {date} 失效(剩 {count} 天):請在那之前執行 capy auth login spotify"
+  },
   "doctor.token_refresh.err.needs_config": "需要先通過設定檔檢查",
   "doctor.token_refresh.err.needs_refresh_token": "需要先通過 refresh token 檢查",
   "doctor.token_refresh.err.refresh": "換發失敗(token 可能已被撤銷,重跑 capy auth login spotify):{err}",

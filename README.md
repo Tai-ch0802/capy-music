@@ -107,7 +107,7 @@ Either way, `--client-id` / `--client-secret` always override the built-in value
 
 ```json
 {
-  "spotify": { "state": "ok", "client_id": "set" },
+  "spotify": { "state": "ok", "client_id": "set", "refresh_token_expiry": "2027-03-26T09:00:00Z" },
   "google": { "state": "ok", "client": "builtin", "access_token_expiry": "2026-09-23T09:00:00Z", "email": "you@example.com", "device_id": "…" },
   "apple": { "state": "ok", "developer_token": "ok", "developer_token_expiry": "2026-11-01T00:00:00Z", "user_token": "ok", "storefront": "tw" }
 }
@@ -117,6 +117,7 @@ Either way, `--client-id` / `--client-secret` always override the built-in value
 |---|---|
 | `spotify.state` | `ok` logged in / `missing` not logged in / `keychain_error` the keychain can't be read (needs fixing; it doesn't mean logged out) |
 | `spotify.client_id` | `set` / `missing` / `malformed` (the value in the config isn't 32 hex characters) |
+| `spotify.refresh_token_expiry` | roughly when your Spotify login expires: Spotify logins last six months from when you log in, and refreshing doesn't extend them, so capy counts 180 days from your last `capy auth login spotify`. Left out when capy doesn't know (you logged in with an older version). `capy auth status` and `capy doctor` start telling you to log in again 10 days before |
 | `google.state` | `ok` / `missing` / `keychain_error` |
 | `google.client` | `config` your own client / `builtin` built into the release / `none` no client yet |
 | `google.access_token_expiry` | when the stored access token expires; capy renews it by itself, so this is **not when your login expires** |
