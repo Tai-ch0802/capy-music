@@ -21,6 +21,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
@@ -1186,5 +1187,29 @@ func TestAuthStatusCorruptClientIDDoesNotPanic(t *testing.T) {
 	}
 	if !strings.Contains(out, "格式異常") {
 		t.Errorf("壞 client ID 應提示格式異常,得到 %q", out)
+	}
+}
+
+// TestAuthLogoutForgetsCachedProviderData:【fails-before-fix】登出一個平台時,這台電腦快取裡它的清單名稱與最近項目一起刪掉
+// (Spotify Developer Policy:中斷連線就刪掉快取的平台資料;計畫 2026-09-24 §1.7 S5)。別的平台的快取不動。
+func TestAuthLogoutForgetsCachedProviderData(t *testing.T) {
+	setCLITestConfig(t)
+	c := cache.Load()
+	c.SetPlaylists("spotify", []cache.Playlist{{ID: "p1", Name: "通勤", Total: 3}})
+	c.SetPlaylists("apple", []cache.Playlist{{ID: "p.a1", Name: "冬日暖調", Total: 5}})
+	c.AddRecent(cache.Recent{Provider: "apple", Type: cache.TypeTrack, ID: "a1", Label: "Sugar"})
+	c.AddRecent(cache.Recent{Provider: "spotify", Type: cache.TypeTrack, ID: "s1", Label: "派對動物"})
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCLI(t, "auth", "logout", "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	got := cache.Load()
+	if len(got.Playlists["spotify"]) != 0 || len(got.Playlists["apple"]) != 1 {
+		t.Errorf("只刪登出的那個平台的清單:%+v", got.Playlists)
+	}
+	if len(got.Recent) != 1 || got.Recent[0].Provider != "apple" {
+		t.Errorf("只刪登出的那個平台的最近項目:%+v", got.Recent)
 	}
 }

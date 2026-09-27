@@ -76,3 +76,10 @@ func (s *Store) LoadCache() (map[string][]ProviderPlaylist, []Recent, error) {
 	}
 	return pls, recent, nil
 }
+
+// ForgetProvider 刪掉某個 provider 在兩張快取表裡的列(登出時:Spotify Developer Policy I.1.b 要求使用者中斷連線時刪掉他的資料;
+// 計畫 2026-09-24 §1.7 S5)。recent 的 position 會留空號,讀回依 position 排序,不影響順序。
+func (s *Store) ForgetProvider(provider string) error {
+	_, err := s.db.Exec("DELETE FROM provider_playlists WHERE provider = ?; DELETE FROM recent WHERE provider = ?;", provider, provider)
+	return err
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	"github.com/Tai-ch0802/capy-music/internal/browser"
+	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
@@ -551,6 +552,14 @@ func newAuthLogoutCmd() *cobra.Command {
 				}
 			default:
 				return i18n.Errorf("auth.err.unsupported_provider")
+			}
+			// 快取的清單名稱與最近項目也一起刪(Spotify Developer Policy I.1.b:使用者中斷連線時刪掉他的資料;計畫 §1.7 S5)。
+			// Drive 正本的鏡像(tracks、mappings…)不動:那是使用者自己的清單,放在他自己的 Drive。
+			// 權杖已經刪了,這一步失敗不讓整個命令失敗,但要講。
+			if args[0] != "google" { // google 沒有快取的平台資料
+				if err := cache.Forget(args[0]); err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), i18n.T("auth.logout.cache_not_cleared", "provider", args[0], "err", err))
+				}
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), i18n.T("auth.logout.done", "provider", args[0]))
 			return nil

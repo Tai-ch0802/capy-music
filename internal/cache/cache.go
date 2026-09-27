@@ -98,3 +98,17 @@ func (c *Cache) AddRecent(r Recent) {
 }
 
 func (c *Cache) ClearRecent() { c.Recent = nil }
+
+// forgetWait:登出時等別的 capy 放鎖的上限。比 busy 長:這裡不是 TAB 補全,而且等不到就等於沒清掉(要照實說)。
+const forgetWait = 5 * time.Second
+
+// Forget 刪掉某個 provider 快取的清單名稱與最近項目(auth logout 時)。跟 Load 不同,失敗照實回錯:
+// 呼叫端要說「已登出,但快取沒清掉」,不能讓人以為平台的資料已經從這台電腦上拿掉了。
+func Forget(provider string) error {
+	s, err := store.Open(forgetWait)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return s.ForgetProvider(provider)
+}
