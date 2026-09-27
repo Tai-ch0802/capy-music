@@ -170,12 +170,16 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
 ### 1.9 S3:同步不重讀沒變的清單(決策 57)
 
 - **版本從哪來**:Spotify 的清單列表(`/me/playlists`,pull / sync 本來就會打)每一份都附 `snapshot_id`,清單有任何變動就換。存成 `PlaylistRef.Version`,零額外呼叫。Apple 與 local 不給版本,照舊每輪都讀。
-- **什麼時候用快取**:版本非空、跟快取的相同、快取的曲目數等於列表的 Total、快取不到 7 天。四個條件缺一就真的讀,讀到了記下,同時刪掉超過 7 天的列(解除連結的清單不會再被覆寫)。
+- **什麼時候用快取**:版本非空、跟快取的相同、快取的曲目數等於列表的 Total、快取不到 7 天、快取的曲目跟 base 一模一樣。缺一就真的讀,讀到了記下,同時刪掉超過 7 天的列(解除連結的清單不會再被覆寫)。
 - **存哪裡、存什麼**:`state.db` 新表 `playlist_items_cache`(schema 5 → 6),只放同步要用的欄位。刪掉 db 只會多讀一次。
-- **寫過就丟**:push 寫過的清單(成功、半截、失敗都算)立刻刪掉那一列。不拿寫入回傳的版本記快取,因為列表可能還回舊版本(`TestSyncForgetsCacheEvenIfVersionLags`:少了這步,自己推過去的重排會被讀成平台排回去,再推一個反向的 move 到對面)。
+- **列表的版本會落後**(寫完之後一陣子還回舊的 snapshot_id),所以有三道:
+  - 比 base:別台裝置剛推過,base 已前進、這台的快取還停在推之前。信快取的話,DERIVE 會把那次寫入讀成平台改回去,把使用者的修改撤銷到正本與對面平台(推 PR 前審查重現,`TestSyncIgnoresCacheBehindBase`)。
+  - 寫過就丟:push 寫過的清單(成功、半截、失敗都算)立刻刪掉那一列,不拿寫入回傳的版本記快取。寫成了但 Drive 的 COMMIT 失敗時 base 沒前進,只有這道擋得住(`TestPushForgetsCacheEvenIfCommitFails`)。
+  - stale 也丟:寫之前的重讀發現平台跟計畫對不上,計畫可能是照快取排的;不丟的話每一輪都照同一份舊的排、每一輪都 stale(`TestSyncForgetsCacheWhenStale`)。
 - **不動的**:push 寫之前的重讀(安全網)、L′ 的重讀都照舊真的讀。快取讀寫失敗不擋一輪。
 - **登出**:`auth logout spotify` / `apple` 連這張表一起清(S5 那套,含舊檔)。
 - **7 天上限**:Spotify Developer Terms IV.3.2 只准為了效能暫時快取 metadata、不可無限期。
+- **已知限制**:清單裡有空項目(已下架的曲目、podcast 單集)時,列表的 Total 比讀到的多,這種清單每輪照讀;不再同步的話,超過 7 天的列留到下次同步或登出才刪。
 - **研究過不採用**:ETag(就算平台給,也是每份清單每頁照打一次,省頻寬不省呼叫數)、逐份 `GET /playlists/{id}?fields=snapshot_id`(每份多一次呼叫)、放進 Drive 的裝置檔(Spotify metadata 只准暫時快取,跨裝置也沒好處)。
 - **隱私權政策不用改**:政策 §4 已寫「你的電腦:同一份資料的本機快取(SQLite 檔)」,快取的欄位都在 §3 的曲目資料裡(explicit 與 unpushable 是旗標);不是 Google scope、Drive 內容或外部服務的變動。
 ---

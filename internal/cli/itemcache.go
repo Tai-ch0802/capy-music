@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
@@ -29,14 +31,16 @@ type cachedTrack struct {
 	Unpushable bool     `json:"unpushable,omitempty"`
 }
 
-// playlistItems:讀一份連結清單的曲目。平台給版本(ref.Version)、快取的版本相同、曲目數等於列表的 Total、一週內 → 用快取;
-// 其他一律真的讀,讀到了就記下來。快取讀寫失敗都不擋這一輪(它只是省呼叫的快取)。s.st 為 nil(沒有本機 db)就不快取。
-// 安全網:push 在寫之前會再真的讀一次、跟計畫比(pushPlan.apply),快取就算錯了也寫不出錯的東西。
-func playlistItems(ctx context.Context, s *canonState, prov string, r provider.PlaylistReader, ref provider.PlaylistRef) ([]provider.Track, error) {
-	if s.st != nil && ref.Version != "" {
+// playlistItems:讀一份連結清單的曲目。平台給版本(ref.Version)、快取的版本相同、曲目數等於列表的 Total、一週內,
+// 而且快取的曲目跟 base(所有裝置合併後最後一次看到的這份清單,nil = 沒有)一模一樣 → 用快取;其他一律真的讀,讀到了就記下來。
+// 比 base 是因為列表的版本可能落後(寫完之後一陣子還回舊的 snapshot_id):別台裝置剛推過、或我們自己剛推過,base 已經前進,
+// 快取還停在寫之前——這時信快取,DERIVE 會把那次寫入讀成「平台改回去了」,再把使用者的修改撤銷到正本與對面平台。
+// 快取讀寫失敗都不擋這一輪(它只是省呼叫的快取)。s.st 為 nil(沒有本機 db)就不快取。
+func playlistItems(ctx context.Context, s *canonState, prov string, r provider.PlaylistReader, ref provider.PlaylistRef, base *canon.Snapshot) ([]provider.Track, error) {
+	if s.st != nil && ref.Version != "" && base != nil {
 		if it, ok, err := s.st.CachedPlaylistItems(prov, ref.ID); err == nil && ok && it.Version == ref.Version && itemCacheNow().Sub(it.FetchedAt) < itemCacheTTL {
 			var cached []cachedTrack
-			if json.Unmarshal(it.Tracks, &cached) == nil && len(cached) == ref.Total {
+			if json.Unmarshal(it.Tracks, &cached) == nil && len(cached) == ref.Total && slices.EqualFunc(cached, base.Items, func(c cachedTrack, id string) bool { return c.ID == id }) {
 				out := make([]provider.Track, len(cached))
 				for i, t := range cached {
 					out[i] = provider.Track{ProviderID: t.ID, ISRC: t.ISRC, Title: t.Title, Artists: t.Artists, Album: t.Album,

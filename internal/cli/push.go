@@ -197,7 +197,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			if seen {
 				live = *reused
 			} else {
-				tracks, err := playlistItems(ctx, s, prov, r, ref)
+				tracks, err := playlistItems(ctx, s, prov, r, ref, &b.Snapshot)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
 					fmt.Fprintln(stderr, i18n.T("push.skip.restricted", "playlist", pl.Name, "platform", prov, "link", link))
@@ -319,6 +319,7 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 		return 0, false, true, friendlyErr(p.prov, err)
 	}
 	if !slices.Equal(idsOf(now), p.current) {
+		forgetPlaylistItems(s, p.prov, p.link) // 計畫可能是照快取排的(列表版本落後時):丟掉,下一輪真的讀,不然每一輪都照同一份舊的排、每一輪都 stale
 		return 0, false, true, nil
 	}
 	skipped, werr := p.writer.ApplyOps(ctx, p.link, p.current, p.ops)

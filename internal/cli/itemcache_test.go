@@ -2,10 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
@@ -146,8 +149,9 @@ func TestSyncForgetsCacheAfterPush(t *testing.T) {
 	}
 }
 
-// TestSyncForgetsCacheEvenIfVersionLags:寫完之後列表可能還回舊的 snapshot_id(最終一致)。快取要在寫完就丟掉——不然下一輪
-// 拿寫之前的曲目當現況:同數量的重排比 Total 看不出來,會把自己的重排讀成平台排回去(規則 6′),再推一個反向的 move 到對面。
+// TestSyncForgetsCacheEvenIfVersionLags:寫完之後列表可能還回舊的 snapshot_id(最終一致)。下一輪不能拿寫之前的曲目當現況——
+// 同數量的重排比 Total 看不出來,會把自己的重排讀成平台排回去(規則 6′),再推一個反向的 move 到對面。
+// 擋的有兩道:寫過就丟,以及快取要跟 base 一樣(base 已前進到寫之後);兩道各自的單獨案例見下面兩個測試。
 func TestSyncForgetsCacheEvenIfVersionLags(t *testing.T) {
 	fs1, fs2, _, _ := syncWorld(t)
 	withSnapshots(fs1)
@@ -165,6 +169,72 @@ func TestSyncForgetsCacheEvenIfVersionLags(t *testing.T) {
 	}
 	if a, s := strings.Join(fs2.tracksOf("q1"), ","), strings.Join(fs1.tracksOf("p1"), ","); a != "b,a,c" || s != "b,a,c" {
 		t.Errorf("Apple 的重排不能被翻回去:Apple %s、Spotify %s", a, s)
+	}
+}
+
+// TestPushForgetsCacheEvenIfCommitFails:平台寫成了、Drive 的 COMMIT 失敗(base 沒前進),列表的版本也還沒跟上:
+// 這時快取(寫之前)跟 base 還是一樣,只有「寫過就丟」擋得住——下一次 pull 要真的讀,把 base 補成平台現在的樣子。
+func TestPushForgetsCacheEvenIfCommitFails(t *testing.T) {
+	fs, dc, srv, pl := pushWorld(t)
+	withSnapshots(fs)
+	fs.mu.Lock()
+	fs.snapFixed = map[string]string{"p1": "lagging"}
+	fs.mu.Unlock()
+	editCanonical(t, dc, pl, []string{"b", "a", "c"}, nil, "") // 同數量的重排:比 Total 看不出來
+	srv.FailOn(func(r *http.Request) bool { return r.Method == http.MethodPatch }, http.StatusInternalServerError, "backendError")
+	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes"); exitOf(t, err) != 1 || strings.Join(fs.tracksOf("p1"), ",") != "b,a,c" {
+		t.Fatalf("平台寫成、COMMIT 失敗:%v %v", err, fs.tracksOf("p1"))
+	}
+	srv.FailOn(nil, 0, "")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	if b := baseOf(t, dc); strings.Join(b.Items, ",") != "b,a,c" {
+		t.Fatalf("pull 要真的讀、把 base 補上:%v", b.Items)
+	}
+}
+
+// TestSyncIgnoresCacheBehindBase:【推 PR 前審查】別台裝置剛推過(base 前進了),這台的快取還停在推之前,而列表的版本落後、看起來沒變:
+// 不能信快取——不然 DERIVE 把別台的那次寫入讀成「平台改回去了」,把使用者在 Apple 的重排撤銷到正本與 Apple。
+func TestSyncIgnoresCacheBehindBase(t *testing.T) {
+	fs1, fs2, _, _ := syncWorld(t)
+	withSnapshots(fs1)
+	fs1.mu.Lock()
+	fs1.snapFixed = map[string]string{"p1": "lagging"}
+	fs1.mu.Unlock()
+	mustPull(t, "pl", "sync", "通勤", "--yes") // 這台(A)記下 (lagging, [a b c])
+	dirA := os.Getenv("CAPY_CONFIG_DIR")
+	t.Setenv("CAPY_CONFIG_DIR", t.TempDir()) // 另一台(B):自己的 config 與 state.db
+	if err := config.Save(&config.Config{DeviceID: "01TESTDEVICEB0000000000000", GoogleEmail: "tai@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	fs2.set("q1", "通勤", "b", "a", "c") // 使用者在 Apple 重排,B 推到 Spotify
+	mustPull(t, "pl", "sync", "通勤", "--yes")
+	t.Setenv("CAPY_CONFIG_DIR", dirA)
+	r1 := fs1.reads()
+	out, _ := mustPull(t, "pl", "sync", "通勤", "--yes")
+	if a, s := strings.Join(fs2.tracksOf("q1"), ","), strings.Join(fs1.tracksOf("p1"), ","); a != "b,a,c" || s != "b,a,c" || out != "" || fs1.reads()-r1 != 1 {
+		t.Errorf("A 要真的讀一次、零變更,重排不能被撤銷:Apple %s、Spotify %s、讀 %d 次\n%s", a, s, fs1.reads()-r1, out)
+	}
+}
+
+// TestSyncForgetsCacheWhenStale:照快取排的 push 在寫之前重讀發現平台變了(使用者直接在 Spotify 改、列表的版本還沒跟上)→ 這輪 stale,
+// 快取也要丟:不然每一輪都照同一份舊的排、每一輪都 stale,直到列表跟上。
+func TestSyncForgetsCacheWhenStale(t *testing.T) {
+	fs1, fs2, _, _ := syncWorld(t)
+	withSnapshots(fs1)
+	fs1.mu.Lock()
+	fs1.snapFixed = map[string]string{"p1": "lagging"}
+	fs1.mu.Unlock()
+	mustPull(t, "pl", "sync", "通勤", "--yes")
+	fs1.set("p1", "通勤", "c", "a", "b") // 使用者直接在 Spotify 重排:數量一樣、版本沒換
+	fs2.set("q1", "通勤", "a", "c")      // Apple 刪一首 → 要推 remove 到 Spotify
+	if _, _, err := runPull(t, "pl", "sync", "通勤", "--yes"); err == nil {
+		t.Fatal("照快取排的 push,寫之前重讀發現對不上:這一輪要 stale")
+	}
+	if out, errs, err := runPull(t, "pl", "sync", "通勤", "--yes"); err != nil {
+		t.Fatalf("下一輪要真的讀、收斂:%v\n%s%s", err, out, errs)
+	}
+	if a, s := strings.Join(fs2.tracksOf("q1"), ","), strings.Join(fs1.tracksOf("p1"), ","); a != s || len(fs1.tracksOf("p1")) != 2 {
+		t.Errorf("兩邊要一樣、b 刪掉:Apple %s、Spotify %s", a, s)
 	}
 }
 

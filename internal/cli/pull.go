@@ -852,7 +852,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				in.Base = &b.Snapshot
 			}
 			if ref, ok := refs[link]; ok {
-				tracks, err := playlistItems(ctx, s, prov, r, ref)
+				tracks, err := playlistItems(ctx, s, prov, r, ref, in.Base)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
 					fmt.Fprintln(stderr, i18n.T("pull.skip.restricted", "name", pl.Name, "platform", prov, "id", link))
