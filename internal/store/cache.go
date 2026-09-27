@@ -99,8 +99,8 @@ const forgetSQL = "PRAGMA secure_delete = ON; DELETE FROM provider_playlists WHE
 // retiredName:schema 升版時留下的舊檔(state.db.v<N>,見 retire);不含它們的 -journal / -wal / -shm。
 var retiredName = regexp.MustCompile(`\.v\d+$`)
 
-// ForgetProviderInRetired:舊檔(state.db.v<N>)裡也有這兩張快取表,登出時連它們一起刪(不然平台的清單名稱與最近項目
-// 還留在這台電腦上)。用原始的 open,不經 OpenAt——那會把舊檔當成版本不符再退役一次。很舊的檔沒有這兩張表就跳過;
+// ForgetProviderInRetired:舊檔(state.db.v<N>)裡也有這三張快取表,登出時連它們一起刪(不然平台的清單名稱、最近項目與
+// 清單曲目還留在這台電腦上)。用原始的 open,不經 OpenAt——那會把舊檔當成版本不符再退役一次。舊檔沒有某張表就跳過(v5 及更早的沒有清單曲目);
 // 壞掉的舊檔(打不開也讀不出來)直接刪掉——它只是 cache 的保留檔,不刪的話每次登出都會說「沒能清掉」(#102 review)。
 func ForgetProviderInRetired(provider string, busy time.Duration) error {
 	p, err := Path()

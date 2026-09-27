@@ -214,7 +214,7 @@
   "cmd.pl.link.use": "link [name|pid] [provider]:[playlist-id|name] (or [provider] --create)",
   "cmd.pl.list.short": "List my playlists",
   "cmd.pl.pull.flag.all": "pull all linked playlists",
-  "cmd.pl.pull.flag.dry_run": "only list the changes, don't write (exits 2 if there are any)",
+  "cmd.pl.pull.flag.dry_run": "only list the changes; write neither the master copy nor Drive (exits 2 if there are any)",
   "cmd.pl.pull.flag.force": "override the removal threshold (>10 tracks, or >30% and >3 tracks); single playlist only, not with --all; doesn't let an incomplete Drive through",
   "cmd.pl.pull.flag.provider": "pull only the links to this provider (default: every provider the playlist is linked to)",
   "cmd.pl.pull.flag.yes": "skip the confirmation (for cron / pipelines); doesn't let an incomplete Drive through",
