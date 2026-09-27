@@ -40,7 +40,13 @@ export function initSearch(root, api, con, notice, providers) {
   q.focus();
 }
 
+// SPOTIFY_TRACK_ID:Spotify 的曲目 id 是 22 碼 base62;local file 的 spotify:local:… 沒有 Spotify 上的頁面,不給連結。
+const SPOTIFY_TRACK_ID = /^[0-9A-Za-z]{22}$/;
+
 // resultTable:沿用 table.js 的表格(同一份原子欄與時長規則),再補一欄常駐的列動作。
+// Spotify 的每一列連回 Spotify(Spotify 的設計規範:顯示 Spotify 的曲名、歌手就要連回 Spotify;計畫 2026-09-24 §1.7 S7):
+// 連結的字用規範核可的「LISTEN ON SPOTIFY」,開在新分頁,同 player.js 的曲名連結。規範也要求用 Spotify 的 logo 或 icon 標示
+// 來源,這一點刻意不照做:決策 48 不內嵌官方 logo(開源專案內嵌是商標風險),只用文字。
 // Apple 那一列叫「在 Music.app 開啟」(決策 52):搜尋結果多半是資料庫裡沒有的目錄歌曲,capy 只能在 Music.app 打開並標出那首;
 // 資料庫裡有的會真的播,這時底部的播放列換成 Apple 就是確認,說「開啟」只是少說,不會說謊。
 function resultTable(header, rows, prov, con, notice) {
@@ -65,6 +71,14 @@ function resultTable(header, rows, prov, con, notice) {
       if (code === 0 && line && !line.startsWith('▶')) notice(line);
     };
     td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
+    if (prov === 'spotify' && SPOTIFY_TRACK_ID.test(id)) {
+      const a = el('a', 'btn btn--ghost', t('webui.search.listen_on_spotify'));
+      a.href = `https://open.spotify.com/track/${id}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.setAttribute('aria-label', t('webui.search.listen_on_spotify_label', { title })); // 每一列的字都一樣:報讀時要聽得出是哪一首
+      td.appendChild(a);
+    }
     tr.appendChild(td);
   });
   wrap.appendChild(tbl);
