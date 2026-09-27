@@ -50,7 +50,7 @@ func TestTUIViewIsFourLines(t *testing.T) {
 				m = step(t, m, tea.KeyPressMsg{Code: ':'}, false) // 不開選單:開過的高度到下一個命令前不縮(另一條測試)
 				m.input.SetValue(long)
 			case "noplayback":
-				m.pc, m.st, m.pcErr = nil, nil, provider.ErrNotSupported
+				m.st, m.pcErr = nil, provider.ErrNotSupported
 			}
 			lines := strings.Split(m.View().Content, "\n")
 			if len(lines) != 4 {

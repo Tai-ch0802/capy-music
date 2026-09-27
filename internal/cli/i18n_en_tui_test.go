@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -47,7 +48,7 @@ func TestEnglishTUIBottomAreaFits(t *testing.T) {
 			case "placeholder": // 空的輸入行顯示 placeholder:英文那句最長,要靠 tuiPlaceholder 量寬度挑
 				m = step(t, m, tea.KeyPressMsg{Code: ':'}, false)
 			case "noplayback":
-				m.pc, m.st = nil, nil
+				m.pcErr, m.st = provider.ErrNotSupported, nil
 			}
 			lines := strings.Split(m.View().Content, "\n")
 			if len(lines) != 4 {
@@ -73,7 +74,7 @@ func TestEnglishTUIHintsAreWholeAt80(t *testing.T) {
 	}{
 		"playing":    {func(m tuiModel) tuiModel { return m }, "space play/pause · ←→ ±10 s · / commands · ? keys · q quit"},
 		"stalled":    {func(m tuiModel) tuiModel { m.stalled = true; return m }, "r reconnect · / commands · ? keys · q quit"},
-		"noplayback": {func(m tuiModel) tuiModel { m.pc = nil; return m }, "/ commands · ? keys · q quit"},
+		"noplayback": {func(m tuiModel) tuiModel { m.pcErr = provider.ErrNotSupported; return m }, "/ commands · ? keys · q quit"},
 		"typing": {func(m tuiModel) tuiModel { return step(t, m, tea.KeyPressMsg{Code: ':'}, false) },
 			"↑↓ history · Enter run · Esc clear · Ctrl-C quit"},
 		"menu": {func(m tuiModel) tuiModel { return step(t, m, tea.KeyPressMsg{Code: '/'}, false) },
@@ -147,8 +148,9 @@ func TestEnglishTUIStatusLine(t *testing.T) {
 			"  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50"},
 		{"nostate", func(m tuiModel) tuiModel { m.st = nil; return m }, "  Nothing playing"},
 		{"stalled", func(m tuiModel) tuiModel { m.st, m.stalled = nil, true; return m }, "  Polling stopped (r to retry)"},
-		{"noplayback", func(m tuiModel) tuiModel { m.pc, m.pcErr = nil, nil; return m },
-			"  No playback control: not supported by this platform"},
+		{"noplayback", func(m tuiModel) tuiModel {
+			return step(t, m, tuiStateMsg{provider: "local", err: nowBuildErr{errors.New("local can't control playback")}, gen: m.gen}, false)
+		}, "  No playback control: local can't control playback"},
 		{"player not running", func(m tuiModel) tuiModel {
 			return step(t, m, tuiStateMsg{err: provider.ErrPlayerNotRunning, gen: m.gen}, false)
 		}, "  Player not running"},
@@ -157,8 +159,9 @@ func TestEnglishTUIStatusLine(t *testing.T) {
 			return step(t, m, tuiStateMsg{err: boom, gen: m.gen}, false)
 		}, "  Can't read playback state (r to retry)"},
 		{"rate limited", func(m tuiModel) tuiModel {
-			return step(t, m, tuiStateMsg{st: m.st, err: &provider.RateLimitError{Seconds: 30}, gen: m.gen}, false)
-		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · Rate limited; waiting to retry"},
+			at := time.Date(2026, 9, 27, 14, 5, 0, 0, time.Local)
+			return step(t, m, tuiStateMsg{st: m.st, err: &provider.RateLimitError{Seconds: 30}, retryAt: at, gen: m.gen}, false)
+		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · Rate limited; retrying at 14:05:00"},
 		{"control failed", func(m tuiModel) tuiModel {
 			return step(t, m, tuiStateMsg{err: boom, fromCtl: true, gen: m.gen}, false)
 		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · That action failed (see above)"},

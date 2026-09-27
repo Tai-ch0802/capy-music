@@ -107,9 +107,10 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗:留在畫面上、繼續輪詢,app 開了畫面就活過來
 			m.st, m.err, m.fails = nil, msg.err, 0
 			return m, m.tick()
-		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失;下一次照 Retry-After 等
-			m.err, m.fails = i18n.Errorf("watch.rate_limited", "message", rl.Message), 0
-			return m, m.tickAfter(rateLimitDelay(m.interval, rl))
+		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失;下一次照 Retry-After 等,並說幾點再試
+			d := rateLimitDelay(m.interval, rl)
+			m.err, m.fails = i18n.Errorf("watch.rate_limited", "time", time.Now().Add(d).Format("15:04:05"), "message", rl.Message), 0
+			return m, m.tickAfter(d)
 		case msg.fromCtl && msg.err != nil:
 			m.err = msg.err
 			return m, m.tick()

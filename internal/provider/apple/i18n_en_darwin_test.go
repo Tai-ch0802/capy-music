@@ -17,19 +17,19 @@ func TestEnglishPlayerErrors(t *testing.T) {
 
 	orig := runOSA
 	t.Cleanup(func() { runOSA = orig })
-	runOSA = func(string, ...string) (string, error) { return "", errors.New("exit status 1") }
+	runOSA = func(context.Context, string, ...string) (string, error) { return "", errors.New("exit status 1") }
 	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != "osascript failed (Music.app not installed, or automation not allowed?): exit status 1" {
 		t.Errorf("osascript 失敗:%v", err)
 	}
-	runOSA = func(string, ...string) (string, error) { return "playing\tx", nil }
+	runOSA = func(context.Context, string, ...string) (string, error) { return "playing\tx", nil }
 	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != `unexpected osascript output: "playing\tx"` {
 		t.Errorf("格式非預期:%v", err)
 	}
-	runOSA = func(string, ...string) (string, error) { return "playing\ta\tb\tc\t1,5\t0", nil }
+	runOSA = func(context.Context, string, ...string) (string, error) { return "playing\ta\tb\tc\t1,5\t0", nil }
 	if _, err := (&Provider{}).State(ctx); err == nil || err.Error() != `can't parse the numeric fields in osascript output: "playing\ta\tb\tc\t1,5\t0"` {
 		t.Errorf("數值欄位:%v", err)
 	}
-	runOSA = func(string, ...string) (string, error) { return "not running", nil }
+	runOSA = func(context.Context, string, ...string) (string, error) { return "not running", nil }
 	if _, err := (&Provider{}).State(ctx); !errors.Is(err, provider.ErrPlayerNotRunning) || err.Error() != "Music.app is not running (capy play starts it): the player is not running" {
 		t.Errorf("未執行:%v", err)
 	}

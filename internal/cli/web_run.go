@@ -286,7 +286,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // webExitReason:命令回 nil 就是做完了,即使中止 / 關分頁在它做完之後才落下(或落在不吃取消的那一段,
-// 例如 Apple 的 osascript)——回 cancelled 會讓頁面說「已中止」、叫人重跑一個已經做完的命令(review)。
+// 例如 Apple 播放時查資料庫與確認播放的 osascript)——回 cancelled 會讓頁面說「已中止」、叫人重跑一個已經做完的命令(review)。
 func webExitReason(ctx context.Context, err error) string {
 	cause := context.Cause(ctx)
 	switch {

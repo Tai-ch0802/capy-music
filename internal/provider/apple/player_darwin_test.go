@@ -13,7 +13,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
@@ -23,7 +25,10 @@ func stubOSA(t *testing.T, out string) *[]string {
 	t.Helper()
 	var scripts []string
 	origOSA, origOpen := runOSA, runOpen
-	runOSA = func(script string, _ ...string) (string, error) { scripts = append(scripts, script); return out, nil }
+	runOSA = func(_ context.Context, script string, _ ...string) (string, error) {
+		scripts = append(scripts, script)
+		return out, nil
+	}
 	runOpen = func(u string) error { t.Errorf("這個測試不該打開 %s", u); return nil }
 	t.Cleanup(func() { runOSA, runOpen = origOSA, origOpen })
 	return &scripts
@@ -44,7 +49,7 @@ func stubPlay(t *testing.T, match string, matchErr error, play string, playErr e
 	t.Helper()
 	ps := &playStub{}
 	origOSA, origOpen := runOSA, runOpen
-	runOSA = func(script string, args ...string) (string, error) {
+	runOSA = func(_ context.Context, script string, args ...string) (string, error) {
 		ps.calls = append(ps.calls, osaCall{script, args})
 		switch script {
 		case libraryMatchScript:
@@ -224,7 +229,7 @@ func TestLibraryMatchPicks(t *testing.T) {
 func TestRunOSAPassesArgsAfterDoubleDash(t *testing.T) {
 	const echo = "on run argv\nreturn item 1 of argv\nend run"
 	for _, v := range []string{"-e", "-ing", `a"b\c`, "Déjà Vu"} {
-		got, err := runOSA(echo, v)
+		got, err := runOSA(context.Background(), echo, v)
 		if err != nil || got != v {
 			t.Errorf("argv %q 要原樣到腳本:%q %v", v, got, err)
 		}
@@ -279,7 +284,7 @@ func TestPlayTrackStopsWhenCancelled(t *testing.T) {
 		var scripts []string
 		var opened []string
 		origOSA, origOpen := runOSA, runOpen
-		runOSA = func(script string, _ ...string) (string, error) {
+		runOSA = func(_ context.Context, script string, _ ...string) (string, error) {
 			scripts = append(scripts, script)
 			if script == during {
 				cancel() // = Ctrl-C 落在這一步
@@ -332,5 +337,61 @@ func TestPlayScriptsGuards(t *testing.T) {
 	i, j, k := strings.Index(libraryMatchScript, "ignoring diacriticals"), strings.Index(libraryMatchScript, "album of t is wantAlbum"), strings.Index(libraryMatchScript, "end ignoring")
 	if i < 0 || !(i < j && j < k) {
 		t.Error("專輯比對要在 ignoring diacriticals 裡")
+	}
+}
+
+// TestRunOSAKilledWhenCtxDone:【#97 審查】ctx 到期就殺掉 osascript。Music.app 卡住時一次 AppleEvent 要等一兩分鐘才自己逾時,
+// TUI 與 web 的輪詢拿著單飛鎖等它,所有平台的狀態都跟著停住。跑真的 osascript,腳本只 delay、不碰 Music.app。
+func TestRunOSAKilledWhenCtxDone(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := runOSA(ctx, "delay 5"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("被 ctx 殺掉要回逾時本身(結束碼 130 / 143、web 的「已中止」才認得),不是 signal: killed:%v", err)
+	}
+	if el := time.Since(start); el > 3*time.Second {
+		t.Errorf("ctx 到期就要結束,不是等腳本跑完:%v", el)
+	}
+}
+
+type ctxMark struct{}
+
+// TestStateAndControlsPassCtx:State 與控制指令把呼叫端的 ctx 交給 runOSA(TUI 的 State 逾時、按鍵的期限才管得到 osascript);
+// Play 查資料庫與確認播放的兩支腳本刻意不吃取消(見 Play 的註解)。
+func TestStateAndControlsPassCtx(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ctxMark{}, true)
+	var got []bool
+	origOSA := runOSA
+	runOSA = func(c context.Context, _ string, _ ...string) (string, error) {
+		got = append(got, c.Value(ctxMark{}) != nil)
+		return "stopped", nil
+	}
+	t.Cleanup(func() { runOSA = origOSA })
+	p := &Provider{}
+	_, _ = p.State(ctx)
+	_ = p.Play(ctx, provider.PlayRequest{})
+	_ = p.Pause(ctx)
+	_ = p.Next(ctx)
+	_ = p.Prev(ctx)
+	_ = p.Seek(ctx, 1000)
+	_ = p.SetVolume(ctx, 50)
+	if len(got) != 7 || slices.Contains(got, false) {
+		t.Errorf("每一個都要帶呼叫端的 ctx:%v", got)
+	}
+}
+
+// TestStateSaysNotRespondingOnTimeout:State 等不下去(TUI 的逾時)是 Music.app 沒回應,不是「沒裝或沒授權自動化」。
+func TestStateSaysNotRespondingOnTimeout(t *testing.T) {
+	origOSA := runOSA
+	runOSA = func(c context.Context, _ string, _ ...string) (string, error) {
+		<-c.Done()
+		return "", fmt.Errorf("osascript: %w", c.Err())
+	}
+	t.Cleanup(func() { runOSA = origOSA })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := (&Provider{}).State(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), i18n.T("apple.player.err.osascript_failed", "err", "")) {
+		t.Errorf("要說沒回應、保留逾時本身:%v", err)
 	}
 }
