@@ -158,7 +158,7 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
 | S4 | refresh token 從授權那天起算 6 個月就失效,refresh 不會延長 | 記錄 `authorized_at`,doctor 與 `auth status` 從第 170 天左右開始提醒 |
 | S5 | `auth logout spotify` 沒清掉本機快取裡的 Spotify 資料列(Developer Policy I 要求中斷連線時刪除) | logout 時一起清 |
 | S6 | redirect 綁固定的 8888 埠 | 文件說 loopback 可以只註冊不帶埠號的網址,授權時再帶動態埠,但要先在真的 dashboard 上確認可行 |
-| S7 | 搜尋結果列沒有連回 Spotify | 加上連結,並對照 Branding Guidelines |
+| S7 | 搜尋結果列沒有連回 Spotify | 加上連結,並對照 Branding Guidelines。✅ 2026-09-27:web 搜尋頁的 Spotify 列加「在 Spotify 上聽」(open.spotify.com/track/<id>,新分頁);規範要求 metadata 連回 Spotify、帶 Spotify 的名稱。CLI 的終端機與 TSV 輸出沒有連結可放,不在這次範圍 |
 
 ### 1.8 文件(PR A)
 

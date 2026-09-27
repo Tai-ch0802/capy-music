@@ -194,6 +194,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .btn--ghost { background: none; border-color: transparent; color: var(--accent); padding: 0 .5rem; }
 .btn--ghost:hover { background: rgb(var(--accent-rgb) / .12); }
 .btn--danger { color: var(--danger); border-color: var(--danger); background: var(--surface); }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* 連結長得跟按鈕一樣(搜尋頁的「在 Spotify 上聽」):min-height 要 flex 才生效 */
 .btn:disabled, #cancel[aria-disabled="true"] { opacity: .45; cursor: default; } /* [data-run] 的調暗看 body[data-busy],不看 aria-disabled */
 
 /* ── 空白態:一句白話(主控台的空白態是水豚) ── */

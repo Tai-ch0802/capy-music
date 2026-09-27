@@ -760,6 +760,32 @@ await scenario('8l', async () => {
   }
 });
 
+// 8m. 搜尋頁的 Spotify 列連回 Spotify(計畫 2026-09-24 §1.7 S7;Spotify 的設計規範:顯示 Spotify 的曲名、歌手就要連回 Spotify、
+//     帶 Spotify 的名稱):每一列有「在 Spotify 上聽」,連到 open.spotify.com/track/<id>、開新分頁、noopener,報讀說得出是哪一首;
+//     local file(spotify:local:…)沒有 Spotify 上的頁面,不給連結;Apple 列沒有這個連結。播放鈕照舊是那一列的第一個按鈕。
+await scenario('8m', async () => {
+  const { initSearch } = await import('./pages/search.mjs');
+  const paint = async (prov, rows) => {
+    reset();
+    script = { [`search k --provider ${prov} --limit 10`]: { events: [{ type: 'table', header: ['ID', 'TITLE'], rows }, done] } };
+    const r = mk();
+    initSearch(r, api, con, () => {}, { list: ['spotify', 'apple'], current: prov });
+    r.querySelector('input').value = 'k';
+    r.querySelector('.btn--primary').click();
+    await new Promise((res) => con.idle(res));
+    return r.querySelector('.tbl-wrap').querySelectorAll('tbody tr').map((tr) => ({ link: tr.querySelector('a'), first: tr.querySelector('.btn--ghost') }));
+  };
+  const sp = await paint('spotify', [['4uLU6hMCjMI75M1A2tKUQC', 'Never Gonna'], ['spotify:local:a:b:c:1', 'Local']]);
+  const a = sp[0].link;
+  check(a && a.href === 'https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC' && a.target === '_blank' && a.rel === 'noopener noreferrer',
+    `Spotify 列要連回 Spotify、開新分頁:${a && JSON.stringify({ href: a.href, target: a.target, rel: a.rel })}`);
+  check(a && a.textContent === '在 Spotify 上聽' && a.getAttribute('aria-label') === '在 Spotify 上聽「Never Gonna」', `連結的字與報讀:${a && a.textContent} ${a && a.getAttribute('aria-label')}`);
+  check(sp[0].first && sp[0].first.tagName === 'BUTTON' && sp[0].first.textContent === '播放', `播放鈕照舊是第一個:${sp[0].first && sp[0].first.tagName}`);
+  check(sp[1].link === null, 'local file 沒有 Spotify 上的頁面:不給連結');
+  const ap = await paint('apple', [['700050031', 'Radioactivity']]);
+  check(ap[0].link === null, 'Apple 列沒有 Spotify 連結');
+});
+
 // 9. 被伺服器拒絕(別的分頁佔著槽):說一句,並回報 refused 讓命令列把那行還給使用者。
 await scenario('9', async () => {
   reset();
