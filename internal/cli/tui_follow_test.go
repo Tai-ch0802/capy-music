@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
@@ -195,8 +198,8 @@ func TestTUIDropDuringRoundDiscardsIt(t *testing.T) {
 	}
 }
 
-// TestTUIRoundsAreSingleFlight:控制鍵起的那一輪要等舊鏈在飛的那一輪做完,看得到它剛寫的快取——不然按一次鍵就對 Spotify
-// 多打一次,晚到的那一輪還會蓋掉 tracker 的 shown / lastNow(web 用 pollMu.TryLock,TUI 用同一把鎖)。
+// TestTUIRoundsAreSingleFlight:舊鏈的那一輪還在飛時,控制鍵起的那一輪不另外問(TryLock 拿不到就讓,稍後再試)——
+// 不然按一次鍵就對 Spotify 多打一次,晚到的那一輪還會蓋掉 tracker 的 shown / lastNow(web 的 /api/now 用同一把鎖)。
 func TestTUIRoundsAreSingleFlight(t *testing.T) {
 	f := newNowFake()
 	f.set(nil, nil) // 閒置:有效期 15 秒
@@ -237,11 +240,12 @@ func followingApple(t *testing.T) (tuiModel, *watchFake, *watchFake) {
 }
 
 // TestTUITypedPlaybackCommandsFollowTheShownPlatform:【review】沒明指時,命令列打的 pause 也要送給狀態列上的那一家——
-// 不然按鍵停的是 Apple、打 /pause 停的卻是 Spotify,同一個畫面兩個平台。搜尋類(play <查詢>)照舊用預設平台,自己打了 --provider 不動。
+// 不然按鍵停的是 Apple、打 /pause 停的卻是 Spotify,同一個畫面兩個平台。搜尋類(play <查詢>、play --pick)與 play --id
+// (id 是預設平台的 id 空間)照舊用預設平台,自己打了 --provider 不動(#97 review 第 4 點)。
 func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	got := recordExec(t)
 	m, _, _ := followingApple(t)
-	for _, line := range []string{"pause", "seek 1:00", "now", "play", "play 派對動物", "pause --provider spotify", "pl list"} {
+	for _, line := range []string{"pause", "seek 1:00", "now", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
 		m.typing = true
 		m.input.SetValue(line)
 		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
@@ -252,6 +256,8 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 		{"/bin/capy", "now", "--provider", "apple"},
 		{"/bin/capy", "play", "--provider", "apple"},
 		{"/bin/capy", "play", "派對動物"},
+		{"/bin/capy", "play", "--id", "1422652341"},
+		{"/bin/capy", "play", "--pick"},
 		{"/bin/capy", "pause", "--provider", "spotify"},
 		{"/bin/capy", "pl", "list"},
 	}
@@ -336,5 +342,119 @@ func TestTUIProviderFlagPins(t *testing.T) {
 	m = pollOnce(t, m)
 	if m.provID != "spotify" || ap.calls.Load() != 0 || trk.shown.Load() != nil {
 		t.Errorf("釘住就只問 spotify:provID=%q apple State %d 次 shown=%v", m.provID, ap.calls.Load(), trk.shown.Load())
+	}
+}
+
+// within:在 d 之內拿到 f 的結果,不然判失敗(被測的東西要是會卡住,測試不能跟著卡到 go test 的十分鐘上限)。
+func within(t *testing.T, d time.Duration, what string, f func() tea.Msg) tea.Msg {
+	t.Helper()
+	got := make(chan tea.Msg, 1)
+	go func() { got <- f() }()
+	select {
+	case msg := <-got:
+		return msg
+	case <-time.After(d):
+		t.Fatalf("%s:%v 內沒有回來", what, d)
+		return nil
+	}
+}
+
+// TestTUISlowRoundSaysSoAndDoesNotQueue:【#97 review 第 1 點】建 provider 要等 token 鎖(沒有上限,持有者可能停在 keychain
+// 對話框),那個 ctx 又不能給期限。所以跟 web 一樣只限「等」:等了 tuiRoundWait 還沒回來,狀態列說「等待平台回應」;
+// 之後的輪詢不排隊(拿不到鎖就讓),卡住的那一輪做完後恢復正常。
+func TestTUISlowRoundSaysSoAndDoesNotQueue(t *testing.T) {
+	orig := tuiRoundWait
+	tuiRoundWait = 50 * time.Millisecond
+	t.Cleanup(func() { tuiRoundWait = orig })
+	f := newNowFake()
+	blk := make(chan struct{})
+	f.blockOn(blk)
+	m := newTestTUI(t, &watchFake{})
+	m.trk.now["spotify"] = f
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(blk)
+		}
+		for deadline := time.Now().Add(5 * time.Second); !m.trk.pollMu.TryLock(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Error("卡住的那一輪沒有收尾")
+				return
+			}
+		}
+		m.trk.pollMu.Unlock()
+	})
+
+	msg := within(t, 2*time.Second, "第一輪", m.poll())
+	next, cmd := m.Update(msg)
+	m = next.(tuiModel)
+	if !strings.Contains(m.statusLine(99), "等待平台回應") || cmd == nil {
+		t.Fatalf("等太久要說一聲、鏈照走:%q cmd=%v", ansi.Strip(m.statusLine(99)), cmd)
+	}
+	msg = within(t, 2*time.Second, "第二輪(不可以排隊等鎖)", m.poll())
+	next, cmd = m.Update(msg)
+	m = next.(tuiModel)
+	if n := f.calls.Load(); n != 1 || cmd == nil || m.fails != 0 {
+		t.Errorf("上一輪還在飛:不另外問、鏈照走、不算失敗:State %d 次 cmd=%v fails=%d", n, cmd, m.fails)
+	}
+	if !strings.Contains(m.statusLine(99), "等待平台回應") {
+		t.Errorf("真的結果回來之前,那句話要留著:%q", ansi.Strip(m.statusLine(99)))
+	}
+
+	close(blk)
+	released = true
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if m.trk.pollMu.TryLock() {
+			m.trk.pollMu.Unlock()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("卡住的那一輪沒有收尾")
+		}
+	}
+	if m = pollOnce(t, m); strings.Contains(m.statusLine(99), "等待平台回應") || !strings.Contains(m.statusLine(99), "派對動物") {
+		t.Errorf("恢復後顯示真的結果:%q", ansi.Strip(m.statusLine(99)))
+	}
+}
+
+// TestTUIQuietStderr:【#97 review 第 1 點】等 token 鎖的提示(auth.LockStderr)與 429 退避的提示不能印進 TUI 的畫面——
+// 以前只在畫面出來之前建一次 provider,跟著正在播的平台走之後,輪詢期間也會建。
+func TestTUIQuietStderr(t *testing.T) {
+	var lock, backoff bytes.Buffer
+	origLock, origBackoff := auth.LockStderr, provider.BackoffStderr
+	auth.LockStderr, provider.BackoffStderr = &lock, &backoff
+	t.Cleanup(func() { auth.LockStderr, provider.BackoffStderr = origLock, origBackoff })
+	restore := tuiQuietStderr()
+	if auth.LockStderr != io.Discard || provider.BackoffStderr != io.Discard {
+		t.Errorf("TUI 執行期間兩個提示都要丟掉:lock=%T backoff=%T", auth.LockStderr, provider.BackoffStderr)
+	}
+	restore()
+	if auth.LockStderr != &lock || provider.BackoffStderr != &backoff {
+		t.Error("離開後要還原")
+	}
+}
+
+// TestTUIRetryWorksWithoutPlayback:【#97 review 第 2 點】沒有播放遙控(沒登入)時 r 也要能用:在別的終端機跑完
+// capy auth login 之後,不必等建不起來的結果過期(一分鐘)。
+func TestTUIRetryWorksWithoutPlayback(t *testing.T) {
+	fakeNowClock(t)
+	m := newTestTUI(t, &watchFake{})
+	delete(m.trk.now, "spotify") // 還沒建:testTracker 的建構一律失敗 = 沒登入
+	if m = pollOnce(t, m); m.pcErr == nil {
+		t.Fatal("前提:沒登入 = 沒有播放遙控")
+	}
+	f := newNowFake()
+	stub := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "spotify" {
+			return f, nil
+		}
+		return stub(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = stub })
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, false) // r 讓快取過期;它回的 Cmd 就是 poll,下面手動跑一次再套用
+	m = pollOnce(t, m)
+	if m.pcErr != nil {
+		t.Errorf("別處登入後按 r 要馬上恢復:%v", m.pcErr)
 	}
 }

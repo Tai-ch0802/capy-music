@@ -894,6 +894,7 @@
   "tui.status.stalled": "已停止輪詢(r 重試)",
   "tui.status.state_unavailable": "讀不到播放狀態(r 重試)",
   "tui.status.volume": "音量 {pct}",
+  "tui.status.waiting": "等待平台回應…",
   "ui.err.interrupted": "已中斷",
   "ui.pager.status": "第 {top}–{bottom} 列 / {rows} · 欄 {col_from}–{col_to} / {cols} · ←→ 橫向 ↑↓ 上下 g/G 頭尾 q 離開",
   "ulid.err.alphabet": "ulid: 含非 Crockford base32 字元",

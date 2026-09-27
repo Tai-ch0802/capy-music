@@ -959,6 +959,7 @@
   "tui.status.stalled": "Polling stopped (r to retry)",
   "tui.status.state_unavailable": "Can't read playback state (r to retry)",
   "tui.status.volume": "volume {pct}",
+  "tui.status.waiting": "Waiting for the platform to respond…",
   "ui.err.interrupted": "interrupted",
   "ui.pager.status": "rows {top}–{bottom}/{rows} · cols {col_from}–{col_to}/{cols} · ←→ ↑↓ scroll g/G top/end q quit",
   "ulid.err.alphabet": "ulid: contains a character outside Crockford base32",

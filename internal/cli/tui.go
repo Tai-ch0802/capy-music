@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
@@ -66,7 +67,8 @@ type (
 	tuiPollMsg struct{ gen int }
 	// provider / retryAt / cached 來自 nowTracker:provider 是這一輪顯示的平台(跟隨規則,決策 51;空 = 不換),
 	// retryAt 是限流冷卻結束的時間,cached = 這份是快取、不是這一次真的問到的(不計入 fails)。
-	// dropped:問的期間 dropNow 過(命令列跑了 auth / config set),這一輪作廢。
+	// dropped:問的期間 dropNow 過(命令列跑了 auth / config set),這一輪作廢。busy:上一輪還沒做完,這次沒問;
+	// slow:這次問了,但等了 tuiRoundWait 還沒回來(那一輪在背景繼續做完、寫回快取)。
 	tuiStateMsg struct {
 		st       *provider.PlaybackState
 		err      error
@@ -76,6 +78,8 @@ type (
 		retryAt  time.Time
 		cached   bool
 		dropped  bool
+		busy     bool
+		slow     bool
 	}
 	tuiExecMsg struct {
 		args []string
@@ -147,24 +151,49 @@ func (m tuiModel) frameTick() tea.Cmd {
 	return tea.Tick(tuiFrameInterval, func(t time.Time) tea.Msg { return tuiFrameMsg(t) })
 }
 
-func (m tuiModel) pollTick() tea.Cmd {
+func (m tuiModel) pollTick() tea.Cmd { return m.pollTickAfter(m.interval) }
+
+func (m tuiModel) pollTickAfter(d time.Duration) tea.Cmd {
 	gen := m.gen
-	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
+	return tea.Tick(d, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
+
+// tuiRoundWait:poll 等一輪的上限。建 provider 要等 <key>.token.lock(沒有上限,持有者可能停在 keychain 授權對話框),
+// 而那個 ctx 得留給 TokenSource 之後每次換發用,不能給它期限——所以跟 web 的 webNowWait 一樣只限「等」:
+// 超過就先說「等待平台回應」,那一輪在背景做完、寫回快取。測試替換點。
+var tuiRoundWait = 3 * time.Second
+
+// tuiBusyRetry:上一輪還沒做完時,多久再試一次(只是 TryLock,不問平台)。比輪詢間隔短:按鍵剛好撞上一輪時,畫面不必多等兩秒。
+const tuiBusyRetry = 200 * time.Millisecond
 
 // poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
 // 不是由這裡每 2 秒一次決定——限流時也照常每 2 秒問,冷卻期內 tracker 只端出快取。
+// 單飛同 web 的 /api/now:上一輪還沒做完就不排隊(TryLock),卡住的那一輪不會讓按鍵堆出一串等鎖的 goroutine。
 func (m tuiModel) poll() tea.Cmd {
 	trk, pin, gen := m.trk, m.provFlag, m.gen
 	return func() tea.Msg {
-		trk.pollMu.Lock()
-		defer trk.pollMu.Unlock()
-		g := trk.nowGen.Load()
-		res := trk.pollRound(pin)
-		if !trk.setNow(res, pin == "", g) {
-			return tuiStateMsg{gen: gen, dropped: true}
+		if !trk.pollMu.TryLock() {
+			return tuiStateMsg{gen: gen, busy: true}
 		}
-		return tuiStateMsg{provider: res.provider, st: res.st, err: res.err, retryAt: res.retryAt, cached: !res.fresh, gen: gen}
+		done := make(chan tuiStateMsg, 1)
+		go func() {
+			g := trk.nowGen.Load()
+			res := trk.pollRound(pin)
+			msg := tuiStateMsg{gen: gen, dropped: true}
+			if trk.setNow(res, pin == "", g) {
+				msg = tuiStateMsg{provider: res.provider, st: res.st, err: res.err, retryAt: res.retryAt, cached: !res.fresh, gen: gen}
+			}
+			trk.pollMu.Unlock() // 先放鎖再送:收到結果的一方緊接著再問一輪時,不會撞上剛做完的這一輪而拿到 busy
+			done <- msg
+		}()
+		wait := time.NewTimer(tuiRoundWait)
+		defer wait.Stop()
+		select {
+		case msg := <-done:
+			return msg
+		case <-wait.C:
+			return tuiStateMsg{gen: gen, busy: true, slow: true}
+		}
 	}
 }
 
@@ -308,6 +337,8 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 	id := m.provFlag
 	if id == "" {
 		path := c.CommandPath()
+		// rest 刻意連 flag 一起算:play --id X 的 id 是預設平台的 id 空間,play --pick 是搜尋——都照舊用 default_provider。
+		// 只看位置參數的話,這兩個會被送去顯示中的平台。
 		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
 		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
 		if !follows || typed {
@@ -405,6 +436,15 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.dropped { // 已登出 / 換掉的帳號的結果:不顯示,鏈照走
 		return m, tick()
+	}
+	if msg.busy { // 上一輪還沒做完:畫面照舊(等太久就說一聲,直到真的結果蓋掉它),很快再試;不算 fails
+		if msg.slow {
+			m.errShort = i18n.T("tui.status.waiting")
+		}
+		if m.stalled {
+			return m, nil
+		}
+		return m, m.pollTickAfter(tuiBusyRetry)
 	}
 	if msg.provider != "" && msg.provider != m.provID { // 換平台:上一家的曲目與失敗次數不能掛在這一家名下(限流、出錯的分支都不動 st)
 		m.provID, m.st, m.fails = msg.provider, nil, 0
@@ -603,17 +643,19 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
 		return m, m.printBlock(tuiKeymap(), m.theme.Mutedly)
 	}
-	if m.pcErr != nil {
-		return m, nil
-	}
-	switch msg.String() {
-	case "r": // 輪詢停下來之後重新接上
+	// r 在「沒有播放遙控」時也要能用:在別的終端機跑完 capy auth login 之後,不必等建不起來的結果過期(一分鐘)。
+	if msg.String() == "r" { // 輪詢停下來之後重新接上
 		m = m.newChain()
 		// lastErr 也清掉:明確的重試是新的一件事,重試又撞到同一則錯誤時要再印一次,
 		// 不然使用者按了鍵,十秒內畫面上完全沒有任何事情發生過的痕跡。
 		m.errShort, m.fails, m.lastErr = "", 0, ""
-		m.trk.expireExcept("") // 真的重問,不是端出快取裡的同一則錯誤(限流的冷卻照守)
+		m.trk.expireExcept("") // 真的重問,不是端出快取裡的同一則錯誤(限流的冷卻與「不支援播放」照守)
 		return m, m.poll()
+	}
+	if m.pcErr != nil {
+		return m, nil
+	}
+	switch msg.String() {
 	case "space":
 		m = m.newChain()
 		if m.st != nil && m.st.Playing {
@@ -862,6 +904,14 @@ func (m tuiModel) hints() string {
 	return i18n.T("tui.hint.playing")
 }
 
+// tuiQuietStderr:429 退避與等 token 鎖的提示不能印進畫面(狀態列另外會說「等待平台回應」)。以前只在啟動前建一次 provider,
+// 等鎖的提示印在畫面出來之前;跟著正在播的平台走之後,輪詢期間也會建。回傳還原的函式。
+func tuiQuietStderr() func() {
+	origBackoff, origLock := provider.BackoffStderr, auth.LockStderr
+	provider.BackoffStderr, auth.LockStderr = io.Discard, io.Discard
+	return func() { provider.BackoffStderr, auth.LockStderr = origBackoff, origLock }
+}
+
 // runTUI:互動式介面的進入點。取不到 provider 或播放遙控都不致命——介面照開,使用者可以在命令列
 // 跑 capy auth login。測試替換點。
 var runTUI = func(cmd *cobra.Command) error {
@@ -880,9 +930,7 @@ var runTUI = func(cmd *cobra.Command) error {
 	}
 	trk := &nowTracker{ctx: ctx, timeout: tuiStateTimeout}
 	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, trk, watchPollSpotify)
-	origStderr := provider.BackoffStderr // 429 退避的提示不能印進畫面
-	provider.BackoffStderr = io.Discard
-	defer func() { provider.BackoffStderr = origStderr }()
+	defer tuiQuietStderr()()
 	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
 	// 離開一律是使用者按 q / Esc(exit 0)、按 Ctrl-C 或從外面來的訊號(exit 130 / 143)——收尾在 runProgram。
 	_, err = runProgram(ctx, m, cmd.OutOrStdout())
