@@ -1154,3 +1154,20 @@ func TestWebNowFallsBackWhenBaseCannotBuild(t *testing.T) {
 		}
 	}
 }
+
+// TestWebNowStateErrorBaseStays:【#98 review 第 1 點】退回只看建構錯誤:base 建得起來、只是 State 出錯(Music.app 沒開、502),
+// 另一家登入了、只是暫停,面板照舊停在 base、照實說它的狀態(決策 54)——不會因為一次 502 就跳到別家。
+func TestWebNowStateErrorBaseStays(t *testing.T) {
+	for _, stateErr := range []error{provider.ErrPlayerNotRunning, errors.New("502 bad gateway")} {
+		setCLITestConfig(t)
+		setDefaultProvider(t, "apple")
+		fakeNowClock(t)
+		apple := newNowFakeAs("apple", nil)
+		apple.set(nil, stateErr)
+		swapNowByID(t, map[string]*nowFake{"apple": apple, "spotify": newNowFakeAs("spotify", nowTrack(false, "暫停的那首", 1000, 200000))})
+		_, c := startWeb(t)
+		if m := c.now(""); m["provider"] != "apple" || m["error"] == nil {
+			t.Errorf("%v:base 只是 State 出錯,要留在 base:%v", stateErr, m)
+		}
+	}
+}
