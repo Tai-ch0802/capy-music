@@ -602,7 +602,7 @@ await scenario('8k', async () => {
       script = { export: stdout(exported) };
       const pl = page(initPlaylists);
       await settle();
-      pl.children[2].querySelector('.btn--ghost').click(); // 右欄的「看 Spotify 上的內容」
+      pl.children[2].querySelector('[data-run]').click(); // 右欄的「看 Spotify 上的內容」(不用 .btn--ghost:表裡的 Spotify 連結也是)
       await settle();
       pl.children[4].querySelector('.btn').click(); // 「列出來」
       await settle();
@@ -685,6 +685,177 @@ await scenario('8k', async () => {
     i18nFile = './i18n.json';
     await loadI18n(api);
   }
+});
+
+// 8n. 連回 Spotify(計畫 §1.7 S7 其餘的部分):清單頁的正本曲目、清單本身、pl list 與 pl show 的表,同步頁與主控台的變更表,
+//     搬家精靈的預覽表與搬不過去的歌。只有確定是 Spotify 的列才連(平台看呼叫端送出去的那一家、或每一列自己的 PROVIDER);
+//     不像 Spotify id 的(local file、釘成「沒有」的空字串)不連;一列都連不出去的表不多一欄。連結本身不送命令。
+await scenario('8n', async () => {
+  const { initPlaylists } = await import('./pages/playlists.mjs');
+  const { initSync } = await import('./pages/sync.mjs');
+  const { initMove, tally } = await import('./pages/move.mjs');
+  const T1 = '4uLU6hMCjMI75M1A2tKUQC', T2 = '7qiZfU4dY1lWllzX7mPBI3', PL = '37i9dQZF1DXcBWIGoYBM5M';
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
+  const widths = (tw) => [tw.querySelector('thead tr').children.length, ...tw.querySelectorAll('tbody tr').map((tr) => tr.children.length)];
+  const idle = () => new Promise((r) => con.idle(r));
+  const label = (a) => a && a.getAttribute('aria-label');
+  const track = (id) => `https://open.spotify.com/track/${id}`;
+  const exit2 = { type: 'exit', code: 2, message: 'x', reason: 'done' };
+  const table = (header, rows, end = done) => ({ events: [{ type: 'table', header, rows }, end] });
+  const TH = ['ID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'];
+  const LH = ['ID', 'NAME', 'TRACKS', 'OWNER'];
+
+  // ── 清單頁
+  reset();
+  script = {
+    export: { events: [{ type: 'stdout', text: JSON.stringify({
+      'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: PL }, items: [{ cid: 'c1' }, { cid: 'c2' }, { cid: 'c3' }, { cid: 'c4' }] },
+      'pl__b.json': { pid: 'b', name: 'mix', links: { apple: 'p.AAAA', spotify: {} }, items: [{ cid: 'c4' }] },
+      'tracks.json': { tracks: {
+        c1: { title: 'Song A', mappings: { spotify: { id: T1, confidence: 100, source: 'observed' } } },
+        c2: { title: 'Song B', mappings: { spotify: { id: '', confidence: 100, source: 'review', pinned: true } } }, // 釘成「Spotify 沒有」
+        c3: { title: 'Song C', mappings: { spotify: { id: 'spotify:local:a:b:c:1', source: 'observed' } } },       // Spotify 的 local file
+        c4: { title: 'Song D', mappings: { apple: { id: 'i.XYZ', source: 'observed' } } },
+      } } }) }, done] },
+    'pl show "road trip" --provider spotify': table(TH, [[T2, 'Live One', 'x', '', '1000'], ['spotify:local:q:r:s:2', 'Local', '', '', '0']]),
+    'pl show mix --provider apple': table(TH, [[T2, 'Apple One', 'x', '', '1000']]), // id 長得像 Spotify 也不連:這張表是 Apple 的
+    'pl list --provider spotify': table(LH, [[PL, 'road trip', '4', 'me']]),
+    'pl list --provider apple': table(LH, [[T2, 'Mix', '-', '']]),
+  };
+  const pl = mk();
+  initPlaylists(pl, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
+  await idle();
+  const [left, right] = pl.children[2].children;
+  const items = right.querySelector('.tbl-wrap');
+  const il = anchors(items);
+  check(il.length === 1 && il[0].href === track(T1) && il[0].target === '_blank' && il[0].rel === 'noopener noreferrer' && il[0].textContent === '在 Spotify 上聽' && label(il[0]) === '在 Spotify 上聽「Song A」',
+    `正本曲目:有 Spotify 對應的才連(空字串、local file、只有 Apple 的不連):${JSON.stringify(il.map((a) => [a.href, label(a)]))}`);
+  check(JSON.stringify(widths(items)) === JSON.stringify([6, 6, 6, 6, 6]), `正本曲目表補一欄、每一列都有那一格:${JSON.stringify(widths(items))}`);
+  const run = right.querySelector('[data-run]');
+  const pa = anchors(right).find((a) => a.href.includes('/playlist/'));
+  check(pa && pa.href === `https://open.spotify.com/playlist/${PL}` && label(pa) === '在 Spotify 上聽「road trip」' && right.children.indexOf(pa) > right.children.indexOf(run),
+    `連著的 Spotify 清單本身:放在「看平台上的內容」後面:${pa && pa.href}`);
+  check(anchors(left).length === 0, '左欄那一列整個是按鈕:裡面不放連結');
+  run.click();
+  await idle();
+  const shown = anchors(pl.children[5]);
+  check(shown.length === 1 && shown[0].href === track(T2) && label(shown[0]) === '在 Spotify 上聽「Live One」', `pl show(Spotify)的表:${JSON.stringify(shown.map((a) => a.href))}`);
+
+  left.children[1].click(); // mix:連著 apple 與 spotify(值是物件的壞資料),pl show 走 apple
+  await idle();
+  check(anchors(right).length === 0 && JSON.stringify(widths(right.querySelector('.tbl-wrap'))) === JSON.stringify([5, 5]), '沒有 Spotify 對應、清單的 spotify 連結不是字串:沒有連結、不多一欄');
+  right.querySelector('[data-run]').click();
+  await idle();
+  check(anchors(pl.children[5]).length === 0 && JSON.stringify(widths(pl.children[5].querySelector('.tbl-wrap'))) === JSON.stringify([5, 5]), 'pl show(Apple)的表:id 長得像也不連、不多一欄');
+
+  const sel = pl.children[4].querySelector('select');
+  sel.value = 'spotify';
+  pl.children[4].querySelector('.btn').click();
+  sel.value = 'apple'; // 命令還在跑就換掉選單:表照送出去的那一家(spotify)判斷
+  await idle();
+  const listed = anchors(pl.children[5]);
+  check(listed.length === 1 && listed[0].href === `https://open.spotify.com/playlist/${PL}` && label(listed[0]) === '在 Spotify 上聽「road trip」', `pl list(Spotify)的表連到清單:${JSON.stringify(listed.map((a) => a.href))}`);
+  pl.children[4].querySelector('.btn').click();
+  await idle();
+  check(anchors(pl.children[5]).length === 0 && JSON.stringify(widths(pl.children[5].querySelector('.tbl-wrap'))) === JSON.stringify([4, 4]), 'pl list(Apple)的表:不連、不多一欄');
+
+  // ── 同步頁與主控台的變更表:PROVIDER / PROVIDER_ID 的位置在 pull 與 sync 的表不一樣,照表頭找
+  const PH = ['ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+  const SH = ['DIR', ...PH];
+  reset();
+  script = {
+    'pl pull --all --dry-run': table(PH, [
+      ['add', 'spotify', 'road trip', '0', 'c1', T1, 'Song A', 'a', 'r', 'added_on_platform'],
+      ['rename', 'spotify', 'road trip', '', '', '', 'New Name', '', 'r', 'renamed_on_platform'], // 改名那一列的 TITLE 是清單名、沒有曲目 id
+      ['add', 'apple', 'road trip', '1', 'c9', T2, 'Song Z', 'a', 'r', 'added_on_platform']], exit2),
+    'pl sync --all --dry-run': table(SH, [['push', 'add', 'spotify', 'road trip', '1', 'c2', T2, 'Song B', 'b', 'r', 'push']], exit2),
+  };
+  const sy = mk();
+  initSync(sy, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
+  const [pullBtn, , syncBtn] = sy.children[2].children;
+  pullBtn.click();
+  await idle();
+  const pulled = anchors(sy.querySelector('.tbl-wrap'));
+  check(pulled.length === 1 && pulled[0].href === track(T1) && label(pulled[0]) === '在 Spotify 上聽「Song A」', `pull 的表:只有 Spotify 的曲目列連(改名列、Apple 列不連):${JSON.stringify(pulled.map((a) => a.href))}`);
+  const tables = allByClass(root, 'tbl');
+  const inConsole = anchors(tables[tables.length - 1]);
+  check(inConsole.length === 1 && inConsole[0].href === track(T1), `主控台裡同一張表也連:${JSON.stringify(inConsole.map((a) => a.href))}`);
+  syncBtn.click();
+  await idle();
+  const synced = anchors(sy.querySelector('.tbl-wrap'));
+  check(synced.length === 1 && synced[0].href === track(T2) && label(synced[0]) === '在 Spotify 上聽「Song B」', `sync 的表(多一個 DIR 欄):${JSON.stringify(synced.map((a) => a.href))}`);
+  script = { 'search k': table(['ID', 'TITLE'], [[T1, 'Song A']]) };
+  await con.run('search k');
+  const typed = allByClass(root, 'tbl');
+  check(anchors(typed[typed.length - 1]).length === 0, '主控台打的 search 不帶平台:猜不出是哪一家,不連');
+  // resolve 的 review 列:PROVIDER_ID 是還沒確認的候選,報讀不說正本的歌名(那是另一首),改說 id
+  const RH = ['ACTION', 'CID', 'PROVIDER', 'PROVIDER_ID', 'CONFIDENCE', 'SOURCE', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+  script = { 'resolve x --provider spotify --dry-run': table(RH, [['map', 'c1', 'spotify', T1, '95', 'isrc', 'Song A', 'a', 'r', 'isrc'],
+    ['review', 'c2', 'spotify', T2, '70', 'fuzzy', 'Song B', 'b', 'r', 'low_score']], exit2) };
+  await con.run('resolve x --provider spotify --dry-run');
+  const rt = allByClass(root, 'tbl');
+  const rl = anchors(rt[rt.length - 1]).map(label);
+  check(JSON.stringify(rl) === JSON.stringify(['在 Spotify 上聽「Song A」', `在 Spotify 上聽「${T2}」`]), `resolve:map 列說歌名、review 列說候選的 id:${JSON.stringify(rl)}`);
+  // pl dedup spotify:<清單>:平台清單的去重報告沒有 PROVIDER 欄,但每一列都是 Spotify 的
+  script = { 'pl dedup spotify:mix': table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['1', T1, 'Song A', 'a', 'r', 'duplicate']]) };
+  sy.querySelector('input').value = 'spotify:mix';
+  walk(sy, (c) => { if (c.type === 'checkbox') c.checked = false; }); // 平台清單的報告不能配 --dry-run
+  sy.children[2].children[3].click(); // 去除重複
+  await idle();
+  const rep = anchors(sy.querySelector('.tbl-wrap'));
+  check(rep.length === 1 && rep[0].href === track(T1), `Spotify 清單的去重報告也連:${JSON.stringify(rep.map((a) => a.href))}`);
+
+  // ── 搜尋頁:命令還在跑就換掉平台,結果表照送出去的那一家(Spotify):有連結、播放鈕送 spotify
+  const { initSearch } = await import('./pages/search.mjs');
+  script = { [`search k --provider spotify --limit 10`]: table(['ID', 'TITLE'], [[T1, 'Song A']]) };
+  const se = mk();
+  initSearch(se, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
+  se.querySelector('input').value = 'k';
+  const psel = se.querySelector('select');
+  psel.value = 'spotify';
+  se.querySelector('.btn--primary').click();
+  psel.value = 'apple';
+  await idle();
+  const srow = se.querySelector('.tbl-wrap').querySelector('tbody tr');
+  check(anchors(srow).length === 1 && srow.querySelector('button')?.textContent === '播放', `搜尋頁照送出去的平台畫結果:${srow && srow.textContent}`);
+
+  // ── 搬家精靈:從 Spotify 搬到 Apple Music。tally 記下帶歌名那一列的 Spotify id(migrate.go 產生得出的兩種形狀):
+  //    加進既有清單 = migrate 列(來源 Spotify,有 id)在前、推向目的地的 push 列在後;
+  //    正本已經連著來源(或同名正本原本就有這首)= 只有推向 Apple 的 push 列,表裡沒有 Spotify 的 id——已知不連(計畫 §1.7 S7)。
+  const t1 = tally(SH, [['migrate', 'add', 'spotify', 'road trip', '0', 'c', T1, 'Song C', 'c', 'no match', 'no_mapping'],
+    ['push', 'skip', 'apple', 'road trip', '0', 'c', '', 'Song C', 'c', 'no match', 'no_mapping']]);
+  check(t1.missed.length === 1 && t1.missed[0].spotify === T1, `加進既有清單:搬不過去的歌記下 Spotify id:${JSON.stringify(t1)}`);
+  const t2 = tally(SH, [['push', 'add', 'apple', 'road trip', '0', 'a', 'i.A1', 'Song A', 'a', '', 'push'],
+    ['push', 'skip', 'apple', 'road trip', '1', 'b', '', 'Song B', 'b', 'no match', 'no_mapping'],
+    ['push', 'skip', 'apple', 'road trip', '2', 'd', 'i.D4', 'Song D', 'd', 'cannot push', 'unpushable']]); // 有 Apple 的 id 也不是 Spotify 的
+  check(t2.missed.length === 2 && t2.missed.every((m) => m.spotify === ''), `只有 push 列(正本已連著來源):沒有 Spotify id、不連:${JSON.stringify(t2)}`);
+  globalThis.document.createElementNS ||= (_, tag) => mk(tag); // 水豚是 SVG
+  const button = (r, text) => { let b = null; walk(r, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
+  const radios = (r, name) => { const out = []; walk(r, (c) => { if (c.tagName === 'INPUT' && c.type === 'radio' && c.name === name) out.push(c); }); return out; };
+  const lists = (rows) => (h) => { h.onTable(LH, rows); h.onExit(0, '', 'done'); };
+  let mig = null;
+  const plan = {
+    'auth status --json': (h) => { h.onStdout(JSON.stringify({ spotify: { state: 'ok', client_id: 'set' }, google: { state: 'ok', client: 'builtin' }, apple: { state: 'ok', developer_token: 'ok', user_token: 'ok' } })); h.onExit(0, '', 'done'); },
+    'pl list --provider spotify': lists([['p1', 'Road trip', '2', 'me']]),
+    'pl list --provider apple': lists([]),
+    'migrate p1 --from spotify --to apple': (h) => { mig = h; },
+  };
+  const fcon = { idle: (fn) => fn(), run(_line, hooks, o) { plan[o.args.join(' ')]?.(hooks); return Promise.resolve(); } };
+  const mv = mk();
+  initMove(mv, api, fcon, () => {}, { list: ['spotify', 'apple'] });
+  radios(mv, 'wiz-to')[1].l.change();   // 到 Apple Music
+  radios(mv, 'wiz-from')[0].l.change(); // 從 Spotify
+  button(mv, t('webui.move.next.playlist')).click();
+  radios(mv, 'wiz-src')[0].l.change();
+  button(mv, t('webui.move.next.confirm')).click();
+  button(mv, t('webui.move.start')).click();
+  check(mig !== null, '精靈要送出 migrate p1 --from spotify --to apple');
+  mig?.onTable(SH, [['migrate', 'add', 'spotify', 'Road trip', '0', 'a', T1, 'Song A', 'a', 'push to apple:x', 'push'],
+    ['migrate', 'add', 'spotify', 'Road trip', '1', 'b', T2, 'Song B', 'b', 'no match on apple', 'no_mapping']]);
+  const ml = anchors(mv.querySelector('.wiz__missed'));
+  check(ml.length === 1 && ml[0].href === track(T2) && label(ml[0]) === '在 Spotify 上聽「Song B」' && ml[0].className === 'wiz__link', `搬不過去的歌(Spotify 的曲名)連回去,用文字連結的樣式:${JSON.stringify(ml.map((a) => [a.href, a.className]))}`);
+  check(anchors(mv.querySelector('.wiz__more')).length === 2, '完整的表:兩首都是 Spotify 的列');
 });
 
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,
@@ -1034,7 +1205,8 @@ await scenario('14', async () => {
   const isrc = {
     isrc: 'TWK231680790',
     parts: { country: 'TW', geographic: true, registrant: 'K23', year: '16', year_full: 2016, designation: '80790' },
-    providers: { spotify: { tracks: [{ id: 'sp1', title: 'x', artists: ['a'], url: 'https://open.spotify.com/track/sp1' }] }, apple: { tracks: [] } },
+    providers: { spotify: { tracks: [{ id: 'sp1', title: 'x', artists: ['a'], url: 'https://open.spotify.com/track/sp1' }] }, apple: { tracks: [] },
+      local: { tracks: [{ id: 'l1', title: 'z', artists: ['c'], url: 'javascript:alert(1)' }] } }, // 只給 https:同 player.js
     canonical: { cid: 'c1', title: 'x', artists: ['a'], duration_ms: 200000, isrc: ['TWK231680790'], mappings: { spotify: { id: '', confidence: 95, source: 'isrc', pinned: true } }, playlists: [{ name: 'p', pos: 0, links: {} }] },
   };
   const draw = async () => {
@@ -1078,9 +1250,10 @@ await scenario('14', async () => {
   check(stateOf('apple', parseStatus('spotify:\n  refresh token: keychain 存在\n').apple).text === '未登入', '讀不懂(不是 JSON)就是未登入,不回頭解析文字');
   check(zh.acct.includes('Google Drive(保管你的清單)') && zh.acct.includes('重新連接') && zh.acct.includes('client ID 已設定') && !zh.acct.includes('client_id'), `帳號頁的 zh-TW:${zh.acct}`);
   check(zh.running === '檢查中…' && zh.doctor.includes('還沒檢查過。按「開始檢查」。'), `診斷頁的 zh-TW:${zh.running} ${zh.doctor}`);
-  for (const s of ['ISRC 查詢', 'ISRC 是每首歌的國際編號。輸入一個,看它在三個平台上分別是哪一首。', '查詢', '台灣', '年份(推測)', '在 spotify 開啟', '這個平台沒有符合的曲目', '(不可得) · 95 分 · isrc · 已釘選', '含這首的清單(1)']) {
+  for (const s of ['ISRC 查詢', 'ISRC 是每首歌的國際編號。輸入一個,看它在三個平台上分別是哪一首。', '查詢', '台灣', '年份(推測)', '在 Spotify 開啟', '這個平台沒有符合的曲目', '(不可得) · 95 分 · isrc · 已釘選', '含這首的清單(1)']) {
     check(zh.isrc.includes(s), `ISRC 頁的 zh-TW 少了「${s}」:${zh.isrc}`);
   }
+  check(!zh.isrc.includes('在 本機曲庫 開啟'), `不是 https 的網址不給連結:${zh.isrc}`);
 
   i18nFile = './i18n-en.json';
   try {
@@ -1091,7 +1264,7 @@ await scenario('14', async () => {
     check(en.rows.join('|') === "✓ Logged in|⚠ Expired|⚠ Couldn't read the keychain", `英文的三列狀態:${en.rows}`);
     check(JSON.stringify(en.labels) === JSON.stringify(['Checking account connections', 'Checking config, logins and connections']) && /^Switching /.test(t('webui.lang.switching')),
       `英文的 label 是進行式:${JSON.stringify(en.labels)} / ${t('webui.lang.switching')}`);
-    check(en.running === 'Checking…' && en.isrc.includes('ISRC lookup') && en.isrc.includes('Look up') && en.isrc.includes('Taiwan') && en.isrc.includes('Open in spotify') && en.isrc.includes('(unavailable) · confidence 95 · isrc · pinned'),
+    check(en.running === 'Checking…' && en.isrc.includes('ISRC lookup') && en.isrc.includes('Look up') && en.isrc.includes('Taiwan') && en.isrc.includes('Open in Spotify') && en.isrc.includes('(unavailable) · confidence 95 · isrc · pinned'),
       `診斷與 ISRC 頁的英文:${en.running} ${en.isrc}`);
   } finally {
     i18nFile = './i18n.json';

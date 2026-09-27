@@ -1,7 +1,7 @@
 // sync.js:#/sync —— 表單只組出一條命令,確認與變更表都在 dock 的區塊裡(寫入的確認是提示橋的 confirm,
 // 頁面絕不代加 --yes、絕不代加 --force)。這一頁再把同一份變更表畫大一點。
 import { el, quote, btn, field, input, select, providerOptions, emptyState, pageHead } from './common.js';
-import { renderTable } from '../table.js';
+import { renderTable, linkColumn, byProvider } from '../table.js';
 import { t } from '../i18n.js';
 
 export function initSync(root, api, con, notice, providers) {
@@ -32,9 +32,11 @@ export function initSync(root, api, con, notice, providers) {
   const dryLabel = t('webui.sync.dry_run');
   const run = (verb, label) => {
     const wasDry = dry.checked; // 按下去那一刻的值:命令跑到一半才改勾選,不該改變這一次的收尾
+    // pl dedup spotify:<清單> 走平台清單的報告(dedup.go 看冒號前面是不是平台):那張表沒有 PROVIDER 欄,每一列都是 Spotify 的
+    const report = verb === 'dedup' && name.value.trim().startsWith('spotify:');
     out.replaceChildren();
     con.run(`pl ${verb}${target(verb)}${flags()}`, {
-      onTable: (h, r) => out.replaceChildren(table(h, r)),
+      onTable: (h, r) => out.replaceChildren(table(h, r, report)),
       onExit: (code, msg) => {
         // 只看變更 + 有變更 = exit 2,這是最常見的一次操作,是正常結果不是警告;CLI 的原文會叫人「加 --yes」,
         // 而那正是這一頁永遠不會做的事(決策 46)——說這一頁上的下一步(review #67 第二輪)。
@@ -56,9 +58,12 @@ export function initSync(root, api, con, notice, providers) {
   out.appendChild(emptyState(t('webui.sync.empty', { button: t('webui.sync.sync') })));
 
   // 同步表(最後一欄是 REASON_CODE):自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
-  function table(header, rows) {
+  // Spotify 的那幾列在最後補一欄連回 Spotify(table.js 的 byProvider;spotifyReport = Spotify 清單的去重報告,整張都是 Spotify 的)。
+  function table(header, rows, spotifyReport) {
     const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
     const tbl = renderTable(header, rows);
+    const pick = byProvider(header) || (spotifyReport && ((r) => ({ kind: 'track', id: r[header.indexOf('ID')], title: r[header.indexOf('TITLE')] })));
+    if (pick) linkColumn(tbl, rows, pick);
     const ai = header.indexOf('ACTION');
     if (ai >= 0) {
       for (const tr of tbl.querySelectorAll('tbody tr')) {

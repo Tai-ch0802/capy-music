@@ -129,6 +129,7 @@ body[data-busy] .route__note, body[data-busy] .capy-svg__eye, body[data-busy] .c
 .wiz__more > summary { cursor: pointer; color: var(--accent); margin-bottom: .5rem; }
 .wiz__link { color: var(--accent); font-size: var(--t-14); font-weight: 500; text-decoration: none; }
 .wiz__link:hover { text-decoration: underline; }
+.wiz__missed .wiz__link { margin-left: .5rem; } /* 搬不過去的歌後面的「在 Spotify 上聽」 */
 .wiz__prompts:empty { display: none; }
 .wiz__prompts { margin-top: 1.25rem; }
 .prompt__help { margin: 0 0 .75rem; color: var(--text); max-width: 40em; }

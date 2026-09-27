@@ -1,6 +1,6 @@
 // search.js:#/search —— 表單組出 capy search,結果表加一個「播放」列動作(play --id 是精確命中、不再搜尋;Apple 叫「在 Music.app 開啟」)。
 import { el, quote, btn, field, input, select, providerOptions, providerName, emptyState, pageHead } from './common.js';
-import { renderTable } from '../table.js';
+import { renderTable, spotifyLink } from '../table.js';
 import { t } from '../i18n.js';
 
 export function initSearch(root, api, con, notice, providers) {
@@ -20,13 +20,14 @@ export function initSearch(root, api, con, notice, providers) {
     if (!text) { q.focus(); return; }
     out.replaceChildren();
     const n = Math.max(1, Number(limit.value) || 10); // 輸入框可以被清空,min 只在原生送出時驗
-    con.run(`search ${quote(text)} --provider ${prov.value} --limit ${n}`, {
+    const p = prov.value; // 按下去那一刻的平台:命令跑的時候選單可能被換掉,結果表(播放鈕、Spotify 連結)照送出去的那一家
+    con.run(`search ${quote(text)} --provider ${p} --limit ${n}`, {
       // 沒有命中也是 exit 0,而且照樣送一張只有表頭的空表:要在這裡看列數,不然使用者只會看到一個空格子(review #67 第二輪)。
       onTable: (header, rows) => out.replaceChildren(rows.length
-        ? resultTable(header, rows, prov.value, con, notice)
-        : emptyState(t('webui.search.not_found', { platform: providerName(prov.value), query: text }))),
+        ? resultTable(header, rows, p, con, notice)
+        : emptyState(t('webui.search.not_found', { platform: providerName(p), query: text }))),
       onExit: (code, msg) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState(msg || t('webui.search.failed'))); },
-    }, { label: t('webui.search.label', { platform: providerName(prov.value), query: text }) });
+    }, { label: t('webui.search.label', { platform: providerName(p), query: text }) });
   };
   const goBtn = btn(t('webui.search.go'), 'btn--primary', go);
   bar.appendChild(goBtn);
@@ -40,13 +41,8 @@ export function initSearch(root, api, con, notice, providers) {
   q.focus();
 }
 
-// SPOTIFY_TRACK_ID:Spotify 的曲目 id 是 22 碼 base62;local file 的 spotify:local:… 沒有 Spotify 上的頁面,不給連結。
-const SPOTIFY_TRACK_ID = /^[0-9A-Za-z]{22}$/;
-
 // resultTable:沿用 table.js 的表格(同一份原子欄與時長規則),再補一欄常駐的列動作。
-// Spotify 的每一列連回 Spotify(Spotify 的設計規範:顯示 Spotify 的曲名、歌手就要連回 Spotify;計畫 2026-09-24 §1.7 S7):
-// 連結的字用規範核可的「LISTEN ON SPOTIFY」,開在新分頁,同 player.js 的曲名連結。規範也要求用 Spotify 的 logo 或 icon 標示
-// 來源,這一點刻意不照做:決策 48 不內嵌官方 logo(開源專案內嵌是商標風險),只用文字。
+// Spotify 的每一列連回 Spotify(table.js 的 spotifyLink;local file 的 spotify:local:… 沒有頁面,不給連結)。
 // Apple 那一列叫「在 Music.app 開啟」(決策 52):搜尋結果多半是資料庫裡沒有的目錄歌曲,capy 只能在 Music.app 打開並標出那首;
 // 資料庫裡有的會真的播,這時底部的播放列換成 Apple 就是確認,說「開啟」只是少說,不會說謊。
 function resultTable(header, rows, prov, con, notice) {
@@ -71,14 +67,8 @@ function resultTable(header, rows, prov, con, notice) {
       if (code === 0 && line && !line.startsWith('▶')) notice(line);
     };
     td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
-    if (prov === 'spotify' && SPOTIFY_TRACK_ID.test(id)) {
-      const a = el('a', 'btn btn--ghost', t('webui.search.listen_on_spotify'));
-      a.href = `https://open.spotify.com/track/${id}`;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.setAttribute('aria-label', t('webui.search.listen_on_spotify_label', { title })); // 每一列的字都一樣:報讀時要聽得出是哪一首
-      td.appendChild(a);
-    }
+    const link = prov === 'spotify' && spotifyLink('track', id, title);
+    if (link) td.appendChild(link);
     tr.appendChild(td);
   });
   wrap.appendChild(tbl);

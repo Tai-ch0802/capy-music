@@ -1,7 +1,8 @@
 // playlists.js:#/playlists —— 左邊是 canonical 清單(來源 export:唯讀、只讀本機 state.db),右邊是選中清單的內容。
 // 第二段是平台清單(pl list / pl show)。順序永遠照清單本來的順序,沒有排序、沒有拖曳(決策 38)。
+// 顯示 Spotify 的曲目或清單的地方都連回 Spotify(table.js 的 spotifyLink;計畫 2026-09-24 §1.7 S7)。
 import { el, quote, btn, field, select, providerOptions, providerName, emptyState, pageHead } from './common.js';
-import { renderTable } from '../table.js';
+import { renderTable, linkColumn, spotifyLink } from '../table.js';
 import { t } from '../i18n.js';
 
 export function initPlaylists(root, api, con, notice, providers) {
@@ -19,9 +20,12 @@ export function initPlaylists(root, api, con, notice, providers) {
 
   root.append(btn(t('webui.playlists.refresh'), 'btn--ghost', load), cols, el('h3', 'card__sub', t('webui.playlists.platform_heading')), pbar, pout);
   pbar.append(
-    btn(t('webui.playlists.list'), '', () => con.run(`pl list --provider ${prov.value}`, {
-      onTable: (h, r) => pout.replaceChildren(wrapTable(h, r)),
-    }, { label: t('webui.playlists.list_label', { platform: providerName(prov.value) }) })),
+    btn(t('webui.playlists.list'), '', () => {
+      const p = prov.value; // 按下去那一刻的平台:命令跑的時候選單可能被換掉,表要照送出去的那一家判斷
+      con.run(`pl list --provider ${p}`, {
+        onTable: (h, r) => pout.replaceChildren(wrapTable(h, r, p === 'spotify' && ((row) => ({ kind: 'playlist', id: row[h.indexOf('ID')], title: row[h.indexOf('NAME')] })))),
+      }, { label: t('webui.playlists.list_label', { platform: providerName(p) }) });
+    }),
   );
   con.idle(load); // 同帳號頁:有命令在跑就等它結束,不要撞上它、畫成「沒有清單」
 
@@ -76,23 +80,34 @@ export function initPlaylists(root, api, con, notice, providers) {
   function showItems(pl, tracks) {
     right.replaceChildren();
     right.appendChild(el('h3', 'card__sub', t('webui.playlists.items_title', { name: pl.name, count: (pl.items || []).length })));
-    const rows = (pl.items || []).map((it) => {
+    const items = pl.items || [];
+    const rows = items.map((it) => {
       const trk = tracks[it.cid] || {};
       return [it.cid, trk.title || t('webui.playlists.no_track_data'), (trk.artists || []).join(', '), trk.album || '', String(trk.duration_ms || 0)];
     });
-    right.appendChild(wrapTable(['CID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], rows));
+    // 正本的曲名、歌手不一定是從 Spotify 來的(第一個看到這首的平台給的,export 沒記來源):有 Spotify 對應的每一列都連,
+    // 多連不違規,少連才是。對應是 capy 認定的同一首(自動寫入要 85 分以上,或人工裁決)。
+    right.appendChild(wrapTable(['CID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], rows, (row, i) => {
+      const m = ((tracks[items[i].cid] || {}).mappings || {}).spotify;
+      return m ? { kind: 'track', id: m.id, title: row[1] } : null;
+    }));
     const names = Object.keys(pl.links || {});
     if (names.length) {
       right.appendChild(btn(t('webui.playlists.view_on', { platform: providerName(names[0]) }), 'btn--ghost', () =>
         con.run(`pl show ${quote(pl.name)} --provider ${names[0]}`, {
-          onTable: (h, r) => pout.replaceChildren(wrapTable(h, r)),
+          onTable: (h, r) => pout.replaceChildren(wrapTable(h, r, names[0] === 'spotify' && ((row) => ({ kind: 'track', id: row[h.indexOf('ID')], title: row[h.indexOf('TITLE')] })))),
         }, { label: t('webui.playlists.view_label', { platform: providerName(names[0]), name: pl.name }) })));
     }
+    // 連著的 Spotify 清單本身(放在按鈕後面,不放進左欄那一列:那一列整個是 <button>,裡面不能再放連結)。
+    const sp = spotifyLink('playlist', (pl.links || {}).spotify, pl.name);
+    if (sp) right.appendChild(sp);
   }
 
-  function wrapTable(h, r) {
+  // wrapTable:pick 見 table.js 的 linkColumn;沒給(或 false)就是一般的表。
+  function wrapTable(h, r, pick) {
     const w = el('div', 'tbl-wrap');
-    w.appendChild(renderTable(h, r));
+    const tbl = renderTable(h, r);
+    w.appendChild(pick ? linkColumn(tbl, r, pick) : tbl);
     return w;
   }
 }

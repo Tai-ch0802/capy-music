@@ -1,5 +1,6 @@
 // isrc.js:#/isrc[/<ISRC>] —— 打 GET /api/isrc/{isrc}(決策 42)。四段拆解、各平台卡片、本機鏡像的 canonical。
 import { t } from '../i18n.js';
+import { providerName } from './common.js';
 
 const el = (tag, cls, text) => {
   const x = document.createElement(tag);
@@ -74,9 +75,8 @@ function providerCard(id, data) {
     if (tr.release_date) facts.appendChild(el('span', 'mono', tr.release_date));
     for (const g of tr.genres || []) facts.appendChild(el('span', 'chip', g));
     meta.appendChild(facts);
-    if (tr.url) {
-      const platform = id === 'apple' ? 'Apple Music' : id;
-      const a = el('a', 'track__link', t('webui.isrc.open_on', { platform }));
+    if (/^https:\/\//.test(tr.url || '')) { // 同 player.js:只給 https,javascript: 之類進不了 href
+      const a = el('a', 'track__link', t('webui.isrc.open_on', { platform: providerName(id) }));
       a.href = tr.url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';

@@ -1432,7 +1432,7 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 			t.Errorf("平台的能力變了,move.js 要是:%s", want)
 		}
 	}
-	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON", "REASON_CODE"} {
+	for _, col := range []string{"DIR", "ACTION", "CID", "TITLE", "ARTISTS", "REASON", "REASON_CODE", "PROVIDER", "PROVIDER_ID"} {
 		if !slices.Contains(syncHeader, col) || !strings.Contains(move, "'"+col+"'") {
 			t.Errorf("migrate 的表要有 %s 欄,move.js 的 tally() 也要認它", col)
 		}
