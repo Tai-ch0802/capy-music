@@ -90,11 +90,11 @@ func (s *Store) LoadCache() (map[string][]ProviderPlaylist, []Recent, error) {
 // secure_delete:SQLite 預設只把刪掉的列標成空頁,內容還在檔案裡(strings state.db 讀得到);這裡要的是真的刪掉(#102 review)。
 // 跟 DELETE 放在同一次 Exec,確保是同一條連線(PRAGMA 只作用在那條連線上)。
 func (s *Store) ForgetProvider(provider string) error {
-	_, err := s.db.Exec(forgetSQL, provider, provider)
+	_, err := s.db.Exec(forgetSQL, provider, provider, provider)
 	return err
 }
 
-const forgetSQL = "PRAGMA secure_delete = ON; DELETE FROM provider_playlists WHERE provider = ?; DELETE FROM recent WHERE provider = ?;"
+const forgetSQL = "PRAGMA secure_delete = ON; DELETE FROM provider_playlists WHERE provider = ?; DELETE FROM recent WHERE provider = ?; DELETE FROM playlist_items_cache WHERE provider = ?;"
 
 // retiredName:schema 升版時留下的舊檔(state.db.v<N>,見 retire);不含它們的 -journal / -wal / -shm。
 var retiredName = regexp.MustCompile(`\.v\d+$`)
@@ -126,7 +126,7 @@ func ForgetProviderInRetired(provider string, busy time.Duration) error {
 			}
 			continue
 		}
-		for _, q := range []string{"PRAGMA secure_delete = ON", "DELETE FROM provider_playlists WHERE provider = ?", "DELETE FROM recent WHERE provider = ?"} {
+		for _, q := range []string{"PRAGMA secure_delete = ON", "DELETE FROM provider_playlists WHERE provider = ?", "DELETE FROM recent WHERE provider = ?", "DELETE FROM playlist_items_cache WHERE provider = ?"} {
 			var args []any
 			if strings.Contains(q, "?") {
 				args = []any{provider}
@@ -160,4 +160,45 @@ func removeRetired(f string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// PlaylistItems:上次讀到的某份平台清單的曲目(決策 57)。version 是平台給的清單版本(Spotify 的 snapshot_id),tracks 是呼叫端
+// 編好的 JSON(只放同步要用的欄位)。純快取:刪掉只會讓下一輪多讀一次平台。
+type PlaylistItems struct {
+	Version   string
+	Tracks    []byte
+	FetchedAt time.Time
+}
+
+// CachedPlaylistItems:沒有這份清單的快取回 ok=false。
+func (s *Store) CachedPlaylistItems(provider, playlistID string) (PlaylistItems, bool, error) {
+	var it PlaylistItems
+	var tracks string
+	var at int64
+	err := s.db.QueryRow("SELECT version, tracks, fetched_at FROM playlist_items_cache WHERE provider = ? AND playlist_id = ?", provider, playlistID).Scan(&it.Version, &tracks, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return it, false, nil
+	}
+	if err != nil {
+		return it, false, err
+	}
+	it.Tracks, it.FetchedAt = []byte(tracks), time.Unix(at, 0)
+	return it, true, nil
+}
+
+// SavePlaylistItems 取代這份清單的快取,順便刪掉 expireBefore 之前記的(過期的不再用,也不留著:
+// Spotify 只准暫時快取 metadata;解除連結的清單不會再被覆寫)。
+func (s *Store) SavePlaylistItems(provider, playlistID string, it PlaylistItems, expireBefore time.Time) error {
+	if _, err := s.db.Exec("DELETE FROM playlist_items_cache WHERE fetched_at < ?", expireBefore.Unix()); err != nil {
+		return err
+	}
+	_, err := s.db.Exec("INSERT OR REPLACE INTO playlist_items_cache (provider, playlist_id, version, tracks, fetched_at) VALUES (?, ?, ?, ?, ?)",
+		provider, playlistID, it.Version, string(it.Tracks), it.FetchedAt.Unix())
+	return err
+}
+
+// ForgetPlaylistItems:這份清單剛被我們寫過——下一輪一定真的讀(不拿寫入回傳的版本記快取:寫與重讀之間別人可能又改了)。
+func (s *Store) ForgetPlaylistItems(provider, playlistID string) error {
+	_, err := s.db.Exec("DELETE FROM playlist_items_cache WHERE provider = ? AND playlist_id = ?", provider, playlistID)
+	return err
 }

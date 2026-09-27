@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"os"
 	"slices"
@@ -43,6 +44,18 @@ type fakeSpotify struct {
 	listReads    int                // GET /me/playlists 的次數(pl link 的挑選器路徑要沿用同一份 refs)
 	created      int                // POST /me/playlists 建過幾個(新清單的 id 是 new<序號>,不受其他清單影響)
 	isrcAlias    map[string]string  // id → 借用這個 id 的 ISRC(同 ISRC 不同 id:單曲版 / 專輯版;pl dedup 用)
+	snapshots    bool               // /me/playlists 附 snapshot_id(名稱或曲目一變就換;決策 57 的快取才會用上)
+	snapFixed    map[string]string  // 這些清單的 snapshot_id 釘死(模擬「版本沒換、內容卻變了」)
+}
+
+// snapshotOf:清單版本——名稱或曲目任何變動就換(同 Spotify)。呼叫端持鎖。
+func (f *fakeSpotify) snapshotOf(id string) string {
+	if s, ok := f.snapFixed[id]; ok {
+		return s
+	}
+	h := fnv.New64a()
+	h.Write([]byte(f.lists[f.index(id)].Name + "|" + strings.Join(f.items[id], ",")))
+	return fmt.Sprintf("snap-%x", h.Sum64())
 }
 
 // createdCount:POST /me/playlists 建過幾個(migrate 的 dry-run / 取消不得建清單)。
@@ -176,7 +189,11 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 			f.listReads++
 			var items []string
 			for _, l := range f.lists {
-				items = append(items, fmt.Sprintf(`{"id":%q,"name":%q,"owner":{"display_name":"tai"},"items":{"total":%d}}`, l.ID, l.Name, len(f.items[l.ID])))
+				snap := ""
+				if f.snapshots {
+					snap = fmt.Sprintf(`,"snapshot_id":%q`, f.snapshotOf(l.ID))
+				}
+				items = append(items, fmt.Sprintf(`{"id":%q,"name":%q,"owner":{"display_name":"tai"},"items":{"total":%d}%s}`, l.ID, l.Name, len(f.items[l.ID]), snap))
 			}
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(items, ","), len(items))
 		case strings.HasPrefix(r.URL.Path, "/playlists/") && strings.HasSuffix(r.URL.Path, "/items"):

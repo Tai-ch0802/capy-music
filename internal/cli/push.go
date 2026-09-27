@@ -197,7 +197,7 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			if seen {
 				live = *reused
 			} else {
-				tracks, err := r.GetPlaylistItems(ctx, link)
+				tracks, err := playlistItems(ctx, s, prov, r, ref)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
 					fmt.Fprintln(stderr, i18n.T("push.skip.restricted", "playlist", pl.Name, "platform", prov, "link", link))
@@ -322,6 +322,7 @@ func (p *pushPlan) apply(ctx context.Context, s *canonState, stderr io.Writer) (
 		return 0, false, true, nil
 	}
 	skipped, werr := p.writer.ApplyOps(ctx, p.link, p.current, p.ops)
+	forgetPlaylistItems(s, p.prov, p.link) // 寫過了(全部、半截或第一個就失敗都算):下一輪一定真的讀,不拿寫入回傳的版本記快取(決策 57)
 	written, renamed := len(p.want), p.wantName != ""
 	var pw *provider.PartialWriteError
 	switch {

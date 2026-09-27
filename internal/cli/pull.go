@@ -93,6 +93,7 @@ type canonState struct {
 	tracks    *canon.Tracks
 	playlists map[string]*canon.Playlist    // pid → 清單
 	devices   map[string]*canon.DeviceState // device_id → 裝置檔(含自己)
+	st        *store.Store                  // 本機 db:清單曲目的快取用它(決策 57);nil = 不快取
 	fetched   map[string]fetchedFile        // 檔名 → Drive 上那份與位元組;沒有 = COMMIT 要 Create
 	stderr    io.Writer
 }
@@ -201,7 +202,7 @@ func fetchCanonical(ctx context.Context, dc *drive.Client, st *store.Store, devi
 	for _, f := range files {
 		byName[f.Name] = append(byName[f.Name], f)
 	}
-	s := &canonState{deviceID: deviceID, playlists: map[string]*canon.Playlist{}, devices: map[string]*canon.DeviceState{}, fetched: map[string]fetchedFile{}, stderr: stderr}
+	s := &canonState{deviceID: deviceID, playlists: map[string]*canon.Playlist{}, devices: map[string]*canon.DeviceState{}, fetched: map[string]fetchedFile{}, stderr: stderr, st: st}
 	get := func(name string) ([]byte, bool, error) {
 		fs := byName[name]
 		if len(fs) == 0 {
@@ -851,7 +852,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 				in.Base = &b.Snapshot
 			}
 			if ref, ok := refs[link]; ok {
-				tracks, err := r.GetPlaylistItems(ctx, link)
+				tracks, err := playlistItems(ctx, s, prov, r, ref)
 				switch {
 				case errors.Is(err, provider.ErrRestricted):
 					fmt.Fprintln(stderr, i18n.T("pull.skip.restricted", "name", pl.Name, "platform", prov, "id", link))
