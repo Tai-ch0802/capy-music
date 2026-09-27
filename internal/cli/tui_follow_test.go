@@ -721,3 +721,14 @@ func TestTUIIdempotentKeysWait(t *testing.T) {
 		t.Errorf("冪等的鍵照樣等到送出:played=%d %q", played.Load(), joined(got))
 	}
 }
+
+// TestTUIFallsBackWhenDefaultCannotBuild:【#97 review 第 3 點】預設平台(Spotify)沒登入,Apple 登入了、只是暫停:狀態列顯示 Apple、
+// 按鍵能用——不是整個介面只剩「沒有播放遙控」。
+func TestTUIFallsBackWhenDefaultCannotBuild(t *testing.T) {
+	m := newTestTUI(t, &watchFake{})
+	delete(m.trk.now, "spotify") // testTracker 的建構一律失敗 = 沒登入
+	m.trk.now["apple"] = &watchFake{st: nowTrack(false, "Sugar", 0, 235000)}
+	if m = pollOnce(t, m); m.provID != "apple" || m.pcErr != nil || m.st == nil {
+		t.Errorf("預設平台建不起來:改顯示 Apple:provID=%q pcErr=%v", m.provID, m.pcErr)
+	}
+}
