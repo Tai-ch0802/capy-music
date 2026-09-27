@@ -51,8 +51,9 @@ function capybara() {
 // 兩條路的列長得不一樣(migrate.go;review #68):「加進既有清單」接進去的每一首都是 migrate 列、ACTION 永遠是 add,
 // 推不出去只寫在原因欄;「新建清單」時正本既有的曲目是 push 列(add / skip),正本已連著來源時甚至一列 migrate 都沒有。
 // 所以兩種列都吃、以 CID 去重:沒搬到 = ACTION 是 skip,或 migrate 列的 REASON_CODE 不是 push;其餘都算搬了。
-// spotify:這首在 Spotify 上的 id(PROVIDER 是 spotify、PROVIDER_ID 不空的第一列),「搬不過去的歌」拿它連回 Spotify。
-// 跟帶歌名的那一列分開找:新建清單時同一首的 push 列可能排在 migrate 列前面(列的順序兩條路不一樣,見上)。
+// spotify:這首在 Spotify 上的 id(帶歌名的那一列 PROVIDER 是 spotify 時的 PROVIDER_ID),「搬不過去的歌」拿它連回 Spotify。
+// 從 Spotify 搬出來、正本原本沒有的歌是 migrate 列(來源 Spotify),有 id;正本原本就有的(同名的正本、或正本已經連著來源)
+// 只出現在推向目的地的 push 列,表裡沒有它在 Spotify 的 id,這些不連(計畫 2026-09-24 §1.7 S7 的刻意不做)。
 export function tally(h, rows) {
   if (!h || !rows) return { moved: 0, missed: [] };
   const [dir, action, cid, title, artists, reason, code, prov, pid] = ['DIR', 'ACTION', 'CID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE', 'PROVIDER', 'PROVIDER_ID'].map((k) => h.indexOf(k));
@@ -60,10 +61,9 @@ export function tally(h, rows) {
   for (const r of rows) {
     if (r[dir] !== 'migrate' && r[dir] !== 'push') continue;
     const miss = r[action] === 'skip' || (r[dir] === 'migrate' && r[code] !== 'push');
-    let seen = songs.get(r[cid]);
-    if (!seen) songs.set(r[cid], seen = { title: r[title], artists: r[artists], reason: r[reason], miss, spotify: '' });
+    const seen = songs.get(r[cid]);
+    if (!seen) songs.set(r[cid], { title: r[title], artists: r[artists], reason: r[reason], miss, spotify: r[prov] === 'spotify' ? r[pid] : '' });
     else if (miss && !seen.miss) Object.assign(seen, { miss, reason: r[reason] });
-    if (!seen.spotify && r[prov] === 'spotify' && r[pid]) seen.spotify = r[pid];
   }
   const missed = [...songs.values()].filter((x) => x.miss);
   return { moved: songs.size - missed.length, missed };
@@ -236,7 +236,7 @@ export function initMove(root, api, con, notice, providers) {
     for (const m of missed) {
       const li = el('li', null, `${m.title} — ${m.artists}`);
       li.appendChild(el('span', 'muted', ` · ${m.reason}`));
-      const link = spotifyLink('track', m.spotify, m.title); // 從 Spotify 搬出來卻搬不過去的歌:顯示的是 Spotify 的曲名,連回去
+      const link = spotifyLink('track', m.spotify, m.title); // 表裡有它在 Spotify 的 id 才連(見 tally)
       if (link) li.appendChild(link);
       ul.appendChild(li);
     }

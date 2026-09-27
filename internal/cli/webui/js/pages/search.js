@@ -20,13 +20,14 @@ export function initSearch(root, api, con, notice, providers) {
     if (!text) { q.focus(); return; }
     out.replaceChildren();
     const n = Math.max(1, Number(limit.value) || 10); // 輸入框可以被清空,min 只在原生送出時驗
-    con.run(`search ${quote(text)} --provider ${prov.value} --limit ${n}`, {
+    const p = prov.value; // 按下去那一刻的平台:命令跑的時候選單可能被換掉,結果表(播放鈕、Spotify 連結)照送出去的那一家
+    con.run(`search ${quote(text)} --provider ${p} --limit ${n}`, {
       // 沒有命中也是 exit 0,而且照樣送一張只有表頭的空表:要在這裡看列數,不然使用者只會看到一個空格子(review #67 第二輪)。
       onTable: (header, rows) => out.replaceChildren(rows.length
-        ? resultTable(header, rows, prov.value, con, notice)
-        : emptyState(t('webui.search.not_found', { platform: providerName(prov.value), query: text }))),
+        ? resultTable(header, rows, p, con, notice)
+        : emptyState(t('webui.search.not_found', { platform: providerName(p), query: text }))),
       onExit: (code, msg) => { if (code !== 0 && !out.firstChild) out.appendChild(emptyState(msg || t('webui.search.failed'))); },
-    }, { label: t('webui.search.label', { platform: providerName(prov.value), query: text }) });
+    }, { label: t('webui.search.label', { platform: providerName(p), query: text }) });
   };
   const goBtn = btn(t('webui.search.go'), 'btn--primary', go);
   bar.appendChild(goBtn);

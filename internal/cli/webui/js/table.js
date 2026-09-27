@@ -81,8 +81,9 @@ export function linkColumn(tbl, rows, pick) {
 // byProvider:變更表(pl pull / push / sync / dedup、migrate、resolve)每一列自己帶 PROVIDER 與 PROVIDER_ID,
 // PROVIDER 是 spotify 的那一列連到那一首。兩欄的位置在 pull 與 sync 的表不一樣,一律照表頭找;看 PROVIDER_ID 不看 TITLE
 // (改名那一列的 TITLE 是清單名、PROVIDER_ID 是空的)。表頭沒有這兩欄就回 null。
+// resolve 的 review 列:PROVIDER_ID 是還沒確認的候選、TITLE 卻是正本那一首,報讀名稱不說正本的歌名(會說成另一首),改說 id。
 export function byProvider(header) {
-  const [p, id, title] = ['PROVIDER', 'PROVIDER_ID', 'TITLE'].map((k) => header.indexOf(k));
+  const [a, p, id, title] = ['ACTION', 'PROVIDER', 'PROVIDER_ID', 'TITLE'].map((k) => header.indexOf(k));
   if (p < 0 || id < 0) return null;
-  return (r) => (r[p] === 'spotify' ? { kind: 'track', id: r[id], title: r[title] } : null);
+  return (r) => (r[p] === 'spotify' ? { kind: 'track', id: r[id], title: r[a] === 'review' ? '' : r[title] } : null);
 }

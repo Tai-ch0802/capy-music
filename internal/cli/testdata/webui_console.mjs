@@ -789,12 +789,47 @@ await scenario('8n', async () => {
   await con.run('search k');
   const typed = allByClass(root, 'tbl');
   check(anchors(typed[typed.length - 1]).length === 0, '主控台打的 search 不帶平台:猜不出是哪一家,不連');
+  // resolve 的 review 列:PROVIDER_ID 是還沒確認的候選,報讀不說正本的歌名(那是另一首),改說 id
+  const RH = ['ACTION', 'CID', 'PROVIDER', 'PROVIDER_ID', 'CONFIDENCE', 'SOURCE', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+  script = { 'resolve x --provider spotify --dry-run': table(RH, [['map', 'c1', 'spotify', T1, '95', 'isrc', 'Song A', 'a', 'r', 'isrc'],
+    ['review', 'c2', 'spotify', T2, '70', 'fuzzy', 'Song B', 'b', 'r', 'low_score']], exit2) };
+  await con.run('resolve x --provider spotify --dry-run');
+  const rt = allByClass(root, 'tbl');
+  const rl = anchors(rt[rt.length - 1]).map(label);
+  check(JSON.stringify(rl) === JSON.stringify(['在 Spotify 上聽「Song A」', `在 Spotify 上聽「${T2}」`]), `resolve:map 列說歌名、review 列說候選的 id:${JSON.stringify(rl)}`);
+  // pl dedup spotify:<清單>:平台清單的去重報告沒有 PROVIDER 欄,但每一列都是 Spotify 的
+  script = { 'pl dedup spotify:mix': table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['1', T1, 'Song A', 'a', 'r', 'duplicate']]) };
+  sy.querySelector('input').value = 'spotify:mix';
+  walk(sy, (c) => { if (c.type === 'checkbox') c.checked = false; }); // 平台清單的報告不能配 --dry-run
+  sy.children[2].children[3].click(); // 去除重複
+  await idle();
+  const rep = anchors(sy.querySelector('.tbl-wrap'));
+  check(rep.length === 1 && rep[0].href === track(T1), `Spotify 清單的去重報告也連:${JSON.stringify(rep.map((a) => a.href))}`);
 
-  // ── 搬家精靈:從 Spotify 搬到 Apple Music(新建清單)。tally 另外記每首的 Spotify id,不看帶歌名的是哪一列:
-  //    新建清單時正本原有的曲目先出 push 列(目的地 Apple,沒有 Spotify id),後面才是 migrate 列(來源 Spotify)。
-  const t1 = tally(SH, [['push', 'skip', 'apple', 'road trip', '0', 'c', '', 'Song C', 'c', 'no match', 'no_mapping'],
-    ['migrate', 'add', 'spotify', 'road trip', '0', 'c', T1, 'Song C', 'c', 'no match', 'no_mapping']]);
-  check(t1.missed.length === 1 && t1.missed[0].spotify === T1, `tally 記下 Spotify id(push 列排在前面也一樣):${JSON.stringify(t1)}`);
+  // ── 搜尋頁:命令還在跑就換掉平台,結果表照送出去的那一家(Spotify):有連結、播放鈕送 spotify
+  const { initSearch } = await import('./pages/search.mjs');
+  script = { [`search k --provider spotify --limit 10`]: table(['ID', 'TITLE'], [[T1, 'Song A']]) };
+  const se = mk();
+  initSearch(se, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
+  se.querySelector('input').value = 'k';
+  const psel = se.querySelector('select');
+  psel.value = 'spotify';
+  se.querySelector('.btn--primary').click();
+  psel.value = 'apple';
+  await idle();
+  const srow = se.querySelector('.tbl-wrap').querySelector('tbody tr');
+  check(anchors(srow).length === 1 && srow.querySelector('button')?.textContent === '播放', `搜尋頁照送出去的平台畫結果:${srow && srow.textContent}`);
+
+  // ── 搬家精靈:從 Spotify 搬到 Apple Music。tally 記下帶歌名那一列的 Spotify id(migrate.go 產生得出的兩種形狀):
+  //    加進既有清單 = migrate 列(來源 Spotify,有 id)在前、推向目的地的 push 列在後;
+  //    正本已經連著來源(或同名正本原本就有這首)= 只有推向 Apple 的 push 列,表裡沒有 Spotify 的 id——已知不連(計畫 §1.7 S7)。
+  const t1 = tally(SH, [['migrate', 'add', 'spotify', 'road trip', '0', 'c', T1, 'Song C', 'c', 'no match', 'no_mapping'],
+    ['push', 'skip', 'apple', 'road trip', '0', 'c', '', 'Song C', 'c', 'no match', 'no_mapping']]);
+  check(t1.missed.length === 1 && t1.missed[0].spotify === T1, `加進既有清單:搬不過去的歌記下 Spotify id:${JSON.stringify(t1)}`);
+  const t2 = tally(SH, [['push', 'add', 'apple', 'road trip', '0', 'a', 'i.A1', 'Song A', 'a', '', 'push'],
+    ['push', 'skip', 'apple', 'road trip', '1', 'b', '', 'Song B', 'b', 'no match', 'no_mapping'],
+    ['push', 'skip', 'apple', 'road trip', '2', 'd', 'i.D4', 'Song D', 'd', 'cannot push', 'unpushable']]); // 有 Apple 的 id 也不是 Spotify 的
+  check(t2.missed.length === 2 && t2.missed.every((m) => m.spotify === ''), `只有 push 列(正本已連著來源):沒有 Spotify id、不連:${JSON.stringify(t2)}`);
   globalThis.document.createElementNS ||= (_, tag) => mk(tag); // 水豚是 SVG
   const button = (r, text) => { let b = null; walk(r, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
   const radios = (r, name) => { const out = []; walk(r, (c) => { if (c.tagName === 'INPUT' && c.type === 'radio' && c.name === name) out.push(c); }); return out; };
