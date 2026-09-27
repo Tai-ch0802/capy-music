@@ -88,6 +88,7 @@
   "auth.lock.err.interrupted": "另一個 capy 正持有 {name} 鎖,等待中被中斷或逾時,請稍後再試:{err}",
   "auth.lock.keychain_notice": "對方正在存取 keychain,可能停在授權對話框上——畫面上若有 keychain 對話框,按「允許」即可繼續",
   "auth.lock.waiting": "等待另一個 capy 釋放 {name}({notice});要放棄按 Ctrl-C。",
+  "auth.logout.cache_not_cleared": "已登出,但沒能清掉這台電腦快取裡 {provider} 的清單列表與最近項目:{err}",
   "auth.logout.done": "已登出 {provider}",
   "auth.logout.google_email_not_cleared": "token 已刪除,但 config 的 google_email 清不掉:{err}",
   "auth.loopback.browser_failed": "無法自動開瀏覽器:{err}",

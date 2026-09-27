@@ -88,6 +88,7 @@
   "auth.lock.err.interrupted": "another capy is holding {name} and the wait was interrupted or timed out; try again later: {err}",
   "auth.lock.keychain_notice": "the holder is accessing the keychain and may be waiting on an authorization dialog — if a keychain dialog is on screen, click Allow to continue",
   "auth.lock.waiting": "Waiting for another capy to release {name} ({notice}); press Ctrl-C to give up.",
+  "auth.logout.cache_not_cleared": "Logged out, but couldn't clear {provider}'s playlist list and recent items cached on this computer: {err}",
   "auth.logout.done": "logged out of {provider}",
   "auth.logout.google_email_not_cleared": "the token was deleted, but google_email couldn't be cleared from the config: {err}",
   "auth.loopback.browser_failed": "Couldn't open the browser: {err}",

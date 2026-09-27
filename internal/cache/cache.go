@@ -4,6 +4,7 @@
 package cache
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -98,3 +99,26 @@ func (c *Cache) AddRecent(r Recent) {
 }
 
 func (c *Cache) ClearRecent() { c.Recent = nil }
+
+// forgetWait:登出時等別的 capy 放鎖的上限。比 busy 長:這裡不是 TAB 補全,而且等不到就等於沒清掉(要照實說)。
+const forgetWait = 5 * time.Second
+
+// Forget 刪掉某個 provider 快取的清單名稱與最近項目(auth logout 時)。跟 Load 不同,失敗照實回錯:
+// 呼叫端要說「已登出,但快取沒清掉」,不能讓人以為平台的資料已經從這台電腦上拿掉了。
+// 舊檔(schema 升版時留下的 state.db.v<N>)與 T6 之前的 cache.json 也一起清:它們也存著平台的清單名稱與最近項目。
+// 舊檔在 live db 之後才清——store.Open 可能剛把 live db 退役成一個新的舊檔。
+func Forget(provider string) error {
+	var errs []error
+	if s, err := store.Open(forgetWait); err != nil {
+		errs = append(errs, err)
+	} else {
+		errs = append(errs, s.ForgetProvider(provider), s.Close())
+	}
+	errs = append(errs, store.ForgetProviderInRetired(provider, forgetWait))
+	if dir, err := config.Dir(); err == nil {
+		if err := os.Remove(filepath.Join(dir, legacyFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
