@@ -746,3 +746,17 @@ func TestTUIRoundAfterQuitAsksNothing(t *testing.T) {
 		t.Errorf("結束之後不該再問:dropped=%v State %d 次", msg.dropped, f.calls.Load())
 	}
 }
+
+// TestTUIControlAfterQuitSendsNothing:【#104 review】控制鍵的 Cmd 在 ctx 取消後才跑到(按鍵後馬上收到訊號):不建 provider、不送。
+func TestTUIControlAfterQuitSendsNothing(t *testing.T) {
+	var sent atomic.Int32
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	m.trk.now["spotify"] = ctlFake{newNowFake(), func(context.Context) error { sent.Add(1); return nil }}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.trk.ctx = ctx
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	if msg, ok := within(t, 2*time.Second, "n", cmd).(tuiStateMsg); !ok || !msg.dropped || sent.Load() != 0 {
+		t.Errorf("結束之後不該再送:%#v 送了 %d 次", msg, sent.Load())
+	}
+}

@@ -208,7 +208,7 @@ func (m tuiModel) round() func() tuiStateMsg {
 	return func() tuiStateMsg {
 		trk.pollMu.Lock()
 		defer trk.pollMu.Unlock()
-		if trk.ctx.Err() != nil { // TUI 結束了:bubbletea 不等 Cmd,排在鎖後面的那幾輪還會跑——不再建 provider(keychain 對話框)或打 API
+		if trk.ctx.Err() != nil { // 收到訊號結束了(按 q 離開不取消 ctx,行程接著就結束):bubbletea 不等 Cmd,排在鎖後面的那幾輪還會跑——不再建 provider(keychain 對話框)或打 API
 			return tuiStateMsg{gen: gen, dropped: true}
 		}
 		g := trk.nowGen.Load()
@@ -233,6 +233,9 @@ func (m tuiModel) control(f func(provider.PlaybackController, context.Context) e
 	ctx, gen, trk, id, round, wait := m.ctx, m.gen, m.trk, m.provID, m.round(), tuiRoundWait
 	return func() tea.Msg {
 		return tuiAwait(gen, wait, func() tuiStateMsg {
+			if trk.ctx.Err() != nil { // 同 round:結束之後才跑到的按鍵不建 provider、不送
+				return tuiStateMsg{gen: gen, dropped: true}
+			}
 			start := time.Now()
 			pc, err := trk.playback(id)
 			if err == nil && once && time.Since(start) > wait {
