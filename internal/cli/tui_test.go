@@ -35,7 +35,13 @@ func testTracker(t *testing.T, id string, pc provider.PlaybackController) *nowTr
 		return nil, errors.New(id + ":沒登入")
 	}
 	t.Cleanup(func() { newProvider = orig })
-	return &nowTracker{ctx: context.Background(), now: map[string]provider.PlaybackController{id: pc}}
+	ctx, cancel := context.WithCancel(context.Background())
+	trk := &nowTracker{ctx: ctx, now: map[string]provider.PlaybackController{id: pc}}
+	// 最後註冊、最先執行:bubbletea 不等 Cmd,runProgram 回來時 Init 起的那一輪可能還在跑或還沒開始。收掉 ctx(之後的輪都不問)、
+	// 等手上那一輪做完,才還原 newProvider 與 config——不然它讀到下一個測試換上的替身(-race 抓到 webNowClock),
+	// 或已經還原的真 newProvider。
+	t.Cleanup(func() { cancel(); trk.pollMu.Lock(); trk.pollMu.Unlock() })
+	return trk
 }
 
 // recordPrintln:把推進捲動區的行記下來(tea.Println 產生的是 bubbletea 的私有型別,認不出來)。
