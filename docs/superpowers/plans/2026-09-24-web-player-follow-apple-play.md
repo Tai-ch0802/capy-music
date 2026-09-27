@@ -152,7 +152,7 @@ TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也
 
 | # | 偏差 | 建議 |
 |---|---|---|
-| S1 | 要了 9 個 scope,其中 `user-library-read`、`user-library-modify`、`user-read-currently-playing` 沒有任何呼叫點。指南寫「不要預先要求寬的 scope」,和 ARCHITECTURE §4.2「一次全要、免得重新授權」的決策衝突 | 拿掉這 3 個。這會推翻 §4.2,需要新決策。拿掉不必重新授權,但只有新登入的人會少拿這 3 個權限 |
+| S1 | 要了 9 個 scope,其中 `user-library-read`、`user-library-modify`、`user-read-currently-playing` 沒有任何呼叫點。指南寫「不要預先要求寬的 scope」,和 ARCHITECTURE §4.2「一次全要、免得重新授權」的決策衝突 | 拿掉這 3 個。這會推翻 §4.2,需要新決策。拿掉不必重新授權,但只有新登入的人會少拿這 3 個權限。✅ 2026-09-27 完成(決策 55) |
 | S2 | `GET /artists/{id}/top-tracks` 在 2026-02 已經移除,capy 每次 `play artist:` 還是先打它。只有回 403 才走 fallback,改回 404 或 410 就會直接失敗 | 直接走既有的搜尋 fallback,刪掉 `spotify.top_tracks_fallback` 這個 key;順便拿掉已移除的 `Track.popularity`。✅ 2026-09-27 完成(兩項都已對照 Spotify 的 February 2026 變更清單確認) |
 | S3 | pull / sync 每次都重抓每份清單的每一頁 | 記住 `snapshot_id`,沒變的清單就跳過。配額改成以開發者帳號計算之後,用 cron 同步的人最受惠 |
 | S4 | refresh token 從授權那天起算 6 個月就失效,refresh 不會延長 | 記錄 `authorized_at`,doctor 與 `auth status` 從第 170 天左右開始提醒 |

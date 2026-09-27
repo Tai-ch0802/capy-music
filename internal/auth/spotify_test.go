@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,6 +72,12 @@ func TestSpotifyAuthURLParams(t *testing.T) {
 	for _, s := range SpotifyScopes {
 		if !strings.Contains(scope, s) {
 			t.Errorf("缺 scope %s", s)
+		}
+	}
+	// 決策 55:沒有呼叫點的 scope 不索取(Spotify 指南:不預先要求用不到的權限)。
+	for _, s := range []string{"user-read-currently-playing", "user-library-read", "user-library-modify"} {
+		if slices.Contains(strings.Fields(scope), s) {
+			t.Errorf("不可以索取沒有呼叫點的 scope %s:%s", s, scope)
 		}
 	}
 	if strings.Contains(raw, "localhost") {

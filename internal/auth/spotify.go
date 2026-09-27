@@ -24,17 +24,16 @@ const KeySpotifyToken = "spotify.token"
 // 升級既有使用者(migrateSpotifyToken)與 logout 時清乾淨,新程式不再寫入。
 const KeySpotifyRefreshToken = "spotify.refresh_token"
 
-// SpotifyScopes:spec §4.2 逐字;一次索取 9 個的取捨見 spec §4.2 決策段。
+// SpotifyScopes:spec §4.2 逐字。只要有呼叫點的(決策 55,2026-09-27):Spotify 的 Building with AI 指南要求不預先索取用不到的
+// scope,所以拿掉了 user-read-currently-playing(/me/player 用的是 user-read-playback-state)與 user-library-read / -modify
+// (capy 不碰「已儲存的曲目」)。加回來之前先有程式路徑用到它;新增 scope 要所有人重新授權。
 var SpotifyScopes = []string{
 	"user-read-playback-state",
 	"user-modify-playback-state",
-	"user-read-currently-playing",
 	"playlist-read-private",
 	"playlist-read-collaborative",
 	"playlist-modify-private",
 	"playlist-modify-public",
-	"user-library-read",
-	"user-library-modify",
 }
 
 // SpotifyEndpoint 是 Spotify 的 OAuth 端點。可變的套件變數:測試(含 cli 的 doctor 測試)把 TokenURL 指向 httptest。
