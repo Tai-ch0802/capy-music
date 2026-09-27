@@ -164,9 +164,10 @@ func (m tuiModel) pollTick() tea.Cmd {
 // 超過就先說「等待平台回應」,結果回來照常套用(失敗照算)。測試替換點。
 var tuiRoundWait = 3 * time.Second
 
-// tuiAwait:在 tuiRoundWait 內等 run 的結果;等不到就先回 slow,帶著 pending 讓 applyState 接著等。run 在自己的 goroutine 裡跑,
-// 它的 panic 帶回呼叫端再丟——Cmd 的 goroutine 裡丟,bubbletea 才會還原終端機。
-func tuiAwait(gen int, run func() tuiStateMsg) tuiStateMsg {
+// tuiAwait:在 wait(= 建 Cmd 當下的 tuiRoundWait)內等 run 的結果;等不到就先回 slow,帶著 pending 讓 applyState 接著等。
+// run 在自己的 goroutine 裡跑,它的 panic 帶回呼叫端再丟——Cmd 的 goroutine 裡丟,bubbletea 才會還原終端機。
+// wait 由呼叫端在 Update 裡讀好傳進來:bubbletea 不等 Cmd,程式結束後才跑的 Cmd 不該再碰全域變數。
+func tuiAwait(gen int, wait time.Duration, run func() tuiStateMsg) tuiStateMsg {
 	done := make(chan tuiStateMsg, 1)
 	go func() {
 		defer func() {
@@ -176,12 +177,12 @@ func tuiAwait(gen int, run func() tuiStateMsg) tuiStateMsg {
 		}()
 		done <- run()
 	}()
-	wait := time.NewTimer(tuiRoundWait)
-	defer wait.Stop()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 	select {
 	case msg := <-done:
 		return msg.repanic()
-	case <-wait.C:
+	case <-timer.C:
 		return tuiStateMsg{gen: gen, slow: true, pending: done}
 	}
 }
@@ -196,8 +197,8 @@ func (msg tuiStateMsg) repanic() tuiStateMsg {
 // poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
 // 不是由這裡每 2 秒一次決定——限流時也照常每 2 秒問,冷卻期內 tracker 只端出快取。
 func (m tuiModel) poll() tea.Cmd {
-	gen, round := m.gen, m.round()
-	return func() tea.Msg { return tuiAwait(gen, round) }
+	gen, round, wait := m.gen, m.round(), tuiRoundWait
+	return func() tea.Msg { return tuiAwait(gen, wait, round) }
 }
 
 // round:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖)。卡住的那一輪期間按鍵起的輪詢會排在這裡——
@@ -207,6 +208,9 @@ func (m tuiModel) round() func() tuiStateMsg {
 	return func() tuiStateMsg {
 		trk.pollMu.Lock()
 		defer trk.pollMu.Unlock()
+		if trk.ctx.Err() != nil { // TUI 結束了:bubbletea 不等 Cmd,排在鎖後面的那幾輪還會跑——不再建 provider(keychain 對話框)或打 API
+			return tuiStateMsg{gen: gen, dropped: true}
+		}
 		g := trk.nowGen.Load()
 		res := trk.pollRound(pin)
 		if !trk.setNow(res, pin == "", g) {
@@ -226,12 +230,12 @@ func (m tuiModel) round() func() tuiStateMsg {
 // 的播放要等它啟動完(冷啟動可能超過三秒,那時殺掉 osascript,app 開了卻沒播)。
 // 所有鍵都帶 WithoutWait:429 不睡在 Retry-After 裡(睡醒才送也是晚到的),照實說被限流,冷卻交給 tracker。
 func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
-	ctx, gen, trk, id, round := m.ctx, m.gen, m.trk, m.provID, m.round()
+	ctx, gen, trk, id, round, wait := m.ctx, m.gen, m.trk, m.provID, m.round(), tuiRoundWait
 	return func() tea.Msg {
-		return tuiAwait(gen, func() tuiStateMsg {
+		return tuiAwait(gen, wait, func() tuiStateMsg {
 			start := time.Now()
 			pc, err := trk.playback(id)
-			if err == nil && once && time.Since(start) > tuiRoundWait {
+			if err == nil && once && time.Since(start) > wait {
 				err = i18n.Errorf("tui.err.ctl_too_late")
 			}
 			if err != nil {
@@ -239,7 +243,7 @@ func (m tuiModel) control(f func(provider.PlaybackController, context.Context) e
 			}
 			fctx, cancel := provider.WithoutWait(ctx), context.CancelFunc(func() {})
 			if once {
-				fctx, cancel = context.WithDeadline(fctx, start.Add(tuiRoundWait))
+				fctx, cancel = context.WithDeadline(fctx, start.Add(wait))
 			}
 			defer cancel()
 			if err := f(pc, fctx); err != nil {

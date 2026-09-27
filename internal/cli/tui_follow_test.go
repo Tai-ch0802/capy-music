@@ -499,11 +499,11 @@ func TestTUIAwaitRepanics(t *testing.T) {
 		f()
 		return nil
 	}
-	if r := caught(func() { tuiAwait(0, func() tuiStateMsg { panic("boom") }) }); r == nil || !strings.Contains(fmt.Sprint(r), "boom") {
+	if r := caught(func() { tuiAwait(0, tuiRoundWait, func() tuiStateMsg { panic("boom") }) }); r == nil || !strings.Contains(fmt.Sprint(r), "boom") {
 		t.Errorf("直接回來的那條要再丟:%v", r)
 	}
 	gate := make(chan struct{})
-	msg := tuiAwait(0, func() tuiStateMsg { <-gate; panic("late boom") })
+	msg := tuiAwait(0, tuiRoundWait, func() tuiStateMsg { <-gate; panic("late boom") })
 	if !msg.slow {
 		t.Fatalf("前提:等太久:%+v", msg)
 	}
@@ -673,7 +673,7 @@ func TestTUISlowBranchRepanics(t *testing.T) {
 	shrinkRoundWait(t, 20*time.Millisecond)
 	m := newTestTUI(t, &watchFake{})
 	gate := make(chan struct{})
-	msg := tuiAwait(m.gen, func() tuiStateMsg { <-gate; panic("late boom") })
+	msg := tuiAwait(m.gen, tuiRoundWait, func() tuiStateMsg { <-gate; panic("late boom") })
 	_, cmd := m.Update(msg)
 	close(gate)
 	var r any
@@ -730,5 +730,19 @@ func TestTUIFallsBackWhenDefaultCannotBuild(t *testing.T) {
 	m.trk.now["apple"] = &watchFake{st: nowTrack(false, "Sugar", 0, 235000)}
 	if m = pollOnce(t, m); m.provID != "apple" || m.pcErr != nil || m.st == nil {
 		t.Errorf("預設平台建不起來:改顯示 Apple:provID=%q pcErr=%v", m.provID, m.pcErr)
+	}
+}
+
+// TestTUIRoundAfterQuitAsksNothing:TUI 結束(ctx 取消)之後才輪到的那一輪不再問平台——bubbletea 不等 Cmd,結束時排在 pollMu
+// 後面的輪詢還會跑,不該再建 provider(可能跳 keychain 對話框)或打 API。測試的 testTracker 也靠這個在收尾時擋住遺留的那一輪。
+func TestTUIRoundAfterQuitAsksNothing(t *testing.T) {
+	f := newNowFake()
+	m := newTestTUI(t, &watchFake{})
+	m.trk.now["spotify"] = f
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.trk.ctx = ctx
+	if msg := m.round()(); !msg.dropped || f.calls.Load() != 0 {
+		t.Errorf("結束之後不該再問:dropped=%v State %d 次", msg.dropped, f.calls.Load())
 	}
 }
