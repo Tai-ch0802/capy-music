@@ -412,7 +412,7 @@ func TestSearchArtistsAndTopTracks(t *testing.T) {
 			}
 			w.Write([]byte(`{"artists":{"items":[{"id":"a1","name":"五月天"},{"id":"a2","name":"五月天 Mayday"}]}}`))
 		case r.URL.Path == "/search" && q.Get("type") == "track":
-			w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"name":"五月天"}],"album":{"name":"自傳"},"duration_ms":249000}],"total":1}}`))
+			w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"id":"a1","name":"五月天"}],"album":{"name":"自傳"},"duration_ms":249000}],"total":1}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			t.Errorf("非預期路徑(已移除的端點不可以再打):%s", r.URL.Path)
@@ -463,8 +463,8 @@ func TestPlayContextSendsContextURIOnly(t *testing.T) {
 	}
 }
 
-// TestArtistTopTracksFiltersToTheArtist:artist:"<name>" 搜尋(名稱裡的引號去掉)只留藝人欄真的含這個名字的曲目——
-// 同名藝人與翻唱帳號會混進搜尋結果,使用者挑的是具體那一個。
+// TestArtistTopTracksFiltersToTheArtist:【#99 review】artist:"<name>" 搜尋(名稱裡的引號去掉)只留使用者挑的那一位藝人(比 id)的曲目——
+// 同名的另一位藝人(名稱一模一樣)與翻唱帳號都會混進搜尋結果。以前只比名稱,同名藝人濾不掉。
 func TestArtistTopTracksFiltersToTheArtist(t *testing.T) {
 	var searchQ string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -472,15 +472,36 @@ func TestArtistTopTracksFiltersToTheArtist(t *testing.T) {
 			t.Errorf("只搜曲目:%s?%s", r.URL.Path, r.URL.RawQuery)
 		}
 		searchQ = r.URL.Query().Get("q")
-		w.Write([]byte(`{"tracks":{"items":[{"id":"t1","name":"派對動物","artists":[{"name":"Mayday"}],"album":{"name":"自傳"}},{"id":"t9","name":"翻唱","artists":[{"name":"Mayday Cover Band"}],"album":{"name":"x"}}],"total":2}}`))
+		w.Write([]byte(`{"tracks":{"items":[
+			{"id":"t1","name":"派對動物","artists":[{"id":"a1","name":"Mayday"}],"album":{"name":"自傳"}},
+			{"id":"t8","name":"同名的另一位","artists":[{"id":"a2","name":"Mayday"}],"album":{"name":"y"}},
+			{"id":"t9","name":"翻唱","artists":[{"id":"a3","name":"Mayday Cover Band"}],"album":{"name":"x"}}],"total":3}}`))
 	}))
 	t.Cleanup(srv.Close)
-	tracks, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: `May"day`})
+	c := NewClient(srv.Client(), srv.URL)
+	tracks, err := c.ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: `May"day`})
 	if err != nil || len(tracks) != 1 || tracks[0].ProviderID != "t1" {
-		t.Fatalf("只留藝人欄相符的曲目(同名 / 翻唱帳號要濾掉):%+v %v", tracks, err)
+		t.Fatalf("只留挑的那一位(比 id;同名藝人與翻唱帳號要濾掉):%+v %v", tracks, err)
 	}
 	if searchQ != `artist:"Mayday"` {
 		t.Errorf("查詢應為 artist:\"<name>\"(名稱裡的引號去掉):%q", searchQ)
+	}
+	// 沒有 id(不該發生)才退回比名稱:同名的兩位都留,翻唱帳號濾掉。
+	if tracks, err := c.ArtistTopTracks(context.Background(), provider.Artist{Name: "Mayday"}); err != nil || len(tracks) != 2 {
+		t.Errorf("沒有 id 時比名稱:%+v %v", tracks, err)
+	}
+}
+
+// TestArtistTopTracksNeedsAName:沒有名稱(或只有引號)就不搜:artist:"" 會搜到什麼都不確定。
+func TestArtistTopTracksNeedsAName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("沒有名稱不該發請求:%s?%s", r.URL.Path, r.URL.RawQuery)
+	}))
+	t.Cleanup(srv.Close)
+	for _, n := range []string{"", `""`, ` " `} {
+		if tracks, err := NewClient(srv.Client(), srv.URL).ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: n}); err != nil || tracks != nil {
+			t.Errorf("%q:要回空:%v %v", n, tracks, err)
+		}
 	}
 }
 

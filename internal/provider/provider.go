@@ -175,7 +175,7 @@ func NormalizeISRC(s string) string {
 // 呼叫端不要把它當精確的「官方熱門榜」。
 type ArtistSearcher interface {
 	SearchArtists(ctx context.Context, q Query) ([]Artist, error)
-	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 的備案要用名稱
+	ArtistTopTracks(ctx context.Context, artist Artist) ([]Track, error) // 收整個 Artist:Spotify 用名稱搜尋、用 id 過濾
 }
 
 type PlaylistReader interface {
