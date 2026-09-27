@@ -664,15 +664,16 @@ func TestWebNowNotRunningKeepsController(t *testing.T) {
 }
 
 // TestWebNowBuildFailureCached:【fails-before-fix】建不起來(沒登入)的平台一分鐘才重試一次——以前每 2.5 秒就重建一次。
+// 每一家都建不起來:照實說預設平台的原因(有一家建得起來的話會改顯示它,見 TestWebNowFallsBackWhenBaseCannotBuild)。
 func TestWebNowBuildFailureCached(t *testing.T) {
 	setCLITestConfig(t)
 	setDefaultProvider(t, "apple")
 	advance := fakeNowClock(t)
-	built := swapNowByID(t, map[string]*nowFake{"spotify": newNowFakeAs("spotify", nil)}) // apple 沒登入
+	built := swapNowByID(t, map[string]*nowFake{}) // 都沒登入
 	_, c := startWeb(t)
 	for range 10 {
 		if m := c.now(""); m["provider"] != "apple" || m["error"] == nil {
-			t.Fatalf("預設平台沒登入要照實說:%v", m)
+			t.Fatalf("都建不起來:照實說預設平台的原因:%v", m)
 		}
 		advance(2500 * time.Millisecond)
 	}
@@ -1136,5 +1137,20 @@ func TestWebNowUnsupportedNotRetried(t *testing.T) {
 	c.now("")
 	if n := localBuilt.Load(); n != 2 {
 		t.Errorf("dropNow(改設定)之後重來一次:%d 次", n)
+	}
+}
+
+// TestWebNowFallsBackWhenBaseCannotBuild:【#97 review 第 3 點】預設平台沒登入(或這台電腦不支援播放),另一家登入了、只是暫停:
+// 播放列顯示那一家、控制鈕也能用——不是一直說「Apple 未登入」。之後照舊只有正在播的平台能把它拉走。
+func TestWebNowFallsBackWhenBaseCannotBuild(t *testing.T) {
+	setCLITestConfig(t)
+	setDefaultProvider(t, "apple")
+	fakeNowClock(t)
+	swapNowByID(t, map[string]*nowFake{"spotify": newNowFakeAs("spotify", nowTrack(false, "暫停的那首", 1000, 200000))}) // apple 沒登入
+	_, c := startWeb(t)
+	for range 3 {
+		if m := c.now(""); m["provider"] != "spotify" || m["error"] != nil || m["track"] == nil {
+			t.Fatalf("預設平台建不起來:改顯示建得起來的 Spotify:%v", m)
+		}
 	}
 }

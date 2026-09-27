@@ -87,6 +87,8 @@ type nowTracker struct {
 // 別家一律不問(照這條規則它們改變不了結果,Spotify 一次都不打);base 沒在播才依序問其他平台(預設先,再照 providerIDs),
 // 第一個在播的就切過去;都沒在播就留在 base,不管它是暫停、閒置還是出錯。暫停中的歌不能搶顯示:Spotify 暫停幾分鐘會從
 // 200 變 204,這時 Music.app 掛著昨天暫停的那首就會把顯示搶回去——使用者 2026-09-24 回報的就是這個。
+// 例外(決策 54):base 根本建不起來(沒登入、這台電腦不支援播放)時,改留在第一個建得起來的平台——不然預設平台沒登入的人,
+// 另一家明明登入了、只是暫停,整個播放列(TUI 的按鍵)也只能說「沒有播放遙控」。都建不起來才照實說 base 的原因。
 func (t *nowTracker) pollRound(pin string) nowResult {
 	if pin != "" {
 		return t.consult(pin)
@@ -103,15 +105,28 @@ func (t *nowTracker) pollRound(pin string) nowResult {
 	if snap := t.lastNow.Load(); snap != nil && snap.res.provider == base && snap.res.playing() {
 		t.expireExcept(base) // base 剛停:免費的觸發點(Apple 每輪都問),馬上看別家有沒有接著播,不等快取過期
 	}
+	var usable *nowResult // 第一個建得起來的:base 沒登入或不支援播放時,顯示它而不是一句「沒有播放遙控」(決策 54)
 	for i, id := range append([]string{def}, providerIDs...) {
 		if id == base || (i > 0 && id == def) {
 			continue
 		}
-		if r := t.consult(id); r.playing() {
+		r := t.consult(id)
+		if r.playing() {
 			return r
 		}
+		if usable == nil && !isBuildErr(r.err) {
+			usable = &r
+		}
+	}
+	if usable != nil && isBuildErr(res.err) {
+		return *usable
 	}
 	return res
+}
+
+func isBuildErr(err error) bool {
+	var be nowBuildErr
+	return errors.As(err, &be)
 }
 
 // consult:問一家。快取沒過期就用快取;否則真的問,並依結果定有效期。只在 pollMu 裡被呼叫,
