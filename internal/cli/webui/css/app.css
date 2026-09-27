@@ -211,7 +211,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .tbl td.atomic { white-space: nowrap; font-family: var(--mono); font-size: var(--t-12); color: var(--muted); }
 .tbl td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); }
 .row-actions { white-space: nowrap; }
-.row-actions .btn { min-height: 32px; }
+.row-actions .btn { min-height: 32px; vertical-align: middle; } /* 按鈕(inline-block)與連結(a.btn,inline-flex)並排時基線對齊方式不同,置中才不會差 1px(#101 review) */
 .tbl td[data-action="add"] { color: var(--accent); }
 .tbl td[data-action="remove"] { color: var(--danger); }
 .num { font-variant-numeric: tabular-nums; }
