@@ -40,7 +40,7 @@ func TestSpotifyRenewalShown(t *testing.T) {
 		want    string
 		hasJSON bool
 	}{
-		{"known", 30 * 24 * time.Hour, "(剩 149 天)", true},
+		{"known", 30 * 24 * time.Hour, "(剩 150 天)", true},
 		{"soon", 175 * 24 * time.Hour, "請在那之前執行 capy auth login spotify", true},
 		{"expired", 181 * 24 * time.Hour, "大概已在", true},
 		{"unknown", 0, "不知道(用舊版的 capy 登入的", false},
@@ -92,8 +92,11 @@ func TestSpotifyRenewalBoundary(t *testing.T) {
 	if s := spotifyRenewalText(day170); !strings.Contains(s, "請在那之前") {
 		t.Errorf("剩剛好 10 天要叫人重新登入:%s", s)
 	}
-	if s := spotifyRenewalText(day170.Add(-time.Minute)); strings.Contains(s, "請在那之前") {
-		t.Errorf("剩 10 天多一點還不叫:%s", s)
+	if s := spotifyRenewalText(day170.Add(-time.Hour)); strings.Contains(s, "請在那之前") || !strings.Contains(s, "剩 11 天") {
+		t.Errorf("剩 10 天又 1 小時:還不叫,而且說剩 11 天(天數無條件進位,跟門檻同一把尺;#103 review):%s", s)
+	}
+	if s := spotifyRenewalText(day170); !strings.Contains(s, "剩 10 天") {
+		t.Errorf("剩剛好 10 天:說剩 10 天:%s", s)
 	}
 	if s := spotifyRenewalText(at.Add(auth.SpotifyRefreshLifetime)); !strings.Contains(s, "左右失效") {
 		t.Errorf("到期那一刻就算失效:%s", s)
@@ -108,7 +111,7 @@ func TestDoctorSpotifyRenewal(t *testing.T) {
 		wantOK bool
 		want   string
 	}{
-		{30 * 24 * time.Hour, true, "剩 149 天"},
+		{30 * 24 * time.Hour, true, "剩 150 天"},
 		{175 * 24 * time.Hour, true, "請在那之前執行 capy auth login spotify"},
 		{181 * 24 * time.Hour, true, "大概已在"}, // 180 天是保守估計:只說大概、照樣通過,真的死了沒由下一項實際換發來判
 		{0, true, ""},
@@ -133,5 +136,17 @@ func TestDoctorSpotifyRenewal(t *testing.T) {
 				t.Errorf("要說 %q:%q", tc.want, msg)
 			}
 		})
+	}
+}
+
+// TestSpotifyRenewalKeychainError:【#103 review】keychain 讀不到(JSON 壞了)要照實說讀不到,不是「用舊版的 capy 登入的」。
+func TestSpotifyRenewalKeychainError(t *testing.T) {
+	setCLITestConfig(t)
+	t.Cleanup(keyring.MockInit)
+	if err := secret.Set(auth.KeySpotifyToken, "{not json"); err != nil {
+		t.Fatal(err)
+	}
+	if s := spotifyRenewalText(time.Now()); strings.Contains(s, "舊版") || !strings.Contains(s, "keychain") {
+		t.Errorf("讀不到 keychain 要照實說:%s", s)
 	}
 }

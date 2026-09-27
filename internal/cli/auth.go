@@ -474,7 +474,7 @@ func keychainState(err error) string {
 func authStatusOf(cfg *config.Config) authStatus {
 	var st authStatus
 	st.Spotify.State = keychainState(auth.SpotifyStored())
-	if exp, _, ok := spotifyRenewal(time.Now()); ok && st.Spotify.State == "ok" {
+	if exp, _, _, ok, _ := spotifyRenewal(time.Now()); ok && st.Spotify.State == "ok" {
 		st.Spotify.RefreshTokenExpiry = exp.UTC().Format(time.RFC3339)
 	}
 	switch {
@@ -574,23 +574,31 @@ func newAuthLogoutCmd() *cobra.Command {
 }
 
 // spotifyRenewal:Spotify 登入授權的到期資訊(決策 56):到期 = 授權 + auth.SpotifyRefreshLifetime(比六個曆月短,提醒一定在
-// 真的到期之前)。ok=false:不知道授權時間(這個版本之前登入的、從舊鍵遷移來的)或沒登入。
-func spotifyRenewal(now time.Time) (expiry time.Time, left time.Duration, ok bool) {
+// 真的到期之前)。ok=false:不知道授權時間(這個版本之前登入的、從舊鍵遷移來的)或沒登入;err:keychain 讀不到(不是「不知道」)。
+// days 是剩幾天,無條件進位:跟「剩 SpotifyRenewWarn 以內就提醒」的門檻同一把尺,不會同一個「剩 10 天」一下提醒一下不提醒。
+func spotifyRenewal(now time.Time) (expiry time.Time, left time.Duration, days int, ok bool, err error) {
 	at, err := auth.SpotifyAuthorizedAt()
+	if errors.Is(err, secret.ErrNotFound) {
+		err = nil
+	}
 	if err != nil || at.IsZero() {
-		return time.Time{}, 0, false
+		return time.Time{}, 0, 0, false, err
 	}
 	expiry = at.Add(auth.SpotifyRefreshLifetime)
-	return expiry, expiry.Sub(now), true
+	left = expiry.Sub(now)
+	return expiry, left, int((left + 24*time.Hour - 1) / (24 * time.Hour)), true, nil
 }
 
 // spotifyRenewalText:auth status 那一行。到期前 auth.SpotifyRenewWarn 以內就叫人重新登入;日期用本地時區、只到日。
 func spotifyRenewalText(now time.Time) string {
-	exp, left, ok := spotifyRenewal(now)
+	exp, left, days, ok, err := spotifyRenewal(now)
+	if err != nil {
+		return i18n.T("auth.status.keychain_read_failed", "err", err)
+	}
 	if !ok {
 		return i18n.T("auth.status.spotify_renew_unknown")
 	}
-	date, days := exp.Local().Format("2006-01-02"), int(left/(24*time.Hour))
+	date := exp.Local().Format("2006-01-02")
 	switch {
 	case left <= 0:
 		return i18n.T("auth.status.spotify_renew_expired", "date", date)
