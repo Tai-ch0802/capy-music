@@ -330,6 +330,9 @@ func TestApplyCacheDedupesAndTrims(t *testing.T) {
 	if got := add(3, "c", "d", "b"); !slices.Equal(got, []string{"b", "d", "c"}) {
 		t.Errorf("重複的移到最前、超過上限剪最舊的:%v", got)
 	}
+	if got := add(0, "e"); !slices.Equal(got, []string{"e", "b", "d", "c"}) {
+		t.Errorf("上限是 0 = 不剪,不是剪光:%v", got)
+	}
 }
 
 // TestApplyCacheWaitsForAnotherWriter:另一個 capy 正拿著寫鎖時,要照 busy_timeout 等它寫完再寫,不是立刻 SQLITE_BUSY。

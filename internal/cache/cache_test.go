@@ -282,7 +282,7 @@ func TestRecentInMemoryMatchesWhatIsSaved(t *testing.T) {
 	setDir(t)
 	c := Load()
 	for i := range MaxRecent + 10 {
-		c.AddRecent(Recent{Provider: "spotify", Type: TypeTrack, ID: strconv.Itoa(i % 37), Label: strconv.Itoa(i), At: int64(i + 1)})
+		c.AddRecent(Recent{Provider: "spotify", Type: TypeTrack, ID: strconv.Itoa(i % (MaxRecent + 7)), Label: strconv.Itoa(i), At: int64(i + 1)}) // 超過上限的不同 id,也有重複
 	}
 	c.AddRecent(Recent{Provider: "apple", Type: TypeTrack, ID: "3", Label: "apple", At: 999})
 	if err := c.Save(); err != nil {

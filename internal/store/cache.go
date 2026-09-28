@@ -37,7 +37,7 @@ type CacheDelta struct {
 	ClearRecent bool                          // 先清空最近項目(history clear)
 	Playlists   map[string][]ProviderPlaylist // 這幾家的清單整個換掉(切片是空的 = 那一家清空)
 	Recent      []Recent                      // 依呼叫順序加到最前,同 provider+type+id 的舊列拿掉
-	MaxRecent   int                           // 加完之後最近項目最多留幾筆
+	MaxRecent   int                           // 加完之後最近項目最多留幾筆;0 = 不剪(不是剪光)
 }
 
 // ApplyCache 在一筆交易裡套用 d,回傳 ClearRecent 刪掉幾列。
@@ -80,7 +80,7 @@ func (s *Store) ApplyCache(d CacheDelta) (cleared int64, err error) {
 			return 0, err
 		}
 	}
-	if len(d.Recent) > 0 { // 不用 OFFSET 的寫法:少於上限時子查詢是 NULL,position > NULL 一列都刪不掉
+	if len(d.Recent) > 0 && d.MaxRecent > 0 { // 不用 OFFSET 的寫法:少於上限時子查詢是 NULL,position > NULL 一列都刪不掉
 		if _, err = tx.Exec("DELETE FROM recent WHERE position NOT IN (SELECT position FROM recent ORDER BY position LIMIT ?)", d.MaxRecent); err != nil {
 			return 0, err
 		}
