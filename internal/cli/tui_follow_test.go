@@ -250,7 +250,7 @@ func followingApple(t *testing.T) (tuiModel, *watchFake, *watchFake) {
 func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	got := recordExec(t)
 	m, _, _ := followingApple(t)
-	for _, line := range []string{"pause", "seek 1:00", "now", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
+	for _, line := range []string{"pause", "seek 1:00", "now", "now --watch", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
 		m.typing = true
 		m.input.SetValue(line)
 		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
@@ -259,6 +259,7 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 		{"/bin/capy", "pause", "--provider", "apple"},
 		{"/bin/capy", "seek", "1:00", "--provider", "apple"},
 		{"/bin/capy", "now", "--provider", "apple"},
+		{"/bin/capy", "now", "--watch"}, // 自己會跟著正在播的平台走(決策 58):附加了反而釘死在按下去那一刻的平台
 		{"/bin/capy", "play", "--provider", "apple"},
 		{"/bin/capy", "play", "派對動物"},
 		{"/bin/capy", "play", "--id", "1422652341"},

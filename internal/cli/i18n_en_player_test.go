@@ -49,7 +49,7 @@ func TestEnglishPlayerHelp(t *testing.T) {
 		{"play", "id", "play a track directly by its platform track ID (skips the search)"},
 		{"play", "type", "search only this type: track|artist|playlist (same as the prefixes artist: / pl: / track:)"},
 		{"play", "pick", "open the picker right away (playlists and recent items from the local cache; needs a terminal)"},
-		{"now", "watch", "keep it on screen (bubbletea view; space play/pause, n/p next/previous track, q/esc quit)"},
+		{"now", "watch", "keep it on screen, following whichever platform is playing (--provider pins one) (bubbletea view; space play/pause, n/p next/previous track, q/esc quit)"},
 		{"search", "limit", "number of results (the API returns at most 10 per request; more are fetched page by page)"},
 	} {
 		c, _, _ := root.Find([]string{f.cmd})
@@ -237,7 +237,7 @@ func TestEnglishSeekVolNow(t *testing.T) {
 
 func TestEnglishWatchView(t *testing.T) {
 	withLanguage(t, "en")
-	m := newWatchModel(context.Background(), &watchFake{}, time.Millisecond)
+	m := newWatchModel(context.Background(), testTracker(t, "spotify", &watchFake{}), "", "spotify", time.Millisecond)
 	m.st = &provider.PlaybackState{
 		Playing:    true,
 		Track:      &provider.Track{Title: "Stubborn", Artists: []string{"Mayday"}, Album: "Poetry", DurationMS: 249000},
@@ -258,19 +258,16 @@ func TestEnglishWatchView(t *testing.T) {
 		t.Errorf("無內容與錯誤列:\n%s", v)
 	}
 
-	before := time.Now()
-	next, _ := m.Update(watchStateMsg{err: &provider.RateLimitError{Seconds: 90, Message: "retry in 90 s"}})
-	v = ansi.Strip(next.(watchModel).View().Content)
-	if !strings.Contains(v, "⚠ rate limited; retrying at "+before.Add(90*time.Second).Format("15:04:05")+" (retry in 90 s)\n") &&
-		!strings.Contains(v, "⚠ rate limited; retrying at "+time.Now().Add(90*time.Second).Format("15:04:05")+" (retry in 90 s)\n") {
+	retryAt := time.Date(2026, 9, 28, 4, 30, 0, 0, time.UTC) // tracker 冷卻的終點(決策 58)
+	m, _ = feed(m, tuiStateMsg{err: &provider.RateLimitError{Seconds: 90, Message: "retry in 90 s"}, retryAt: retryAt})
+	if v = ansi.Strip(m.View().Content); !strings.Contains(v, "⚠ Rate limited; retrying at "+retryAt.Local().Format("15:04:05")+"\n") {
 		t.Errorf("限流要說幾點再試:\n%s", v)
 	}
 
 	boom := errors.New("boom")
-	m = newWatchModel(context.Background(), &watchFake{}, time.Millisecond)
+	m = newWatchModel(context.Background(), testTracker(t, "spotify", &watchFake{}), "", "spotify", time.Millisecond)
 	for range watchMaxFails {
-		next, _ := m.Update(watchStateMsg{err: boom})
-		m = next.(watchModel)
+		m, _ = feed(m, tuiStateMsg{err: boom})
 	}
 	if m.fatal == nil || m.fatal.Error() != "couldn't read the playback state 5 times in a row: boom" || !errors.Is(m.fatal, boom) {
 		t.Errorf("連續失敗:%v", m.fatal)

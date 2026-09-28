@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -18,82 +17,56 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
-// now --watch:bubbletea 程式,輪詢 State() 畫進度條;鍵位 space / n / p / q。
-// 離開不改變播放狀態。Update 是純函式(tea.Msg 進、model 出),測試不需要 TTY。
+// now --watch:bubbletea 程式,每 interval 問一輪、畫進度條;鍵位 space / n / p / q。離開不改變播放狀態。
+// 一輪走 nowTracker(決策 58,同 TUI 的決策 53):沒用 --provider 釘住時跟著正在播的平台走,Spotify 真的被打幾次由
+// tracker 的有效期決定(限流時照 Retry-After 冷卻)。Update 是純函式(tea.Msg 進、model 出),測試不需要 TTY。
 
 const (
 	watchMaxFails     = 5
-	watchPollSpotify  = 2 * time.Second // 1s 就是每分鐘 60 次 /me/player,429 門檻不高;進度差一秒沒人看得出來
+	watchPollSpotify  = 2 * time.Second // 畫面每 2 秒問一輪;真的打 Spotify 幾次看 tracker 的有效期(在播最多 10 s、閒置 15 s)
 	watchPollApple    = 2 * time.Second
 	watchDefaultWidth = 80
 )
 
-// pollTimeout:單次輪詢的上限要蓋得住 429 退避(Backoff 會在請求裡面睡到 MaxBackoff),不然退避一半就被
-// ctx 砍掉、畫面只看到 deadline exceeded、五次後整個 TUI 消失。Ctrl-C 仍能中斷(Wait 吃 ctx)。
-func pollTimeout(interval time.Duration) time.Duration { return interval + provider.MaxBackoff }
-
-// rateLimitDelay:被限流時,下一次輪詢照 Retry-After 等(QUOTA_EXCEEDED 沒帶就是 client 給的預設),不比平常的間隔短。
-// 限流是狀態不是失敗(不計入 fails),但「狀態」不等於「照常每 2 秒再打一次」——那正是 Spotify 指南禁止的緊密重試。
-func rateLimitDelay(interval time.Duration, rl *provider.RateLimitError) time.Duration {
-	return max(interval, time.Duration(rl.Seconds)*time.Second)
-}
-
-type (
-	watchTickMsg  time.Time
-	watchStateMsg struct {
-		st      *provider.PlaybackState
-		err     error
-		fromCtl bool // 控制指令(space/n/p)的錯:顯示、但不計入 fails(那個預算是給「連不上」用的)
-	}
-)
+// watchTickMsg:帶著排它的那條鏈的世代號。控制鍵開新鏈(gen++),舊鏈的 tick 到了就丟——不然每按一次鍵就多一條
+// 永遠停不了的鏈(Apple 的結果不快取,每條鏈每 2 秒一支 osascript)。
+type watchTickMsg struct{ gen int }
 
 type watchModel struct {
 	ctx      context.Context
-	pc       provider.PlaybackController
+	trk      *nowTracker
+	pin      string // --provider 釘住的平台;空 = 跟著正在播的平台走
+	provID   string // 畫面上的平台:控制鍵送給它、連續失敗算它的
+	gen      int
 	interval time.Duration
 	width    int
 	bar      progress.Model
 	st       *provider.PlaybackState
-	err      error // 最近一次輪詢錯誤(顯示在底部,繼續輪詢)
-	fails    int
-	fatal    error // 連續失敗達上限:離開並回錯
+	err      error // 最近一次的狀態或錯誤(顯示在底部,繼續輪詢)
+	fails    int   // 連續失敗:只算真的問到的(快取裡的同一則錯誤不重複算)
+	fatal    error // 連續失敗達上限,或沒有任何平台建得起來:離開並回錯
 	ctrlC    bool  // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
 }
 
-func newWatchModel(ctx context.Context, pc provider.PlaybackController, interval time.Duration) watchModel {
-	return watchModel{ctx: ctx, pc: pc, interval: interval, width: watchDefaultWidth, bar: progress.New(progress.WithoutPercentage())}
+func newWatchModel(ctx context.Context, trk *nowTracker, pin, provID string, interval time.Duration) watchModel {
+	return watchModel{ctx: ctx, trk: trk, pin: pin, provID: provID, interval: interval, width: watchDefaultWidth, bar: progress.New(progress.WithoutPercentage())}
 }
 
 func (m watchModel) Init() tea.Cmd { return m.poll() }
 
 func (m watchModel) interruptedByKey() bool { return m.ctrlC }
 
-func (m watchModel) poll() tea.Cmd {
-	ctx, pc, interval := m.ctx, m.pc, m.interval
-	return func() tea.Msg {
-		c, cancel := context.WithTimeout(ctx, pollTimeout(interval))
-		defer cancel()
-		st, err := pc.State(c)
-		return watchStateMsg{st: st, err: err}
-	}
+func (m watchModel) poll() tea.Cmd { return nowPoll(m.trk, m.pin, m.gen) }
+
+func (m watchModel) tick() tea.Cmd {
+	gen := m.gen
+	return tea.Tick(m.interval, func(time.Time) tea.Msg { return watchTickMsg{gen: gen} })
 }
 
-func (m watchModel) tick() tea.Cmd { return m.tickAfter(m.interval) }
-
-func (m watchModel) tickAfter(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg { return watchTickMsg(t) })
-}
-
-// control:送控制指令後立刻重新輪詢,畫面才會跟上。
-func (m watchModel) control(f func(context.Context) error) tea.Cmd {
-	ctx := m.ctx
-	poll := m.poll()
-	return func() tea.Msg {
-		if err := f(ctx); err != nil {
-			return watchStateMsg{err: err, fromCtl: true}
-		}
-		return poll()
-	}
+// control:開新鏈、把控制指令送給畫面上的平台(n / p 限時,見 nowControl),送完立刻重問一輪。
+func (m watchModel) control(f func(provider.PlaybackController, context.Context) error, once bool) (watchModel, tea.Cmd) {
+	m.gen++
+	return m, nowControl(m.ctx, m.trk, m.provID, m.pin, m.gen, f, once)
 }
 
 func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -101,31 +74,12 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
-	case watchStateMsg:
-		var rl *provider.RateLimitError
-		switch {
-		case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗:留在畫面上、繼續輪詢,app 開了畫面就活過來
-			m.st, m.err, m.fails = nil, msg.err, 0
-			return m, m.tick()
-		case errors.As(msg.err, &rl): // 限流也是狀態:畫面卡一下,不是畫面消失;下一次照 Retry-After 等,並說幾點再試
-			d := rateLimitDelay(m.interval, rl)
-			m.err, m.fails = i18n.Errorf("watch.rate_limited", "time", time.Now().Add(d).Format("15:04:05"), "message", rl.Message), 0
-			return m, m.tickAfter(d)
-		case msg.fromCtl && msg.err != nil:
-			m.err = msg.err
-			return m, m.tick()
-		}
-		if msg.err != nil {
-			m.err, m.fails = msg.err, m.fails+1
-			if m.fails >= watchMaxFails {
-				m.fatal = i18n.Errorf("watch.err.consecutive_failures", "count", m.fails, "err", msg.err)
-				return m, tea.Quit
-			}
-			return m, m.tick()
-		}
-		m.st, m.err, m.fails = msg.st, nil, 0
-		return m, m.tick()
+	case tuiStateMsg:
+		return m.applyState(msg)
 	case watchTickMsg:
+		if msg.gen != m.gen {
+			return m, nil
+		}
 		return m, m.poll()
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -134,18 +88,79 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			m.ctrlC = true
 			return m, tea.Quit
-		case "space":
+		case "space": // 播放或暫停看畫面上的狀態(可能是快取的,最多舊 10 秒;送不出去會說,並讓快取過期)
 			if m.st != nil && m.st.Playing {
-				return m, m.control(m.pc.Pause)
+				return m.control(provider.PlaybackController.Pause, false)
 			}
-			return m, m.control(func(ctx context.Context) error { return m.pc.Play(ctx, provider.PlayRequest{}) })
+			return m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+				return pc.Play(ctx, provider.PlayRequest{})
+			}, false)
 		case "n":
-			return m, m.control(m.pc.Next)
+			return m.control(provider.PlaybackController.Next, true)
 		case "p":
-			return m, m.control(m.pc.Prev)
+			return m.control(provider.PlaybackController.Prev, true)
 		}
 	}
 	return m, nil
+}
+
+// applyState:順序同 TUI 的 applyState(決策 53)。差別:連續失敗到上限就離開(watch 沒有命令列可以留下來用),
+// 沒有任何平台建得起來也離開(以前是開畫面之前就失敗)。
+func (m watchModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
+	stale := msg.gen != m.gen
+	tick := func() tea.Cmd {
+		if stale {
+			return nil
+		}
+		return m.tick()
+	}
+	if msg.slow { // 等太久:先說一聲,接著等同一個結果(過期的也要等:可能是控制指令自己的錯,或要再丟的 panic)
+		if !stale {
+			m.err = i18n.Errorf("tui.status.waiting")
+		}
+		pending := msg.pending
+		return m, func() tea.Msg { return (<-pending).repanic() }
+	}
+	if msg.fromCtl && msg.err != nil { // 使用者剛按的鍵失敗了:即使期間又按了一次而變成 stale 也要說;不計入 fails
+		m.err = msg.err
+		return m, tick()
+	}
+	if stale {
+		return m, nil
+	}
+	if msg.dropped {
+		return m, tick()
+	}
+	if msg.provider != "" && msg.provider != m.provID { // 換平台:上一家的曲目與失敗次數不能掛在這一家名下
+		m.provID, m.st, m.fails = msg.provider, nil, 0
+	}
+	var be nowBuildErr
+	if errors.As(msg.err, &be) { // 沒有任何平台建得起來(沒登入、這台電腦不支援):同以前開畫面之前的那個錯,原樣回
+		m.fatal = msg.err
+		return m, tea.Quit
+	}
+	var rl *provider.RateLimitError
+	switch {
+	case errors.Is(msg.err, provider.ErrPlayerNotRunning): // 狀態,不是失敗:app 開了畫面就活過來
+		m.st, m.err, m.fails = nil, msg.err, 0
+		return m, tick()
+	case errors.As(msg.err, &rl): // 限流也是狀態:照常每 2 秒問,冷卻期內 tracker 只端出快取(Retry-After 由它守)
+		m.err, m.fails = i18n.Errorf("tui.status.rate_limited", "time", msg.retryAt.Local().Format("15:04:05")), 0
+		return m, tick()
+	}
+	if msg.err != nil {
+		m.err = msg.err
+		if !msg.cached { // Spotify 出錯的結果留 15 秒:每 2 秒算一次的話,一次 502 不到十秒就把畫面關掉
+			m.fails++
+		}
+		if m.fails >= watchMaxFails {
+			m.fatal = i18n.Errorf("watch.err.consecutive_failures", "count", m.fails, "err", msg.err)
+			return m, tea.Quit
+		}
+		return m, tick()
+	}
+	m.st, m.err, m.fails = msg.st, nil, 0
+	return m, tick()
 }
 
 func (m watchModel) View() tea.View {
@@ -191,22 +206,36 @@ func (m watchModel) View() tea.View {
 	return tea.NewView(b.String())
 }
 
-// runWatch:跑到使用者離開或連續失敗。測試替換點(RunE 的 TTY 閘門獨立可測)。
-var runWatch = func(cmd *cobra.Command, p provider.Provider, pc provider.PlaybackController) error {
-	interval := watchPollSpotify
-	if p.ID() == "apple" {
-		interval = watchPollApple
+// runWatch:跑到使用者離開、連續失敗,或沒有任何平台建得起來。測試替換點(RunE 的 TTY 閘門獨立可測)。
+// pin 是 --provider 釘住的平台,seed 是 RunE 事先建好的那一家(沒釘住時兩者都是空的,tracker 自己建)。
+var runWatch = func(cmd *cobra.Command, pin string, seed provider.PlaybackController) error {
+	provID := pin
+	if provID == "" {
+		provID = loadDefaultProvider()
 	}
-	m := newWatchModel(cmd.Context(), pc, interval)
-	origStderr := provider.BackoffStderr // 429 退避的提示不能印進 TUI 畫面
-	provider.BackoffStderr = io.Discard
-	defer func() { provider.BackoffStderr = origStderr }()
-	final, err := runProgram(cmd.Context(), m, cmd.OutOrStdout())
+	trk := &nowTracker{ctx: cmd.Context(), timeout: tuiStateTimeout}
+	if seed != nil {
+		trk.now = map[string]provider.PlaybackController{pin: seed}
+	}
+	defer tuiQuietStderr()() // 換 token 等鎖、429 退避的提示不能印進畫面
+	final, err := tuiRunProgram(cmd.Context(), newWatchModel(cmd.Context(), trk, pin, provID, watchPollSpotify), cmd.OutOrStdout())
 	if err != nil {
 		return err
 	}
-	if fm, ok := final.(watchModel); ok && fm.fatal != nil {
-		return friendlyErr(p.ID(), fm.fatal)
+	if fm, ok := final.(watchModel); ok {
+		return fm.exitErr()
 	}
 	return nil
+}
+
+// exitErr:離開時回的錯。沒有任何平台建得起來的,原樣回(同以前開畫面之前的那個錯);連續失敗的,照那個平台說人話。
+func (m watchModel) exitErr() error {
+	if m.fatal == nil {
+		return nil
+	}
+	var be nowBuildErr
+	if errors.As(m.fatal, &be) {
+		return be.error
+	}
+	return friendlyErr(m.provID, m.fatal)
 }

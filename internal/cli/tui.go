@@ -50,7 +50,7 @@ const (
 	tuiSeekStep = 10000 // ←/→ 一次 10 秒
 	tuiVolStep  = 5     // +/- 一次 5
 	tuiMaxFails = 5
-	// 每次 State 的上限。輪詢帶 WithoutWait,不會睡在 429 退避裡(不像 now --watch 的 pollTimeout 要蓋住 MaxBackoff),
+	// 每次 State 的上限(now --watch 也用它,決策 58)。輪詢帶 WithoutWait,不會睡在 429 退避裡,
 	// 這只是卡住的上限:osascript 或 HTTP 卡住時狀態列最多停這麼久就回錯,不是一分鐘。
 	tuiStateTimeout = 10 * time.Second
 	tuiMinWidth     = 46 // 窄於此:橫幅換成一行
@@ -393,7 +393,9 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 		path := c.CommandPath()
 		// rest 刻意連 flag 一起算:play --id X 的 id 是預設平台的 id 空間,play --pick 是搜尋——都照舊用 default_provider。
 		// 只看位置參數的話,這兩個會被送去顯示中的平台。
-		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
+		// now --watch 自己就會跟著正在播的平台走(決策 58):不附加,附加了反而把它釘死在按下去那一刻的平台。
+		watching := path == "capy now" && slices.ContainsFunc(rest, func(a string) bool { return a == "--watch" || strings.HasPrefix(a, "--watch=") })
+		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0) && !watching
 		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
 		if !follows || typed {
 			return args

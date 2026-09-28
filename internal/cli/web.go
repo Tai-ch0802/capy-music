@@ -296,7 +296,7 @@ func installWebSeams(s *webServer) (restore func()) {
 	origBackoff, origStore, origDrive, origLogin, origLock := provider.BackoffStderr, store.Stderr, drive.Stderr, auth.LoginStderr, auth.LockStderr
 	restorePrompts := installWebPromptSeams(s)
 	runTUI = func(cmd *cobra.Command) error { return cmd.Help() }
-	runWatch = func(*cobra.Command, provider.Provider, provider.PlaybackController) error {
+	runWatch = func(*cobra.Command, string, provider.PlaybackController) error {
 		return i18n.Errorf("web.err.no_watch")
 	}
 	// 真實進度(P8 決策 47):送給當下的 job;沒有 job(或串流已關)就丟掉——進度不是輸出,不退回 stderr。
