@@ -98,6 +98,7 @@ globalThis.document = {
   createTextNode: (t) => ({ textContent: t, children: [] }),
   querySelectorAll(sel) { return findAll(this.body, sel); },
   addEventListener() {}, // player.js 的 visibilitychange
+  dispatchEvent(ev) { (this.events ||= []).push(ev.type); return true; }, // player.js 每輪 render 後的 capy:now(歌曲 wiki 頁聽它)
 };
 globalThis.sessionStorage = { getItem() { return null; }, setItem() {} };
 let reloads = 0;
@@ -1102,6 +1103,7 @@ await scenario('13', async () => {
     track: { title: 'Song', artists: ['A', 'B'], duration_ms: 200000 }, device: { name: 'Mac', volume_known: true, volume_pct: 40 } };
   player.render(d);
   check(line.textContent === 'Spotify · ▶ Song — A, B · 1:01 / 3:20 · Mac · 🔊 40 · 1 秒前', `播放列(中文):「${line.textContent}」`);
+  if (typeof CustomEvent === 'function') check(globalThis.document.events?.at(-1) === 'capy:now', `render 後要廣播 capy:now(歌曲 wiki 頁聽它):${globalThis.document.events}`);
   player.render({ provider: 'apple' });
   check(line.textContent === 'Apple Music:目前沒有播放內容', `播放列沒在播(中文):「${line.textContent}」`);
   // 待套用(exit 2、訊息提到 --yes)的補一句:中文接全形括號、英文值開頭是空白(接在訊息後面),兩邊都釘住。
