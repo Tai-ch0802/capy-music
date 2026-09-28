@@ -272,6 +272,15 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	}
 }
 
+// TestTUIPinnedStillPinsWatch:TUI 自己被 capy --provider apple 釘住時,命令列打的 now --watch 照舊附加(決策 58:只有沒釘住時
+// 才讓 watch 自己跟隨)——不然從釘住的介面開出來的 watch 會跑去看別家。
+func TestTUIPinnedStillPinsWatch(t *testing.T) {
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", testTracker(t, "apple", &watchFake{}), watchPollSpotify)
+	if got := m.withProviderFlag([]string{"now", "--watch"}); !slices.Equal(got, []string{"now", "--watch", "--provider", "apple"}) {
+		t.Errorf("釘住的介面照舊附加:%q", got)
+	}
+}
+
 // TestTUISwitchDropsThePreviousPlatformsTrack:【review】換到一家正在出錯(或限流)的平台時,上一家的曲目不能留在狀態列上——
 // 出錯與限流的分支不動 st,留下來的話 ←→ 會拿 Apple 的進度去 seek Spotify。
 func TestTUISwitchDropsThePreviousPlatformsTrack(t *testing.T) {

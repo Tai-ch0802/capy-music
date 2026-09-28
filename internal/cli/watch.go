@@ -42,10 +42,11 @@ type watchModel struct {
 	width    int
 	bar      progress.Model
 	st       *provider.PlaybackState
-	err      error // 最近一次的狀態或錯誤(顯示在底部,繼續輪詢)
-	fails    int   // 連續失敗:只算真的問到的(快取裡的同一則錯誤不重複算)
-	fatal    error // 連續失敗達上限,或沒有任何平台建得起來:離開並回錯
-	ctrlC    bool  // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
+	err      error  // 最近一次的狀態或錯誤(顯示在底部,繼續輪詢)
+	note     string // 等太久時的「等待平台回應」:蓋過 err 那一行,結果一回來就清掉(不跟失敗次數掛在一起)
+	fails    int    // 連續失敗:只算真的問到的(快取裡的同一則錯誤不重複算)
+	fatal    error  // 連續失敗達上限,或沒有任何平台建得起來:離開並回錯
+	ctrlC    bool   // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
 }
 
 func newWatchModel(ctx context.Context, trk *nowTracker, pin, provID string, interval time.Duration) watchModel {
@@ -116,18 +117,19 @@ func (m watchModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.slow { // 等太久:先說一聲,接著等同一個結果(過期的也要等:可能是控制指令自己的錯,或要再丟的 panic)
 		if !stale {
-			m.err = i18n.Errorf("tui.status.waiting")
+			m.note = i18n.T("tui.status.waiting")
 		}
 		pending := msg.pending
 		return m, func() tea.Msg { return (<-pending).repanic() }
 	}
 	if msg.fromCtl && msg.err != nil { // 使用者剛按的鍵失敗了:即使期間又按了一次而變成 stale 也要說;不計入 fails
-		m.err = msg.err
+		m.err, m.note = msg.err, ""
 		return m, tick()
 	}
 	if stale {
 		return m, nil
 	}
+	m.note = ""
 	if msg.dropped {
 		return m, tick()
 	}
@@ -197,9 +199,12 @@ func (m watchModel) View() tea.View {
 			line(dev)
 		}
 	}
-	if m.err != nil && m.fails == 0 {
+	switch {
+	case m.note != "":
+		line("⚠ " + m.note)
+	case m.err != nil && m.fails == 0:
 		line("⚠ " + m.err.Error())
-	} else if m.err != nil {
+	case m.err != nil:
 		line(i18n.T("watch.error_attempt", "err", m.err, "attempt", m.fails))
 	}
 	line(i18n.T("watch.keys"))

@@ -394,10 +394,11 @@ func TestWatchRateLimitCooldownIsTheTrackers(t *testing.T) {
 // TestWatchSlowRoundSaysWaiting:建平台卡在 token 鎖或 keychain 對話框時,畫面先說在等,結果回來照常套用(限等不限做)。
 func TestWatchSlowRoundSaysWaiting(t *testing.T) {
 	m := newTestWatch(t, &watchFake{}, "")
+	m.err, m.fails = errors.New("timeout"), 2 // 之前失敗過:「等待」不是第 3 次失敗,不帶次數
 	pending := make(chan tuiStateMsg, 1)
 	m, cmd := feed(m, tuiStateMsg{slow: true, pending: pending})
-	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "等待平台回應") {
-		t.Errorf("等太久要說一聲:\n%s", v)
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "⚠ 等待平台回應…\n") {
+		t.Errorf("等太久要說一聲、不帶失敗次數:\n%s", v)
 	}
 	pending <- tuiStateMsg{st: playingState(), gen: m.gen}
 	msg, ok := runCmd(cmd).(tuiStateMsg)
@@ -405,8 +406,8 @@ func TestWatchSlowRoundSaysWaiting(t *testing.T) {
 		t.Fatalf("要接著等同一個結果:%#v", msg)
 	}
 	next, _ := m.Update(msg)
-	if m = next.(watchModel); m.st == nil || m.err != nil {
-		t.Errorf("結果回來要照常套用:%#v %v", m.st, m.err)
+	if m = next.(watchModel); m.st == nil || m.err != nil || m.note != "" {
+		t.Errorf("結果回來要照常套用、清掉「等待」:%#v %v %q", m.st, m.err, m.note)
 	}
 }
 
