@@ -3,15 +3,18 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
 
 // 純快取的兩張表(原本的 config.Dir()/cache.json,UX 計畫 R3 併進來):各 provider 的播放清單與最近項目。
-// 順序存 position、讀回依 position——「最新在前、去重、上限 50」的規則留在 internal/cache 的記憶體邏輯裡,不在 SQL 重做。
+// 順序存 position、讀回依 position。「最新在前、去重、上限 50」的規則在 internal/cache 的記憶體邏輯與 ApplyCache 的
+// SQL 各有一份:記憶體那份給呼叫端讀 c.Recent,SQL 那份才是寫進去的(兩者由 internal/cache 的測試釘成一樣)。
 
 type ProviderPlaylist struct {
 	ID    string
@@ -28,33 +31,61 @@ type Recent struct {
 	Detail   string
 }
 
-// SaveCache 整批取代兩張表(一筆交易)。
-func (s *Store) SaveCache(pls map[string][]ProviderPlaylist, recent []Recent) (err error) {
+// CacheDelta:一個行程這次對快取做的改動(internal/cache 記下來的)。只寫這些、不整批取代:兩個 capy 同時存時,
+// 整批取代會蓋掉對方剛寫的、把剛清掉的最近項目寫回來,也會把剛登出的平台的列從一份登出前讀到的快取寫回去。
+type CacheDelta struct {
+	ClearRecent bool                          // 先清空最近項目(history clear)
+	Playlists   map[string][]ProviderPlaylist // 這幾家的清單整個換掉(切片是空的 = 那一家清空)
+	Recent      []Recent                      // 依呼叫順序加到最前,同 provider+type+id 的舊列拿掉
+	MaxRecent   int                           // 加完之後最近項目最多留幾筆;0 = 不剪(不是剪光)
+}
+
+// ApplyCache 在一筆交易裡套用 d,回傳 ClearRecent 刪掉幾列。
+// 交易的第一句一定要是寫入:deferred 交易先讀再寫的話,升級成寫鎖那一步 SQLite 不走 busy handler,另一個 capy 正在寫時
+// 立刻回 SQLITE_BUSY(量過:4–7 µs),busy_timeout 形同虛設;第一句就寫,才會照 busy_timeout 等對方寫完。
+// 所以順序是:清空 → 換清單 → 逐筆加最近項目(每筆先 DELETE 重複的那一列)→ 修剪到上限。
+func (s *Store) ApplyCache(d CacheDelta) (cleared int64, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() {
 		if err != nil {
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err = tx.Exec("DELETE FROM provider_playlists; DELETE FROM recent;"); err != nil {
-		return err
+	if d.ClearRecent {
+		res, err := tx.Exec("DELETE FROM recent")
+		if err != nil {
+			return 0, err
+		}
+		cleared, _ = res.RowsAffected()
 	}
-	for prov, list := range pls {
-		for i, p := range list {
+	for _, prov := range slices.Sorted(maps.Keys(d.Playlists)) {
+		if _, err = tx.Exec("DELETE FROM provider_playlists WHERE provider = ?", prov); err != nil {
+			return 0, err
+		}
+		for i, p := range d.Playlists[prov] {
 			if _, err = tx.Exec("INSERT INTO provider_playlists (provider, position, id, name, total) VALUES (?, ?, ?, ?, ?)", prov, i, p.ID, p.Name, p.Total); err != nil {
-				return err
+				return 0, err
 			}
 		}
 	}
-	for i, r := range recent {
-		if _, err = tx.Exec("INSERT INTO recent (position, at, provider, type, id, label, detail) VALUES (?, ?, ?, ?, ?, ?, ?)", i, r.At, r.Provider, r.Type, r.ID, r.Label, r.Detail); err != nil {
-			return err
+	for _, r := range d.Recent { // 最新的放在目前最小的 position 前面:依呼叫順序,最後加的在最前
+		if _, err = tx.Exec("DELETE FROM recent WHERE provider = ? AND type = ? AND id = ?", r.Provider, r.Type, r.ID); err != nil {
+			return 0, err
+		}
+		if _, err = tx.Exec("INSERT INTO recent (position, at, provider, type, id, label, detail) SELECT COALESCE(MIN(position), 0) - 1, ?, ?, ?, ?, ?, ? FROM recent",
+			r.At, r.Provider, r.Type, r.ID, r.Label, r.Detail); err != nil {
+			return 0, err
 		}
 	}
-	return tx.Commit()
+	if len(d.Recent) > 0 && d.MaxRecent > 0 {
+		if _, err = tx.Exec("DELETE FROM recent WHERE position NOT IN (SELECT position FROM recent ORDER BY position LIMIT ?)", d.MaxRecent); err != nil {
+			return 0, err
+		}
+	}
+	return cleared, tx.Commit()
 }
 
 // LoadCache 讀回兩張表;沒有資料時 map 為空、recent 為 nil。

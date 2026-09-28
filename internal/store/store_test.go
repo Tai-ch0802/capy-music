@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -282,19 +283,91 @@ func TestCacheTablesRoundTrip(t *testing.T) {
 	}
 	defer s.Close()
 	pls := map[string][]ProviderPlaylist{"spotify": {{ID: "p2", Name: "後", Total: 1}, {ID: "p1", Name: "前", Total: 2}}}
-	rec := []Recent{{At: 1, Provider: "spotify", Type: "track", ID: "b"}, {At: 9, Provider: "spotify", Type: "track", ID: "a", Detail: "d"}} // at 與 position 反向
-	if err := s.SaveCache(pls, rec); err != nil {
+	rec := []Recent{{At: 9, Provider: "spotify", Type: "track", ID: "a", Detail: "d"}, {At: 1, Provider: "spotify", Type: "track", ID: "b"}} // at 與加入順序反向
+	if _, err := s.ApplyCache(CacheDelta{Playlists: pls, Recent: rec, MaxRecent: 50}); err != nil {
 		t.Fatal(err)
 	}
 	gotPls, gotRec, err := s.LoadCache()
 	if err != nil || gotPls["spotify"][0].ID != "p2" || gotPls["spotify"][1].ID != "p1" || len(gotRec) != 2 || gotRec[0].ID != "b" || gotRec[1].Detail != "d" {
-		t.Fatalf("順序要照存入的 position:%v %v %v", err, gotPls, gotRec)
+		t.Fatalf("清單照給的順序、最近項目後加的在前(不看 at):%v %v %v", err, gotPls, gotRec)
 	}
-	if err := s.SaveCache(nil, nil); err != nil {
-		t.Fatal(err)
+	n, err := s.ApplyCache(CacheDelta{ClearRecent: true, Playlists: map[string][]ProviderPlaylist{"spotify": nil}})
+	if err != nil || n != 2 {
+		t.Fatalf("清空要回刪掉幾筆:%d %v", n, err)
 	}
 	if gotPls, gotRec, _ = s.LoadCache(); len(gotPls) != 0 || gotRec != nil {
-		t.Fatalf("SaveCache 是取代:%v %v", gotPls, gotRec)
+		t.Fatalf("清單給空的 = 那一家清空;最近項目清空:%v %v", gotPls, gotRec)
+	}
+}
+
+// TestApplyCacheDedupesAndTrims:加最近項目時同 provider+type+id 的舊列拿掉、超過上限剪掉最舊的;沒超過上限一筆都不剪
+// (LIMIT 寫錯會多剪),上限 0 不剪光。
+func TestApplyCacheDedupesAndTrims(t *testing.T) {
+	s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	add := func(max int, ids ...string) []string {
+		t.Helper()
+		var rec []Recent
+		for _, id := range ids {
+			rec = append(rec, Recent{Provider: "spotify", Type: "track", ID: id})
+		}
+		if _, err := s.ApplyCache(CacheDelta{Recent: rec, MaxRecent: max}); err != nil {
+			t.Fatal(err)
+		}
+		_, got, _ := s.LoadCache()
+		var out []string
+		for _, r := range got {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	if got := add(3, "a", "b"); !slices.Equal(got, []string{"b", "a"}) {
+		t.Errorf("沒超過上限不剪:%v", got)
+	}
+	if got := add(3, "c", "d", "b"); !slices.Equal(got, []string{"b", "d", "c"}) {
+		t.Errorf("重複的移到最前、超過上限剪最舊的:%v", got)
+	}
+	if got := add(0, "e"); !slices.Equal(got, []string{"e", "b", "d", "c"}) {
+		t.Errorf("上限是 0 = 不剪,不是剪光:%v", got)
+	}
+}
+
+// TestApplyCacheWaitsForAnotherWriter:另一個 capy 正拿著寫鎖時,要照 busy_timeout 等它寫完再寫,不是立刻 SQLITE_BUSY。
+// 交易的第一句是寫入才會這樣;第一句若是讀,升級寫鎖那一步 SQLite 不走 busy handler(見 ApplyCache 的註解)。
+func TestApplyCacheWaitsForAnotherWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	a, err := OpenAt(path, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := OpenAt(path, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	tx, err := a.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("DELETE FROM recent"); err != nil { // A 拿著寫鎖
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	time.AfterFunc(150*time.Millisecond, func() { done <- tx.Commit() })
+	start := time.Now()
+	_, err = b.ApplyCache(CacheDelta{Recent: []Recent{{Provider: "spotify", Type: "query", ID: "q"}}, MaxRecent: 50})
+	if err != nil || time.Since(start) < 100*time.Millisecond {
+		t.Errorf("要等對方寫完再寫(%v 後):%v", time.Since(start), err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, got, _ := b.LoadCache(); len(got) != 1 {
+		t.Errorf("等完之後要寫進去:%v", got)
 	}
 }
 
