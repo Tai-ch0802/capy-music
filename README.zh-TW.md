@@ -117,7 +117,7 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 |---|---|
 | `spotify.state` | `ok` 已登入 / `missing` 沒登入 / `keychain_error` 讀不到 keychain(要處理,不是沒登入) |
 | `spotify.client_id` | `set` / `missing` / `malformed`(config 裡的不是 32 碼十六進位) |
-| `spotify.refresh_token_expiry` | Spotify 的登入大約何時失效:Spotify 的登入從登入那一刻起六個月失效、refresh 不會延長,所以 capy 從你上一次 `capy auth login spotify` 起算 180 天。不知道的時候(用舊版登入的)不印。`capy auth status` 與 `capy doctor` 在到期前 10 天開始叫你重新登入 |
+| `spotify.refresh_token_expiry` | Spotify 的登入大約何時失效:Spotify 的登入從登入那一刻起六個月失效、refresh 不會延長,所以 capy 從你上一次 `capy auth login spotify` 起算 180 天。不知道的時候(用舊版登入的)不印。`capy auth status`、`capy doctor` 與 `capy --web` 的帳號頁在到期前 10 天開始叫你重新登入(帳號頁平常也會顯示大約哪一天失效) |
 | `google.state` | `ok` / `missing` / `keychain_error` |
 | `google.client` | `config` 自建 client / `builtin` release 內建 / `none` 還沒有 |
 | `google.access_token_expiry` | 存著的 access token 何時到期;capy 會自己換發,**不是登入的期限** |

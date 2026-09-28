@@ -41,12 +41,34 @@ function localTime(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// SPOTIFY_RENEW_WARN_DAYS:剩這麼多天以內就叫人重新連接(= auth.SpotifyRenewWarn,auth_status_json_test.go 釘住)。
+const SPOTIFY_RENEW_WARN_DAYS = 10;
+const DAY = 24 * 60 * 60 * 1000;
+
+// spotifyRenewal:Spotify 的登入約何時失效(決策 56:refresh token 從登入起六個月失效、refresh 不延長,capy 從上一次登入算 180 天)
+// → { text, warn };沒登入(state 不是 ok)回 null。說法與門檻同 auth status 的文字版:剩的時間在 SPOTIFY_RENEW_WARN_DAYS 天以內
+// 就提醒(比的是時間長度,不是天數),過了說大概已失效;天數無條件進位(剩 10 天又 1 小時 = 剩 11 天、不提醒)。
+// 沒有 refresh_token_expiry = 不知道(這個版本之前登入的)。日期用這台電腦的時區、只到日。
+export function spotifyRenewal(st, now = Date.now()) {
+  if (st?.state !== 'ok') return null;
+  const button = t('webui.account.reconnect');
+  const exp = new Date(st.refresh_token_expiry || '').getTime();
+  if (Number.isNaN(exp)) return { text: t('webui.account.detail.spotify_renew_unknown', { button }), warn: false };
+  const left = exp - now;
+  const date = localTime(st.refresh_token_expiry).slice(0, 10);
+  if (left <= 0) return { text: t('webui.account.detail.spotify_renew_expired', { date, button }), warn: true };
+  const count = Math.ceil(left / DAY);
+  if (left <= SPOTIFY_RENEW_WARN_DAYS * DAY) return { text: t('webui.account.detail.spotify_renew_soon', { date, count, button }), warn: true };
+  return { text: t('webui.account.detail.spotify_renew_by', { date, count }), warn: false };
+}
+
 // details:auth status --json 的事實 → 給人看、跟著語系的句子;沒有的事實不畫。JSON 的欄名與列舉值是給腳本的,不上畫面;
 // 也沒有任何 token 值可畫(--json 本來就沒有,auth_status_json_test.go)。Google 的 client 來源、access token 到期
 // (會自動換發)與 device_id 對使用者沒有意義,不列。
 // 不用 switch:TestWebAccountPageKeysOnAuthStatusJSON 把這個檔的每個 case '…' 都當成 state 的值核對。
 const details = {
   spotify: (st) => [
+    spotifyRenewal(st)?.text,
     st.client_id === 'set' && t('webui.account.detail.client_id_set'),
     st.client_id === 'malformed' && t('webui.account.detail.client_id_malformed'),
   ],
@@ -84,7 +106,9 @@ export function initAccount(root, api, con, notice) {
       return;
     }
     for (const p of providerRows()) {
-      const st = stateOf(p.id, parsed[p.id]);
+      let st = stateOf(p.id, parsed[p.id]);
+      // 快到期或大概已失效:那一列標成要處理(stateOf 不動:搬家精靈的平台卡片也用它,那裡只管連上了沒有)
+      if (p.id === 'spotify' && spotifyRenewal(parsed.spotify)?.warn) st = { ...st, mark: '⚠', kind: 'warn' };
       const row = el('div', 'acct');
       row.dataset.state = st.kind;
       row.appendChild(el('span', 'acct__name', p.label));
