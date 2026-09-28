@@ -203,6 +203,20 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 
 /* ── 表格 ── */
 .tbl-wrap { overflow: auto; max-width: 100%; border: 1px solid var(--line); border-radius: var(--r); }
+/* 歌曲 wiki(決策 59):正在播的那一行、手打歌名的表單、就地的 setup 表單、逐行畫出來的正文 */
+.wiki__now { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.wiki__now-label { color: var(--muted); font-size: var(--t-14); }
+.wiki__now-line { color: var(--text-hi); font-weight: 600; }
+.wiki__prompts:empty { display: none; }
+.wiki__prompts { margin: 1rem 0; }
+.wiki__status { color: var(--muted); font-size: var(--t-14); min-height: 1.4em; margin: .5rem 0; }
+.wiki__out { max-width: 44em; line-height: 1.75; }
+.wiki__h { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 1.5rem 0 .5rem; }
+.wiki__p { margin: .5rem 0; overflow-wrap: anywhere; }
+.wiki__list { margin: .5rem 0 .5rem 1.25rem; padding: 0; }
+.wiki__list li { margin: .25rem 0; }
+.wiki__link { overflow-wrap: anywhere; }
+.wiki__actions { margin-top: 1rem; }
 .tbl-wrap--tall { max-height: 60vh; }
 .tbl-wrap--tall thead th { position: sticky; top: 0; background: var(--surface); }
 .tbl { border-collapse: collapse; font-size: var(--t-14); width: 100%; }

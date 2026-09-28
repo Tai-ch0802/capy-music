@@ -1483,6 +1483,28 @@ await scenario('16', async () => {
     `Ctrl+Enter 送出、多行原樣:${JSON.stringify(sent?.value)}`);
 });
 
+// 17. 歌曲 wiki 頁的渲染器(決策 59):stdout 事件切在行中間也要湊成整行;"## " 標題、"- " 清單、**粗體**、空行分段;
+//     連結只認 https(javascript: / http: 不成連結);全部是 createElement / textContent。
+await scenario('17', async () => {
+  const { lineSplitter, wikiRenderer } = await import('./pages/wiki.mjs');
+  const lines = [];
+  const sp = lineSplitter((l) => lines.push(l));
+  sp.push('## Ba'); sp.push('sics\nThe so'); sp.push('ng\n\n- one\n'); sp.push('tail'); sp.end();
+  check(JSON.stringify(lines) === JSON.stringify(['## Basics', 'The song', '', '- one', 'tail']), `切在行中間也要湊成整行:${JSON.stringify(lines)}`);
+  const out = mk();
+  const r = wikiRenderer(out);
+  for (const l of ['## 基本資料', '1997 年,**五月天** 的歌。', '- 一', '- 二', '', '- 三', 'MV: https://www.youtube.com/results?search_query=x。 javascript:alert(1) http://plain']) r.line(l);
+  const kinds = out.children.map((c) => c.tagName);
+  check(JSON.stringify(kinds) === JSON.stringify(['H3', 'P', 'UL', 'UL', 'P']), `節點形狀(空行結束清單):${JSON.stringify(kinds)}`);
+  check(out.children[0].textContent === '基本資料', `標題去掉 ## :${out.children[0].textContent}`);
+  const strong = find(out.children[1], 'strong');
+  check(strong?.textContent === '五月天' && out.children[1].textContent === '1997 年,五月天 的歌。', `粗體:${out.children[1].textContent}`);
+  check(out.children[2].children.length === 2 && out.children[3].children.length === 1, '清單項數');
+  const links = allByClass(out, 'wiki__link');
+  check(links.length === 1 && links[0].href === 'https://www.youtube.com/results?search_query=x' && links[0].target === '_blank' && links[0].rel === 'noopener noreferrer',
+    `只有 https 成連結、句尾的全形句號不算進網址:${links.map((a) => a.href)}`);
+  check(out.children[4].textContent === 'MV: https://www.youtube.com/results?search_query=x。 javascript:alert(1) http://plain', `其餘照原文:${out.children[4].textContent}`);
+});
 flush();
 if (failures.length) {
   say(`${failures.length} 條不成立`);

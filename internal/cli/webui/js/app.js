@@ -10,6 +10,7 @@ import { initSync } from './pages/sync.js';
 import { initAccount } from './pages/account.js';
 import { initDoctor } from './pages/doctor.js';
 import { initMove } from './pages/move.js';
+import { initWiki } from './pages/wiki.js';
 
 export const api = {
   token: '',
@@ -102,10 +103,10 @@ input.addEventListener('keydown', (ev) => {
 runBtn.addEventListener('click', submit);
 document.addEventListener('capy:busy', () => notice(busyHint())); // 頁面按鈕在執行中被按(common.js btn)
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
-// ── 路由:八頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–8;
-// 預設落在搬家(決策 45),後三頁收在「進階」。
+// ── 路由:九頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–9;
+// 預設落在搬家(決策 45),後三頁收在「進階」;歌曲 wiki(決策 59)在搜尋之後。
 const providers = { list: ['spotify', 'apple', 'local'], current: 'spotify' };
-const PAGES = ['move', 'playlists', 'sync', 'search', 'account', 'console', 'isrc', 'doctor'];
+const PAGES = ['move', 'playlists', 'sync', 'search', 'wiki', 'account', 'console', 'isrc', 'doctor'];
 const ADVANCED = ['console', 'isrc', 'doctor'];
 const ready = new Set();
 let isrcPage = null;
@@ -137,6 +138,7 @@ function route() {
     else if (name === 'search') initSearch(...args);
     else if (name === 'playlists') initPlaylists(...args);
     else if (name === 'sync') initSync(...args);
+    else if (name === 'wiki') initWiki(...args, player);
     else if (name === 'account') initAccount(...args);
     else if (name === 'doctor') initDoctor(...args);
     else if (name === 'isrc') isrcPage = initISRC(root, api, arg);
