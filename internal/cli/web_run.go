@@ -150,7 +150,7 @@ func webCommands(root *cobra.Command) []webCommand {
 	return out
 }
 
-// webDenyTokens:純字串 deny,鎖前、比對 args 每個 token(等於、或以它加 = 開頭)。五個都是 String / Bool 無短旗標。
+// webDenyTokens:純字串 deny,鎖前、比對 args 每個 token(等於、或以它加 = 開頭)。全部都是 String / StringArray / Bool 而且沒有短旗標。
 // 不擋的話 start 事件回顯 args 就把 secret 送進頁面歷史。值是 i18n.Errorf:package 層級在 init 就建好,印出時才翻。
 var webDenyTokens = map[string]error{
 	"--auto":            i18n.Errorf("web.deny.auto"),
@@ -158,6 +158,8 @@ var webDenyTokens = map[string]error{
 	"--client-secret":   i18n.Errorf("web.deny.client_secret"),
 	"--developer-token": i18n.Errorf("web.deny.token"),
 	"--user-token":      i18n.Errorf("web.deny.token"),
+	"--api-key":         i18n.Errorf("web.deny.api_key"), // wiki setup(決策 59):金鑰與自訂標頭走精靈的 Secret 欄
+	"--header":          i18n.Errorf("web.deny.header"),
 }
 
 func webDenied(args []string) string {
@@ -243,7 +245,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	defer stop()
 	job := &webJob{id: strconv.FormatUint(s.seq.Add(1), 10), ctx: jobCtx, cancel: cancel, sse: sse,
 		answers: make(chan webAnswer, 1), promptTimeout: webPromptTimeout}
-	if strings.HasPrefix(path, "capy auth login") {
+	if strings.HasPrefix(path, "capy auth login") || path == "capy wiki setup" { // wiki setup 同理:去 Cloudflare dashboard 抄 service token
 		// 5 分鐘對「開 DevTools 抄兩個 token」不夠,但「完全沒有上限」的代價是:分頁被放生就永久占住單一序列槽,
 		// 之後每個命令都 409 且永遠不會自己好(auth login 不取 pull.lock,所以只卡 web 自己)。給寬鬆但有限的上限。
 		job.promptTimeout = webAuthPromptTimeout

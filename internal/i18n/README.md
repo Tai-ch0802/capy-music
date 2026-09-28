@@ -104,3 +104,6 @@ Use one English term per concept so messages stay consistent.
 | 網頁介面 | web UI | `capy --web` |
 | 授權、登入 | authorization, log in | |
 | 憑證 | credentials | |
+| 歌曲 wiki | song wiki | `capy wiki`; the feature name is lowercase "song wiki" in running text |
+| 母語 | native language | the `native_language` setting; "interface language" is the `language` setting |
+| AI 端點 | AI endpoint | the user's own OpenAI-compatible endpoint (`capy wiki setup`); never "our AI" |

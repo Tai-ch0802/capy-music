@@ -101,6 +101,21 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 
 不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。`capy auth logout spotify` / `apple` 也會刪掉這台電腦快取裡那個平台的清單列表、最近項目(補全與 `play --pick` 用的)與同步記下的清單曲目(Spotify 清單沒變就不必每輪重讀;最多用一週),本機資料庫的舊檔也一起清(Spotify 的 Developer Policy 要求你中斷連線時,應用程式要刪掉你的資料)。你自己 Google Drive 裡的清單正本與它在這台電腦上的鏡像不動:那是你的資料,放在你自己的空間。
 
+## 歌曲 wiki(選用):接上你自己的 AI 端點
+
+`capy wiki` 會用你的母語介紹正在播的歌——它從哪裡來、歌詞在說什麼、還有什麼值得一聽——再附一個 YouTube 的 MV 搜尋連結。寫的是你自己帶來的 AI 端點:capy 自己沒有端點、不替你保管金鑰,在你接上端點之前不會把任何東西送到任何地方。(這一版先有設定;`capy wiki` 命令本身與網頁的那一頁接著來。)
+
+```bash
+capy wiki setup                                   # 精靈:base URL、API key、自訂標頭、母語 → 再從端點列出的模型裡挑一個
+capy wiki setup --base-url https://api.openai.com/v1 --model <模型> --api-key <金鑰>   # 非互動;--header "Name: value"(可重複)、--native-language ja
+capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);沒設 = 跟介面語言
+```
+
+- **任何 OpenAI 相容端點**(`/chat/completions`):OpenAI 本身、LiteLLM 或 OpenRouter 這類 gateway、或這台電腦上的 Ollama(`http://localhost:11434/v1`,不用金鑰)。設定時會列出端點的模型(`GET /models`);沒有這個清單的端點改用一個 token 的測試請求確認。
+- **端點在 Cloudflare Access 之類的門後面?** 把它要求的標頭加上去,一行一個 `Name: value`(例如 `CF-Access-Client-Id` / `CF-Access-Client-Secret`);每個請求都會帶,包括設定時的檢查。你自己寫的標頭優先,所以寫一行 `Authorization:` 就會取代 Bearer 金鑰。
+- **送出什麼,而且只在你執行 `capy wiki` 時**:那首歌的歌名、歌手、專輯、發行日期、曲風。其他都不送——沒有帳號、沒有清單。端點是你自己選的服務,適用它自己的政策;見[隱私權政策](https://capy.taislife.work/privacy)。
+- **東西放哪**:base URL、模型、母語在 `config.json`(`capy config set ai_base_url` / `ai_model` / `native_language`);API key 與自訂標頭只在 OS keychain(標頭最多 2 KB)。明文 `http:` 打到別台電腦會警告(金鑰會不加密地走網路);`localhost` 不會。在網頁裡 `capy wiki setup` 是一張表單,金鑰與標頭欄位不會出現在事件或 log 裡,`--api-key` / `--header` 在網頁一律拒絕。
+
 ## 登入狀態給腳本讀:`capy auth status --json`
 
 `capy auth status` 是給人看的(跟著語系);腳本請用 `--json`。欄位只增不改,列舉值是固定的英文、**永不翻譯**;時間是 UTC 的 RFC 3339;沒有值的欄位不印。**輸出絕不含任何 token 或 secret 的值**,client ID 也只給來源(`internal/cli/auth_status_json_test.go` 把每一種憑證種成哨兵值、斷言它們不出現)。
@@ -322,7 +337,7 @@ capy completion powershell | Out-String | Invoke-Expression
 
 ## 憑證與資料
 
-你的憑證只存 OS keychain(macOS Keychain / Windows Credential Manager),不進設定檔、不上雲。唯一例外是專案自己的 Google client:Releases 的 binary 把它編在裡面(`strings capy` 讀得到,散佈給使用者的原生 app 本來就藏不住,RFC 8252 §8.5),那是 app 自身的識別,不是任何人的帳號憑證。架構、平台約束與開發階段見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+你的憑證(以及你自己設定的 AI 端點的 API key 與自訂標頭)只存 OS keychain(macOS Keychain / Windows Credential Manager),不進設定檔、不上雲。唯一例外是專案自己的 Google client:Releases 的 binary 把它編在裡面(`strings capy` 讀得到,散佈給使用者的原生 app 本來就藏不住,RFC 8252 §8.5),那是 app 自身的識別,不是任何人的帳號憑證。架構、平台約束與開發階段見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 發版(維護者)
 

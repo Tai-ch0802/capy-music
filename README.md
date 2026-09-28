@@ -101,6 +101,21 @@ After `capy auth login google`, your playlists sync to the app data folder in yo
 
 Either way, `--client-id` / `--client-secret` always override the built-in values. Your own client's secret goes only into the OS keychain. `capy auth status` shows the email of the Google account you're logged in with and this device's `device_id`; `capy auth logout google` deletes the token and your own client's secret. `capy auth logout spotify` / `apple` also deletes that platform's playlist list, recent items (the ones used for completion and `play --pick`) and the playlist tracks remembered for sync (so an unchanged Spotify playlist isn't re-read every round; used for a week at most) cached on this computer, including in older copies of the local database (Spotify's Developer Policy asks apps to delete your data when you disconnect). The playlist master copies in your own Google Drive, and this computer's mirror of them, stay: they're your data, in your own storage.
 
+## Song wiki (optional): bring your own AI endpoint
+
+`capy wiki` will explain the song that's playing in your native language — where it came from, what the lyrics say, what else to listen to — plus a YouTube search link for the MV. The writing is done by an AI endpoint you bring yourself: capy has none of its own, holds no key for you, and sends nothing anywhere until you connect one. (This release ships the setup; the `capy wiki` command and its web page follow.)
+
+```bash
+capy wiki setup                                   # wizard: base URL, API key, custom headers, native language → then pick a model from what the endpoint offers
+capy wiki setup --base-url https://api.openai.com/v1 --model <model> --api-key <key>   # non-interactive; --header "Name: value" (repeatable), --native-language ja
+capy config set native_language ja                # BCP 47 (ja, zh-TW, pt-BR); unset = the interface language
+```
+
+- **Any OpenAI-compatible endpoint** (`/chat/completions`): OpenAI itself, a gateway such as LiteLLM or OpenRouter, or Ollama on this computer (`http://localhost:11434/v1`, no key needed). The setup lists the endpoint's models (`GET /models`); an endpoint without that list is checked with a one-token test request instead.
+- **Behind Cloudflare Access or a similar gate?** Add the headers it requires, one per line as `Name: value` (for example `CF-Access-Client-Id` / `CF-Access-Client-Secret`); they go with every request, including the setup check. A header you write yourself wins over the derived ones, so an `Authorization:` line replaces the Bearer key.
+- **What is sent, and only when you run `capy wiki`:** the song's title, artist, album, release date and genre. Nothing else — no account, no playlists. The endpoint is a service you chose, under its own policy; see the [privacy policy](https://capy.taislife.work/en/privacy).
+- **Where things live:** the base URL, model and native language in `config.json` (`capy config set ai_base_url` / `ai_model` / `native_language`); the API key and custom headers only in the OS keychain (at most 2 KB of headers). Plain `http:` to another computer gets a warning, because the key would travel unencrypted; `localhost` doesn't. In the web UI, `capy wiki setup` runs as a form whose key and header fields never appear in events or logs, and `--api-key` / `--header` are refused there.
+
 ## Login status for scripts: `capy auth status --json`
 
 `capy auth status` is for people (it follows the interface language); scripts should use `--json`. Fields are only ever added, never changed; enum values are fixed English strings and **never translated**; times are UTC in RFC 3339; fields without a value are left out. **The output never contains the value of any token or secret**, and the client ID is reported only by status or source (`internal/cli/auth_status_json_test.go` seeds every kind of credential with sentinel values and asserts that none of them appear).
@@ -321,7 +336,7 @@ Candidates come only from the local cache (`state.db`, no network): playlist nam
 
 ## Credentials and data
 
-Your credentials are stored only in the OS keychain (macOS Keychain / Windows Credential Manager), never in config files or the cloud. The one exception is the project's own Google client: release binaries have it compiled in (`strings capy` can read it; a native app distributed to users can't hide it anyway, RFC 8252 §8.5). That's the app's own identity, not anyone's account credentials. For the architecture, platform constraints and development phases, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in Traditional Chinese).
+Your credentials — and, if you set one up, your AI endpoint's API key and custom headers — are stored only in the OS keychain (macOS Keychain / Windows Credential Manager), never in config files or the cloud. The one exception is the project's own Google client: release binaries have it compiled in (`strings capy` can read it; a native app distributed to users can't hide it anyway, RFC 8252 §8.5). That's the app's own identity, not anyone's account credentials. For the architecture, platform constraints and development phases, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in Traditional Chinese).
 
 ## Releasing (maintainers)
 
