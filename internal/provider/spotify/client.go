@@ -337,7 +337,9 @@ func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]prov
 			out = append(out, items[i].toTrack())
 		}
 	}
-	if len(out) == 0 && len(items) > 0 { // 有結果、卻沒有一首是這一位的:同名(或名字相近)的別人佔滿了搜尋結果
+	// 有結果、卻沒有一首是這一位的:同名(或名字相近)的別人佔滿了搜尋結果。只看了前 searchPageMax 筆——這一位的歌排在更後面的話
+	// 也會走到這裡(多抓幾頁要多打 Spotify,2026-09-28 使用者選了照實說,沒做)。
+	if len(out) == 0 && len(items) > 0 {
 		return nil, provider.ErrOnlyNamesakes
 	}
 	return out, nil
