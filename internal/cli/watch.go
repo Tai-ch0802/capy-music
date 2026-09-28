@@ -23,8 +23,7 @@ import (
 
 const (
 	watchMaxFails     = 5
-	watchPollSpotify  = 2 * time.Second // 畫面每 2 秒問一輪;真的打 Spotify 幾次看 tracker 的有效期(在播最多 10 s、閒置 15 s)
-	watchPollApple    = 2 * time.Second
+	watchPollSpotify  = 2 * time.Second // 畫面每 2 秒問一輪(每一家都一樣);真的打 Spotify 幾次看 tracker 的有效期(在播最多 10 s、閒置 15 s)
 	watchDefaultWidth = 80
 )
 
