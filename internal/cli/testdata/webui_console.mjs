@@ -98,6 +98,7 @@ globalThis.document = {
   createTextNode: (t) => ({ textContent: t, children: [] }),
   querySelectorAll(sel) { return findAll(this.body, sel); },
   addEventListener() {}, // player.js 的 visibilitychange
+  dispatchEvent(ev) { (this.events ||= []).push(ev.type); return true; }, // player.js 每輪 render 後的 capy:now(歌曲 wiki 頁聽它)
 };
 globalThis.sessionStorage = { getItem() { return null; }, setItem() {} };
 let reloads = 0;
@@ -1102,6 +1103,7 @@ await scenario('13', async () => {
     track: { title: 'Song', artists: ['A', 'B'], duration_ms: 200000 }, device: { name: 'Mac', volume_known: true, volume_pct: 40 } };
   player.render(d);
   check(line.textContent === 'Spotify · ▶ Song — A, B · 1:01 / 3:20 · Mac · 🔊 40 · 1 秒前', `播放列(中文):「${line.textContent}」`);
+  if (typeof CustomEvent === 'function') check(globalThis.document.events?.at(-1) === 'capy:now', `render 後要廣播 capy:now(歌曲 wiki 頁聽它):${globalThis.document.events}`);
   player.render({ provider: 'apple' });
   check(line.textContent === 'Apple Music:目前沒有播放內容', `播放列沒在播(中文):「${line.textContent}」`);
   // 待套用(exit 2、訊息提到 --yes)的補一句:中文接全形括號、英文值開頭是空白(接在訊息後面),兩邊都釘住。
@@ -1483,6 +1485,60 @@ await scenario('16', async () => {
     `Ctrl+Enter 送出、多行原樣:${JSON.stringify(sent?.value)}`);
 });
 
+// 17. 歌曲 wiki 頁的渲染器(決策 59):stdout 事件切在行中間也要湊成整行;"## " 標題、"- " 清單、**粗體**、空行分段;
+//     連結只認 https(javascript: / http: 不成連結);全部是 createElement / textContent。
+await scenario('17', async () => {
+  const { lineSplitter, wikiRenderer } = await import('./pages/wiki.mjs');
+  const lines = [];
+  const sp = lineSplitter((l) => lines.push(l));
+  sp.push('## Ba'); sp.push('sics\nThe so'); sp.push('ng\n\n- one\n'); sp.push('tail'); sp.end();
+  check(JSON.stringify(lines) === JSON.stringify(['## Basics', 'The song', '', '- one', 'tail']), `切在行中間也要湊成整行:${JSON.stringify(lines)}`);
+  const out = mk();
+  const r = wikiRenderer(out);
+  for (const l of ['## 基本資料', '1997 年,**五月天** 的歌。', '- 一', '- 二', '', '- 三', 'MV: https://www.youtube.com/results?search_query=x。 javascript:alert(1) http://plain']) r.line(l);
+  const kinds = out.children.map((c) => c.tagName);
+  check(JSON.stringify(kinds) === JSON.stringify(['H3', 'P', 'UL', 'UL', 'P']), `節點形狀(空行結束清單):${JSON.stringify(kinds)}`);
+  check(out.children[0].textContent === '基本資料', `標題去掉 ## :${out.children[0].textContent}`);
+  const strong = find(out.children[1], 'strong');
+  check(strong?.textContent === '五月天' && out.children[1].textContent === '1997 年,五月天 的歌。', `粗體:${out.children[1].textContent}`);
+  check(out.children[2].children.length === 2 && out.children[3].children.length === 1, '清單項數');
+  const links = allByClass(out, 'wiki__link');
+  check(links.length === 1 && links[0].href === 'https://www.youtube.com/results?search_query=x' && links[0].target === '_blank' && links[0].rel === 'noopener noreferrer',
+    `只有 https 成連結、句尾的全形句號不算進網址:${links.map((a) => a.href)}`);
+  check(out.children[4].textContent === 'MV: https://www.youtube.com/results?search_query=x。 javascript:alert(1) http://plain', `其餘照原文:${out.children[4].textContent}`);
+});
+// 18. 歌曲 wiki 頁的命令(決策 59):「介紹這首歌」帶播放列當下的平台;「再問一次」對「查這首」重新讀面板的平台
+//     (面板換了平台就帶新的,不帶舊的),對手打的歌名照原樣加 --refresh;手打的歌名走 --title / --artist(有空白就加引號)。
+await scenario('18', async () => {
+  const { initWiki } = await import('./pages/wiki.mjs');
+  const root = mk('section');
+  const player = { last: { provider: 'apple', track: { title: '派對動物', artists: ['五月天'] } } };
+  script = {};
+  initWiki(root, api, con, (x) => notices.push(x), { list: ['spotify', 'apple'], current: 'spotify' }, player);
+  const buttons = () => allByClass(root, 'btn');
+  const before = calls.length;
+  buttons()[0].click(); // 介紹這首歌
+  await tick(30);
+  check(calls[before] === 'wiki --provider apple', `查這首帶面板上的平台:${calls[before]}`);
+  player.last = { provider: 'spotify', track: { title: 'Yellow', artists: ['Coldplay'] } };
+  const refresh = buttons().find((b) => b.textContent === '再問一次(不用快取的回答)');
+  check(!!refresh, '做完要長出「再問一次」');
+  refresh?.click();
+  await tick(30);
+  check(calls[before + 1] === 'wiki --refresh --provider spotify', `再問一次重新讀面板的平台:${calls[before + 1]}`);
+  const inputs = allByClass(root, 'in');
+  inputs[0].value = '"Heroes"'; inputs[1].value = 'David Bowie';
+  buttons()[1].click(); // 查詢:走 args 陣列,雙引號與空白原樣到達(#115 review 第 1 點)
+  await tick(30);
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--title', '"Heroes"', '--artist', 'David Bowie']) && bodies.at(-1).line === undefined,
+    `手打的歌名走 args、原樣:${JSON.stringify(bodies.at(-1))}`);
+  buttons().find((b) => b.textContent === '再問一次(不用快取的回答)')?.click();
+  await tick(30);
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--refresh', '--title', '"Heroes"', '--artist', 'David Bowie']), `手打的再問一次照原樣:${JSON.stringify(bodies.at(-1).args)}`);
+  check(JSON.stringify(bodies.at(-3).args) === JSON.stringify(['wiki', '--refresh', '--provider', 'spotify']) && JSON.stringify(bodies.at(-4).args) === JSON.stringify(['wiki', '--provider', 'apple']),
+    `查這首與它的再問一次也走 args:${JSON.stringify(bodies.slice(-4).map((b) => b.args))}`);
+  check(root.hidden === false && allByClass(root, 'wiki__now-line')[0]?.textContent === 'Spotify · Yellow — Coldplay', `正在播那一行跟著面板:${allByClass(root, 'wiki__now-line')[0]?.textContent}`);
+});
 flush();
 if (failures.length) {
   say(`${failures.length} 條不成立`);

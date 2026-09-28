@@ -16,12 +16,13 @@
   <a class="rail__item" href="#/playlists" data-page="playlists"><span class="rail__glyph" aria-hidden="true">♫</span><span data-i18n="webui.rail.playlists"></span><span class="rail__key">2</span></a>
   <a class="rail__item" href="#/sync" data-page="sync"><span class="rail__glyph" aria-hidden="true">↻</span><span data-i18n="webui.rail.sync"></span><span class="rail__key">3</span></a>
   <a class="rail__item" href="#/search" data-page="search"><span class="rail__glyph" aria-hidden="true">⚲</span><span data-i18n="webui.rail.search"></span><span class="rail__key">4</span></a>
-  <a class="rail__item" href="#/account" data-page="account"><span class="rail__glyph" aria-hidden="true">☺</span><span data-i18n="webui.rail.account"></span><span class="rail__key">5</span></a>
+  <a class="rail__item" href="#/wiki" data-page="wiki"><span class="rail__glyph" aria-hidden="true">✎</span><span data-i18n="webui.rail.wiki"></span><span class="rail__key">5</span></a>
+  <a class="rail__item" href="#/account" data-page="account"><span class="rail__glyph" aria-hidden="true">☺</span><span data-i18n="webui.rail.account"></span><span class="rail__key">6</span></a>
   <details class="rail__more" id="rail-more">
     <summary data-i18n="webui.rail.more"></summary>
-    <a class="rail__item" href="#/console" data-page="console"><span class="rail__glyph" aria-hidden="true">›</span><span data-i18n="webui.rail.console"></span><span class="rail__key">6</span></a>
-    <a class="rail__item" href="#/isrc" data-page="isrc"><span class="rail__glyph" aria-hidden="true">#</span><span data-i18n="webui.rail.isrc"></span><span class="rail__key">7</span></a>
-    <a class="rail__item" href="#/doctor" data-page="doctor"><span class="rail__glyph" aria-hidden="true">✓</span><span data-i18n="webui.rail.doctor"></span><span class="rail__key">8</span></a>
+    <a class="rail__item" href="#/console" data-page="console"><span class="rail__glyph" aria-hidden="true">›</span><span data-i18n="webui.rail.console"></span><span class="rail__key">7</span></a>
+    <a class="rail__item" href="#/isrc" data-page="isrc"><span class="rail__glyph" aria-hidden="true">#</span><span data-i18n="webui.rail.isrc"></span><span class="rail__key">8</span></a>
+    <a class="rail__item" href="#/doctor" data-page="doctor"><span class="rail__glyph" aria-hidden="true">✓</span><span data-i18n="webui.rail.doctor"></span><span class="rail__key">9</span></a>
   </details>
   <div class="rail__meta"><span id="version">—</span> · <span data-i18n="webui.rail.default_provider"></span> <span id="default-provider">—</span></div>
   <select class="in rail__lang" id="lang" data-run data-i18n-aria-label="webui.lang.label"></select>
@@ -34,6 +35,7 @@
   <section class="page" id="page-search" hidden></section>
   <section class="page" id="page-playlists" hidden></section>
   <section class="page" id="page-sync" hidden></section>
+  <section class="page" id="page-wiki" hidden></section>
   <section class="page" id="page-account" hidden></section>
   <section class="page" id="page-doctor" hidden></section>
   <section class="page" id="page-isrc" hidden>
@@ -84,7 +86,7 @@
     <dt>n p</dt><dd data-i18n="webui.keys.next_prev"></dd>
     <dt>← →</dt><dd data-i18n="webui.keys.seek"></dd>
     <dt>+ -</dt><dd data-i18n="webui.keys.volume"></dd>
-    <dt>1 – 8</dt><dd data-i18n="webui.keys.pages"></dd>
+    <dt>1 – 9</dt><dd data-i18n="webui.keys.pages"></dd>
     <dt>/</dt><dd data-i18n="webui.keys.slash"></dd>
     <dt>Ctrl-C</dt><dd data-i18n="webui.keys.ctrl_c"></dd>
     <dt>r</dt><dd data-i18n="webui.keys.reconnect"></dd>

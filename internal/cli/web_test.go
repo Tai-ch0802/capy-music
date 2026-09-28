@@ -1038,9 +1038,9 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, "overflow-wrap: anywhere") {
 		t.Error("主控台輸出要 overflow-wrap: anywhere")
 	}
-	// 八頁(決策 45):殼層、rail 的連結、app.js 的 PAGES 三處同一組、同一個順序(鍵位 1–8 靠這個順序);
+	// 九頁(決策 45;歌曲 wiki 決策 59 在搜尋之後):殼層、rail 的連結、app.js 的 PAGES 三處同一組、同一個順序(鍵位 1–9 靠這個順序);
 	// 預設落在搬家頁;主控台 / ISRC / 診斷收在「進階」但一個不少。
-	pages := []string{"move", "playlists", "sync", "search", "account", "console", "isrc", "doctor"}
+	pages := []string{"move", "playlists", "sync", "search", "wiki", "account", "console", "isrc", "doctor"}
 	last := -1
 	for _, page := range pages {
 		if !strings.Contains(index, `id="page-`+page+`"`) {
@@ -1058,8 +1058,8 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, ": 'move';") || !strings.Contains(app, "location.pathname + '#/move'") {
 		t.Error("預設路由與 token 引導後的落點都要是搬家頁")
 	}
-	if !strings.Contains(index, "<dt>1 – 8</dt>") {
-		t.Error("? 鍵位表要寫 1 – 8")
+	if !strings.Contains(index, "<dt>1 – 9</dt>") {
+		t.Error("? 鍵位表要寫 1 – 9")
 	}
 	// label(決策 45):執行狀態列顯示頁面給的白話;沒給 label 的 fallback 仍然要過 maskSecrets(review #66 第 4 點:
 	// 重構 label 時最容易掉的就是這一行,掉了 secret 就上了每一頁都看得到的狀態列)。
