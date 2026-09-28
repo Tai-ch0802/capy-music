@@ -349,6 +349,12 @@ func newNowCmd() *cobra.Command {
 			if watch && !isInteractive(cmd) {
 				return i18n.Errorf("player.err.watch_needs_tty")
 			}
+			// --watch 沒用 --provider 釘住:跟著正在播的平台走(決策 58),平台由 tracker 自己建——預設平台沒登入但別家可以,
+			// 照樣開得起來。釘住的照舊先建好再開畫面(平台名打錯、沒登入、不支援播放,一開始就失敗)。
+			// 看 Changed 不看值:--provider 的預設值就是 default_provider,值永遠有。
+			if watch && !cmd.Flags().Changed(flagProvider) {
+				return runWatch(cmd, "", nil)
+			}
 			p, err := getProvider(cmd)
 			if err != nil {
 				return err
@@ -358,7 +364,7 @@ func newNowCmd() *cobra.Command {
 				return err
 			}
 			if watch {
-				return runWatch(cmd, p, pc)
+				return runWatch(cmd, p.ID(), pc)
 			}
 			st, err := pc.State(cmd.Context())
 			w := cmd.OutOrStdout()

@@ -250,7 +250,7 @@ func followingApple(t *testing.T) (tuiModel, *watchFake, *watchFake) {
 func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	got := recordExec(t)
 	m, _, _ := followingApple(t)
-	for _, line := range []string{"pause", "seek 1:00", "now", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
+	for _, line := range []string{"pause", "seek 1:00", "now", "now --watch", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
 		m.typing = true
 		m.input.SetValue(line)
 		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
@@ -259,6 +259,7 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 		{"/bin/capy", "pause", "--provider", "apple"},
 		{"/bin/capy", "seek", "1:00", "--provider", "apple"},
 		{"/bin/capy", "now", "--provider", "apple"},
+		{"/bin/capy", "now", "--watch", "--provider", "apple"}, // 看狀態列上的那一家(決策 58),不從 default_provider 起算
 		{"/bin/capy", "play", "--provider", "apple"},
 		{"/bin/capy", "play", "派對動物"},
 		{"/bin/capy", "play", "--id", "1422652341"},
@@ -268,6 +269,14 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	}
 	if !slices.EqualFunc(*got, want, slices.Equal[[]string]) {
 		t.Errorf("執行的參數:\n got %q\nwant %q", *got, want)
+	}
+}
+
+// TestTUIPinnedStillPinsWatch:TUI 自己被 capy --provider apple 釘住時,命令列打的 now --watch 也附加 --provider apple(決策 58)。
+func TestTUIPinnedStillPinsWatch(t *testing.T) {
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", testTracker(t, "apple", &watchFake{}), watchPollSpotify)
+	if got := m.withProviderFlag([]string{"now", "--watch"}); !slices.Equal(got, []string{"now", "--watch", "--provider", "apple"}) {
+		t.Errorf("釘住的介面照舊附加:%q", got)
 	}
 }
 

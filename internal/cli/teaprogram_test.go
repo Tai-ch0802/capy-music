@@ -22,13 +22,13 @@ func TestCtrlCKeyExits130(t *testing.T) {
 		want  int
 	}{
 		{"now --watch:Ctrl-C", func() tea.Model {
-			return newWatchModel(context.Background(), &watchFake{st: playingState()}, time.Hour)
+			return newWatchModel(context.Background(), testTracker(t, "spotify", &watchFake{st: playingState()}), "", "spotify", time.Hour)
 		}, "\x03", 130},
 		{"now --watch:q", func() tea.Model {
-			return newWatchModel(context.Background(), &watchFake{st: playingState()}, time.Hour)
+			return newWatchModel(context.Background(), testTracker(t, "spotify", &watchFake{st: playingState()}), "", "spotify", time.Hour)
 		}, "q", 0},
 		{"now --watch:Esc", func() tea.Model {
-			return newWatchModel(context.Background(), &watchFake{st: playingState()}, time.Hour)
+			return newWatchModel(context.Background(), testTracker(t, "spotify", &watchFake{st: playingState()}), "", "spotify", time.Hour)
 		}, "\x1b", 0},
 		{"互動式介面:Ctrl-C", func() tea.Model { return newTestTUI(t, &watchFake{st: playingState()}) }, "\x03", 130},
 		{"互動式介面:輸入中 Ctrl-C(輸入中唯一的離開鍵)", func() tea.Model { return newTestTUI(t, &watchFake{st: playingState()}) }, "/\x03", 130},

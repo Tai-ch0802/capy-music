@@ -1,6 +1,6 @@
 # web 播放列跟著正在播的平台 + Apple 搜尋結果的「播放」(2026-09-24)
 
-狀態:**定案**。使用者 2026-09-24 定案:Q58–Q68 全部照推薦(Q62 授權我跑探測,結果在 §2.2)。PR A(問題一)#95 已合併 → d5dbaf3(決策 51);PR B(問題二)#96 已合併 → 311d7fe(決策 52);Q64(TUI 跟隨)決策 53;#97 review 第 3 點(base 建不起來就改顯示建得起來的平台)決策 54。
+狀態:**定案**。使用者 2026-09-24 定案:Q58–Q68 全部照推薦(Q62 授權我跑探測,結果在 §2.2)。PR A(問題一)#95 已合併 → d5dbaf3(決策 51);PR B(問題二)#96 已合併 → 311d7fe(決策 52);Q64(TUI 跟隨)決策 53;#97 review 第 3 點(base 建不起來就改顯示建得起來的平台)決策 54;`now --watch` 跟隨(Q64 的 follow-up)決策 58。
 
 **PR B 實作時跟本文不同的地方**(2026-09-27):
 - 誠實的那句叫使用者「對標出來的那一首點兩下」,不是「按播放」:P-5 顯示標亮後按播放會播回原本那首,web 播放列的 ▶ 也是。Q63 選了選項 2,所以那句也改成「capy 只能替你播資料庫裡找得到的歌」,不再說「目錄歌曲都播不了」。
@@ -31,7 +31,7 @@
 3. **使用者現在就在付代價的 bug。** `pollNow` 碰到任何 State 錯誤都呼叫全域的 `dropNow()`([web_api.go:290](../../../internal/cli/web_api.go))。「Music.app 沒開」是一種狀態,也被當成錯誤處理,所以 Music.app 關著時,每 2.5 秒就重建一次 Apple provider,每次讀 2–3 次 keychain。限流也一樣:`Retry-After` 超過 60 秒時,`Backoff` 會立刻回錯,`dropNow` 把 provider 丟掉,2.5 秒後重建再打一次 Spotify。這變成一個無視 `Retry-After` 的緊密重試迴圈,正是 Spotify 指南明令禁止的做法。
 4. **Spotify 在播 podcast 或廣告時,會被當成沒在播。** `pollNow` 在 `st.Track == nil` 時先 return,來不及設 `Playing`(web_api.go:292-294)。`State` 沒帶 `additional_types`,所以播 episode 時 item 是 null;規格也允許 `currently_playing_type` 是 `ad` 或 `unknown`。新的跟隨規則會把這個問題放大。
 
-TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也就是每分鐘 30 次 Spotify 呼叫。Q64 的 follow-up PR 要沿用本節的規則與節流策略。
+TUI 與 `capy now --watch` 也只看一個平台,而且每 2 秒輪詢一次,也就是每分鐘 30 次 Spotify 呼叫。Q64 的 follow-up PR 要沿用本節的規則與節流策略(TUI 2026-09-27 決策 53、`now --watch` 2026-09-28 決策 58 已改)。
 
 ### 1.2 方案
 
@@ -262,7 +262,7 @@ Windows:Apple Music for Windows 沒有腳本介面,本來就不支援播放。
 | Q61 | Apple 以 id 播放時改印誠實的那句、不印 ▶、exit 0 | ✅ 照推薦 |
 | Q62 | 探測 | ✅ 授權我跑,已完成(§2.2) |
 | Q63 | 真的播:選項 1 或 選項 2 | ✅ 選項 2(資料庫裡有的歌直接播,比對不到就退回開啟並標亮) |
-| Q64 | TUI 的同一個 bug 另開 PR | ✅ 另開,沿用 §1.2 的規則與節流(TUI 與 `now --watch` 現在每分鐘打 30 次);順便做 #95 review 第 2 點:被限流時狀態列說幾點會再試。2026-09-27 實作(決策 53):TUI 與 web 共用 `nowTracker`;`now --watch` 只加了「幾點再試」,仍只看一個平台、照 `Retry-After` 延後輪詢 |
+| Q64 | TUI 的同一個 bug 另開 PR | ✅ 另開,沿用 §1.2 的規則與節流(TUI 與 `now --watch` 現在每分鐘打 30 次);順便做 #95 review 第 2 點:被限流時狀態列說幾點會再試。2026-09-27 實作(決策 53):TUI 與 web 共用 `nowTracker`;`now --watch` 只加了「幾點再試」,仍只看一個平台、照 `Retry-After` 延後輪詢。2026-09-28 follow-up:`now --watch` 也改用 `nowTracker`(決策 58) |
 | Q65 | Spotify 閒置或暫停時的有效期 | ✅ 15 秒 |
 | Q66 | 429 與 `QUOTA_EXCEEDED` 的處理要做,而且放在問題一的範圍內 | ✅ 做,PR A 不拆 |
 | Q67 | 播放列曲名連回平台(Developer Policy II) | ✅ 做 |

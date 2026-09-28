@@ -50,7 +50,7 @@ const (
 	tuiSeekStep = 10000 // ←/→ 一次 10 秒
 	tuiVolStep  = 5     // +/- 一次 5
 	tuiMaxFails = 5
-	// 每次 State 的上限。輪詢帶 WithoutWait,不會睡在 429 退避裡(不像 now --watch 的 pollTimeout 要蓋住 MaxBackoff),
+	// 每次 State 的上限(now --watch 也用它,決策 58)。輪詢帶 WithoutWait,不會睡在 429 退避裡,
 	// 這只是卡住的上限:osascript 或 HTTP 卡住時狀態列最多停這麼久就回錯,不是一分鐘。
 	tuiStateTimeout = 10 * time.Second
 	tuiMinWidth     = 46 // 窄於此:橫幅換成一行
@@ -196,15 +196,24 @@ func (msg tuiStateMsg) repanic() tuiStateMsg {
 
 // poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
 // 不是由這裡每 2 秒一次決定——限流時也照常每 2 秒問,冷卻期內 tracker 只端出快取。
-func (m tuiModel) poll() tea.Cmd {
-	gen, round, wait := m.gen, m.round(), tuiRoundWait
+func (m tuiModel) poll() tea.Cmd { return nowPoll(m.trk, m.provFlag, m.gen) }
+
+func (m tuiModel) round() func() tuiStateMsg { return nowRound(m.trk, m.provFlag, m.gen) }
+
+func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
+	return nowControl(m.ctx, m.trk, m.provID, m.provFlag, m.gen, f, once)
+}
+
+// nowPoll / nowRound / nowControl:TUI 與 now --watch 共用的一輪與控制鍵(決策 53、58)。都在呼叫端的 Update 裡建好,
+// wait(tuiRoundWait)也在這裡讀——bubbletea 不等 Cmd,程式結束後才跑的 Cmd 不該再碰全域變數。
+func nowPoll(trk *nowTracker, pin string, gen int) tea.Cmd {
+	round, wait := nowRound(trk, pin, gen), tuiRoundWait
 	return func() tea.Msg { return tuiAwait(gen, wait, round) }
 }
 
-// round:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖)。卡住的那一輪期間按鍵起的輪詢會排在這裡——
+// nowRound:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖)。卡住的那一輪期間按鍵起的輪詢會排在這裡——
 // 一輪是冪等的(問、寫快取),排隊的那幾輪做完各自依世代號丟棄,不會重播任何控制指令。
-func (m tuiModel) round() func() tuiStateMsg {
-	trk, pin, gen := m.trk, m.provFlag, m.gen
+func nowRound(trk *nowTracker, pin string, gen int) func() tuiStateMsg {
 	return func() tuiStateMsg {
 		trk.pollMu.Lock()
 		defer trk.pollMu.Unlock()
@@ -220,7 +229,7 @@ func (m tuiModel) round() func() tuiStateMsg {
 	}
 }
 
-// control:把控制指令送給狀態列上的那個平台(applyState 記下的 provID,不是按鍵當下才去問 tracker——
+// nowControl:把控制指令送給畫面上的那個平台(id = 套用結果時記下的 provID,不是按鍵當下才去問 tracker——
 // 那時 tracker 可能已經換到畫面還沒顯示的另一家),送完進安定期、立刻重新輪詢,畫面才會跟上。
 // 呼叫端要先把 gen 推進(newChain),這次讀取才會取代舊鏈而不是疊上去。
 // once:晚到就會多生效一次的鍵(n / p:每一下跳一首)。這種鍵從按下起最多等 tuiRoundWait——controller 等超過才建好
@@ -229,8 +238,8 @@ func (m tuiModel) round() func() tuiStateMsg {
 // 其他鍵(播放 / 暫停、±10 秒、音量)是冪等的:目標在按下時就算好了,晚到也是同一個結果,照樣等——而且 Music.app 沒開時
 // 的播放要等它啟動完(冷啟動可能超過三秒,那時殺掉 osascript,app 開了卻沒播)。
 // 所有鍵都帶 WithoutWait:429 不睡在 Retry-After 裡(睡醒才送也是晚到的),照實說被限流,冷卻交給 tracker。
-func (m tuiModel) control(f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
-	ctx, gen, trk, id, round, wait := m.ctx, m.gen, m.trk, m.provID, m.round(), tuiRoundWait
+func nowControl(ctx context.Context, trk *nowTracker, id, pin string, gen int, f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
+	round, wait := nowRound(trk, pin, gen), tuiRoundWait
 	return func() tea.Msg {
 		return tuiAwait(gen, wait, func() tuiStateMsg {
 			if trk.ctx.Err() != nil { // 同 round:結束之後才跑到的按鍵不建 provider、不送
@@ -384,6 +393,8 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 		path := c.CommandPath()
 		// rest 刻意連 flag 一起算:play --id X 的 id 是預設平台的 id 空間,play --pick 是搜尋——都照舊用 default_provider。
 		// 只看位置參數的話,這兩個會被送去顯示中的平台。
+		// now --watch 也附加(決策 58):從 TUI 開的 watch 看的是狀態列上的那一家——不附加的話它從 default_provider 起算,
+		// Apple 暫停、Spotify 閒置時會跑去顯示 Spotify,空白鍵播的就不是剛剛看著的那首。
 		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
 		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
 		if !follows || typed {

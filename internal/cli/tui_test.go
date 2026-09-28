@@ -364,7 +364,7 @@ func TestTUIPassesProviderFlagToSubcommands(t *testing.T) {
 	}
 	t.Cleanup(func() { tuiExecProcess = orig })
 
-	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", testTracker(t, "apple", &watchFake{}), watchPollApple)
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", testTracker(t, "apple", &watchFake{}), watchPollSpotify)
 	m.width = 100
 	run := func(line string) {
 		m.typing = true
