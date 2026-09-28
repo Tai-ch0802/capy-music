@@ -492,6 +492,22 @@ func TestArtistTopTracksFiltersToTheArtist(t *testing.T) {
 	}
 }
 
+// TestArtistTopTracksOnlyNamesakes:搜尋有結果、卻沒有一首是挑的這一位的(同名、比較多人聽的藝人佔滿了):回 ErrOnlyNamesakes,
+// 讓呼叫端照實說原因——不是回空、被當成「這位藝人沒有歌」。完全沒搜到才是回空。
+func TestArtistTopTracksOnlyNamesakes(t *testing.T) {
+	body := `{"tracks":{"items":[{"id":"t8","name":"同名的另一位","artists":[{"id":"a2","name":"Mayday"}],"album":{"name":"y"}}],"total":1}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) }))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.Client(), srv.URL)
+	if tracks, err := c.ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: "Mayday"}); !errors.Is(err, provider.ErrOnlyNamesakes) || tracks != nil {
+		t.Fatalf("只有同名的別人:%+v %v", tracks, err)
+	}
+	body = `{"tracks":{"items":[],"total":0}}`
+	if tracks, err := c.ArtistTopTracks(context.Background(), provider.Artist{ProviderID: "a1", Name: "Mayday"}); err != nil || len(tracks) != 0 {
+		t.Fatalf("完全沒搜到:回空、不是錯:%+v %v", tracks, err)
+	}
+}
+
 // TestArtistTopTracksNeedsAName:沒有名稱(或只有引號)就不搜:artist:"" 會搜到什麼都不確定。
 func TestArtistTopTracksNeedsAName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

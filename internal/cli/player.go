@@ -202,11 +202,14 @@ func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (prov
 			return provider.PlayRequest{}, "", notSupported(p, i18n.T("platform.cap.artist_top_tracks"))
 		}
 		tracks, err := a.ArtistTopTracks(ctx, provider.Artist{ProviderID: c.ID, Name: c.Label})
+		if errors.Is(err, provider.ErrOnlyNamesakes) { // 照實說找不到、為什麼,並建議直接搜歌名(不改播同名的別人)
+			return provider.PlayRequest{}, "", i18n.Errorf("play.err.no_top_tracks_namesakes", "artist", c.Label, "platform", p.DisplayName())
+		}
 		if err != nil {
 			return provider.PlayRequest{}, "", err
 		}
 		if len(tracks) == 0 {
-			return provider.PlayRequest{}, "", i18n.Errorf("play.err.no_top_tracks", "artist", c.Label)
+			return provider.PlayRequest{}, "", i18n.Errorf("play.err.no_top_tracks", "artist", c.Label, "platform", p.DisplayName())
 		}
 		ids := make([]string, len(tracks))
 		for i, t := range tracks {
