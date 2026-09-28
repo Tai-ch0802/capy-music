@@ -347,6 +347,7 @@ func TestWikiSetupProbeRefusedKeepsSettings(t *testing.T) {
 	if c, _ := config.Load(); c.AIBaseURL != "" {
 		t.Fatal("舊標頭壞掉時不得先把端點存下來")
 	}
+	f.modelsStatus = 0 // 上面把探測設成 403 了;這一段看的是標頭,讓探測過
 	if _, err := runCLI(t, "wiki", "setup", "--base-url", f.base(), "--model", "m", "--header", "X-Fixed: 1"); err != nil {
 		t.Fatalf("給新標頭就換掉壞的:%v", err)
 	}
