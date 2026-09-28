@@ -1338,6 +1338,11 @@ await scenario('14c', async () => {
   check(unknown && unknown.text.startsWith('不知道登入何時失效') && unknown.warn === false, `已登入、沒有到期欄位 = 不知道:${JSON.stringify(unknown)}`);
   check(spotifyRenewal({ state: 'missing', refresh_token_expiry: at(-DAY) }, now) === null && spotifyRenewal({ state: 'keychain_error' }, now) === null && spotifyRenewal(undefined, now) === null,
     '沒登入(或 keychain 讀不到)不說到期');
+  // 日期用這台電腦的時區:UTC 午夜前後各一個,離 UTC 半小時以上的時區至少有一個跟 UTC 的日期不同(UTC 的機器上兩者一樣,驗不出來)
+  for (const iso of ['2026-11-01T23:30:00Z', '2026-11-02T00:30:00Z']) {
+    const r = spotifyRenewal({ state: 'ok', refresh_token_expiry: iso }, now);
+    check(r && r.text.startsWith(`登入約 ${day(iso)} 失效`), `日期是本機時區的:${iso} → ${r && r.text}`);
+  }
 
   // 畫出來:快到期的那一列標成 ⚠、細節欄有日期與按鈕名;遠的照舊 ✓。(頁面用真的時鐘:到期時間從現在往後算)
   const draw = (expiry) => {
@@ -1345,12 +1350,16 @@ await scenario('14c', async () => {
     const st = { spotify: { state: 'ok', client_id: 'set', refresh_token_expiry: expiry }, google: { state: 'missing', client: 'none' }, apple: { state: 'missing', developer_token: 'missing', user_token: 'missing' } };
     initAccount(r, null, { run: (_c, h) => { h.onStdout(JSON.stringify(st)); h.onExit(0, ''); }, idle: (fn) => fn() }, () => {});
     const row = allByClass(r, 'acct')[0];
-    return { state: row.dataset.state, mark: allByClass(row, 'acct__state')[0].textContent, detail: allByClass(row, 'acct__detail')[0].textContent };
+    const b = allByClass(row, 'btn')[0];
+    return { state: row.dataset.state, mark: allByClass(row, 'acct__state')[0].textContent, detail: allByClass(row, 'acct__detail')[0].textContent, button: b.textContent, ghost: b.classList.contains('btn--ghost') };
   };
+  // 那一句叫人按的「重新連接」要真的是那一列按鈕的字;要處理的那一列按鈕不做成 ghost
   const soon = draw(new Date(Date.now() + 3 * DAY).toISOString());
-  check(soon.state === 'warn' && soon.mark === '⚠ 已登入' && soon.detail.includes('(剩 3 天):請在那之前按「重新連接」'), `快到期:${JSON.stringify(soon)}`);
+  check(soon.state === 'warn' && soon.mark === '⚠ 已登入' && soon.detail.includes('(剩 3 天):請在那之前按「重新連接」') && soon.button === '重新連接' && !soon.ghost, `快到期:${JSON.stringify(soon)}`);
+  const gone = draw(new Date(Date.now() - DAY).toISOString());
+  check(gone.state === 'warn' && gone.mark === '⚠ 已過期' && gone.detail.includes('左右失效:請按「重新連接」') && gone.button === '重新連接', `大概已失效:狀態不說「已登入」:${JSON.stringify(gone)}`);
   const far = draw(new Date(Date.now() + 150 * DAY).toISOString());
-  check(far.state === 'ok' && far.mark === '✓ 已登入' && far.detail.startsWith('登入約 ') && far.detail.includes('(剩 150 天)'), `還早:${JSON.stringify(far)}`);
+  check(far.state === 'ok' && far.mark === '✓ 已登入' && far.detail.startsWith('登入約 ') && far.detail.includes('(剩 150 天)') && far.button === '重新連接' && far.ghost, `還早:${JSON.stringify(far)}`);
 
   i18nFile = './i18n-en.json';
   try {

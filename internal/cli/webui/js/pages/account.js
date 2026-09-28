@@ -46,20 +46,20 @@ const SPOTIFY_RENEW_WARN_DAYS = 10;
 const DAY = 24 * 60 * 60 * 1000;
 
 // spotifyRenewal:Spotify 的登入約何時失效(決策 56:refresh token 從登入起六個月失效、refresh 不延長,capy 從上一次登入算 180 天)
-// → { text, warn };沒登入(state 不是 ok)回 null。說法與門檻同 auth status 的文字版:剩的時間在 SPOTIFY_RENEW_WARN_DAYS 天以內
+// → { text, warn, expired };沒登入(state 不是 ok)回 null。說法與門檻同 auth status 的文字版:剩的時間在 SPOTIFY_RENEW_WARN_DAYS 天以內
 // 就提醒(比的是時間長度,不是天數),過了說大概已失效;天數無條件進位(剩 10 天又 1 小時 = 剩 11 天、不提醒)。
 // 沒有 refresh_token_expiry = 不知道(這個版本之前登入的)。日期用這台電腦的時區、只到日。
 export function spotifyRenewal(st, now = Date.now()) {
   if (st?.state !== 'ok') return null;
   const button = t('webui.account.reconnect');
   const exp = new Date(st.refresh_token_expiry || '').getTime();
-  if (Number.isNaN(exp)) return { text: t('webui.account.detail.spotify_renew_unknown', { button }), warn: false };
+  if (Number.isNaN(exp)) return { text: t('webui.account.detail.spotify_renew_unknown', { button }), warn: false, expired: false };
   const left = exp - now;
   const date = localTime(st.refresh_token_expiry).slice(0, 10);
-  if (left <= 0) return { text: t('webui.account.detail.spotify_renew_expired', { date, button }), warn: true };
+  if (left <= 0) return { text: t('webui.account.detail.spotify_renew_expired', { date, button }), warn: true, expired: true };
   const count = Math.ceil(left / DAY);
-  if (left <= SPOTIFY_RENEW_WARN_DAYS * DAY) return { text: t('webui.account.detail.spotify_renew_soon', { date, count, button }), warn: true };
-  return { text: t('webui.account.detail.spotify_renew_by', { date, count }), warn: false };
+  if (left <= SPOTIFY_RENEW_WARN_DAYS * DAY) return { text: t('webui.account.detail.spotify_renew_soon', { date, count, button }), warn: true, expired: false };
+  return { text: t('webui.account.detail.spotify_renew_by', { date, count }), warn: false, expired: false };
 }
 
 // details:auth status --json 的事實 → 給人看、跟著語系的句子;沒有的事實不畫。JSON 的欄名與列舉值是給腳本的,不上畫面;
@@ -107,15 +107,18 @@ export function initAccount(root, api, con, notice) {
     }
     for (const p of providerRows()) {
       let st = stateOf(p.id, parsed[p.id]);
-      // 快到期或大概已失效:那一列標成要處理(stateOf 不動:搬家精靈的平台卡片也用它,那裡只管連上了沒有)
-      if (p.id === 'spotify' && spotifyRenewal(parsed.spotify)?.warn) st = { ...st, mark: '⚠', kind: 'warn' };
+      // 快到期:那一列標成要處理;大概已失效:連狀態都說已過期(不在「已登入」旁邊說「大概已失效」)。
+      // stateOf 不動:搬家精靈的平台卡片也用它,那裡只管連上了沒有。
+      const renew = p.id === 'spotify' ? spotifyRenewal(parsed.spotify) : null;
+      if (renew?.warn) st = { ...st, mark: '⚠', kind: 'warn', text: renew.expired ? t('webui.account.state.expired') : st.text };
       const row = el('div', 'acct');
       row.dataset.state = st.kind;
       row.appendChild(el('span', 'acct__name', p.label));
       row.appendChild(el('span', 'acct__state', `${st.mark} ${st.text}`));
       row.appendChild(el('span', 'acct__detail', detail(p.id, parsed[p.id])));
+      // 按鈕的字看有沒有登入(那一句叫人按的就是「重新連接」);樣式看這一列要不要處理:要處理的不做成 ghost,比較顯眼
       const ok = st.kind === 'ok';
-      row.appendChild(btn(ok ? t('webui.account.reconnect') : t('webui.account.connect'), ok ? 'btn--ghost' : '', () => {
+      row.appendChild(btn(parsed[p.id]?.state === 'ok' ? t('webui.account.reconnect') : t('webui.account.connect'), ok ? 'btn--ghost' : '', () => {
         con.run(`auth login ${p.id}`, { onExit: () => refresh() }, { label: t('webui.account.connecting', { name: providerName(p.id) }) });
       }));
       out.appendChild(row);
