@@ -5,6 +5,7 @@
   "ai.err.empty": "端點回了空的內容",
   "ai.err.header_bad_line": "自訂標頭第 {line} 行要是「Name: value」(名稱不含空白、不含控制字元)",
   "ai.err.headers_too_big": "自訂標頭最多 {max} 位元組,你給了 {size}",
+  "ai.err.incomplete": "端點在回答寫完之前就停了({reason});上面那一截不會留下來,再問一次會真的再問端點",
   "ai.err.not_configured": "還沒設定 AI 端點:先執行 capy wiki setup",
   "ai.err.stream_error": "端點回報錯誤:{message}",
   "apple.auto.no_tab": "沒開或沒有 music.apple.com 分頁",

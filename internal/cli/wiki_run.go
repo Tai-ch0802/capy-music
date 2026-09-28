@@ -110,13 +110,20 @@ func runWiki(cmd *cobra.Command, args []string) error {
 		// 不帶 max_tokens:reasoning model 把思考的 token 也算在上限裡,上限一到就無聲截斷;長度由 prompt 與這個逾時管。
 		req := ai.ChatRequest{System: system, User: user}
 		var body string
+		printed := false
 		if asJSON {
 			body, err = c.ChatOnce(ctx, req)
 		} else {
-			body, err = c.Chat(ctx, req, func(line string) { fmt.Fprintln(w, wikiLine(tty, line)) })
+			body, err = c.Chat(ctx, req, func(line string) { printed = true; fmt.Fprintln(w, wikiLine(tty, line)) })
 		}
 		if err != nil {
-			// 逾時說人話;Ctrl-C / web 的中止(context.Canceled)原樣回,結束碼 130 與「已中止」才認得。出錯的不進快取。
+			// 正文已經印了一截(逾時、串流中途的錯誤幀、斷線、Ctrl-C)也要收在免責行之後——不完整的內容最需要它
+			// (CLAUDE.md:結尾的免責行不可關)。出錯的、不完整的(ai.IncompleteError)都不進快取。
+			if printed {
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, i18n.T("wiki.disclaimer"))
+			}
+			// 逾時說人話;Ctrl-C / web 的中止(context.Canceled)原樣回,結束碼 130 與「已中止」才認得。
 			if errors.Is(err, context.DeadlineExceeded) && cmd.Context().Err() == nil {
 				return i18n.Errorf("wiki.err.timeout", "seconds", int(wikiChatTimeout.Seconds()))
 			}
@@ -136,8 +143,9 @@ func runWiki(cmd *cobra.Command, args []string) error {
 			Language: entry.Language, Model: entry.Model, Cached: cached, FetchedAt: entry.FetchedAt.UTC().Format(time.RFC3339), Body: entry.Body, YouTubeSearchURL: mv, // 語言與 model 都描述這一列自己
 		})
 	}
-	if cached { // 快取命中:整份走同一個逐行路徑,TTY 的標題加粗才一致
-		fmt.Fprintln(w, i18n.T("wiki.cached", "date", entry.FetchedAt.Format("2006-01-02")))
+	if cached { // 快取命中:整份走同一個逐行路徑,TTY 的標題加粗才一致。「來自快取」跟「正在詢問」一樣是框架字、走 stderr:
+		// stdout 在命中與沒命中時長得一樣(capy wiki > song.md 拿到的都是正文 + 結尾三行)
+		fmt.Fprintln(stderr, i18n.T("wiki.cached", "date", entry.FetchedAt.Format("2006-01-02")))
 		for _, line := range strings.Split(strings.TrimRight(entry.Body, "\n"), "\n") {
 			fmt.Fprintln(w, wikiLine(tty, line))
 		}

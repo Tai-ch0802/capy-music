@@ -5,6 +5,7 @@
   "ai.err.empty": "the endpoint returned an empty reply",
   "ai.err.header_bad_line": "custom header line {line} must be \"Name: value\" (no spaces in the name, no control characters)",
   "ai.err.headers_too_big": "custom headers may be at most {max} bytes; you gave {size}",
+  "ai.err.incomplete": "the endpoint stopped before the answer was complete ({reason}); the partial answer above isn't kept, so asking again asks the endpoint again",
   "ai.err.not_configured": "the AI endpoint isn't set up yet: run capy wiki setup",
   "ai.err.stream_error": "the endpoint reported an error: {message}",
   "apple.auto.no_tab": "not running, or no music.apple.com tab open",

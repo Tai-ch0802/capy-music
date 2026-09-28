@@ -242,12 +242,16 @@ func TestWikiTimeoutAndCancelDoNotCache(t *testing.T) {
 	setWikiTest(t)
 	f := newFakeAI(t)
 	f.chatHang = make(chan struct{})
+	f.chatHead = "## 已經印出來的一段\n"
 	wikiConfigured(t, f)
 	wikiPlayers(t, playingState(), nil)
 	wikiChatTimeout = 100 * time.Millisecond
-	_, err := runCLI(t, "wiki")
+	out, err := runCLI(t, "wiki")
 	if err == nil || !strings.Contains(err.Error(), "0 秒") || !strings.Contains(err.Error(), "capy wiki setup") {
 		t.Fatalf("逾時要說人話並指路:%v", err)
+	}
+	if !strings.HasSuffix(out, "## 已經印出來的一段\n\n以上由 AI 產生,可能有錯;歌詞請以播放器或官方為準。\n") {
+		t.Fatalf("已經印了一截就要收在免責行之後(#114 review):%q", out)
 	}
 	// 中止(Ctrl-C / web):context.Canceled 原樣回,結束碼 130 與「已中止」才認得。
 	wikiChatTimeout = time.Minute
@@ -338,5 +342,41 @@ func TestWikiEnglish(t *testing.T) {
 	}
 	if _, err := runCLI(t, "wiki", "--artist", "y"); err == nil || err.Error() != "--artist only goes with a title: capy wiki <title> --artist <artist>" {
 		t.Fatalf("英文錯誤:%v", err)
+	}
+}
+
+// TestWikiIncompleteAnswerIsShownButNotCached(#114 review):串流沒收到 [DONE] 就斷線、或端點自己的 token 上限到了
+// (finish_reason = length)——印出來的照留、收在免責行之後、exit 1,而且不進快取:第二次會真的再問。
+func TestWikiIncompleteAnswerIsShownButNotCached(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(f *fakeAI)
+		want string
+	}{
+		{"斷線", func(f *fakeAI) { f.chatCut = true }, "eof"},
+		{"上限", func(f *fakeAI) { f.chatLength = true }, "length"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setWikiTest(t)
+			f := newFakeAI(t)
+			f.chatText = "## 半截\n第一段"
+			tc.set(f)
+			wikiConfigured(t, f)
+			wikiPlayers(t, playingState(), nil)
+			out, err := runCLI(t, "wiki")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("不完整要報錯並說原因:%v", err)
+			}
+			if !strings.Contains(out, "## 半截\n第一段\n\n以上由 AI 產生,可能有錯;歌詞請以播放器或官方為準。\n") {
+				t.Fatalf("印出來的照留、免責行收尾:%q", out)
+			}
+			if _, err := runCLI(t, "wiki"); f.chats() != 2 {
+				t.Fatalf("不完整的不進快取,第二次要再問(%v):%v", err, f.paths())
+			}
+			// --json 一樣:不完整就是錯,不印半截的 JSON。
+			if out, err := runCLI(t, "wiki", "--json"); err == nil || strings.Contains(out, "{") {
+				t.Fatalf("--json 不完整要是錯、不印半截:%v %q", err, out)
+			}
+		})
 	}
 }
