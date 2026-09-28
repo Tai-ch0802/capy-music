@@ -164,7 +164,7 @@ func TestWatchKeysDoNotMultiplyPolling(t *testing.T) {
 		t.Error("舊鏈遲到的結果不可以再排 tick")
 	}
 	// 舊鏈的控制錯誤照樣要說(使用者剛按的鍵失敗了),但不可以替目前這條鏈多排一個 tick——那就是兩條鏈
-	if next, cmd := m.Update(tuiStateMsg{err: provider.ErrNoActiveDevice, fromCtl: true, gen: old}); cmd != nil || next.(watchModel).err == nil {
+	if next, cmd := m.Update(tuiStateMsg{err: provider.ErrNoActiveDevice, fromCtl: true, gen: old}); cmd != nil || next.(watchModel).note == "" {
 		t.Errorf("舊鏈的控制錯誤:要說、不排 tick(cmd=%v)", cmd != nil)
 	}
 	if _, cmd := m.Update(watchTickMsg{gen: m.gen}); cmd == nil {
@@ -246,6 +246,73 @@ func TestWatchPinnedStaysPut(t *testing.T) {
 	m = watchRound(t, m)
 	if m.provID != "spotify" || m.st != nil || ap.calls.Load() != 0 {
 		t.Fatalf("釘住的只問 Spotify:%s %#v Apple 被問了 %d 次", m.provID, m.st, ap.calls.Load())
+	}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'}) // 按鍵之後重問的那一輪也要釘住,不然之後的鍵都送去 Apple
+	m, _ = feed(next.(watchModel), runCmd(cmd).(tuiStateMsg))
+	if m.provID != "spotify" || ap.calls.Load() != 0 {
+		t.Fatalf("按鍵後的那一輪也要釘住:%s Apple 被問了 %d 次", m.provID, ap.calls.Load())
+	}
+}
+
+// TestWatchControlsGoToTheFollowedPlatform:【決策 58】跟到 Apple 之後,控制鍵送給畫面上的 Apple,不是預設平台。
+func TestWatchControlsGoToTheFollowedPlatform(t *testing.T) {
+	sp := &watchFake{st: nowTrack(false, "昨天那首", 1000, 200000)}
+	ap := &watchFake{st: nowTrack(true, "Sugar", 30000, 235000)}
+	m := newTestWatch(t, sp, "")
+	m.trk.now["apple"] = ap
+	m = watchRound(t, m)
+	if m.provID != "apple" {
+		t.Fatalf("前提:跟到 Apple:%q", m.provID)
+	}
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	runCmd(cmd)
+	if !slices.Equal(ap.calls, []string{"pause"}) || len(sp.calls) != 0 {
+		t.Errorf("控制鍵要送給畫面上的 Apple:apple=%v spotify=%v", ap.calls, sp.calls)
+	}
+}
+
+// TestWatchLateControlIsDropped:controller 還沒建好、建構又卡住(等 token 鎖):n 等超過 tuiRoundWait 才建好就不送了,照實說——
+// 不然連按五次 n,鎖一放開就一口氣跳五首(#97 review;沒釘住時平台是輪詢中才建的,watch 也碰得到)。
+func TestWatchLateControlIsDropped(t *testing.T) {
+	shrinkRoundWait(t, 30*time.Millisecond)
+	c := &countingNext{nowFake: newNowFake()}
+	gate := make(chan struct{})
+	m := newTestWatch(t, &watchFake{st: playingState()}, "")
+	delete(m.trk.now, "spotify")
+	stub := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "spotify" {
+			<-gate
+			return c, nil
+		}
+		return stub(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = stub })
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	next, pend := next.(watchModel).Update(within(t, 2*time.Second, "按鍵", cmd))
+	m = next.(watchModel)
+	time.Sleep(60 * time.Millisecond) // 建構卡得比 tuiRoundWait 久
+	close(gate)
+	next, _ = m.Update(within(t, 5*time.Second, "按鍵的結果", pend))
+	if n := c.next.Load(); n != 0 {
+		t.Errorf("太晚才建好的 n 不可以送:Next %d 次", n)
+	}
+	if note := next.(watchModel).note; !strings.Contains(note, "略過") {
+		t.Errorf("要照實說略過了:%q", note)
+	}
+}
+
+// TestWatchControlErrorHasNoAttemptCount:控制鍵失敗不帶輪詢的失敗次數(那是關畫面的預算,跟這個鍵無關)。
+func TestWatchControlErrorHasNoAttemptCount(t *testing.T) {
+	m := newTestWatch(t, &watchFake{}, "")
+	boom := errors.New("502 bad gateway")
+	for _, msg := range []tuiStateMsg{{st: playingState()}, {err: boom}, {err: boom, cached: true}, {err: boom}} {
+		m, _ = feed(m, msg)
+	}
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'n'})
+	m, _ = feed(next.(watchModel), tuiStateMsg{err: provider.ErrNoActiveDevice, fromCtl: true})
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "⚠ "+provider.ErrNoActiveDevice.Error()+"\n") || strings.Contains(v, "第 2 次") {
+		t.Errorf("控制鍵的錯不帶失敗次數:\n%s", v)
 	}
 }
 
@@ -437,5 +504,33 @@ func TestRunWatchQuietsStderrAndReturnsBuildErrorsRaw(t *testing.T) {
 	}
 	if auth.LockStderr != &lock || provider.BackoffStderr != &backoff {
 		t.Error("結束後要還原")
+	}
+}
+
+// TestRunWatchWiring:runWatch 把釘住的平台、RunE 事先建好的那一家與 State 的逾時交給 model 與 tracker——少了哪一個,
+// 釘住會變成跟隨、同一家建兩次、卡住的 osascript 永遠不回錯。
+func TestRunWatchWiring(t *testing.T) {
+	setCLITestConfig(t)
+	var got watchModel
+	origRun := tuiRunProgram
+	tuiRunProgram = func(_ context.Context, m tea.Model, _ io.Writer, _ ...tea.ProgramOption) (tea.Model, error) {
+		got = m.(watchModel)
+		return m, nil
+	}
+	t.Cleanup(func() { tuiRunProgram = origRun })
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	seed := &watchFake{}
+	if err := runWatch(cmd, "apple", seed); err != nil {
+		t.Fatal(err)
+	}
+	if got.pin != "apple" || got.provID != "apple" || got.trk.now["apple"] != provider.PlaybackController(seed) || got.trk.timeout != tuiStateTimeout {
+		t.Errorf("釘住:pin=%q provID=%q seed=%v timeout=%v", got.pin, got.provID, got.trk.now["apple"] == provider.PlaybackController(seed), got.trk.timeout)
+	}
+	if err := runWatch(cmd, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got.pin != "" || got.provID != loadDefaultProvider() || len(got.trk.now) != 0 || got.trk.timeout != tuiStateTimeout {
+		t.Errorf("跟隨:pin=%q provID=%q now=%v timeout=%v", got.pin, got.provID, got.trk.now, got.trk.timeout)
 	}
 }

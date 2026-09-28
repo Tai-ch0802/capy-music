@@ -393,9 +393,9 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 		path := c.CommandPath()
 		// rest 刻意連 flag 一起算:play --id X 的 id 是預設平台的 id 空間,play --pick 是搜尋——都照舊用 default_provider。
 		// 只看位置參數的話,這兩個會被送去顯示中的平台。
-		// now --watch 自己就會跟著正在播的平台走(決策 58):不附加,附加了反而把它釘死在按下去那一刻的平台。
-		watching := path == "capy now" && slices.ContainsFunc(rest, func(a string) bool { return a == "--watch" || strings.HasPrefix(a, "--watch=") })
-		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0) && !watching
+		// now --watch 也附加(決策 58):從 TUI 開的 watch 看的是狀態列上的那一家——不附加的話它從 default_provider 起算,
+		// Apple 暫停、Spotify 閒置時會跑去顯示 Spotify,空白鍵播的就不是剛剛看著的那首。
+		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
 		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
 		if !follows || typed {
 			return args

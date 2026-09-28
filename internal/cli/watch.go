@@ -43,7 +43,7 @@ type watchModel struct {
 	bar      progress.Model
 	st       *provider.PlaybackState
 	err      error  // 最近一次的狀態或錯誤(顯示在底部,繼續輪詢)
-	note     string // 等太久時的「等待平台回應」:蓋過 err 那一行,結果一回來就清掉(不跟失敗次數掛在一起)
+	note     string // 等太久時的「等待平台回應」、控制鍵失敗的原因:蓋過 err 那一行、不帶失敗次數,下一個結果回來就清掉
 	fails    int    // 連續失敗:只算真的問到的(快取裡的同一則錯誤不重複算)
 	fatal    error  // 連續失敗達上限,或沒有任何平台建得起來:離開並回錯
 	ctrlC    bool   // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
@@ -89,7 +89,7 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			m.ctrlC = true
 			return m, tea.Quit
-		case "space": // 播放或暫停看畫面上的狀態(可能是快取的,最多舊 10 秒;送不出去會說,並讓快取過期)
+		case "space": // 播放或暫停看畫面上的狀態(可能是快取的、不一定是現在的狀態;送不出去會說,並讓快取過期)
 			if m.st != nil && m.st.Playing {
 				return m.control(provider.PlaybackController.Pause, false)
 			}
@@ -123,7 +123,7 @@ func (m watchModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return (<-pending).repanic() }
 	}
 	if msg.fromCtl && msg.err != nil { // 使用者剛按的鍵失敗了:即使期間又按了一次而變成 stale 也要說;不計入 fails
-		m.err, m.note = msg.err, ""
+		m.note = msg.err.Error() // 不放 err:那一行會帶上輪詢的失敗次數(那是關畫面的預算,跟這個鍵無關)
 		return m, tick()
 	}
 	if stale {

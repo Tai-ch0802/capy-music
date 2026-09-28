@@ -259,7 +259,7 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 		{"/bin/capy", "pause", "--provider", "apple"},
 		{"/bin/capy", "seek", "1:00", "--provider", "apple"},
 		{"/bin/capy", "now", "--provider", "apple"},
-		{"/bin/capy", "now", "--watch"}, // 自己會跟著正在播的平台走(決策 58):附加了反而釘死在按下去那一刻的平台
+		{"/bin/capy", "now", "--watch", "--provider", "apple"}, // 看狀態列上的那一家(決策 58),不從 default_provider 起算
 		{"/bin/capy", "play", "--provider", "apple"},
 		{"/bin/capy", "play", "派對動物"},
 		{"/bin/capy", "play", "--id", "1422652341"},
@@ -272,8 +272,7 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	}
 }
 
-// TestTUIPinnedStillPinsWatch:TUI 自己被 capy --provider apple 釘住時,命令列打的 now --watch 照舊附加(決策 58:只有沒釘住時
-// 才讓 watch 自己跟隨)——不然從釘住的介面開出來的 watch 會跑去看別家。
+// TestTUIPinnedStillPinsWatch:TUI 自己被 capy --provider apple 釘住時,命令列打的 now --watch 也附加 --provider apple(決策 58)。
 func TestTUIPinnedStillPinsWatch(t *testing.T) {
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", testTracker(t, "apple", &watchFake{}), watchPollSpotify)
 	if got := m.withProviderFlag([]string{"now", "--watch"}); !slices.Equal(got, []string{"now", "--watch", "--provider", "apple"}) {
