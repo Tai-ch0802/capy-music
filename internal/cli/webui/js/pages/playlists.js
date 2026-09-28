@@ -50,7 +50,11 @@ export function initPlaylists(root, api, con, notice, providers) {
   }
 
   function render(files) {
-    const tracks = (files['tracks.json'] || {}).tracks || {};
+    const tr = files['tracks.json'] || {};
+    const tracks = tr.tracks || {};
+    const merged = tr.merged || {};
+    // 清單檔裡可能還是敗者的 cid(別台裝置寫的、還沒被 pull 改指勝者):沿墓碑找勝者。寫入時已壓平,一步就到(canon.Tracks.Merged)。
+    const track = (cid) => tracks[merged[cid] || cid] || {};
     // 不重排:export 的鍵序本來就是決定性的(map 鍵排序),而 localeCompare 的結果會隨瀏覽器的 ICU 版本浮動,
     // 同一份資料在不同瀏覽器上會不一樣。清單集合與清單內容都照原順序(review #62)。
     const pls = Object.keys(files)
@@ -64,43 +68,48 @@ export function initPlaylists(root, api, con, notice, providers) {
       row.type = 'button';
       row.appendChild(el('span', 'pl__name', pl.name || pl.pid));
       const chips = el('span', 'pl__chips');
-      for (const linked of Object.keys(pl.links || {})) chips.appendChild(el('span', 'chip', `${linked} ✓`));
+      for (const [linked] of links(pl)) chips.appendChild(el('span', 'chip', `${linked} ✓`));
       row.appendChild(chips);
       row.appendChild(el('span', 'pl__count num', String((pl.items || []).length)));
       row.addEventListener('click', () => {
         for (const other of left.querySelectorAll('.pl__item')) other.classList.remove('is-active');
         row.classList.add('is-active');
-        showItems(pl, tracks);
+        showItems(pl, track);
       });
       left.appendChild(row);
     }
     left.firstElementChild.click();
   }
 
-  function showItems(pl, tracks) {
+  function showItems(pl, track) {
     right.replaceChildren();
     right.appendChild(el('h3', 'card__sub', t('webui.playlists.items_title', { name: pl.name, count: (pl.items || []).length })));
     const items = pl.items || [];
     const rows = items.map((it) => {
-      const trk = tracks[it.cid] || {};
+      const trk = track(it.cid);
       return [it.cid, trk.title || t('webui.playlists.no_track_data'), (trk.artists || []).join(', '), trk.album || '', String(trk.duration_ms || 0)];
     });
     // 正本的曲名、歌手不一定是從 Spotify 來的(第一個看到這首的平台給的,export 沒記來源):有 Spotify 對應的每一列都連,
     // 多連不違規,少連才是。對應是 capy 認定的同一首(自動寫入要 85 分以上,或人工裁決)。
     right.appendChild(wrapTable(['CID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], rows, (row, i) => {
-      const m = ((tracks[items[i].cid] || {}).mappings || {}).spotify;
+      const m = (track(items[i].cid).mappings || {}).spotify;
       return m ? { kind: 'track', id: m.id, title: row[1] } : null;
     }));
-    const names = Object.keys(pl.links || {});
-    if (names.length) {
-      right.appendChild(btn(t('webui.playlists.view_on', { platform: providerName(names[0]) }), 'btn--ghost', () =>
-        con.run(`pl show ${quote(pl.name)} --provider ${names[0]}`, {
-          onTable: (h, r) => pout.replaceChildren(wrapTable(h, r, names[0] === 'spotify' && ((row) => ({ kind: 'track', id: row[h.indexOf('ID')], title: row[h.indexOf('TITLE')] })))),
-        }, { label: t('webui.playlists.view_label', { platform: providerName(names[0]), name: pl.name }) })));
+    // 每個連著的平台各一顆。送 links 裡的 id,不送正本的名稱:pl show 用名稱找平台上的清單,改過名或有同名清單就會找錯。
+    for (const [p, id] of links(pl)) {
+      right.appendChild(btn(t('webui.playlists.view_on', { platform: providerName(p) }), 'btn--ghost', () =>
+        con.run(`pl show ${quote(id)} --provider ${p}`, {
+          onTable: (h, r) => pout.replaceChildren(wrapTable(h, r, p === 'spotify' && ((row) => ({ kind: 'track', id: row[h.indexOf('ID')], title: row[h.indexOf('TITLE')] })))),
+        }, { label: t('webui.playlists.view_label', { platform: providerName(p), name: pl.name }) })));
     }
     // 連著的 Spotify 清單本身(放在按鈕後面,不放進左欄那一列:那一列整個是 <button>,裡面不能再放連結)。
     const sp = spotifyLink('playlist', (pl.links || {}).spotify, pl.name);
     if (sp) right.appendChild(sp);
+  }
+
+  // links:真的連著的 [平台, id](空字串 = 沒連結,同 pull.go / resolve 的規則;不是字串的壞資料也不算)。
+  function links(pl) {
+    return Object.entries(pl.links || {}).filter(([, id]) => typeof id === 'string' && id);
   }
 
   // wrapTable:pick 見 table.js 的 linkColumn;沒給(或 false)就是一般的表。

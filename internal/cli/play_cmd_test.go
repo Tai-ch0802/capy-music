@@ -18,6 +18,7 @@ type playFake struct {
 	artists []provider.Artist
 	tracks  []provider.Track
 	top     []provider.Track
+	topErr  error // ArtistTopTracks 回它(例如 provider.ErrOnlyNamesakes)
 	played  []provider.PlayRequest
 	playErr error // Play 回它(例如 Apple 只打開頁面時的 *provider.OpenedError)
 }
@@ -33,7 +34,7 @@ func (f *playFake) SearchArtists(context.Context, provider.Query) ([]provider.Ar
 	return f.artists, nil
 }
 func (f *playFake) ArtistTopTracks(context.Context, provider.Artist) ([]provider.Track, error) {
-	return f.top, nil
+	return f.top, f.topErr
 }
 func (f *playFake) Devices(context.Context) ([]provider.Device, error)     { return nil, nil }
 func (f *playFake) State(context.Context) (*provider.PlaybackState, error) { return nil, nil }
@@ -232,6 +233,26 @@ func TestArtistLabelHonestWhenProviderCannotQueue(t *testing.T) {
 	out, err := runCLI(t, "play", "artist:五月天")
 	if err != nil || !strings.Contains(out, "五月天:知足(Fake 不能排佇列") || strings.Contains(out, "2 首") {
 		t.Fatalf("不能排佇列的平台,標籤不得說「N 首」:%v %q", err, out)
+	}
+}
+
+// TestPlayArtistWithoutTracksIsHonest:藝人挑了卻沒有歌可播:照實說找不到、建議直接搜歌名,不改播同名的別人。
+// 搜尋結果全是同名的其他藝人時(Spotify 用名稱近似熱門歌曲),說出原因——不是這位藝人沒有歌;以前一律說「沒有熱門歌曲」。
+func TestPlayArtistWithoutTracksIsHonest(t *testing.T) {
+	f := newPlayFake(t)
+	f.top = nil
+	_, err := runCLI(t, "play", "artist:五月天")
+	if err == nil || err.Error() != "在 Fake 找不到 五月天 的歌。試試直接搜歌名:capy play <歌名>" || len(f.played) != 0 {
+		t.Errorf("找不到就照實說、不播:%v %v", err, f.played)
+	}
+	f.topErr = provider.ErrOnlyNamesakes
+	_, err = runCLI(t, "play", "artist:五月天")
+	if err == nil || !strings.Contains(err.Error(), "找不到這位 五月天 的歌") || !strings.Contains(err.Error(), "名字相同或相近的其他藝人") ||
+		!strings.Contains(err.Error(), "capy play <歌名>") || len(f.played) != 0 {
+		t.Errorf("只有同名的別人:說原因、不播:%v %v", err, f.played)
+	}
+	if code, _ := ExitCode(err); code != 1 {
+		t.Errorf("沒有播:exit 1,不是 %d", code)
 	}
 }
 
