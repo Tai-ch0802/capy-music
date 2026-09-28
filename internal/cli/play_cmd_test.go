@@ -247,7 +247,7 @@ func TestPlayArtistWithoutTracksIsHonest(t *testing.T) {
 	}
 	f.topErr = provider.ErrOnlyNamesakes
 	_, err = runCLI(t, "play", "artist:五月天")
-	if err == nil || !strings.Contains(err.Error(), "找不到你挑的這位 五月天 的歌") || !strings.Contains(err.Error(), "名字相同或相近的其他藝人") ||
+	if err == nil || !strings.Contains(err.Error(), "找不到這位 五月天 的歌") || !strings.Contains(err.Error(), "名字相同或相近的其他藝人") ||
 		!strings.Contains(err.Error(), "capy play <歌名>") || len(f.played) != 0 {
 		t.Errorf("只有同名的別人:說原因、不播:%v %v", err, f.played)
 	}

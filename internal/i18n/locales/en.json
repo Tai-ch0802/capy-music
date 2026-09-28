@@ -687,7 +687,7 @@
   "play.err.id_with_query": "use either --id or a search query, not both",
   "play.err.missing_query": "missing search query",
   "play.err.no_top_tracks": "Couldn't find any songs by {artist} on {platform}. Try a song title instead: capy play <title>",
-  "play.err.no_top_tracks_namesakes": "Couldn't find any songs by the {artist} you picked on {platform}: {platform} has no top-tracks list for artists, so capy searches by name, and every result was by another artist with the same or a similar name. Try a song title instead: capy play <title>",
+  "play.err.no_top_tracks_namesakes": "Couldn't find any songs by this {artist} on {platform}: {platform}'s API doesn't offer an artist's top tracks, so capy searches by name, and every result was by another artist with the same or a similar name. Try a song title instead: capy play <title>",
   "play.err.not_found": "nothing found for {query}",
   "play.err.pick_cache_empty": "the local cache is empty: run capy pl list first, or play a few things with capy play <query>",
   "play.err.pick_needs_tty": "--pick needs a terminal; elsewhere, give a search query and set the type with --type or a prefix",

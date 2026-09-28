@@ -93,7 +93,8 @@ func TestEnglishPlayLabels(t *testing.T) {
 		t.Errorf("沒有歌可播:%v", err)
 	}
 	f.topErr = provider.ErrOnlyNamesakes
-	if _, err := runCLI(t, "play", "artist:五月天"); err == nil || !strings.HasPrefix(err.Error(), "Couldn't find any songs by the 五月天 you picked on Fake: Fake has no top-tracks list") || hasCJK(strings.ReplaceAll(err.Error(), "五月天", "")) {
+	if _, err := runCLI(t, "play", "artist:五月天"); err == nil || !strings.HasPrefix(err.Error(), "Couldn't find any songs by this 五月天 on Fake: Fake's API doesn't offer an artist's top tracks") ||
+		!strings.HasSuffix(err.Error(), "Try a song title instead: capy play <title>") || hasCJK(strings.ReplaceAll(err.Error(), "五月天", "")) {
 		t.Errorf("只有同名的別人:%v", err)
 	}
 	f.topErr = nil
