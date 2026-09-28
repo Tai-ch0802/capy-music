@@ -1527,13 +1527,16 @@ await scenario('18', async () => {
   await tick(30);
   check(calls[before + 1] === 'wiki --refresh --provider spotify', `再問一次重新讀面板的平台:${calls[before + 1]}`);
   const inputs = allByClass(root, 'in');
-  inputs[0].value = 'Road Trip'; inputs[1].value = 'X';
-  buttons()[1].click(); // 查詢
+  inputs[0].value = '"Heroes"'; inputs[1].value = 'David Bowie';
+  buttons()[1].click(); // 查詢:走 args 陣列,雙引號與空白原樣到達(#115 review 第 1 點)
   await tick(30);
-  check(calls[before + 2] === 'wiki --title "Road Trip" --artist X', `手打的歌名:${calls[before + 2]}`);
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--title', '"Heroes"', '--artist', 'David Bowie']) && bodies.at(-1).line === undefined,
+    `手打的歌名走 args、原樣:${JSON.stringify(bodies.at(-1))}`);
   buttons().find((b) => b.textContent === '再問一次(不用快取的回答)')?.click();
   await tick(30);
-  check(calls[before + 3] === 'wiki --refresh --title "Road Trip" --artist X', `手打的再問一次照原樣:${calls[before + 3]}`);
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--refresh', '--title', '"Heroes"', '--artist', 'David Bowie']), `手打的再問一次照原樣:${JSON.stringify(bodies.at(-1).args)}`);
+  check(JSON.stringify(bodies.at(-3).args) === JSON.stringify(['wiki', '--refresh', '--provider', 'spotify']) && JSON.stringify(bodies.at(-4).args) === JSON.stringify(['wiki', '--provider', 'apple']),
+    `查這首與它的再問一次也走 args:${JSON.stringify(bodies.slice(-4).map((b) => b.args))}`);
   check(root.hidden === false && allByClass(root, 'wiki__now-line')[0]?.textContent === 'Spotify · Yellow — Coldplay', `正在播那一行跟著面板:${allByClass(root, 'wiki__now-line')[0]?.textContent}`);
 });
 flush();
