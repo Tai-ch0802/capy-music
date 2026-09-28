@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/ai"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
@@ -22,11 +23,15 @@ const keyDefaultProvider = "default_provider"
 const (
 	keyLocalRoot = "local_root" // P6:本機曲庫目錄;可用 config set 改
 	keyLanguage  = "language"   // 決策 50:介面語系;可用 config set 改,網頁的語言選單改的也是它
+	// 歌曲 wiki(決策 59)三個非機密欄位,config list 加在最後;金鑰與標頭只經 wiki setup 進 keychain,這裡碰不到。
+	keyAIBaseURL      = "ai_base_url"
+	keyAIModel        = "ai_model"
+	keyNativeLanguage = "native_language"
 )
 
 var (
-	configKeys   = []string{keyDefaultProvider, keyLocalRoot, "spotify_client_id", "apple_storefront", keyLanguage}
-	settableKeys = []string{keyDefaultProvider, keyLocalRoot, keyLanguage}
+	configKeys   = []string{keyDefaultProvider, keyLocalRoot, "spotify_client_id", "apple_storefront", keyLanguage, keyAIBaseURL, keyAIModel, keyNativeLanguage}
+	settableKeys = []string{keyDefaultProvider, keyLocalRoot, keyLanguage, keyAIBaseURL, keyAIModel, keyNativeLanguage}
 )
 
 func configGet(c *config.Config, key string) (string, error) {
@@ -41,41 +46,75 @@ func configGet(c *config.Config, key string) (string, error) {
 		return c.LocalRoot, nil
 	case keyLanguage:
 		return c.Language, nil
+	case keyAIBaseURL:
+		return c.AIBaseURL, nil
+	case keyAIModel:
+		return c.AIModel, nil
+	case keyNativeLanguage:
+		return c.NativeLanguage, nil
 	}
 	return "", i18n.Errorf("config.err.unknown_key", "key", strconv.Quote(key), "keys", strings.Join(configKeys, i18n.T("sep.list")))
 }
 
-func configSet(c *config.Config, key, val string) error {
+// configSet:改一個可設的欄位。warn 是存了但值得提醒的事(ai_base_url 用明文 http 打到別台電腦),呼叫端印到 stderr。
+func configSet(c *config.Config, key, val string) (warn string, err error) {
 	switch key {
 	case keyDefaultProvider:
 		if !isProviderID(val) {
-			return i18n.Errorf("config.err.bad_value", "key", key, "valid", strings.Join(providerIDs, i18n.T("sep.or")), "value", strconv.Quote(val))
+			return "", i18n.Errorf("config.err.bad_value", "key", key, "valid", strings.Join(providerIDs, i18n.T("sep.or")), "value", strconv.Quote(val))
 		}
 		c.DefaultProvider = val
-		return nil
+		return "", nil
 	case keyLanguage: // 大小寫與底線寬鬆(zh_tw),存正規化後的代碼
 		lang, ok := i18n.Normalize(val)
 		if !ok {
-			return i18n.Errorf("config.err.bad_value", "key", key, "valid", strings.Join(i18n.Supported(), i18n.T("sep.or")), "value", strconv.Quote(val))
+			return "", i18n.Errorf("config.err.bad_value", "key", key, "valid", strings.Join(i18n.Supported(), i18n.T("sep.or")), "value", strconv.Quote(val))
 		}
 		c.Language = lang
-		return nil
+		return "", nil
 	case "spotify_client_id":
-		return i18n.Errorf("config.err.spotify_client_id")
+		return "", i18n.Errorf("config.err.spotify_client_id")
 	case "apple_storefront":
-		return i18n.Errorf("config.err.apple_storefront")
+		return "", i18n.Errorf("config.err.apple_storefront")
 	case keyLocalRoot: // 存絕對路徑;要是存在的目錄(手打錯路徑時當場知道,不是等到 pl list 才錯)
 		abs, err := filepath.Abs(val)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
-			return i18n.Errorf("config.err.not_dir", "key", key, "path", abs)
+			return "", i18n.Errorf("config.err.not_dir", "key", key, "path", abs)
 		}
 		c.LocalRoot = abs
-		return nil
+		return "", nil
+	case keyAIBaseURL: // 正規化(trim、去尾端 /);明文 http 打到別台電腦只警告不拒絕(Q74:區網的 Ollama 是正當用法)
+		base, err := ai.NormalizeBaseURL(val)
+		if err != nil {
+			return "", err
+		}
+		c.AIBaseURL = base
+		if ai.InsecureRemote(base) {
+			warn = i18n.T("config.warn.http", "url", base)
+		}
+		return warn, nil
+	case keyAIModel:
+		if strings.TrimSpace(val) == "" {
+			return "", i18n.Errorf("config.err.bad_value", "key", key, "valid", i18n.T("config.valid.model_name"), "value", strconv.Quote(val))
+		}
+		c.AIModel = strings.TrimSpace(val)
+		return "", nil
+	case keyNativeLanguage: // 存正規化的代碼(zh_tw → zh-TW);空字串 = 清掉、回到跟介面語系
+		if strings.TrimSpace(val) == "" {
+			c.NativeLanguage = ""
+			return "", nil
+		}
+		_, tag, err := ai.LanguageLabel(val)
+		if err != nil {
+			return "", err
+		}
+		c.NativeLanguage = tag
+		return "", nil
 	}
-	return i18n.Errorf("config.err.unknown_settable", "key", strconv.Quote(key), "keys", strings.Join(settableKeys, i18n.T("sep.list")))
+	return "", i18n.Errorf("config.err.unknown_settable", "key", strconv.Quote(key), "keys", strings.Join(settableKeys, i18n.T("sep.list")))
 }
 
 func newConfigCmd() *cobra.Command {
@@ -103,11 +142,15 @@ func newConfigCmd() *cobra.Command {
 				if err != nil {
 					return i18n.Errorf("config.err.broken", "err", err)
 				}
-				if err := configSet(c, args[0], args[1]); err != nil {
+				warn, err := configSet(c, args[0], args[1])
+				if err != nil {
 					return err
 				}
 				if err := config.Save(c); err != nil {
 					return err
+				}
+				if warn != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), warn)
 				}
 				resetDefaultProvider() // 同一個 process 內(測試、之後的 REPL)立刻生效
 				if args[0] == keyLanguage {

@@ -314,6 +314,9 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .prompt__field { display: flex; flex-direction: column; gap: .3rem; color: var(--muted); }
 .prompt__input { background: var(--surface-2); color: var(--text-hi); border: 1px solid var(--line-hi); border-radius: var(--r); padding: 0 .75rem; height: 40px; font: var(--t-14) var(--mono); min-width: 12rem; }
 .prompt__input:focus { border-color: var(--accent); outline: none; }
+.prompt__input--multi { height: auto; min-height: 5.5rem; padding: .5rem .75rem; resize: vertical; }
+.prompt__input--multi[data-secret] { -webkit-text-security: disc; }
+.prompt__hint { font-size: var(--t-12); color: var(--muted); }
 .prompt__closed { margin-top: .5rem; font-size: var(--t-12); color: var(--muted); }
 
 /* ── dock:播放列 + 執行狀態列;命令列只在主控台頁(決策 45) ── */

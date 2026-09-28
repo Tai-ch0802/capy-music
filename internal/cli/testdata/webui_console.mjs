@@ -1443,6 +1443,46 @@ await scenario('15', async () => {
   }
 });
 
+// 16. wiki setup 的自訂標頭欄(決策 59):multiline + secret → textarea(不是 input)、遮字標記、一行提示;
+//     Enter 不送出、Ctrl / ⌘+Enter 送出,多行的值原樣進 answer body;非 multiline 的 secret 欄照舊是 password input。
+await scenario('16', async () => {
+  i18nFile = './i18n.json'; // 上一組把目錄清空了(目錄讀不到的情境):這裡要畫的是 zh-TW 的提示
+  await loadI18n(api);
+  const before = answers.length;
+  const [g, release] = gate();
+  script = {
+    w: {
+      first: [{ type: 'prompt', id: 1, kind: 'form', title: 'AI', fields: [
+        { name: 'base_url', label: 'Base URL', value: 'https://x/v1' },
+        { name: 'api_key', label: 'Key', secret: true },
+        { name: 'headers', label: 'Headers', secret: true, multiline: true },
+      ] }],
+      gate: g,
+      events: [{ type: 'prompt_closed', id: 1, reason: 'answered' }, done],
+    },
+    onAnswer: release,
+  };
+  const p = con.run('w');
+  await tick(20);
+  const block = root.children[root.children.length - 1];
+  const form = allByClass(block, 'prompt')[0];
+  const inputs = allByClass(form, 'prompt__input');
+  check(inputs.length === 3 && inputs[0].tagName === 'INPUT' && inputs[1].tagName === 'INPUT' && inputs[1].type === 'password' && inputs[2].tagName === 'TEXTAREA',
+    `三個欄位:input、password input、textarea:${inputs.map((i) => i.tagName + ':' + (i.type || '')).join(',')}`);
+  check('secret' in inputs[2].dataset && inputs[2].rows === 3, 'multiline 的 secret 欄要標 data-secret(CSS 遮字)、三行高');
+  check(find(form, '.prompt__hint')?.textContent === '一行一個;Ctrl+Enter(Mac 是 ⌘+Enter)送出', `多行欄的提示:${find(form, '.prompt__hint')?.textContent}`);
+  inputs[2].value = 'CF-Access-Client-Id: a\nCF-Access-Client-Secret: b';
+  inputs[1].value = 'k';
+  inputs[2].l.keydown({ key: 'Enter', preventDefault() {} });
+  await tick(20);
+  check(answers.length === before, 'textarea 裡的 Enter 是換行,不送出');
+  inputs[2].l.keydown({ key: 'Enter', ctrlKey: true, preventDefault() {} });
+  await p;
+  const sent = answers[answers.length - 1];
+  check(answers.length === before + 1 && sent.value.headers === 'CF-Access-Client-Id: a\nCF-Access-Client-Secret: b' && sent.value.api_key === 'k' && sent.value.base_url === 'https://x/v1',
+    `Ctrl+Enter 送出、多行原樣:${JSON.stringify(sent?.value)}`);
+});
+
 flush();
 if (failures.length) {
   say(`${failures.length} 條不成立`);

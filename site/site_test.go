@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tai-ch0802/capy-music/internal/ai"
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 )
 
@@ -62,6 +63,32 @@ func TestPrivacyPolicyDisclosesExactlyTheScopesTheCodeRequests(t *testing.T) {
 		}
 		if !strings.Contains(html, "https://developers.google.com/terms/api-services-user-data-policy") {
 			t.Errorf("%s 要有 Google API 服務使用者資料政策(Limited Use)的聲明", page)
+		}
+	}
+}
+
+// 歌曲 wiki(決策 59):程式會連到使用者自己設定的 AI 端點,政策要說清楚——哪兩個命令會連、送的是哪幾個欄位、
+// 端點是使用者自選的、MV 只是 YouTube 搜尋網址。送出的欄位以 ai.SentFields(英文用詞)為準,中文對照表在這裡:
+// 程式多送一欄、政策沒寫,這個測試讓那種 PR 過不了(跟上面 scope 的釘子同一個道理)。
+func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
+	zh := map[string]string{"title": "歌名", "artist": "歌手", "album": "專輯", "release date": "發行日期", "genre": "曲風"}
+	for _, page := range []string{"privacy.html", "en/privacy.html"} {
+		html := read(t, page)
+		for _, want := range []string{"<code>capy wiki setup</code>", "<code>capy wiki</code>", "YouTube"} {
+			if !strings.Contains(html, want) {
+				t.Errorf("%s 沒有提到 %s", page, want)
+			}
+		}
+		for _, f := range ai.SentFields {
+			word := f
+			if !strings.HasPrefix(page, "en/") {
+				if word = zh[f]; word == "" {
+					t.Fatalf("ai.SentFields 多了 %q,這個測試的中文對照表要一起補", f)
+				}
+			}
+			if !strings.Contains(html, word) {
+				t.Errorf("%s 沒有揭露程式會送到 AI 端點的欄位 %q", page, word)
+			}
 		}
 	}
 }

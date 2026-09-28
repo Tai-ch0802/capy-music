@@ -74,8 +74,8 @@ func TestConfigGetAndListPlainText(t *testing.T) {
 		t.Fatalf("get 非 TTY 應印裸值,得到 %q", out)
 	}
 	_ = config.Save(&config.Config{DefaultProvider: "apple", SpotifyClientID: "cid", AppleStorefront: "tw"})
-	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\nlanguage\t\n" {
-		t.Fatalf("list 非 TTY 應列出五個非機密欄位 key\\tvalue(language 加在最後,既有的行位置不動),得到 %q", out)
+	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\nlanguage\t\nai_base_url\t\nai_model\t\nnative_language\t\n" {
+		t.Fatalf("list 非 TTY 應列出八個非機密欄位 key\\tvalue(language、再來 wiki 的三個都加在最後,既有的行位置不動),得到 %q", out)
 	}
 	if out, _ := runCLI(t, "config", "get", "spotify_client_id"); out != "cid\n" {
 		t.Fatalf("get 應支援三個欄位,得到 %q", out)
@@ -243,7 +243,7 @@ func TestConfigInEnglish(t *testing.T) {
 	setCLITestConfig(t)
 	withLanguage(t, "en")
 	_, err := runCLI(t, "config", "set", "theme", "dark")
-	if err == nil || err.Error() != `unknown setting "theme" (settable: default_provider, local_root, language)` {
+	if err == nil || err.Error() != `unknown setting "theme" (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language)` {
 		t.Fatalf("英文的錯誤訊息:%v", err)
 	}
 	_, err = runCLI(t, "config", "set", "language", "fr")

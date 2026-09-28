@@ -22,6 +22,10 @@ type Config struct {
 	DeviceID        string `json:"device_id,omitempty"`        // ULID,首次需要時產生;CAPY_CONFIG_DIR 換目錄 = 新裝置(不可沿用已刪的 install_id)
 	LocalRoot       string `json:"local_root,omitempty"`       // P6 決策 35:本機曲庫目錄(*.m3u8 + library.json);非機密
 	Language        string `json:"language,omitempty"`         // 決策 50:介面語系(BCP 47,如 en、zh-TW);空 = i18n.Default()
+	// 歌曲 wiki(決策 59):使用者自己的 OpenAI 相容端點。金鑰與自訂標頭不在這裡(keychain 的 ai.api_key / ai.headers)。
+	AIBaseURL      string `json:"ai_base_url,omitempty"`     // 到 /v1 為止、尾端沒有 /(ai.NormalizeBaseURL)
+	AIModel        string `json:"ai_model,omitempty"`        // 原樣送進 chat/completions 的 model 欄
+	NativeLanguage string `json:"native_language,omitempty"` // 母語,BCP 47 正規化後的代碼;空 = 跟介面語系(language)
 }
 
 // Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。

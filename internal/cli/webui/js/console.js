@@ -431,15 +431,28 @@ export class Console {
         (ev.fields || []).forEach((f) => {
           const lab = el('label', 'prompt__field');
           lab.appendChild(el('span', null, f.label));
-          const inp = el('input', 'prompt__input');
-          inp.type = f.secret ? 'password' : 'text';
+          // multiline(wiki setup 的自訂標頭):textarea,Enter 換行、Ctrl / ⌘+Enter 送出、Esc 取消。
+          // secret 的 textarea 沒有 password 型別可用:CSS 用 text-security 遮字(data-secret),值一樣只進 answer body。
+          const inp = el(f.multiline ? 'textarea' : 'input', f.multiline ? 'prompt__input prompt__input--multi' : 'prompt__input');
+          if (f.multiline) {
+            inp.rows = 3;
+            if (f.secret) inp.dataset.secret = '';
+            inp.addEventListener('keydown', (k) => {
+              if (k.isComposing || k.keyCode === 229) return;
+              if (k.key === 'Enter' && (k.ctrlKey || k.metaKey)) { k.preventDefault(); submit(); }
+              if (k.key === 'Escape') { k.preventDefault(); answer(true, null); }
+            });
+          } else {
+            inp.type = f.secret ? 'password' : 'text';
+            onKeys(inp, submit);
+          }
           inp.autocomplete = f.secret ? 'new-password' : 'off';
           inp.spellcheck = false;
           if (f.value) inp.value = f.value;                      // 重問時帶回上一輪的值(非 secret 欄)
           if (f.filled) inp.placeholder = t('webui.console.prompt.filled'); // secret 欄的值絕不回到頁面
-          onKeys(inp, submit);
           inputs[f.name] = inp;
           lab.appendChild(inp);
+          if (f.multiline) lab.appendChild(el('span', 'prompt__hint', t('webui.console.prompt.multiline_hint')));
           fields.appendChild(lab);
           if (!focus) focus = inp;
         });

@@ -353,6 +353,9 @@ func TestWebAllowlistTable(t *testing.T) {
 		{[]string{"auth", "login", "apple", "--developer-token=eyJ"}, true},
 		{[]string{"auth", "login", "apple", "--user-token", "x"}, true},
 		{[]string{"auth", "login", "spotify", "--client-id", "x"}, false},
+		{[]string{"wiki", "setup", "--api-key", "k"}, true}, // 決策 59:金鑰與自訂標頭走精靈的 Secret 欄
+		{[]string{"wiki", "setup", "--header=X-A: 1"}, true},
+		{[]string{"wiki", "setup", "--base-url", "https://x/v1", "--model", "m"}, false},
 		{[]string{"search", "--autoplay"}, false}, // 只比整個 token,不比前綴
 	} {
 		if got := webDenied(tc.args) != ""; got != tc.deny {
@@ -474,16 +477,16 @@ func TestWebLanguageFollowsConfig(t *testing.T) {
 		msg, _ := evExit(t, events)["message"].(string)
 		return msg
 	}
-	if got := short(); got != "寫入設定值(可設:default_provider、local_root、language)" {
+	if got := short(); got != "寫入設定值(可設:default_provider、local_root、language、ai_base_url、ai_model、native_language)" {
 		t.Fatalf("沒設 language:測試二進位的預設是 zh-TW:%q", got)
 	}
 	if msg := exitMsg("config", "set", "language", "en"); msg != "" { // T3 的語言選單跑的就是這個命令
 		t.Fatalf("config set language en:%q", msg)
 	}
-	if got := short(); got != "Change a setting (settable: default_provider, local_root, language)" {
+	if got := short(); got != "Change a setting (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language)" {
 		t.Fatalf("切成英文後 /api/commands 要是英文:%q", got)
 	}
-	if msg := exitMsg("config", "set", "theme", "dark"); msg != `Error: unknown setting "theme" (settable: default_provider, local_root, language)` {
+	if msg := exitMsg("config", "set", "theme", "dark"); msg != `Error: unknown setting "theme" (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language)` {
 		t.Fatalf("下一個 job 就是英文:%q", msg)
 	}
 	if err := config.Save(&config.Config{Language: "zh-TW"}); err != nil { // 終端機那邊改回中文

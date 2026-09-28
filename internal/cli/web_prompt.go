@@ -49,6 +49,8 @@ type webField struct {
 	Name   string `json:"name"`
 	Label  string `json:"label"`
 	Secret bool   `json:"secret,omitempty"` // 值只在 answer body 裡經 loopback 進行程,不進事件、不記 log、不回顯
+	// Multiline:畫成 textarea(wiki setup 的自訂標頭,一行一個);Enter 換行、Ctrl / ⌘+Enter 送出。
+	Multiline bool `json:"multiline,omitempty"`
 	// 驗證失敗重問時把上一輪的值帶回去,使用者只要改錯的那一欄(終端機的 huh 本來就是這樣)。
 	// secret 欄不能帶值(決策 40–41),只帶 Filled:前端顯示「已填,留空 = 沿用上次」,伺服器端沿用。
 	Value  string `json:"value,omitempty"`
@@ -246,6 +248,7 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 	origConfirm, origPick, origName, origReview := confirmWrite, pickOne, promptNewName, reviewPrompt
 	origCID, origDisclosure, origApple := runClientIDWizard, confirmAppleDisclosure, runAppleWizardInputs
 	origGoogle, origGoogleSecret, origOpen := googleWizard, googleSecretPrompt, openBrowser
+	origWiki := wikiSetupForm
 	isInteractive = func(*cobra.Command) bool { return true }
 	stdinIsTTY = func() bool { return true }
 	bothTTY = func(*cobra.Command) bool { return true } // reviewIsTTY / migrateIsTTY 委派到這裡(T1)
@@ -259,11 +262,13 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 	googleWizard = s.webGoogleWizard
 	googleSecretPrompt = s.webGoogleSecretPrompt
 	openBrowser = s.webOpenBrowser
+	wikiSetupForm = s.webWikiSetupForm
 	return func() {
 		isInteractive, stdinIsTTY, bothTTY = origInteractive, origStdin, origBoth
 		confirmWrite, pickOne, promptNewName, reviewPrompt = origConfirm, origPick, origName, origReview
 		runClientIDWizard, confirmAppleDisclosure, runAppleWizardInputs = origCID, origDisclosure, origApple
 		googleWizard, googleSecretPrompt, openBrowser = origGoogle, origGoogleSecret, origOpen
+		wikiSetupForm = origWiki
 	}
 }
 
@@ -434,6 +439,50 @@ func (s *webServer) webGoogleWizard() (id, sec string, err error) {
 			continue
 		}
 		return strings.TrimSpace(v["client_id"]), strings.TrimSpace(v["client_secret"]), nil
+	}
+}
+
+// webWikiSetupForm:wiki setup 第一段的提示橋版(決策 59)。金鑰與自訂標頭是 Secret 欄(標頭還是 Multiline);
+// keychain 已有值時只標「已填」——留空 = 沿用,值從沒離開過行程。驗證用 wiki.go 的三個具名函式,錯了帶 Error 重問。
+func (s *webServer) webWikiSetupForm(in wikiSetupInput) (wikiSetupInput, error) {
+	p := webPrompt{Kind: "form", Title: i18n.T("wiki.setup.title"), Note: &webNote{Title: i18n.T("wiki.setup.title"), Body: wikiGuide()},
+		Fields: []webField{
+			{Name: "base_url", Label: i18n.T("wiki.setup.base_url")},
+			{Name: "api_key", Label: wikiKeyLabel(in.HadKey), Secret: true},
+			{Name: "headers", Label: wikiHeadersLabel(in.HadHeaders), Secret: true, Multiline: true},
+			{Name: "language", Label: i18n.T("wiki.setup.language")},
+		}}
+	last := map[string]string{"base_url": in.BaseURL, "language": in.Language}
+	for {
+		refill(p.Fields, last)
+		for i := range p.Fields { // keychain 裡已經有的:第一輪 last 沒有它,也要標「已填」
+			f := &p.Fields[i]
+			if f.Secret && !f.Filled && ((f.Name == "api_key" && in.HadKey) || (f.Name == "headers" && in.HadHeaders)) {
+				f.Filled = true
+			}
+		}
+		a, err := s.ask(p)
+		if err != nil || a.Cancel {
+			return in, huh.ErrUserAborted
+		}
+		v := a.formValue()
+		keepSecrets(p.Fields, v, last)
+		last = v
+		if err := validateAIBaseURL(v["base_url"]); err != nil {
+			p.Error = i18n.T("webprompt.err.field", "field", i18n.T("wiki.setup.base_url"), "err", err)
+			continue
+		}
+		if err := validateAIHeaders(v["headers"]); err != nil {
+			p.Error = i18n.T("webprompt.err.field", "field", i18n.T("wiki.setup.headers"), "err", err)
+			continue
+		}
+		if err := validateNativeLanguage(v["language"]); err != nil {
+			p.Error = i18n.T("webprompt.err.field", "field", i18n.T("wiki.setup.language"), "err", err)
+			continue
+		}
+		out := in
+		out.BaseURL, out.APIKey, out.HeadersText, out.Language = v["base_url"], v["api_key"], v["headers"], v["language"]
+		return out, nil
 	}
 }
 
