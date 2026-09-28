@@ -716,7 +716,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | 不可下載/修改 MusicKit Content | 我們只碰 metadata,不碰音訊 |
 | Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規;web 介面顯示 Spotify 曲目或清單的表格(搜尋、清單頁、同步頁、搬家精靈、主控台的變更表)連回 Spotify,連結字用設計規範核可的「Listen on Spotify」;播放列的曲名、ISRC 頁的平台卡片也連回去(Policy II.4.b)。規範要的 logo 依決策 48 不放;沒連的地方與理由見計畫 2026-09-24 §1.7 S7 |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
-| 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,capy 不連 YouTube;AI 正文不逐字重製歌詞、結尾免責行不可關 |
+| 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)加上母語的名稱(prompt 的 `{language}`,只用來指定回答的語言;政策中英都寫了)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,capy 不連 YouTube;AI 正文不逐字重製歌詞、結尾免責行不可關 |
 
 本專案沒有任何遠端伺服器端元件(v0.5 起 Worker 已移除;`capy --web` 只在使用者自己的電腦 127.0.0.1 起 HTTP,不對外、資料不離開那台電腦、不經過我們):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google OAuth 同意畫面與 basic verification 需要的 URL)掛在品牌網站 <https://capy.taislife.work>(2026-09-21;首頁 / `/privacy` / `/terms`,中英各一份,原始檔在 `site/`):Cloudflare Workers 的**純靜態資產**——沒有 Worker 程式、沒有 binding、零外部資源、沒有 cookie 與分析,不構成「伺服器端元件」。政策的核心就是上面那一句;`site/site_test.go` 釘住「政策揭露的 scope = `auth.GoogleScopes`」,兩邊不一致測試會紅。(2026-09-28,決策 59:歌曲 wiki 的 AI 端點也在這句的範圍內——它是使用者自己設定的服務,資料直接從使用者的電腦送到使用者選的端點,不經過我們;政策 §4 / §5 同 PR 補上,`site_test` 另釘一條。)
 
