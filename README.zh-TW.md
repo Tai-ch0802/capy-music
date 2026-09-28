@@ -115,7 +115,7 @@ capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);�
 
 - **任何 OpenAI 相容端點**(`/chat/completions`):OpenAI 本身、LiteLLM 或 OpenRouter 這類 gateway、或這台電腦上的 Ollama(`http://localhost:11434/v1`,不用金鑰)。設定時會列出端點的模型(`GET /models`);沒有這個清單的端點改用一個 token 的測試請求確認。
 - **端點在 Cloudflare Access 之類的門後面?** 把它要求的標頭加上去,一行一個 `Name: value`(例如 `CF-Access-Client-Id` / `CF-Access-Client-Secret`);每個請求都會帶,包括設定時的檢查。你自己寫的標頭優先,所以寫一行 `Authorization:` 就會取代 Bearer 金鑰。
-- **送出什麼,而且只在你執行 `capy wiki` 時**:那首歌的歌名、歌手、專輯、發行日期、曲風。其他都不送——沒有帳號、沒有清單。端點是你自己選的服務,適用它自己的政策;見[隱私權政策](https://capy.taislife.work/privacy)。
+- **送出什麼,而且只在你執行 `capy wiki` 時**:那首歌的歌名、歌手、專輯、發行日期、曲風,以及你設定的母語(只用來指定回答的語言)。其他都不送——沒有帳號、沒有清單。端點是你自己選的服務,適用它自己的政策;見[隱私權政策](https://capy.taislife.work/privacy)。
 - **你會拿到什麼**:回答邊寫邊一行一行印出來(Ctrl-C 可以停),結尾是 MV 連結、哪個模型什麼時候寫的,以及一行固定的提醒:由 AI 產生、可能有錯。回答留在這台電腦上(`state.db` 裡的快取),同一首再問一次是瞬間;`--refresh` 會再問端點,換了 `native_language` 也會用新語言再問。互動式介面裡按 `w` 就問狀態列上那首。
 - **東西放哪**:base URL、模型、母語在 `config.json`(`capy config set ai_base_url` / `ai_model` / `native_language`);API key 與自訂標頭只在 OS keychain(標頭最多 2 KB)。明文 `http:` 打到別台電腦會警告(金鑰會不加密地走網路);`localhost` 不會。在網頁裡 `capy wiki setup` 是一張表單,金鑰與標頭欄位不會出現在事件或 log 裡,`--api-key` / `--header` 在網頁一律拒絕。
 

@@ -365,3 +365,39 @@ func TestLoadReadsConfigAndKeychain(t *testing.T) {
 		t.Errorf("SentFields 是政策的用詞,改了政策要一起改:%v", got)
 	}
 }
+
+func TestChatIncompleteWhenStreamEndsWithoutDoneOrLength(t *testing.T) {
+	_, cfg := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n", delta("half\nway")) // 沒有 [DONE] 就結束
+	})
+	var lines []string
+	text, err := cfg.Chat(context.Background(), ChatRequest{User: "u"}, func(l string) { lines = append(lines, l) })
+	var inc *IncompleteError
+	if !errors.As(err, &inc) || inc.Reason != "eof" || text != "half\nway" || strings.Join(lines, "|") != "half|way" {
+		t.Fatalf("沒收到 [DONE] 就 EOF:要回 IncompleteError(eof)並交出已收到的文字:%v %q %q", err, text, lines)
+	}
+	_, cfg2 := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		sse(w, delta("cut"), `{"choices":[{"delta":{},"finish_reason":"length"}]}`)
+	})
+	if _, err := cfg2.Chat(context.Background(), ChatRequest{User: "u"}, nil); !errors.As(err, &inc) || inc.Reason != "length" {
+		t.Fatalf("finish_reason length 是不完整:%v", err)
+	}
+	_, cfg3 := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"cut"},"finish_reason":"length"}]}`)
+	})
+	if _, err := cfg3.ChatOnce(context.Background(), ChatRequest{User: "u"}); !errors.As(err, &inc) || inc.Reason != "length" {
+		t.Fatalf("整批的 finish_reason length 也是不完整:%v", err)
+	}
+	if err := cfg3.Ping(context.Background()); err != nil {
+		t.Fatalf("1-token 探測本來就會撞上限,不算錯:%v", err)
+	}
+	// 正常收尾的 finish_reason stop 不算。
+	_, cfg4 := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		sse(w, delta("ok"), `{"choices":[{"delta":{},"finish_reason":"stop"}]}`)
+	})
+	if text, err := cfg4.Chat(context.Background(), ChatRequest{User: "u"}, nil); err != nil || text != "ok" {
+		t.Fatalf("stop 是正常結束:%v %q", err, text)
+	}
+}
