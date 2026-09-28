@@ -29,6 +29,8 @@ type fakeAI struct {
 	models       []string
 	modelsStatus int
 	chatStatus   int
+	chatText     string        // chat 回的正文(空 = "ok");要求 stream 時一行一幀送 SSE,否則整批 JSON
+	chatHang     chan struct{} // 非 nil:chat 先等它關閉(或請求被取消)才回——逾時 / 中止的測試用
 }
 
 func newFakeAI(t *testing.T, models ...string) *fakeAI {
@@ -58,8 +60,31 @@ func newFakeAI(t *testing.T, models ...string) *fakeAI {
 				fmt.Fprint(w, `{"error":{"message":"nope"}}`)
 				return
 			}
+			if f.chatHang != nil {
+				select {
+				case <-f.chatHang:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			text := f.chatText
+			if text == "" {
+				text = "ok"
+			}
+			if strings.Contains(string(b), `"stream":true`) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, line := range strings.SplitAfter(text, "\n") {
+					if line == "" {
+						continue
+					}
+					frame, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": line}}}})
+					fmt.Fprintf(w, "data: %s\n\n", frame)
+				}
+				fmt.Fprint(w, "data: [DONE]\n\n")
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": text}}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

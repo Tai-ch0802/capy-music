@@ -233,3 +233,36 @@ func (s *Store) ForgetPlaylistItems(provider, playlistID string) error {
 	_, err := s.db.Exec("DELETE FROM playlist_items_cache WHERE provider = ? AND playlist_id = ?", provider, playlistID)
 	return err
 }
+
+// WikiEntry:capy wiki 的一份回答(決策 59)。純快取、不過期:key 是 ai.WikiCacheKey(prompt 版號 | 母語 | 歌名 | 歌手),
+// 不進 Dump / Hydrate,刪掉只會讓下一次多問一次端點。Body 是 AI 的正文(不含 capy 自己印的 MV 連結、來源與免責行)。
+type WikiEntry struct {
+	Title     string
+	Artists   string
+	Language  string
+	Model     string
+	Body      string
+	FetchedAt time.Time
+}
+
+// CachedWiki:沒有這首的快取回 ok=false。
+func (s *Store) CachedWiki(key string) (WikiEntry, bool, error) {
+	var e WikiEntry
+	var at int64
+	err := s.db.QueryRow("SELECT title, artists, language, model, body, fetched_at FROM wiki_cache WHERE key = ?", key).Scan(&e.Title, &e.Artists, &e.Language, &e.Model, &e.Body, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return e, false, nil
+	}
+	if err != nil {
+		return e, false, err
+	}
+	e.FetchedAt = time.Unix(at, 0)
+	return e, true, nil
+}
+
+// SaveWiki 取代這首的快取(--refresh 也走這裡)。
+func (s *Store) SaveWiki(key string, e WikiEntry) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO wiki_cache (key, title, artists, language, model, body, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		key, e.Title, e.Artists, e.Language, e.Model, e.Body, e.FetchedAt.Unix())
+	return err
+}

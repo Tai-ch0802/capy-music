@@ -396,6 +396,10 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 		// now --watch 也附加(決策 58):從 TUI 開的 watch 看的是狀態列上的那一家——不附加的話它從 default_provider 起算,
 		// Apple 暫停、Spotify 閒置時會跑去顯示 Spotify,空白鍵播的就不是剛剛看著的那首。
 		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
+		if path == "capy wiki" { // 沒指定歌名就是「狀態列上這首」:位置參數或 --title 給了就不跟;--refresh / --json 照跟
+			_ = c.Flags().Parse(rest)
+			follows = len(c.Flags().Args()) == 0 && !c.Flags().Changed("title")
+		}
 		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
 		if !follows || typed {
 			return args
@@ -698,6 +702,16 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case "?": // 完整鍵位推進捲動區,不佔底部的行數
 		m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
 		return m, m.printBlock(tuiKeymap(), m.theme.Mutedly)
+	case "w": // 狀態列上這首歌的 wiki(決策 59):跟打 /wiki 一樣的路——回音、讓出終端機、--provider 跟著狀態列;
+		// 放在 pcErr 的閘之前:沒有播放遙控時命令自己會說沒有在播、指路 --title,比按了沒反應好
+		if m.exe == "" {
+			return m, m.println(tuiSeg{"✗ " + i18n.T("tui.err.no_executable"), m.theme.Mutedly})
+		}
+		m.running, m.menuHigh = true, 0
+		return m, tea.Sequence(
+			tuiPrintln("\n"+tuiJoin(m.viewWidth()-1, tuiSeg{"> ", m.theme.Accented}, tuiSeg{"wiki", m.theme.Strong})),
+			m.runArgs([]string{"wiki"}),
+		)
 	}
 	// r 在「沒有播放遙控」時也要能用:在別的終端機跑完 capy auth login 之後,不必等建不起來的結果過期(一分鐘)。
 	if msg.String() == "r" { // 輪詢停下來之後重新接上
