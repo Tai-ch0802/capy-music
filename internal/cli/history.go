@@ -15,12 +15,11 @@ func newHistoryCmd() *cobra.Command {
 		Use: "clear", Short: i18n.T("cmd.history.clear.short"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c := cache.Load()
-			n := len(c.Recent)
 			c.ClearRecent()
 			if err := c.Save(); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), i18n.T("history.cleared", "count", n))
+			fmt.Fprintln(cmd.OutOrStdout(), i18n.T("history.cleared", "count", int(c.Cleared())))
 			return nil
 		},
 	})

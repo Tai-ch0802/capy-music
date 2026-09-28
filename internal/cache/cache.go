@@ -1,6 +1,8 @@
 // Package cache 是非機密本機快取的門面:各 provider 的播放清單 id/name,與最近 MaxRecent 筆搜尋/挑選。
 // 原本存 config.Dir()/cache.json;P3 T6 起改存 state.db(store 套件)的兩張表,呼叫端不變:Load 永不失敗、
 // Save 寫穿。它只是快取——讀不到或壞掉視同空、絕不報錯;不是 source of truth,也絕不存憑證。
+// Save 只寫這次改了什麼(SetPlaylists / AddRecent / ClearRecent 記下來的),不拿讀到的那一份整批取代:
+// 同時有好幾個 capy 在讀寫(TUI 開出來的子程式、capy --web、另一個終端機、cron)。
 package cache
 
 import (
@@ -36,8 +38,9 @@ type (
 
 type Cache struct {
 	Playlists map[string][]Playlist // key = provider id
-	Recent    []Recent              // 最新在前
-	loaded    bool                  // Load 成功才 true;false 時 Save 是 no-op——讀不到就不能拿空的去蓋掉別人的(它只是快取)
+	Recent    []Recent              // 最新在前(讀到的那一份加上這次的改動;別的行程之後寫的不在裡面)
+	delta     store.CacheDelta      // 這次改了什麼:Save 只寫這些
+	cleared   int64                 // 最近一次 Save 的 ClearRecent 真的刪掉幾筆
 }
 
 // Now 是測試替換點。
@@ -58,13 +61,15 @@ func Load() *Cache {
 	if err != nil {
 		return empty
 	}
-	return &Cache{Playlists: pls, Recent: recent, loaded: true}
+	return &Cache{Playlists: pls, Recent: recent}
 }
 
-// Save 寫穿到 state.db(一筆交易)。Load 沒成功的 Cache 直接回 nil 不寫:一次暫時性的讀失敗(200 ms 內等不到鎖)
-// 不能變成整批取代成空的永久遺失。
+// Save 把這次的改動寫進 state.db(一筆交易,見 store.ApplyCache)。只寫改動,所以別的行程在這之間寫的、
+// 剛登出的平台被清掉的、history clear 清掉的都不會被這一份讀到的快取蓋回去;Load 失敗(讀到的是空的)也一樣只寫改動。
+// 沒有改動就不開 db;寫成了就把改動清掉——再存一次不會重做(例如不會再清一次別人剛加的最近項目)。
 func (c *Cache) Save() error {
-	if !c.loaded {
+	d := c.delta
+	if !d.ClearRecent && d.Playlists == nil && len(d.Recent) == 0 {
 		return nil
 	}
 	s, err := store.Open(busy)
@@ -72,11 +77,24 @@ func (c *Cache) Save() error {
 		return err
 	}
 	defer s.Close()
-	return s.SaveCache(c.Playlists, c.Recent)
+	d.MaxRecent = MaxRecent
+	n, err := s.ApplyCache(d)
+	if err != nil {
+		return err
+	}
+	c.delta, c.cleared = store.CacheDelta{}, n
+	return nil
 }
+
+// Cleared:最近一次 Save 的 ClearRecent 真的刪掉幾筆(history clear 要說的數字;不能拿讀到的那一份算——Load 失敗時它是空的)。
+func (c *Cache) Cleared() int64 { return c.cleared }
 
 func (c *Cache) SetPlaylists(providerID string, pls []Playlist) {
 	c.Playlists[providerID] = pls
+	if c.delta.Playlists == nil {
+		c.delta.Playlists = map[string][]Playlist{}
+	}
+	c.delta.Playlists[providerID] = pls
 }
 
 // AddRecent 放到最前;同 provider+type+id 只留這筆;超過 MaxRecent 淘汰最舊。At 為 0 時補現在。
@@ -96,9 +114,14 @@ func (c *Cache) AddRecent(r Recent) {
 		out = out[:MaxRecent]
 	}
 	c.Recent = out
+	c.delta.Recent = append(c.delta.Recent, r)
 }
 
-func (c *Cache) ClearRecent() { c.Recent = nil }
+// ClearRecent 清空最近項目;這之前加的一起作廢,之後加的照樣寫。
+func (c *Cache) ClearRecent() {
+	c.Recent = nil
+	c.delta.ClearRecent, c.delta.Recent = true, nil
+}
 
 // forgetWait:登出時等別的 capy 放鎖的上限。比 busy 長:這裡不是 TAB 補全,而且等不到就等於沒清掉(要照實說)。
 const forgetWait = 5 * time.Second

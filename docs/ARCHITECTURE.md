@@ -682,7 +682,9 @@ CREATE TABLE playlist_links (pid TEXT, provider TEXT, provider_id TEXT, PRIMARY 
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT, last_seen INTEGER, registered INTEGER /* 在 manifest.devices */, has_state INTEGER /* 有 dev__<id>.json */);
 CREATE TABLE device_base (device_id TEXT, pid TEXT, provider TEXT, playlist_id TEXT /* 被觀測的平台清單 id */, name TEXT, items TEXT /* JSON,平台順序的 provider id */, cids TEXT /* JSON,觀測當時的 cid,與 items 對齊 */, observed_at INTEGER, PRIMARY KEY (device_id, pid, provider));
 -- manifest.playlists 不另存:Dump 由 playlists 表推回(pull 的閘保證「宣告但取不到」的狀態永遠不會被 Hydrate 進來,兩者恆等)。
--- 純快取(原 cache.json,附錄 C 決策 17):順序存 position,「最新在前、去重、上限 50」在 internal/cache 的記憶體邏輯
+-- 純快取(原 cache.json,附錄 C 決策 17):順序存 position,「最新在前、去重、上限 50」在 internal/cache 的記憶體邏輯與 store.ApplyCache 的 SQL 各一份(測試釘成一樣)。
+-- Save 只寫這次的改動、一筆交易、第一句就是寫入(2026-09-28):好幾個 capy 會同時讀寫(TUI 的子程式、capy --web、另一個終端機、cron),
+-- 整批取代會蓋掉對方剛寫的、把 history clear 清掉的與剛登出的平台的列寫回來;先讀再寫的交易升級寫鎖時 SQLite 不等 busy_timeout、立刻 BUSY
 CREATE TABLE provider_playlists (provider TEXT, position INTEGER, id TEXT, name TEXT, total INTEGER, PRIMARY KEY (provider, position));
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER, provider TEXT, type TEXT, id TEXT, label TEXT, detail TEXT);
 -- 純快取(決策 57):上次真的讀到的連結清單曲目,版本(Spotify snapshot_id)沒變就不重讀;tracks 是同步用欄位的白名單 JSON,最多用 7 天
