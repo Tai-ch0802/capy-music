@@ -233,8 +233,8 @@ func TestWikiJSON(t *testing.T) {
 		t.Fatal("--json 整批、不串流")
 	}
 	out, _ = runCLI(t, "wiki", "--json")
-	if m := parse(out); m["cached"] != true || f.chats() != 1 {
-		t.Fatalf("第二次 cached 要是 true、不打端點:%v", m)
+	if m := parse(out); m["cached"] != true || m["language"] != "zh-TW" || m["model"] != "m1" || f.chats() != 1 {
+		t.Fatalf("第二次 cached 要是 true、不打端點、語言與 model 描述這一列自己:%v", m)
 	}
 }
 

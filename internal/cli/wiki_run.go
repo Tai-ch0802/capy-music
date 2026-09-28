@@ -68,6 +68,8 @@ func runWiki(cmd *cobra.Command, args []string) error {
 	var song ai.Song
 	if strings.TrimSpace(title) != "" {
 		song = ai.Song{Title: strings.TrimSpace(title)}
+		// --artist 刻意是一個字串(不是 StringArray):使用者打 "A, B" 跟平台給的 []string{"A","B"} 在 prompt 與快取 key 裡
+		// 都是 "A, B",同一首才會對到同一份快取。
 		if a := strings.TrimSpace(artist); a != "" {
 			song.Artists = []string{a}
 		}
@@ -131,7 +133,7 @@ func runWiki(cmd *cobra.Command, args []string) error {
 		enc.SetEscapeHTML(false)
 		return enc.Encode(wikiJSON{
 			Title: song.Title, Artists: nonNilStrings(song.Artists), Album: song.Album, ReleaseDate: song.ReleaseDate, Genres: song.Genres,
-			Language: tag, Model: entry.Model, Cached: cached, FetchedAt: entry.FetchedAt.UTC().Format(time.RFC3339), Body: entry.Body, YouTubeSearchURL: mv,
+			Language: entry.Language, Model: entry.Model, Cached: cached, FetchedAt: entry.FetchedAt.UTC().Format(time.RFC3339), Body: entry.Body, YouTubeSearchURL: mv, // 語言與 model 都描述這一列自己
 		})
 	}
 	if cached { // 快取命中:整份走同一個逐行路徑,TTY 的標題加粗才一致
