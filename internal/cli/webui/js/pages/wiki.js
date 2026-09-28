@@ -105,26 +105,30 @@ export function initWiki(root, api, con, notice, providers, player) {
   root.append(now, bar, prompts, status, out, actions);
   out.appendChild(emptyState(t('webui.wiki.empty', { button: t('webui.wiki.ask_now') })));
 
-  // 播放列上的那首(player.js 每 2.5 秒更新 last;這裡只讀,不另外打 /api/now)。
+  // 播放列上的那首(player.js 每一輪 render 完會廣播 capy:now;這裡只讀 player.last,不另外打 /api/now、不開計時器)。
   const refreshNow = () => {
+    if (root.hidden) return; // 頁面藏著就不畫(主控台對 hidden 頁也是這樣)
     const d = player && player.last;
     const tr = d && d.track;
     nowLine.textContent = tr ? `${providerName(d.provider)} · ${tr.title} — ${(tr.artists || []).join(', ')}` : t('webui.wiki.now_none');
   };
   refreshNow();
-  setInterval(refreshNow, 2500);
+  document.addEventListener('capy:now', refreshNow);
 
-  let lastArgs = '';
-  function ask(argText, songLabel) {
+  // lastManual:上一次是手打的歌名(--title …)就記著;是「查這首」就是空字串——「再問一次」對手打的照原樣重跑,
+  // 對「查這首」則**重新讀播放列上的平台**:按下去的當下面板可能已經換了平台,帶舊的平台會問到另一首歌。
+  let lastManual = '';
+  function ask(argText, songLabel, refresh) {
     // 「查這首」:帶播放列上的平台(同 player.js 的控制鈕);還沒有任何狀態就不帶,跟終端機一樣先問預設平台再問其他家。
     let args = argText;
     if (!argText) {
+      refreshNow(); // 問的就是面板上這首:那一行也同步到當下的面板,不等下一個 2.5 秒
       const p = player && player.last && player.last.provider;
       if (p) args = `--provider ${p}`;
       songLabel = (player && player.last && player.last.track && player.last.track.title) || '';
     }
-    lastArgs = args;
-    run(`wiki ${args}`.trim(), songLabel);
+    lastManual = argText;
+    run(`wiki ${refresh ? '--refresh ' : ''}${args}`.trim(), songLabel);
   }
   for (const inp of [title, artist]) {
     inp.addEventListener('keydown', (ev) => {
@@ -147,7 +151,7 @@ export function initWiki(root, api, con, notice, providers, player) {
         status.textContent = '';
         if (code !== 0 && !out.firstChild) out.appendChild(emptyState(msg || t('webui.wiki.failed')));
         if (code === 0) {
-          actions.appendChild(btn(t('webui.wiki.refresh'), 'btn--ghost', () => run(`wiki --refresh ${lastArgs}`.trim(), songLabel)));
+          actions.appendChild(btn(t('webui.wiki.refresh'), 'btn--ghost', () => ask(lastManual, songLabel, true)));
         }
       },
     }, { label: songLabel ? t('webui.wiki.label.ask', { song: songLabel }) : t('webui.wiki.label.ask_now') });

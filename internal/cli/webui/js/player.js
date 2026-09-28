@@ -63,6 +63,8 @@ export class Player {
 
   render(d) {
     this.last = d; // ← → 與 + - 要用它算絕對值:seek 吃秒數、vol 吃 0-100;控制鈕的 --provider 也看它
+    // 每一輪都廣播一次:歌曲 wiki 頁靠它更新「正在播」那一行,不自己開計時器、不另外打 /api/now。
+    if (typeof CustomEvent === 'function' && typeof document.dispatchEvent === 'function') document.dispatchEvent(new CustomEvent('capy:now', { detail: d }));
     this.root.dataset.playing = String(!!d.playing);
     this.root.dataset.stale = d.stale ? 'true' : '';
     const name = providerName(d.provider); // 面板會自己換平台:每一行都先說是哪個平台

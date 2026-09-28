@@ -1505,6 +1505,35 @@ await scenario('17', async () => {
     `只有 https 成連結、句尾的全形句號不算進網址:${links.map((a) => a.href)}`);
   check(out.children[4].textContent === 'MV: https://www.youtube.com/results?search_query=x。 javascript:alert(1) http://plain', `其餘照原文:${out.children[4].textContent}`);
 });
+// 18. 歌曲 wiki 頁的命令(決策 59):「介紹這首歌」帶播放列當下的平台;「再問一次」對「查這首」重新讀面板的平台
+//     (面板換了平台就帶新的,不帶舊的),對手打的歌名照原樣加 --refresh;手打的歌名走 --title / --artist(有空白就加引號)。
+await scenario('18', async () => {
+  const { initWiki } = await import('./pages/wiki.mjs');
+  const root = mk('section');
+  const player = { last: { provider: 'apple', track: { title: '派對動物', artists: ['五月天'] } } };
+  script = {};
+  initWiki(root, api, con, (x) => notices.push(x), { list: ['spotify', 'apple'], current: 'spotify' }, player);
+  const buttons = () => allByClass(root, 'btn');
+  const before = calls.length;
+  buttons()[0].click(); // 介紹這首歌
+  await tick(30);
+  check(calls[before] === 'wiki --provider apple', `查這首帶面板上的平台:${calls[before]}`);
+  player.last = { provider: 'spotify', track: { title: 'Yellow', artists: ['Coldplay'] } };
+  const refresh = buttons().find((b) => b.textContent === '再問一次(不用快取的回答)');
+  check(!!refresh, '做完要長出「再問一次」');
+  refresh?.click();
+  await tick(30);
+  check(calls[before + 1] === 'wiki --refresh --provider spotify', `再問一次重新讀面板的平台:${calls[before + 1]}`);
+  const inputs = allByClass(root, 'in');
+  inputs[0].value = 'Road Trip'; inputs[1].value = 'X';
+  buttons()[1].click(); // 查詢
+  await tick(30);
+  check(calls[before + 2] === 'wiki --title "Road Trip" --artist X', `手打的歌名:${calls[before + 2]}`);
+  buttons().find((b) => b.textContent === '再問一次(不用快取的回答)')?.click();
+  await tick(30);
+  check(calls[before + 3] === 'wiki --refresh --title "Road Trip" --artist X', `手打的再問一次照原樣:${calls[before + 3]}`);
+  check(root.hidden === false && allByClass(root, 'wiki__now-line')[0]?.textContent === 'Spotify · Yellow — Coldplay', `正在播那一行跟著面板:${allByClass(root, 'wiki__now-line')[0]?.textContent}`);
+});
 flush();
 if (failures.length) {
   say(`${failures.length} 條不成立`);
