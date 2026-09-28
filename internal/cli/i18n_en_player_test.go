@@ -89,9 +89,14 @@ func TestEnglishPlayLabels(t *testing.T) {
 	}
 	f.playErr = nil
 	f.top = nil
-	if _, err := runCLI(t, "play", "artist:五月天"); err == nil || err.Error() != "五月天 has no top tracks" {
-		t.Errorf("沒有熱門歌曲:%v", err)
+	if _, err := runCLI(t, "play", "artist:五月天"); err == nil || err.Error() != "Couldn't find any songs by 五月天 on Fake. Try a song title instead: capy play <title>" {
+		t.Errorf("沒有歌可播:%v", err)
 	}
+	f.topErr = provider.ErrOnlyNamesakes
+	if _, err := runCLI(t, "play", "artist:五月天"); err == nil || !strings.HasPrefix(err.Error(), "Couldn't find any songs by the 五月天 you picked on Fake: Fake has no top-tracks list") || hasCJK(strings.ReplaceAll(err.Error(), "五月天", "")) {
+		t.Errorf("只有同名的別人:%v", err)
+	}
+	f.topErr = nil
 }
 
 func TestEnglishPlayAmbiguousTSVAndPicker(t *testing.T) {

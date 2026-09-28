@@ -337,6 +337,9 @@ func (c *Client) ArtistTopTracks(ctx context.Context, a provider.Artist) ([]prov
 			out = append(out, items[i].toTrack())
 		}
 	}
+	if len(out) == 0 && len(items) > 0 { // 有結果、卻沒有一首是這一位的:同名(或名字相近)的別人佔滿了搜尋結果
+		return nil, provider.ErrOnlyNamesakes
+	}
 	return out, nil
 }
 

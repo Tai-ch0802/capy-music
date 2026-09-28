@@ -58,6 +58,9 @@ var (
 	// ErrOpenedNotPlaying:Play 只把曲目在播放器裡打開(標出來),沒有開始播——每次呼叫各自回報的結果,不是失敗,
 	// 所以不是能力位(決策 52:Apple 資料庫裡有的歌會真的播,其他的只能打開)。CLI 看到它就照實說、不印 ▶、exit 0。
 	ErrOpenedNotPlaying = i18n.Errorf("provider.err.opened_not_playing")
+	// ErrOnlyNamesakes:ArtistTopTracks 用名稱近似時(Spotify),搜尋結果全是名字相同或相近的其他藝人,挑的這一位一首都沒有——
+	// 不是這位藝人沒有歌。CLI 照實說,並建議直接搜歌名。
+	ErrOnlyNamesakes = i18n.Errorf("provider.err.only_namesakes")
 )
 
 // OpenedError:同 ErrOpenedNotPlaying(errors.Is 成立),多帶平台查到的「歌名 — 歌手」——play --id 時 CLI 手上只有 id。
