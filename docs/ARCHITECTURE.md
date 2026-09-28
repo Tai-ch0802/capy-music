@@ -858,6 +858,8 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 
 對正在播的歌,用使用者**自己的** OpenAI 相容 AI 端點(base URL / model / 自訂標頭,Zero Trust 也接得上)產生一頁用**母語**寫的介紹:基本資料、這首歌的故事、歌詞在說什麼(逐段講意思,不逐字重製)、延伸聆聽,附 YouTube 的 MV 搜尋連結;CLI `capy wiki`、TUI `w`、web 第 5 頁。目的(使用者原話):讓人類創作的經典歌曲靠 AI 再次出圈,不要沒有靈魂的 AI 歌曲浪費注意力。Q69–Q82 全部照推薦定案。T0 計畫與本文(本 PR);T1 `internal/ai` + 設定 + `wiki setup` + 政策;T2 `capy wiki` + `wiki_cache`(schema v7)+ TUI;T3 web 頁 + 指南。T1 的第一件事是實測多行標頭在 macOS keychain 的 round-trip(唯一還沒驗過的技術假設)。
 
+**狀態(2026-09-29)**:程式全部進 main——#112 計畫、#113 T1(`internal/ai`、設定、`wiki setup`、政策)、#114 T2(`capy wiki`、prompt、`wiki_cache` v7、TUI 的 `w`;review 三點:不完整的回答不進快取、出錯也印免責行、「來自快取」走 stderr)、T3(web 第 5 頁、指南兩份)。**仍在維護者手上**:計畫 §13 的 R-28…R-38(真端點、真終端機、真網頁),跑完才在標題打 ✅,同 P7 / P8 的慣例。
+
 ---
 
 ## 10. 交接給 Claude Code 的重點
@@ -898,7 +900,7 @@ capy play artist:<name> | pl:<name> | track:<name>   # 前綴 = --type 簡寫;�
 capy play --pick               # 直接開挑選器(TTY 限定)
 capy play --id <track id>                                  # Apple(macOS):資料庫裡剛好對到一首才播;否則在 Music.app 打開單曲頁並照實說沒播(exit 0、不印 ▶;決策 52)
 capy                                                       # 無參數 + 終端機:互動式介面(水豚橫幅、現在播什麼、一行輸入任何子命令);非 TTY 一律印 help
-capy --web [--port N] [--provider P]                       # 2026-09-17(P7,決策 40–41;internal/cli/web.go):127.0.0.1 起 HTTP(port 預設隨機、8888 / 80 / 443 拒絕),印 http://127.0.0.1:<port>/#t=<一次性 token> 並開瀏覽器;命令在行程內跑、一次一個(409)、輸出非 TTY(表格經 ui.TableWriter 結構化)、提示由頁面回答(confirm / select / input / form,取消值照抄終端機);允許清單 = 非 Hidden 的命令樹(debug 整群 403),--auto / --web / --client-secret / --developer-token / --user-token 403,update 放行但之後 /api/run 503 要求重啟;/api/isrc、/api/now、/api/i18n 三個直達端點不進序列槽(/api/i18n 是 2026-09-23 決策 50 加的:回 config 的語系、支援清單與頁面用的 webui.* 加 webSharedKeys);左欄底部的語言選單跑 config set language <代碼>(走序列槽、主控台留紀錄,exit 0 才重新載入整頁,有命令在跑時停用);非 TTY 啟動也能開(只印網址不開瀏覽器);Ctrl-C 砍進行中命令後乾淨結束;--provider 釘住播放面板與它的控制鈕,沒明指時面板跟著正在播的平台(2026-09-24,決策 51)
+capy --web [--port N] [--provider P]                       # 2026-09-17(P7,決策 40–41;internal/cli/web.go;2026-09-29 決策 59 加第九頁「歌曲 wiki」在搜尋之後、第 5 頁 / 鍵 5,帳號變 6、進階 7–9):127.0.0.1 起 HTTP(port 預設隨機、8888 / 80 / 443 拒絕),印 http://127.0.0.1:<port>/#t=<一次性 token> 並開瀏覽器;命令在行程內跑、一次一個(409)、輸出非 TTY(表格經 ui.TableWriter 結構化)、提示由頁面回答(confirm / select / input / form,取消值照抄終端機);允許清單 = 非 Hidden 的命令樹(debug 整群 403),--auto / --web / --client-secret / --developer-token / --user-token 403,update 放行但之後 /api/run 503 要求重啟;/api/isrc、/api/now、/api/i18n 三個直達端點不進序列槽(/api/i18n 是 2026-09-23 決策 50 加的:回 config 的語系、支援清單與頁面用的 webui.* 加 webSharedKeys);左欄底部的語言選單跑 config set language <代碼>(走序列槽、主控台留紀錄,exit 0 才重新載入整頁,有命令在跑時停用);非 TTY 啟動也能開(只印網址不開瀏覽器);Ctrl-C 砍進行中命令後乾淨結束;--provider 釘住播放面板與它的控制鈕,沒明指時面板跟著正在播的平台(2026-09-24,決策 51)
 capy pause | capy next | capy prev
 capy seek <[h:]mm:ss|秒> | capy vol <0-100>                    # 2026-09-09 實作(P1 計畫原本延後,附錄 A 稽核後補上);Apple 半邊走 Music.app 的 player position / sound volume
 capy now [--watch]                                        # --watch 沒用 --provider 釘住時跟著正在播的平台走(2026-09-28,決策 58);單次的 now 照舊用 default_provider
