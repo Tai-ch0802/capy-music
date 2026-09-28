@@ -80,7 +80,7 @@ func (s *Store) ApplyCache(d CacheDelta) (cleared int64, err error) {
 			return 0, err
 		}
 	}
-	if len(d.Recent) > 0 && d.MaxRecent > 0 { // 不用 OFFSET 的寫法:少於上限時子查詢是 NULL,position > NULL 一列都刪不掉
+	if len(d.Recent) > 0 && d.MaxRecent > 0 {
 		if _, err = tx.Exec("DELETE FROM recent WHERE position NOT IN (SELECT position FROM recent ORDER BY position LIMIT ?)", d.MaxRecent); err != nil {
 			return 0, err
 		}

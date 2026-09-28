@@ -81,7 +81,7 @@ func TestUnusableDBIsEmptyAndLegacyFileRemoved(t *testing.T) {
 		t.Fatalf("db 開不了應視同空快取:%+v", c)
 	}
 	if err := (&Cache{Playlists: map[string][]Playlist{}}).Save(); err != nil {
-		t.Fatalf("Load 沒成功的 Cache,Save 應是 no-op:%v", err)
+		t.Fatalf("沒有改動的 Save 不開 db、不報錯:%v", err)
 	}
 }
 

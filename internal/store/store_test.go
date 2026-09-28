@@ -301,7 +301,7 @@ func TestCacheTablesRoundTrip(t *testing.T) {
 }
 
 // TestApplyCacheDedupesAndTrims:加最近項目時同 provider+type+id 的舊列拿掉、超過上限剪掉最舊的;沒超過上限一筆都不剪
-// (OFFSET 的寫法在少於上限時一筆都剪不掉,反過來 LIMIT 寫錯會多剪)。
+// (LIMIT 寫錯會多剪),上限 0 不剪光。
 func TestApplyCacheDedupesAndTrims(t *testing.T) {
 	s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
 	if err != nil {
