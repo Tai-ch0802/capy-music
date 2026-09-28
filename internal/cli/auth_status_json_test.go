@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"regexp"
@@ -142,6 +143,10 @@ func TestWebAccountPageKeysOnAuthStatusJSON(t *testing.T) {
 	account := string(b)
 	if !strings.Contains(account, "con.run('auth status --json'") {
 		t.Error("帳號頁要跑 auth status --json")
+	}
+	// 帳號頁自己算「剩幾天、要不要提醒」(auth status --json 只給到期時間):門檻要跟文字版與 doctor 同一個。
+	if want := fmt.Sprintf("const SPOTIFY_RENEW_WARN_DAYS = %d;", int(auth.SpotifyRenewWarn/(24*time.Hour))); !strings.Contains(account, want) {
+		t.Errorf("auth.SpotifyRenewWarn 變了,account.js 要是:%s", want)
 	}
 	for _, prose := range []string{"keychain 存在", "in the keychain", "有效至", "valid until"} {
 		if strings.Contains(account, prose) {

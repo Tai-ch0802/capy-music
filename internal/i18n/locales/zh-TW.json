@@ -1011,6 +1011,14 @@
   "webui.account.detail.client_id_set": "client ID 已設定",
   "webui.account.detail.dev_token_expired": "developer token 已於 {when} 過期",
   "webui.account.detail.dev_token_valid": "developer token 有效至 {when}",
+  "webui.account.detail.spotify_renew_by": {
+    "other": "登入約 {date} 失效(剩 {count} 天)"
+  },
+  "webui.account.detail.spotify_renew_expired": "登入大概已在 {date} 左右失效:請按「{button}」",
+  "webui.account.detail.spotify_renew_soon": {
+    "other": "登入約 {date} 失效(剩 {count} 天):請在那之前按「{button}」"
+  },
+  "webui.account.detail.spotify_renew_unknown": "不知道登入何時失效(用舊版的 capy 登入的;Spotify 的登入六個月失效,按「{button}」之後就會顯示日期)",
   "webui.account.detail.storefront": "商店地區:{region}",
   "webui.account.google_label": "{name}(保管你的清單)",
   "webui.account.lead": "連接你自己的帳號。登入資料只存在這台電腦的鑰匙圈裡,capy 沒有伺服器可以存它。",

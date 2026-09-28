@@ -1290,9 +1290,9 @@ await scenario('14b', async () => {
   const local = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
   const [valid, expired] = [local('2026-10-01T04:30:00Z'), local('2026-01-01T00:00:00Z')];
   const want = {
-    'zh-TW': [['client ID 已設定', `developer token 有效至 ${valid} · 商店地區:台灣`, 'me@example.com'],
+    'zh-TW': [['不知道登入何時失效(用舊版的 capy 登入的;Spotify 的登入六個月失效,按「重新連接」之後就會顯示日期) · client ID 已設定', `developer token 有效至 ${valid} · 商店地區:台灣`, 'me@example.com'],
       ['client ID 格式不對', `developer token 已於 ${expired} 過期`, '—'], ['—', '—', '—']],
-    en: [['client ID set', `developer token valid until ${valid} · store region: Taiwan`, 'me@example.com'],
+    en: [['Login expiry unknown (you logged in with an older version of capy; Spotify logins expire after six months, and the date shows up after you press "Reconnect") · client ID set', `developer token valid until ${valid} · store region: Taiwan`, 'me@example.com'],
       ['client ID has the wrong format', `developer token expired on ${expired}`, '—'], ['—', '—', '—']],
   };
   const raw = ['client_id', 'developer_token', 'user_token', 'access_token', 'device_id', 'dev1', 'storefront', 'missing', 'keychain_error', 'builtin', 'malformed', 'T04:30', ': ok', ': set'];
@@ -1309,6 +1309,64 @@ await scenario('14b', async () => {
         check(!leaked.length, `${lang} 帳號頁不可以畫出 JSON 的欄名或列舉值(第 ${i + 1} 組):${leaked} / ${r.textContent}`);
       });
     }
+  } finally {
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
+});
+
+// 14c. 帳號頁的 Spotify 登入到期(決策 56):門檻與天數同 auth status 的文字版——剩的時間在 10 天以內就提醒(比時間長度,
+//      不比天數),天數無條件進位,過了說大概已失效;已登入卻沒有到期欄位 = 不知道;沒登入不說。要處理的那一列標成 ⚠。
+await scenario('14c', async () => {
+  const { initAccount, spotifyRenewal } = await import('./pages/account.mjs');
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.UTC(2026, 8, 28, 12, 0, 0);
+  const at = (ms) => new Date(now + ms).toISOString();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const day = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+  const cases = [
+    [150 * DAY, `登入約 ${day(at(150 * DAY))} 失效(剩 150 天)`, false],
+    [10 * DAY + 60 * 60 * 1000, `登入約 ${day(at(10 * DAY + 3600000))} 失效(剩 11 天)`, false], // 10 天又 1 小時:進位成 11 天、還不提醒
+    [10 * DAY, `登入約 ${day(at(10 * DAY))} 失效(剩 10 天):請在那之前按「重新連接」`, true],
+    [-DAY, `登入大概已在 ${day(at(-DAY))} 左右失效:請按「重新連接」`, true],
+  ];
+  for (const [ms, text, warn] of cases) {
+    const r = spotifyRenewal({ state: 'ok', refresh_token_expiry: at(ms) }, now);
+    check(r && r.text === text && r.warn === warn, `剩 ${ms / DAY} 天:${JSON.stringify(r)}`);
+  }
+  const unknown = spotifyRenewal({ state: 'ok' }, now);
+  check(unknown && unknown.text.startsWith('不知道登入何時失效') && unknown.warn === false, `已登入、沒有到期欄位 = 不知道:${JSON.stringify(unknown)}`);
+  check(spotifyRenewal({ state: 'missing', refresh_token_expiry: at(-DAY) }, now) === null && spotifyRenewal({ state: 'keychain_error' }, now) === null && spotifyRenewal(undefined, now) === null,
+    '沒登入(或 keychain 讀不到)不說到期');
+  // 日期用這台電腦的時區:UTC 午夜前後各一個,離 UTC 半小時以上的時區至少有一個跟 UTC 的日期不同(UTC 的機器上兩者一樣,驗不出來)
+  for (const iso of ['2026-11-01T23:30:00Z', '2026-11-02T00:30:00Z']) {
+    const r = spotifyRenewal({ state: 'ok', refresh_token_expiry: iso }, now);
+    check(r && r.text.startsWith(`登入約 ${day(iso)} 失效`), `日期是本機時區的:${iso} → ${r && r.text}`);
+  }
+
+  // 畫出來:快到期的那一列標成 ⚠、細節欄有日期與按鈕名;遠的照舊 ✓。(頁面用真的時鐘:到期時間從現在往後算)
+  const draw = (expiry) => {
+    const r = mk();
+    const st = { spotify: { state: 'ok', client_id: 'set', refresh_token_expiry: expiry }, google: { state: 'missing', client: 'none' }, apple: { state: 'missing', developer_token: 'missing', user_token: 'missing' } };
+    initAccount(r, null, { run: (_c, h) => { h.onStdout(JSON.stringify(st)); h.onExit(0, ''); }, idle: (fn) => fn() }, () => {});
+    const row = allByClass(r, 'acct')[0];
+    const b = allByClass(row, 'btn')[0];
+    return { state: row.dataset.state, mark: allByClass(row, 'acct__state')[0].textContent, detail: allByClass(row, 'acct__detail')[0].textContent, button: b.textContent, ghost: b.classList.contains('btn--ghost') };
+  };
+  // 那一句叫人按的「重新連接」要真的是那一列按鈕的字;要處理的那一列按鈕不做成 ghost
+  const soon = draw(new Date(Date.now() + 3 * DAY).toISOString());
+  check(soon.state === 'warn' && soon.mark === '⚠ 已登入' && soon.detail.includes('(剩 3 天):請在那之前按「重新連接」') && soon.button === '重新連接' && !soon.ghost, `快到期:${JSON.stringify(soon)}`);
+  const gone = draw(new Date(Date.now() - DAY).toISOString());
+  check(gone.state === 'warn' && gone.mark === '⚠ 已過期' && gone.detail.includes('左右失效:請按「重新連接」') && gone.button === '重新連接', `大概已失效:狀態不說「已登入」:${JSON.stringify(gone)}`);
+  const far = draw(new Date(Date.now() + 150 * DAY).toISOString());
+  check(far.state === 'ok' && far.mark === '✓ 已登入' && far.detail.startsWith('登入約 ') && far.detail.includes('(剩 150 天)') && far.button === '重新連接' && far.ghost, `還早:${JSON.stringify(far)}`);
+
+  i18nFile = './i18n-en.json';
+  try {
+    await loadI18n(api);
+    const en = [spotifyRenewal({ state: 'ok', refresh_token_expiry: at(DAY / 2) }, now), spotifyRenewal({ state: 'ok', refresh_token_expiry: at(150 * DAY) }, now), spotifyRenewal({ state: 'ok', refresh_token_expiry: at(-DAY) }, now)];
+    check(en[0].text === `Login expires around ${day(at(DAY / 2))} (1 day left): press "Reconnect" before then` && en[1].text.endsWith('(150 days left)') && en[2].text.startsWith('Login probably expired around'),
+      `英文(單複數):${JSON.stringify(en)}`);
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);

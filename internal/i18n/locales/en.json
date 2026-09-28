@@ -1081,6 +1081,16 @@
   "webui.account.detail.client_id_set": "client ID set",
   "webui.account.detail.dev_token_expired": "developer token expired on {when}",
   "webui.account.detail.dev_token_valid": "developer token valid until {when}",
+  "webui.account.detail.spotify_renew_by": {
+    "one": "Login expires around {date} ({count} day left)",
+    "other": "Login expires around {date} ({count} days left)"
+  },
+  "webui.account.detail.spotify_renew_expired": "Login probably expired around {date}: press \"{button}\"",
+  "webui.account.detail.spotify_renew_soon": {
+    "one": "Login expires around {date} ({count} day left): press \"{button}\" before then",
+    "other": "Login expires around {date} ({count} days left): press \"{button}\" before then"
+  },
+  "webui.account.detail.spotify_renew_unknown": "Login expiry unknown (you logged in with an older version of capy; Spotify logins expire after six months, and the date shows up after you press \"{button}\")",
   "webui.account.detail.storefront": "store region: {region}",
   "webui.account.google_label": "{name} (your playlists)",
   "webui.account.lead": "Connect your own accounts. Login details stay in this computer's keychain; capy has no server to keep them on.",
