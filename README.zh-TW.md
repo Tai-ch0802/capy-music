@@ -103,9 +103,11 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
 
 ## 歌曲 wiki(選用):接上你自己的 AI 端點
 
-`capy wiki` 會用你的母語介紹正在播的歌——它從哪裡來、歌詞在說什麼、還有什麼值得一聽——再附一個 YouTube 的 MV 搜尋連結。寫的是你自己帶來的 AI 端點:capy 自己沒有端點、不替你保管金鑰,在你接上端點之前不會把任何東西送到任何地方。(這一版先有設定;`capy wiki` 命令本身與網頁的那一頁接著來。)
+`capy wiki` 用你的母語介紹正在播的歌——基本資料、它從哪裡來、歌詞在說什麼(逐段講意思;整份最多引用兩句短句,不重製整首歌詞)、還有什麼值得一聽——再附一個 YouTube 的 MV 搜尋連結。寫的是你自己帶來的 AI 端點:capy 自己沒有端點、不替你保管金鑰,在你接上端點之前不會把任何東西送到任何地方。(網頁的那一頁之後的版本才有。)
 
 ```bash
+capy wiki                                         # 正在播的歌(暫停中也算):哪個平台有就用哪個,預設平台優先;--provider 釘住一家
+capy wiki 残酷な天使のテーゼ --artist 高橋洋子         # 改指定一首(也可以 --title);--refresh 再問一次、--json 給腳本
 capy wiki setup                                   # 精靈:base URL、API key、自訂標頭、母語 → 再從端點列出的模型裡挑一個
 capy wiki setup --base-url https://api.openai.com/v1 --model <模型> --api-key <金鑰>   # 非互動;--header "Name: value"(可重複)、--native-language ja
 capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);沒設 = 跟介面語言
@@ -113,7 +115,8 @@ capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);�
 
 - **任何 OpenAI 相容端點**(`/chat/completions`):OpenAI 本身、LiteLLM 或 OpenRouter 這類 gateway、或這台電腦上的 Ollama(`http://localhost:11434/v1`,不用金鑰)。設定時會列出端點的模型(`GET /models`);沒有這個清單的端點改用一個 token 的測試請求確認。
 - **端點在 Cloudflare Access 之類的門後面?** 把它要求的標頭加上去,一行一個 `Name: value`(例如 `CF-Access-Client-Id` / `CF-Access-Client-Secret`);每個請求都會帶,包括設定時的檢查。你自己寫的標頭優先,所以寫一行 `Authorization:` 就會取代 Bearer 金鑰。
-- **送出什麼,而且只在你執行 `capy wiki` 時**:那首歌的歌名、歌手、專輯、發行日期、曲風。其他都不送——沒有帳號、沒有清單。端點是你自己選的服務,適用它自己的政策;見[隱私權政策](https://capy.taislife.work/privacy)。
+- **送出什麼,而且只在你執行 `capy wiki` 時**:那首歌的歌名、歌手、專輯、發行日期、曲風,以及你設定的母語(只用來指定回答的語言)。其他都不送——沒有帳號、沒有清單。端點是你自己選的服務,適用它自己的政策;見[隱私權政策](https://capy.taislife.work/privacy)。
+- **你會拿到什麼**:回答邊寫邊一行一行印出來(Ctrl-C 可以停),結尾是 MV 連結、哪個模型什麼時候寫的,以及一行固定的提醒:由 AI 產生、可能有錯。回答留在這台電腦上(`state.db` 裡的快取),同一首再問一次是瞬間;`--refresh` 會再問端點,換了 `native_language` 也會用新語言再問。互動式介面裡按 `w` 就問狀態列上那首。
 - **東西放哪**:base URL、模型、母語在 `config.json`(`capy config set ai_base_url` / `ai_model` / `native_language`);API key 與自訂標頭只在 OS keychain(標頭最多 2 KB)。明文 `http:` 打到別台電腦會警告(金鑰會不加密地走網路);`localhost` 不會。在網頁裡 `capy wiki setup` 是一張表單,金鑰與標頭欄位不會出現在事件或 log 裡,`--api-key` / `--header` 在網頁一律拒絕。
 
 ## 登入狀態給腳本讀:`capy auth status --json`
@@ -172,6 +175,7 @@ capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個
 capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
 capy drive init --from-local [--dry-run] [--yes]   # 逃生口:Drive 空 / 部分遺失時用本機 state.db 補回缺的檔
 capy doctor [--provider apple]
+capy wiki [<歌名> --artist <歌手>] [--refresh] [--json]   # 用你自己的 AI 端點、你的母語介紹這首歌(先 capy wiki setup);不給歌名 = 正在播的那首;見上方「歌曲 wiki」
 capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
 capy config set language zh-TW           # 介面語言(預設 en);見上方「介面語言」
 capy update [--dev]                      # 見上方「更新」

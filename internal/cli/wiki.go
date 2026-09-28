@@ -1,7 +1,7 @@
 package cli
 
-// 歌曲 wiki(決策 59;計畫 docs/superpowers/plans/2026-09-28-song-wiki.md)。T1 只有 wiki setup:接使用者自己的
-// OpenAI 相容端點(base URL / model / 母語進 config.json,API key 與自訂標頭進 keychain)。capy wiki 本身是 T2。
+// 歌曲 wiki(決策 59;計畫 docs/superpowers/plans/2026-09-28-song-wiki.md)。這個檔是 wiki setup:接使用者自己的
+// OpenAI 相容端點(base URL / model / 母語進 config.json,API key 與自訂標頭進 keychain)。capy wiki 本身在 wiki_run.go。
 
 import (
 	"context"
@@ -86,7 +86,13 @@ func runWikiSetupForm(in wikiSetupInput) (wikiSetupInput, error) {
 }
 
 func newWikiCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "wiki", Short: i18n.T("cmd.wiki.short")}
+	// 位置參數 = 歌名(Q82;cobra 先認子命令,所以 capy wiki setup 照舊是 setup,歌名剛好叫 setup 的用 --title)。
+	cmd := &cobra.Command{Use: "wiki [title...]", Short: i18n.T("cmd.wiki.short"), Long: i18n.T("cmd.wiki.long"), Args: cobra.ArbitraryArgs, RunE: runWiki}
+	cmd.Flags().String("title", "", i18n.T("cmd.wiki.flag.title"))
+	cmd.Flags().String("artist", "", i18n.T("cmd.wiki.flag.artist"))
+	cmd.Flags().Bool("refresh", false, i18n.T("cmd.wiki.flag.refresh"))
+	cmd.Flags().Bool("json", false, i18n.T("cmd.wiki.flag.json"))
+	providerFlag(cmd)
 	cmd.AddCommand(newWikiSetupCmd())
 	return cmd
 }

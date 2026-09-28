@@ -34,6 +34,12 @@ func (e *HTTPError) Error() string {
 
 var keyShaped = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}`)
 
+// IncompleteError:回答沒寫完——串流沒收到 [DONE] 就斷了(proxy / Zero Trust 斷線、端點中途掛掉),或端點自己的
+// token 上限到了(finish_reason == "length")。已經印出來的正文照留,但呼叫端不能把半截當完整的存起來(#114 review)。
+type IncompleteError struct{ Reason string } // eof | length
+
+func (e *IncompleteError) Error() string { return i18n.T("ai.err.incomplete", "reason", e.Reason) }
+
 func scrub(body []byte) string {
 	s := strings.TrimSpace(string(body))
 	if r := []rune(s); len(r) > 200 {
@@ -138,16 +144,25 @@ func (c Config) ChatOnce(ctx context.Context, req ChatRequest) (string, error) {
 	return c.chat(ctx, req, false, nil, false)
 }
 
-func (c Config) chat(ctx context.Context, req ChatRequest, stream bool, onLine func(string), allowEmpty bool) (string, error) {
+// chat:probe(1-token 探測)時空字串與「上限到了」都不算錯——那次本來就只要一個 token。
+// 不完整的回答(*IncompleteError)連同已收到的文字一起回:呼叫端印過的照留、不進快取。
+func (c Config) chat(ctx context.Context, req ChatRequest, stream bool, onLine func(string), probe bool) (string, error) {
 	text, err := c.chatWith(ctx, req, stream, onLine, "max_tokens")
 	var he *HTTPError
 	if errors.As(err, &he) && he.Status == http.StatusBadRequest && strings.Contains(he.Body, "max_completion_tokens") {
 		text, err = c.chatWith(ctx, req, stream, onLine, "max_completion_tokens")
 	}
+	var inc *IncompleteError
+	if errors.As(err, &inc) {
+		if probe {
+			return text, nil
+		}
+		return text, err
+	}
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(text) == "" && !allowEmpty {
+	if strings.TrimSpace(text) == "" && !probe {
 		return "", i18n.Errorf("ai.err.empty")
 	}
 	return text, nil
@@ -181,10 +196,17 @@ func (c Config) chatWith(ctx context.Context, req ChatRequest, stream bool, onLi
 	defer resp.Body.Close()
 	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	lines := &lineBuffer{onLine: onLine}
+	var finish string
 	if stream && ct == "text/event-stream" {
-		if err := readSSE(resp.Body, lines); err != nil {
+		done, reason, err := readSSE(resp.Body, lines)
+		if err != nil {
 			return "", err
 		}
+		lines.flush()
+		if !done { // 沒收到 [DONE] 就 EOF:連線在中途斷了,手上這一截不是整份
+			return lines.all.String(), &IncompleteError{Reason: "eof"}
+		}
+		finish = reason
 	} else {
 		var out completion
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&out); err != nil {
@@ -195,9 +217,13 @@ func (c Config) chatWith(ctx context.Context, req ChatRequest, stream bool, onLi
 		}
 		if len(out.Choices) > 0 {
 			lines.write(out.Choices[0].Message.Content)
+			finish = out.Choices[0].FinishReason
 		}
+		lines.flush()
 	}
-	lines.flush()
+	if finish == "length" { // 端點(或它前面的 proxy)自己的 token 上限到了:寫到一半被砍
+		return lines.all.String(), &IncompleteError{Reason: "length"}
+	}
 	return lines.all.String(), nil
 }
 
@@ -210,15 +236,17 @@ type completion struct {
 		Delta struct {
 			Content string `json:"content"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason"` // "length" = 端點的 token 上限到了,回答不完整
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-// readSSE:每個 data: 一幀;[DONE] 結束;幀裡帶 error 就報錯(LiteLLM / OpenRouter 會在 HTTP 200 的串流裡塞錯誤幀,
-// 不能默默回一截半的文字)。解不開的幀跳過(keep-alive 註解、別家的擴充)。
-func readSSE(r io.Reader, lines *lineBuffer) error {
+// readSSE:每個 data: 一幀;[DONE] 結束(done = true);幀裡帶 error 就報錯(LiteLLM / OpenRouter 會在 HTTP 200 的串流裡
+// 塞錯誤幀,不能默默回一截半的文字)。解不開的幀跳過(keep-alive 註解、別家的擴充)。沒看到 [DONE] 就 EOF 的話 done = false,
+// 呼叫端當成不完整。reason 是最後一幀帶的 finish_reason("length" = 上限到了)。
+func readSSE(r io.Reader, lines *lineBuffer) (done bool, reason string, err error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), 4<<20)
 	for sc.Scan() {
@@ -228,20 +256,23 @@ func readSSE(r io.Reader, lines *lineBuffer) error {
 		}
 		data = strings.TrimSpace(data)
 		if data == "[DONE]" {
-			return nil
+			return true, reason, nil
 		}
 		var fr completion
 		if err := json.Unmarshal([]byte(data), &fr); err != nil {
 			continue
 		}
 		if fr.Error != nil {
-			return i18n.Errorf("ai.err.stream_error", "message", fr.Error.Message)
+			return false, reason, i18n.Errorf("ai.err.stream_error", "message", fr.Error.Message)
 		}
 		if len(fr.Choices) > 0 {
 			lines.write(fr.Choices[0].Delta.Content)
+			if fr.Choices[0].FinishReason != "" {
+				reason = fr.Choices[0].FinishReason
+			}
 		}
 	}
-	return sc.Err()
+	return false, reason, sc.Err()
 }
 
 // lineBuffer:delta → 完整的行。onLine 拿到的行不含換行。

@@ -23,7 +23,7 @@ import (
 
 const (
 	fileName      = "state.db"
-	schemaVersion = 6 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at;v5(T2b,決策 21):加 merged。升版舊檔改名保留(T9);v6(決策 57):加 playlist_items_cache
+	schemaVersion = 7 // v2(2026-09-08,T7):device_base 加 cids;v3(T8):加 playlist_id;v4(P4 T2a,決策 20):mappings 加 confidence / pinned / source / updated_at;v5(T2b,決策 21):加 merged。升版舊檔改名保留(T9);v6(決策 57):加 playlist_items_cache;v7(2026-09-29,決策 59):加 wiki_cache
 )
 
 // schema v1。與 spec §7 的差異(2026-09-07,理由寫在 spec §7):tracks 多 artists / conflicts(JSON)、少 updated_at
@@ -42,6 +42,7 @@ CREATE TABLE device_base (device_id TEXT NOT NULL, pid TEXT NOT NULL, provider T
 CREATE TABLE provider_playlists (provider TEXT NOT NULL, position INTEGER NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, total INTEGER NOT NULL, PRIMARY KEY (provider, position));
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER NOT NULL, provider TEXT NOT NULL, type TEXT NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT NOT NULL);
 CREATE TABLE playlist_items_cache (provider TEXT NOT NULL, playlist_id TEXT NOT NULL, version TEXT NOT NULL, tracks TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY (provider, playlist_id));
+CREATE TABLE wiki_cache (key TEXT PRIMARY KEY, title TEXT NOT NULL, artists TEXT NOT NULL, language TEXT NOT NULL, model TEXT NOT NULL, body TEXT NOT NULL, fetched_at INTEGER NOT NULL);
 `
 
 type Store struct {

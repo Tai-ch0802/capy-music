@@ -671,7 +671,7 @@ capy pl sync 的一輪(pl pull 只有 1–3 + 6;pl push 只有 1–2 + 4–6—�
 db 位置 = `config.Dir()/state.db`:macOS `~/Library/Application Support/capy-music/state.db`;Windows `%AppData%\capy-music\state.db`;`CAPY_CONFIG_DIR` 覆寫整個設定目錄,db 一併跟著走
 
 ```sql
--- schema v6(PRAGMA user_version = 6;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id、P4 T2a 加 mappings 的 confidence / pinned / source / updated_at(決策 20,v4)、T2b 加 merged 表(決策 21,v5)、2026-09-28 加 playlist_items_cache(決策 57,v6);與 v0.5 草案的差異見下段)
+-- schema v7(PRAGMA user_version = 7;2026-09-07 T6 實作、2026-09-08 T7 加 device_base.cids、T8 加 device_base.playlist_id、P4 T2a 加 mappings 的 confidence / pinned / source / updated_at(決策 20,v4)、T2b 加 merged 表(決策 21,v5)、2026-09-28 加 playlist_items_cache(決策 57,v6)、2026-09-29 加 wiki_cache(決策 59,v7);與 v0.5 草案的差異見下段)
 CREATE TABLE tracks (cid TEXT PRIMARY KEY, title TEXT, artists TEXT /* JSON [] */, album TEXT, duration_ms INTEGER, conflicts TEXT /* JSON [],§6.2 */);
 CREATE TABLE isrcs (cid TEXT, isrc TEXT, PRIMARY KEY (cid, isrc));
 CREATE TABLE mappings (cid TEXT, provider TEXT, provider_id TEXT /* 空 + pinned = 不可得 */, confidence INTEGER /* 0–100 */, pinned INTEGER, source TEXT /* observed|isrc|fuzzy|review */, updated_at INTEGER, PRIMARY KEY (cid, provider));
@@ -689,6 +689,8 @@ CREATE TABLE provider_playlists (provider TEXT, position INTEGER, id TEXT, name 
 CREATE TABLE recent (position INTEGER PRIMARY KEY, at INTEGER, provider TEXT, type TEXT, id TEXT, label TEXT, detail TEXT);
 -- 純快取(決策 57):上次真的讀到的連結清單曲目,版本(Spotify snapshot_id)沒變就不重讀;tracks 是同步用欄位的白名單 JSON,最多用 7 天
 CREATE TABLE playlist_items_cache (provider TEXT NOT NULL, playlist_id TEXT NOT NULL, version TEXT NOT NULL, tracks TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY (provider, playlist_id));
+-- 純快取(決策 59):capy wiki 的回答;key = prompt 版號 | 母語 | 歌名 | 歌手(ai.WikiCacheKey),不過期、--refresh 覆寫;不進 Dump / Hydrate,登出平台也不動它
+CREATE TABLE wiki_cache (key TEXT PRIMARY KEY, title TEXT, artists TEXT, language TEXT, model TEXT, body TEXT, fetched_at INTEGER);
 ```
 
 **與 v0.5 草案的差異(2026-09-07,T6)**:`tracks` 多 `artists` / `conflicts`、少 `updated_at`——canon(§6.2)有前兩者、沒有後者,鏡像要無損(`store.Dump` 的輸出必須與 Drive 檔逐位元相同,`TestRebuildFromDrive`)。`device_base` 取代 `sync_state`:每台裝置的 base 是**有序的 provider id 清單**(§6.3),不是一個 hash;`base_hash` 若 T8 需要可由它導出。`devices` 鏡像 `manifest.devices` 並記「有沒有 dev 檔」,否則 base 全空的裝置檔重建時會消失。**不建 `sync_state` 與 `resolution_cache`**:P3 沒有寫入者(resolver 是 P4),migration 政策是整檔丟棄重建,之後加表只是 bump `user_version`(2026-09-08 T9:版本不符的舊檔改名保留為 `state.db.v<舊版>`、不刪——Drive 被清空時本機 cache 是唯一剩下的一份;沒有程式讀保留檔,只是不毀掉)。`store.Hydrate` 整批取代、`store.Dump` 整批讀出(items 依 `(rank, iid)`,與 canon 的 normalize 同序),P3 沒有 upsert。
@@ -714,7 +716,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | 不可下載/修改 MusicKit Content | 我們只碰 metadata,不碰音訊 |
 | Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規;web 介面顯示 Spotify 曲目或清單的表格(搜尋、清單頁、同步頁、搬家精靈、主控台的變更表)連回 Spotify,連結字用設計規範核可的「Listen on Spotify」;播放列的曲名、ISRC 頁的平台卡片也連回去(Policy II.4.b)。規範要的 logo 依決策 48 不放;沒連的地方與理由見計畫 2026-09-24 §1.7 S7 |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
-| 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,capy 不連 YouTube;AI 正文不逐字重製歌詞、結尾免責行不可關 |
+| 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)加上母語的名稱(prompt 的 `{language}`,只用來指定回答的語言;政策中英都寫了)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,capy 不連 YouTube;AI 正文不逐字重製歌詞、結尾免責行不可關 |
 
 本專案沒有任何遠端伺服器端元件(v0.5 起 Worker 已移除;`capy --web` 只在使用者自己的電腦 127.0.0.1 起 HTTP,不對外、資料不離開那台電腦、不經過我們):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google OAuth 同意畫面與 basic verification 需要的 URL)掛在品牌網站 <https://capy.taislife.work>(2026-09-21;首頁 / `/privacy` / `/terms`,中英各一份,原始檔在 `site/`):Cloudflare Workers 的**純靜態資產**——沒有 Worker 程式、沒有 binding、零外部資源、沒有 cookie 與分析,不構成「伺服器端元件」。政策的核心就是上面那一句;`site/site_test.go` 釘住「政策揭露的 scope = `auth.GoogleScopes`」,兩邊不一致測試會紅。(2026-09-28,決策 59:歌曲 wiki 的 AI 端點也在這句的範圍內——它是使用者自己設定的服務,資料直接從使用者的電腦送到使用者選的端點,不經過我們;政策 §4 / §5 同 PR 補上,`site_test` 另釘一條。)
 
@@ -936,9 +938,9 @@ capy update                    # P3(T10 已實作):GitHub Releases 最新正式�
 capy update --dev              # 從 main 最新節點 go install 重建並覆蓋自己(需 Go toolchain;沒有內建 Google client)
 capy completion <shell>        # cobra 內建;候選只讀本機快取
 capy doctor
-capy wiki [歌名…] [--title T --artist A] [--provider P] [--refresh] [--json]   # 2026-09-28 計畫(決策 59;T2 實作):對正在播的歌(沒釘 --provider 就先問預設平台、有曲目就用,沒有再照 providerIDs 問;或指定的一首)用使用者自己的 AI 端點產生母語的介紹——基本資料 / 故事 / 歌詞在說什麼(逐段講意思、最多引用原文兩句)/ 延伸聆聽,逐行串流到 stdout,結尾 MV 的 YouTube 搜尋連結、來源、免責一行(不可關);結果進 state.db 的 wiki_cache(純快取、不過期,--refresh 重跑);--json 整批;沒 setup 就 exit 1 指路;TUI 的 w 鍵、web 第 5 頁跑的都是它
-capy wiki setup [--base-url U --model M --api-key K --header "Name: value"… --native-language L]   # 2026-09-28 計畫(決策 59;T1 實作):兩段精靈——端點 / 金鑰 / 自訂標頭 / 母語 → 存 → GET /models 探測(≤ 30 個開選單,404 / 405 退回 1-token chat 驗)→ 存 ai_model;web 走提示橋(金鑰與標頭是 Secret 欄、逾時 30 分鐘);非 TTY 用旗標;web 對 --api-key / --header 一律 403
-capy config set ai_base_url|ai_model|native_language <值>   # 2026-09-28(決策 59;T1):AI 端點 base URL(http 打非本機 host 只警告)、模型名、母語(BCP 47;沒設 = language);API key 與自訂標頭只經 wiki setup 進 keychain(ai.api_key / ai.headers,標頭整包當機密、上限 2 KB);config list 三行加在最後
+capy wiki [歌名…] [--title T --artist A] [--provider P] [--refresh] [--json]   # 2026-09-28 計畫、2026-09-29 T2 實作(決策 59;internal/cli/wiki_run.go):對正在播的歌(沒釘 --provider 就先問預設平台、有曲目就用,沒有再照 providerIDs 問;或指定的一首)用使用者自己的 AI 端點產生母語的介紹——基本資料 / 故事 / 歌詞在說什麼(逐段講意思、最多引用原文兩句)/ 延伸聆聽,逐行串流到 stdout,結尾 MV 的 YouTube 搜尋連結、來源、免責一行(不可關);結果進 state.db 的 wiki_cache(純快取、不過期,--refresh 重跑);--json 整批;沒 setup 就 exit 1 指路;TUI 的 w 鍵、web 第 5 頁跑的都是它
+capy wiki setup [--base-url U --model M --api-key K --header "Name: value"… --native-language L]   # 2026-09-28 計畫、2026-09-29 T1 實作 #113(決策 59;internal/cli/wiki.go):兩段精靈——端點 / 金鑰 / 自訂標頭 / 母語 → 存 → GET /models 探測(≤ 30 個開選單,404 / 405 退回 1-token chat 驗)→ 存 ai_model;web 走提示橋(金鑰與標頭是 Secret 欄、逾時 30 分鐘);非 TTY 用旗標;web 對 --api-key / --header 一律 403
+capy config set ai_base_url|ai_model|native_language <值>   # 2026-09-28(決策 59;T1 #113):AI 端點 base URL(http 打非本機 host 只警告)、模型名、母語(BCP 47;沒設 = language);API key 與自訂標頭只經 wiki setup 進 keychain(ai.api_key / ai.headers,標頭整包當機密、上限 2 KB);config list 三行加在最後
 ```
 
 ## 附錄 B:待監控的外部變數
