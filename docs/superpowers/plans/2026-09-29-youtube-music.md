@@ -217,6 +217,35 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。前綴用 channel 
 11. **唯讀**:拿同一段 cookie 打一個 google.com 的登入後端點(例如 `https://myaccount.google.com/` 或 Drive API 的 `about`),預期被導去登入 / 401;結果決定揭露能不能寫
     「對 Gmail / Drive 無效」。
 
+### 結果(2026-09-29 真帳號,使用者授權;`scripts/p10/youtube-probe.sh` 讀端 + `WRITE=1` + `MODE=cap`;測試清單 `PLTLZN5XdzqBI`、`PLV3e9MGnsOc8` 結尾都已 `playlist/delete`,列表 2 s 後消失)
+
+使用者貼的是 Chrome「Copy as cURL」(`-H '…'` + `-b '<cookie>'`),不是 Request Headers 純文字 → 腳本兩種都收,**T1 的精靈也要兩種都收**(cURL 更好複製)。
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1 | `account_menu` | 帳號名、handle(`@…`)都在;**channel id(`UC…`)在回應裡的 browseId 拿得到** → 清單 id 前綴用 channel id,不必退回 handle。沒有 email。`x-goog-authuser` 換成 1 回的是另一個沒有 handle 的帳號(瀏覽器有第二個 Google 帳號)——抄錯索引真的會變成別人,貼上後的帳號確認不能省 |
+| 2 | cookie | 整段 2209 bytes、24 個;**最小可用白名單 = `__Secure-3PSID` + `__Secure-3PAPISID` + `__Secure-3PSIDTS`(322 bytes)**;少了 `__Secure-3PSIDTS` 就是未登入(`SIDCC` 不能代替),`__Secure-1P*` 那一組也可用;`SID / HSID / SSID / APISID / SAPISID / LOGIN_INFO` 全帶反而未登入(缺 SIDTS)。兩個 keychain 上限都遠遠夠。**`__Secure-3PSIDTS` 正是會被輪替的那顆 → 壽命測試(第 1 / 3 / 7 天 `MODE=ping`)是 T0 最後一個未知** |
+| 3 | `FEmusic_liked_playlists` | grid 第 0 格是「New playlist」tile(也是 `musicTwoRowItemRenderer`,沒有 browseId);`VLLM`「Liked Music」與 `VLRDPN`「New Episodes」是 `Auto playlist`;自己的清單副標 `Tai • 479 tracks`(第一段 = 擁有者名,= 帳號名 → **owned 訊號就在 grid 副標**,不必每份 browse);有 continuation(2 處;T1 要跟) |
+| 4 | `VL<id>`(479 首) | 讀到 478 列、4 次 continuation;`playlistSetVideoId` 每列唯一(478 / 478)、同一 videoId 出現多次 10 首;3 列灰掉(`GREY_OUT`)但**仍有 videoId**、只是沒有 videoType;1 首 `UGC`、其餘 `ATV`;header 同時有 `musicEditablePlaylistDetailHeaderRenderer`(可編輯訊號)與新版 `musicResponsiveHeaderRenderer` |
+| 6 | `search` 歌曲 filter | 三種語言都命中,結果是歌曲實體(歌名 / 歌手 / 專輯 / 時長),live 版也會在;**`hl=en` 時歌手名是羅馬拼音(`Kenshi Yonezu`)** → T1 的 `hl` 跟 config `language`(zh-TW 才會拿到「米津玄師」,跟 Apple TW 商店對得上);parser 不能靠 shelf 標題文字("Songs" 會跟著語系變) |
+| 8 | `next` | 第一項有歌名 / 歌手 • 專輯 • 年份 / 時長 → GetTrack 可用 |
+| 9 | 限流 | 連打 60 次 search 全 200,沒撞到 |
+| 11 | 同一段 cookie 對 google.com(唯讀) | `myaccount.google.com` → 302 導去登入;Drive API `about` → **401**;`www.youtube.com` 的 `account_menu` → 200(YouTube 本站也認)。→ 揭露可以寫「對 Google 的其他服務無效(2026-09-29 實測),但能以你的身分操作整個 YouTube」 |
+| 5a | `playlist/create` | 回 `playlistId`(沒有 status 欄);**列表 3 s 後出現**(Apple 是 9 s)→ `CreatePlaylist` 照計畫輪詢 |
+| 5b / cap | 單請求 ADD 上限 | 100 / 200 / 400 / 466 / 500 / 640 首**一個請求全部 `STATUS_SUCCEEDED`**,`playlistEditResults` 一首一筆(帶新的 setVideoId);一次 ADD 466 後**立刻讀回曾是 0 列**(同一份清單 cap 模式再測三次都是 0 s 一致)→ 讀回有偶發延遲,**寫完重讀要能等一下重試**(count_wait;push.go 規則 7 的 L′ 重讀也要) |
+| 5c | 整批取代 | 同一請求 REMOVE 50 + ADD 50(反序)→ `STATUS_SUCCEEDED`、讀回 50 列、**順序 = 反序 ✓** |
+| 5d | 壞 videoId | 夾一個壞 id 的三個 ADD → **HTTP 400、零變動**(整包拒收,原子 ✓) |
+| 5e | 重複 | 已在清單裡的歌再 ADD:不帶 `dedupeOption` → `STATUS_FAILED` 零變動;帶 `DEDUPE_OPTION_SKIP` → 成功、多一列 ✓(決策 38 的重複靠它) |
+| 5f | 改名 | `ACTION_SET_PLAYLIST_NAME` → `STATUS_SUCCEEDED`(標題讀回走 `musicResponsiveHeaderRenderer`) |
+| 5g | 搬動 | `ACTION_MOVE_VIDEO_BEFORE` + `movedSetVideoIdSuccessor` → `STATUS_SUCCEEDED`(備案 (b) 的原料有;主線仍是整批取代) |
+| 7 | 上傳的歌 | 這個帳號沒有 → **未驗**;T1 讀端遇到 `PRIVATELY_OWNED_TRACK` 先照一般曲目處理,`Pushable` 不擋 |
+| 10 | `playlist/delete` | 200,列表 2 s 後消失(只在探測腳本用) |
+
+對計畫的修正:§3.2 的 `hl` 跟 config `language`;§3.3 的寫後重讀要容忍延遲;§3.4 前綴確定用 channel id;§3.1 貼上格式兩種都收、白名單 = 三個 `__Secure-3P*`。
+**待辦**:第 1 / 3 / 7 天各跑一次 `MODE=ping bash scripts/p10/youtube-probe.sh`(期間照常用瀏覽器、不登出),結果補在這一行下面。
+
+- 第 0 天(2026-09-29):讀端 + 寫端 + cap 全部用同一段 cookie,登入中。
+
 ## 5. 測試(每一則都是修之前會 fail 的)
 
 - parser:每個 renderer 一個 fixture(來自 §4)+ 邊界(無 videoId 的列、無專輯、時長 `h:mm:ss`、explicit、continuation)。

@@ -6,7 +6,7 @@
 # 只對名稱以 capy-probe- 開頭、本次建立的清單送寫入;playlist/delete 只刪它。
 # 用法:bash scripts/p10/youtube-probe.sh [headers 檔]   環境變數:OUT=輸出目錄 WRITE=1 開寫端 KEEP=1 不刪測試清單
 #      PROBE_PLAYLIST=<playlistId> 指定要讀的清單(預設挑最多首的) PROBE_QUERIES='a|b|c' 搜尋詞 RATE=0 跳過限流測試 PROBE_MAX=N 寫入上限
-#      MODE=ping 只打一次 account_menu(測 cookie 壽命用);MODE=size 只做白名單 / 大小
+#      MODE=ping 只打一次 account_menu(測 cookie 壽命用);MODE=size 只做白名單 / 大小;MODE=cap 只測單請求 ADD 的上限與讀回延遲(CAP_SIZES='466 500 640')
 set -euo pipefail
 
 HF="${1:-${CAPY_YOUTUBE_HEADERS_FILE:-$HOME/.capy-youtube-headers.txt}}"
@@ -18,8 +18,17 @@ ORIGIN="https://music.youtube.com"
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 CV="1.$(date -u +%Y%m%d).01.00"
 
-# 解析貼上的 headers:只取三個,其他一律丟掉;值裡的 \r 去掉。
-hdr() { grep -i "^${1}:" "${HF}" | head -n1 | sed -e "s/^[^:]*:[[:space:]]*//" -e 's/\r$//' || true; }
+# 解析貼上的 headers:接受兩種格式——DevTools 的 Request Headers 純文字(name: value 一行一個)與「Copy as cURL」
+# (-H 'name: value' \ 與 -b '<cookie>')。只取三個 header,其他一律丟掉;值裡的 \r 去掉。
+NORM_SED="${OUT}/norm.sed"
+cat > "${NORM_SED}" <<'SED'
+s/\r$//
+s/^[[:space:]]*-H[[:space:]]+['"]//
+s/^[[:space:]]*(-b|--cookie)[[:space:]]+['"]/cookie: /
+s/['"][[:space:]]*\\?[[:space:]]*$//
+SED
+norm() { sed -E -f "${NORM_SED}" "${HF}"; }
+hdr() { norm | grep -i "^${1}:" | head -n1 | sed -e "s/^[^:]*:[[:space:]]*//" || true; }
 COOKIE="$(hdr cookie)"; AU="$(hdr x-goog-authuser)"; PAGEID="$(hdr x-goog-pageid)"
 [ -n "${COOKIE}" ] || { echo "headers 檔裡沒有 cookie: 這一行(要從已登入的 /browse POST 複製)" >&2; exit 1; }
 AU="${AU:-0}"
@@ -63,6 +72,7 @@ logged_in || { echo "   ✗ 回應裡沒有帳號:cookie 失效、authuser 抄�
 echo "   回應裡的 UC… browseId(可能是 channel id):$(jq -r '[.. | objects | .browseId? // empty | select(startswith("UC"))] | unique | join(", ")' "${BODY}")"
 echo "   有沒有 email 字樣:$(grep -c '@' "${BODY}" || true) 個 @(handle 也算);actions 數:$(jq '.actions | length' "${BODY}")"
 if [ "${AU}" != "0" ]; then echo "   (x-goog-authuser=${AU})"; fi
+if [ "${MODE}" != "cap" ]; then
 alt="$(( AU + 1 ))"; AU_SAVE="${AU}"; AU="${alt}"; code="$(yt account/account_menu '{}')"; echo "   authuser=${alt} 試打 → HTTP ${code}、$( logged_in && echo "另一個帳號:$(acct | cut -f2)" || echo "沒有帳號(單帳號瀏覽器)")"; AU="${AU_SAVE}"
 
 echo "② cookie 大小與白名單(對 Windows 2560 / macOS 約 3000 bytes)"
@@ -71,6 +81,9 @@ subset() { printf '%s' "${COOKIE}" | tr ';' '\n' | sed 's/^ *//' | awk -F= -v ke
 for set in \
   "S1:__Secure-3PSID __Secure-3PAPISID" \
   "S2:__Secure-3PSID __Secure-3PAPISID __Secure-3PSIDTS __Secure-3PSIDCC" \
+  "S2a:__Secure-3PSID __Secure-3PAPISID __Secure-3PSIDTS" \
+  "S2b:__Secure-3PSID __Secure-3PAPISID __Secure-3PSIDCC" \
+  "S2c:__Secure-1PSID __Secure-1PAPISID __Secure-1PSIDTS __Secure-1PSIDCC" \
   "S3:SID HSID SSID APISID SAPISID __Secure-1PSID __Secure-3PSID __Secure-1PAPISID __Secure-3PAPISID" \
   "S4:SID HSID SSID APISID SAPISID __Secure-1PSID __Secure-3PSID __Secure-1PAPISID __Secure-3PAPISID LOGIN_INFO" \
   "S5:SID HSID SSID APISID SAPISID __Secure-1PSID __Secure-3PSID __Secure-1PAPISID __Secure-3PAPISID __Secure-1PSIDTS __Secure-3PSIDTS SIDCC __Secure-1PSIDCC __Secure-3PSIDCC" ; do
@@ -79,6 +92,7 @@ for set in \
   printf '   %s %5s bytes → HTTP %s %s\n' "${name}" "$(printf '%s' "${c}" | wc -c | tr -d ' ')" "${code}" "$( logged_in && echo '登入 ✓' || echo '未登入 ✗')"
 done
 [ "${MODE}" = "size" ] && exit 0
+fi # MODE != cap
 
 echo "③ FEmusic_liked_playlists"
 code="$(yt browse '{"browseId":"FEmusic_liked_playlists"}')"; keep 03-library_playlists; echo "   HTTP ${code}"
@@ -115,6 +129,7 @@ echo "   同一 videoId 出現多次:$(cut -f1 "${OUT}/04-rows.tsv" | grep -v '^
 echo "   header 型別:$(jq -r '[.. | objects | keys[] | select(test("Header"))] | unique | join(",")' "${OUT}/04-playlist_first_page.json")"
 echo "   前 3 列:"; head -n 3 "${OUT}/04-rows.tsv" | sed 's/^/     /'
 
+if [ "${MODE}" != "cap" ]; then
 echo "⑥ search(歌曲 filter)"
 IFS='|' read -r -a QS <<< "${PROBE_QUERIES:-五月天 派對動物|米津玄師 Lemon|Coldplay Yellow}"
 for q in "${QS[@]}"; do
@@ -143,7 +158,8 @@ if [ "${RATE:-1}" = "1" ]; then
   echo "   結果:$(printf '%s' "${codes}" | tr ' ' '\n' | grep -c 200) 次 200 / $(printf '%s' "${codes}" | wc -w | tr -d ' ') 次"
 fi
 
-[ "${WRITE:-0}" = "1" ] || { echo "(讀端完成;WRITE=1 才做寫端 ⑤ ⑦ ⑩)"; exit 0; }
+fi # MODE != cap
+[ "${WRITE:-0}" = "1" ] || [ "${MODE}" = "cap" ] || { echo "(讀端完成;WRITE=1 才做寫端 ⑤ ⑦ ⑩)"; exit 0; }
 
 ########## 寫端 ##########
 PL=""
@@ -154,6 +170,14 @@ edit() { # edit <actions json 陣列>:一個 browse/edit_playlist 請求
 adds() { printf '%s\n' "$@" | jq -R . | jq -sc 'map({action:"ACTION_ADD_VIDEO", addedVideoId:., dedupeOption:"DEDUPE_OPTION_SKIP"})'; }
 removes_all() { rows "${PL}" | awk -F'\t' '$1!="-"' | jq -R 'split("\t") | {action:"ACTION_REMOVE_VIDEO", removedVideoId:.[0], setVideoId:.[1]}' | jq -sc .; }
 count() { rows "${PL}" | awk -F'\t' '$1!="-"' | wc -l | tr -d ' '; }
+# count_wait <期望列數>:讀回可能延遲(2026-09-29 實測 ADD 466 首後立刻讀是 0 列),每 3 s 重讀、最多 60 s;印「N 列(等了 k s)」
+count_wait() {
+  local want="$1" i=0 n
+  while :; do n="$(count)"; if [ "${n}" = "${want}" ] || [ "${i}" -ge 20 ]; then break; fi; i=$((i+1)); sleep 3; done
+  if [ "${n}" = "${want}" ]; then printf '%s 列(等了 %d s)' "${n}" "$((i*3))"; else printf '%s 列(%d s 後仍不是 %s)' "${n}" "$((i*3))" "${want}"; fi
+}
+# grid_count:清單列表副標裡這份清單的曲數(另一個資料來源,跟讀回的列數對照)
+grid_count() { yt browse '{"browseId":"FEmusic_liked_playlists"}' >/dev/null; jq -r --arg b "VL${PL}" '[.. | objects | select(has("musicTwoRowItemRenderer")) | .musicTwoRowItemRenderer | select(.navigationEndpoint.browseEndpoint.browseId == $b) | [.subtitle.runs[]?.text] | join("")] | first // "-"' "${BODY}"; }
 vids() { rows "${PL}" | awk -F'\t' '$1!="-" {print $1}' | tr '\n' ' '; }
 cleanup() {
   [ -n "${PL}" ] || return 0
@@ -165,6 +189,23 @@ cleanup() {
 trap cleanup EXIT
 
 MAT=($(awk -F'\t' '$1!="-" {print $1}' "${OUT}/04-rows.tsv" | awk '!seen[$0]++'))
+if [ "${MODE}" = "cap" ]; then
+  # 素材不夠就再讀第二、第三份清單湊(只讀)
+  for extra in $(awk -F'\t' '$1 ~ /^VL/ && $1 != "VLLM" && $1 !~ /^VLRD/ { n=0; if (match($3, /[0-9,]+ (songs|tracks)/)) { n=substr($3, RSTART, RLENGTH); gsub(/[^0-9]/, "", n) } print n "\t" substr($1, 3) }' "${OUT}/03-playlists.tsv" | sort -rn | sed -n '2,3p' | cut -f2); do
+    rows "${extra}" > "${OUT}/cap-extra-${extra}.tsv" || true
+    MAT=($(printf '%s\n' "${MAT[@]}" "$(awk -F'\t' '$1!="-" {print $1}' "${OUT}/cap-extra-${extra}.tsv")" | awk 'NF && !seen[$0]++'))
+  done
+  echo "⑤′ 單請求 ADD 上限與讀回延遲(素材 ${#MAT[@]} 首,尺寸 ${CAP_SIZES:-466 500 640})"
+  NAME="capy-probe-$(date +%s)"; code="$(yt playlist/create "$(jq -nc --arg t "${NAME}" '{title:$t, privacyStatus:"PRIVATE"}')")"; PL="$(jq -r '.playlistId // empty' "${BODY}")"
+  [ -n "${PL}" ] || { echo "建不出清單:$(head -c 200 "${BODY}")"; exit 1; }; echo "   playlist/create → HTTP ${code} id=${PL}"; sleep 3
+  for n in ${CAP_SIZES:-466 500 640}; do
+    [ "${n}" -le "${#MAT[@]}" ] || { echo "   ${n}:素材只有 ${#MAT[@]} 首,略過"; continue; }
+    code="$(edit "$(adds "${MAT[@]:0:${n}}")")"; st="$(ok)"; nres="$(jq '.playlistEditResults | length' "${BODY}")"
+    echo "   ADD ${n} → HTTP ${code} ${st};edit 結果 ${nres} 筆;讀回 $(count_wait "${n}");列表副標:$(grid_count)"
+    code="$(edit "$(removes_all)")"; st="$(ok)"; echo "      REMOVE 全部 → HTTP ${code} ${st};讀回 $(count_wait 0)"
+  done
+  exit 0
+fi
 [ "${#MAT[@]}" -ge 3 ] || { echo "素材不足(清單 ${PL_ID} 只有 ${#MAT[@]} 首可用)" >&2; exit 1; }
 MAXN="${PROBE_MAX:-${#MAT[@]}}"; [ "${MAXN}" -le "${#MAT[@]}" ] || MAXN="${#MAT[@]}"
 echo "⑤ 寫端(素材 ${#MAT[@]} 首,寫入上限 ${MAXN})"
@@ -177,22 +218,22 @@ for i in $(seq 1 30); do yt browse '{"browseId":"FEmusic_liked_playlists"}' >/de
 n=100; [ "${n}" -le "${MAXN}" ] || n="${MAXN}"
 while :; do
   code="$(edit "$(adds "${MAT[@]:0:${n}}")")"; keep "05b-add-${n}"; st="$(ok)"; nres="$(jq '.playlistEditResults | length' "${BODY}")"
-  echo "   5b ADD ${n} 首一個請求 → HTTP ${code} ${st};edit 結果 ${nres} 筆;讀回 $(count) 列"
+  echo "   5b ADD ${n} 首一個請求 → HTTP ${code} ${st};edit 結果 ${nres} 筆;讀回 $(count_wait "${n}");列表副標:$(grid_count)"
   [ "${code}" = "200" ] && [ "${st}" = "STATUS_SUCCEEDED" ] || break
-  code="$(edit "$(removes_all)")"; st="$(ok)"; echo "      REMOVE 全部一個請求 → HTTP ${code} ${st};讀回 $(count) 列"
+  code="$(edit "$(removes_all)")"; st="$(ok)"; echo "      REMOVE 全部一個請求 → HTTP ${code} ${st};讀回 $(count_wait 0)"
   [ "${n}" -ge "${MAXN}" ] && break
   n=$((n*2)); [ "${n}" -le "${MAXN}" ] || n="${MAXN}"
 done
 
 m=50; [ "${m}" -le "${MAXN}" ] || m="${MAXN}"
-if [ "$(count)" -gt 0 ]; then edit "$(removes_all)" >/dev/null; fi # 從空清單開始
+if [ "$(count_wait 0)" != "0 列(等了 0 s)" ]; then edit "$(removes_all)" >/dev/null; count_wait 0 >/dev/null; fi # 從空清單開始
 code="$(edit "$(adds "${MAT[@]:0:${m}}")")"; st="$(ok)"; echo "   5c 先放 ${m} 首 → HTTP ${code} ${st}"
 before="$(vids)"
 rev=($(printf '%s\n' "${MAT[@]:0:${m}}" | tail -r))
 code="$(edit "$(jq -nc --argjson r "$(removes_all)" --argjson a "$(adds "${rev[@]}")" '$r + $a')")"; keep 05c-replace; st="$(ok)"
 after="$(vids)"
 if [ "${after}" = "$(printf '%s ' "${rev[@]}")" ]; then order="順序 = 反序 ✓"; else order="順序不是反序 ✗(before: ${before:0:60}… after: ${after:0:60}…)"; fi
-echo "      REMOVE ${m} + ADD ${m}(反序)同一請求 → HTTP ${code} ${st};讀回 $(count) 列;${order}"
+echo "      REMOVE ${m} + ADD ${m}(反序)同一請求 → HTTP ${code} ${st};讀回 $(count_wait "${m}");${order}"
 
 code="$(edit "$(jq -nc --arg a "${MAT[1]}" --arg b "${MAT[2]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a, dedupeOption:"DEDUPE_OPTION_SKIP"},{action:"ACTION_ADD_VIDEO", addedVideoId:"zzzzzzzzzzz", dedupeOption:"DEDUPE_OPTION_SKIP"},{action:"ACTION_ADD_VIDEO", addedVideoId:$b, dedupeOption:"DEDUPE_OPTION_SKIP"}]')")"; keep 05d-bad_id; st="$(ok)"
 echo "   5d 好 / 壞 / 好 三個 ADD 一個請求 → HTTP ${code} ${st};讀回 $(count) 列(原子 = 還是 ${m};部分套用 = ${m}+2)"
@@ -202,7 +243,7 @@ code="$(edit "$(jq -nc --arg a "${MAT[0]}" '[{action:"ACTION_ADD_VIDEO", addedVi
 code="$(edit "$(jq -nc --arg a "${MAT[0]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a, dedupeOption:"DEDUPE_OPTION_SKIP"}]')")"; st="$(ok)"; echo "      帶 DEDUPE_OPTION_SKIP → HTTP ${code} ${st};列數 → $(count)"
 
 code="$(edit "$(jq -nc --arg t "${NAME}-renamed" '[{action:"ACTION_SET_PLAYLIST_NAME", playlistName:$t}]')")"; keep 05f-rename; st="$(ok)"
-rows "${PL}" >/dev/null; echo "   5f 改名 → HTTP ${code} ${st};讀回標題:$(jq -r '[.. | objects | .title? // empty | .runs[0]?.text // empty] | first // "-"' "${OUT}/rows-first.json")"
+rows "${PL}" >/dev/null; echo "   5f 改名 → HTTP ${code} ${st};讀回標題:$(jq -r '[.. | objects | (.musicResponsiveHeaderRenderer? // .musicDetailHeaderRenderer? // empty) | .title.runs[0].text // empty] | first // "-"' "${OUT}/rows-first.json")"
 
 first="$(rows "${PL}" | head -n1)"; third="$(rows "${PL}" | sed -n 3p)"
 code="$(edit "$(jq -nc --arg s "$(printf '%s' "${first}" | cut -f2)" --arg t "$(printf '%s' "${third}" | cut -f2)" '[{action:"ACTION_MOVE_VIDEO_BEFORE", setVideoId:$s, movedSetVideoIdSuccessor:$t}]')")"; st="$(ok)"
