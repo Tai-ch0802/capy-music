@@ -61,12 +61,13 @@
 | 刪清單 | `playlist/delete` {playlistId}——只給探測腳本清場 | 同上 |
 | 單曲 | `next` {videoId}(watch 清單第一項有歌名 / 歌手 / 專輯 / 時長)或 `player`(要 signatureTimestamp,重)→ GetTrack 用前者 | ytmusicapi get_watch_playlist / get_song |
 | 限流 | ytmusicapi FAQ:有 rate limit,「正常使用不會撞到」;形狀(有沒有 Retry-After)沒人寫 | T0 記錄 |
-| ToS | YouTube 服務條款禁止「以自動化工具存取本服務」(除公開搜尋引擎或書面許可)。社群工具(ytmusicapi 2020 起、yt-dlp)多年未見封鎖,但**不構成保證**。貼的是使用者 **Google 帳號在 YouTube 的登入 session**(`.youtube.com` 的 cookie;跟 `.google.com` 的同名 cookie 是不同值——不是 Gmail / Drive 的通行證,但能以你的身分做 YouTube 上的任何事);外洩要到 Google 帳號的安全性頁面登出所有裝置 | [YouTube Terms of Service](https://www.youtube.com/t/terms) |
+| ToS | YouTube 服務條款禁止「以自動化工具存取本服務」(除公開搜尋引擎或書面許可)。社群工具(ytmusicapi 2020 起、yt-dlp)多年未見封鎖,但**不構成保證**。貼的是使用者 **Google 帳號在 YouTube 的登入 session**(`.youtube.com` 的 cookie):拿到它的人能以你的身分做 YouTube 上的任何事(不只 YouTube Music);要撤銷就到 Google 帳號 → 安全性 → 登出所有裝置。它對 google.com 的其他服務(Gmail / Drive)有沒有效,**T0 第 11 項唯讀驗過才寫進揭露**(揭露文字會被 `checkYouTubeDisclosure` 逐語系釘住,不能放沒驗過的安撫句) | [YouTube Terms of Service](https://www.youtube.com/t/terms) |
 
 ### 1.3 會咬人的事
 
-1. **Windows keychain 2560 bytes**:一整段 YouTube cookie 常 2–4 KB(光 `LOGIN_INFO` 就近 1 KB)。只能存白名單(候選:`__Secure-3PAPISID`、`__Secure-3PSID`、
-   `SID` / `HSID` / `SSID` / `APISID` / `SAPISID`、`LOGIN_INFO`;哪些真的必要 T0 實測),白名單仍超過就拆兩筆 keychain。
+1. **keychain 兩邊都有上限**:Windows Credential Manager 單筆 2560 bytes;macOS 的 go-keyring 先 base64 再塞進 `security -i` 的 4096 字命令,原值約 3 KB 就到頂
+   (歌曲 wiki T1 實測:2 KB 原值變 2732 字)。一整段 YouTube cookie 常 2–4 KB(光 `LOGIN_INFO` 就近 1 KB),**兩個平台都要白名單**(候選:`__Secure-3PAPISID`、
+   `__Secure-3PSID`、`SID` / `HSID` / `SSID` / `APISID` / `SAPISID`、`LOGIN_INFO`;哪些真的必要 T0 實測),白名單仍超過就拆兩筆 keychain。
 2. **cookie 輪替**(§1.2 壽命列):若實測會死,指引改寫成 yt-dlp 的無痕視窗做法;失效偵測要準——InnerTube 對過期 cookie 可能回 401,也可能 200 但內容是未登入的畫面,
    兩種都要對到 `ErrAuthExpired`。
 3. **多帳號**:瀏覽器同時登入多個 Google 帳號時 cookie 是共用的,`x-goog-authuser` 才決定是哪一個;品牌帳號還要 `x-goog-pageid`(或 `context.user.onBehalfOfUser`)。
@@ -76,8 +77,13 @@
 6. **InnerTube 的 JSON 是 UI 樹**(`flexColumns` / `runs` / `navigationEndpoint`),欄位靠位置與端點型別猜,Google 改版面就壞(2024 的 twoColumn 改版讓 ytmusicapi
    重寫 parser)。→ 解析集中在一個檔、每個 renderer 一個小函式、fixture 全部來自 T0 的真回應(去識別化)。
 7. **上傳的歌(`PRIVATELY_OWNED_TRACK`)**只在該帳號存在:跨平台只能 fuzzy;能不能 ADD 進清單 T0 驗,不能就讀端標 `Unpushable`。
-8. **Apple 的 rename 成功、items 失敗回的是普通 error**(`apple.go:187`;push.go 會當「平台沒動」)——YouTube 這裡照 SPI 的意思回 `PartialWriteError{Renamed:true}`,
-   不抄這一點(Apple 那邊沒害處:下一輪 pull 把它讀成平台改名成同一個名字,是 no-op;順手修不修另議)。
+8. **rename 成功、items 整批失敗要回普通 error(照 Apple `apple.go:187`),不是 `PartialWriteError`**:`PartialWriteError.Written` 的語意是「平台現在是 want 的前 N 首」,
+   `push.go:344` 在重讀 L′ 也失敗時會拿 `want[:Written]` 當 base;整批取代失敗時平台還是舊序,`want[:len(current)]` 卻是新序 → 斷網那一輪 base 記成新序,下一輪 pull
+   把平台的舊序讀成「使用者在平台上重排」再拉回正本,等於撤銷使用者的修改(決策 57 講的那種災難)。普通 error 的代價只是名字晚一輪(下一輪 pull 讀到平台改名成同一個名字,no-op)。
+   `PartialWriteError` 只在純 append 分多個請求、第 2 個請求起失敗時用(前綴語意才成立,同 Apple 的分批 POST)。
+9. **同一首歌在 YouTube 上有兩個 videoId**:`ATV`(純音訊的「歌曲」)與 `OMV`(官方 MV)是兩個 id。使用者既有的 YouTube 清單裡放的常是 OMV,而 `Search`(歌曲 filter)把正本對到的是 ATV;
+   沒有 ISRC 可以把兩者併成一個 cid,所以 pull 會多出一筆 `p:youtube:<omv>`、push 又把 ATV 當新曲推回去,`pl dedup` 也抓不到(它只認同 id 或同 ISRC)。Spotify 的單曲 / 專輯版
+   有同樣形狀,靠 ISRC 合併;YouTube 唯一的出路是決策 21 的人工合併(`resolve --review` accept / pin)。這是 Q1 要一起衡量的同步品質事實,不是實作能繞的。
 
 ## 2. 可行性判定與路線
 
@@ -98,11 +104,12 @@
 ### 3.1 憑證與帳號區分:`capy auth login youtube`
 
 - **跟 Google Drive 登入完全分開**:keychain 新鍵 `youtube.headers`(JSON `{cookie, authuser, pageid}`);config 新欄 `youtube_account`(`{name, handle, channel_id}`,
-  非機密,只給顯示與 §3.4 的前綴)。不讀、不寫、不推導 `google.token`;`auth logout youtube` 只刪 `youtube.*` 與這個平台在本機的快取列(清單列表、最近項目、
+  非機密,只給顯示與 §3.4 的前綴)。不讀、不寫、不推導 `google.token`;`auth logout youtube` 只刪 `youtube.*`、config 的 `youtube_account`,與這個平台在本機的快取列(清單列表、最近項目、
   `playlist_items_cache` 的 youtube 列,同 Spotify / Apple 的 logout 承諾)。Drive 帳號與 YouTube Music 帳號**可以不同**,文件明寫。
 - 流程(照 Apple 的 `appleLogin` 收口成一個 persist):
-  1. 揭露頁(Confirm 預設「否」,不可跳過;非 TTY 要 `--i-understand`):非 Google 官方支援、貼的是你 Google 帳號在 YouTube 的登入 session(能以你的身分操作 YouTube,
-     不只 YouTube Music)、Google 可能隨時讓它失效(重跑一次即可)、自動化存取 YouTube 違反其服務條款、風險自負、capy 只指導不擷取、只寫你自己建的清單。
+  1. 揭露頁(Confirm 預設「否」,不可跳過;非 TTY 要 `--i-understand`):非 Google 官方支援、貼的是你 Google 帳號在 YouTube 的登入 session(拿到它的人能以你的身分
+     操作 YouTube,不只 YouTube Music;要撤銷就到 Google 帳號 → 安全性 → 登出所有裝置)、Google 可能隨時讓它失效(重跑一次即可)、自動化存取 YouTube 違反其服務條款、
+     風險自負、capy 只指導不擷取、只寫你自己建的清單。對 Gmail / Drive 有沒有效那一句,T0 第 11 項驗過才寫。
   2. 指引頁:**先在 music.youtube.com 右上角切到你要用的帳號**(可以跟 Drive 用的不同)→ DevTools → Network → 篩 `browse` → 任一 POST → Request Headers 整段複製。
   3. 貼上(TTY 用多行 Text;web 用 Secret textarea,同 `wiki setup` 的標頭欄,逾時 30 分鐘)。程式只留 `cookie`、`x-goog-authuser`、`x-goog-pageid`,其他丟掉;
      cookie 只留白名單(§1.3 第 1 項)。
@@ -143,8 +150,8 @@ ApplyOps(ctx, id, current, ops):
   pure append(want[:len(current)] == current)→ 一個 edit_playlist:尾端多出來的每首 ACTION_ADD_VIDEO(+DEDUPE_OPTION_SKIP)
   否則(Q4,推薦 a)→ 一個 edit_playlist:先 ACTION_REMOVE_VIDEO 每一列(setVideoId)、再 ACTION_ADD_VIDEO 照 want 順序
         = Spotify PUT / Apple PUT 同款的「整批取代」;加入日期會重設(README 對 Spotify 已這樣寫)
-  失敗語意:一個請求 = 沒有半截(T0 第 5 項驗原子性);rename 成功、items 失敗 → *PartialWriteError{Written: len(current), Renamed: true}
-        (push.go:332 只認 nil / PartialWriteError 為「平台動過」;規則 7 重讀 L′ 校正 base)
+  失敗語意:一個請求 = 沒有半截(T0 第 5 項驗原子性);rename 成功、items 失敗 → 回普通 error(§1.3 第 8 項;push.go 當「平台沒動」,名字晚一輪 no-op)
+        純 append 若超過單請求上限而分批、第 2 批起失敗 → *PartialWriteError{Written: len(current)+已加的}(前綴語意成立,同 Apple)
 Pushable(id): id != ""(上傳的歌能不能 ADD 看 T0 第 7 項;不能就讀端標 Unpushable,這裡照 Track 走)
 CreatePlaylist(name): playlist/create PRIVATE → 輪詢列表到出現才回(1→2→4→8→15 s,同 Apple;沒延遲就第一次就回)
 ```
@@ -161,7 +168,8 @@ CreatePlaylist(name): playlist/create PRIVATE → 輪詢列表到出現才回(1�
 
 做法照 local(決策 33)抄:playlist id = `<channel_id>/<playlistId>`(`channel_id` 從 `account_menu` 取,沒有就用 handle;T0 第 1 項),track id 不帶;
 宣告 `CapDeviceBound` + 實作 `Foreign(id)` = 前綴 ≠ 目前帳號 → pull / push / sync 只跳過並點名「屬於 YouTube 帳號 @xxx」、不 gone、不 unlink;`pl link` 撞到別的帳號的
-link 就接管;`resolvePlaylistID` 已接受只打後半段。要改的:三句 `belongs to device {device}` 的 i18n 改成 `{owner}`、`deviceName()` 改成依 provider 給名字
+link 就接管;`resolvePlaylistID` 已接受只打後半段。前綴用 channel id(`UC…`,不會變);`account_menu` 沒給就退回 handle——handle 改名會讓每個連結變 foreign,靠接管復原(跟重灌一樣)。
+跳過的訊息只印得出前綴本身(config 只記目前帳號的名字;別的帳號的 `UC…` 沒地方查名字),訊息要附「用那個帳號登入後 capy pl link 接回」的指路。要改的:三句 `belongs to device {device}` 的 i18n 改成 `{owner}`、`deviceName()` 改成依 provider 給名字
 (local 查 manifest、youtube 用前綴);`CapDeviceBound` 的註解改成「id 只在一個範圍(裝置 / 帳號)有意義」,位元不動(Q10)。約 80 行 + 測試。
 
 不做的代價:文件寫「所有裝置登同一個 YouTube Music 帳號;換帳號後 YouTube 連結會被當成已刪除,重新 `pl link`」。
@@ -177,8 +185,9 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。要改的:三句 `
 ### 3.6 文件與政策(**T1 就要,同一個 PR**——T1 已經連到 music.youtube.com)
 
 - CLAUDE.md:新增一條硬約束(照 Apple 那條:使用者自抄、只指導絕不擷取、揭露在指令內不可跳過、只寫自建清單、不送 `playlist/delete`)。
-- 隱私權政策 ×2:§3「程式只會連到 …、YouTube(music.youtube.com)」、cookie 存 keychain、§6 HTTPS 句、商標句;`site_test.go` 加一條釘 `capy auth login youtube` 與
-  `music.youtube.com` 都有寫。條款 ×2:能力句。首頁 ×2:meta 兩處、能力句、憑證段(「非 Google 官方支援」)。
+- 隱私權政策 ×2:§3「程式只會連到 …、YouTube(music.youtube.com)」、**送出去的是什麼**——`migrate` / `resolve` 對 YouTube 搜尋時,把你在 Spotify / Apple / 本機清單裡的
+  **歌名與歌手**當搜尋字送給 Google;讀寫的是你 YouTube Music 帳號裡的播放清單;cookie 只存 keychain。§6 HTTPS 句、商標句一起改;`site_test.go` 加一條釘
+  `capy auth login youtube`、`music.youtube.com`、「歌名與歌手」三者都在(照 `TestPrivacyPolicyDisclosesTheAIEndpoint` 的做法)。條款 ×2:能力句。首頁 ×2:meta 兩處、能力句、憑證段(「非 Google 官方支援」)。
 - README ×2:新段「YouTube Music:複製你自己的登入 cookie」(揭露 + 步驟 + 非互動用法)、首句平台清單、命令表、`auth status --json` 表加 `youtube.*`、logout 段、
   搬家段(可當來源與目標)。
 - 指南 ×2 + `go test ./site/ -run TestGuideOnSiteIsCurrent -update` + 重發兩個 Artifact(T3)。
@@ -191,17 +200,20 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。要改的:三句 `
 回應存成去識別化的 fixture 給 parser 測試。
 
 1. `account_menu`:帳號名、handle、有沒有 channel id / email;`x-goog-authuser` 換成別的索引會不會變成另一個帳號(瀏覽器同時登入多個帳號才測得到)。
-2. **cookie 白名單與壽命**:只帶白名單 cookie 能不能過;整段與白名單各幾 bytes(對 2560);複製後**繼續正常使用瀏覽器**,第 1、3、7 天各打一次 `account_menu`,
+2. **cookie 白名單與壽命**:只帶白名單 cookie 能不能過;整段與白名單各幾 bytes(對 Windows 2560、macOS 約 3 KB 兩個上限);複製後**繼續正常使用瀏覽器**,第 1、3、7 天各打一次 `account_menu`,
    看會不會死(§1.2 的矛盾)。
 3. `FEmusic_liked_playlists`:第 0 格是什麼、`LM` 在不在列表、有沒有 owned / 可編輯訊號、continuation 形狀、曲數欄。
 4. `VL<id>` 一份 ≥100 首的清單:continuation、`playlistSetVideoId`、videoType 分布、下架列長什麼樣;同一首兩列的 setVideoId 是否不同。
-5. **寫入原子性與上限**(拋棄式清單):`playlist/create` → 立刻 `FEmusic_liked_playlists` 看幾秒出現;ADD 100 首一個請求;同一請求 REMOVE 全部 + ADD 全部(反序)
+5. **寫入原子性與上限**(拋棄式清單):`playlist/create` → 立刻 `FEmusic_liked_playlists` 看幾秒出現;ADD 一個請求從 100 首起加倍到失敗、至少打到你最大那份真清單的列數
+   (Apple 探測是 538 列才安心);同一請求 REMOVE 全部 + ADD 全部(反序)
    看是否成功且順序正確;故意夾一個壞 videoId 看整包失敗還是部分套用;同一首兩份(帶 / 不帶 dedupeOption);`ACTION_SET_PLAYLIST_NAME`。
 6. `search` 歌曲 filter 對中文 / 日文 / 英文各 3 首(拿 Spotify 正本的歌名 + 歌手)看第一頁形狀與命中。
 7. 上傳的歌能不能 ADD;`PRIVATELY_OWNED_TRACK` 的列長什麼樣(帳號沒有上傳的歌就略過)。
 8. `next` {videoId} 第一項的欄位(GetTrack)。
 9. 限流:連打 60 次 `search`,看 429 有沒有 `Retry-After`。
 10. 結尾 `playlist/delete`,列表確認消失。
+11. **唯讀**:拿同一段 cookie 打一個 google.com 的登入後端點(例如 `https://myaccount.google.com/` 或 Drive API 的 `about`),預期被導去登入 / 401;結果決定揭露能不能寫
+    「對 Gmail / Drive 無效」。
 
 ## 5. 測試(每一則都是修之前會 fail 的)
 
@@ -264,5 +276,5 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。要改的:三句 `
 - R-42 `migrate <清單> --from spotify --to youtube`(拋棄式目標)順序正確、沒對到的進 review、`resolve --review` 能釘。
 - R-43 `pl sync` 一輪(YouTube 端加 / 刪 / 搬一首,Spotify 端也改)兩邊收斂、順序照決策 38、重複曲目保留。
 - R-44 換 YouTube 帳號重登後,舊帳號的連結只跳過不 unlink(Q2a)。
-- R-45 Windows:cookie 存得進 Credential Manager(2560)。
+- R-45 白名單 cookie 存得進 macOS Keychain 與 Windows Credential Manager(兩個上限)。
 - R-46 複製後 7 天 cookie 仍有效(或指引已改成無痕做法、失效訊息指向重新登入)。
