@@ -38,6 +38,11 @@ doctor 的帳號不一致訊息兩邊都印頻道 id;搜尋頁的 youtube 列放
   (第一次讀還是舊序,3 秒後才是新序)——push.go 規則 7 寫完重讀 L′ 記 base 可能記到舊狀態,但正本已經等於平台的新狀態,下一輪 pull 把「base → 平台」的差
   當成平台端的變更套到正本時不會改到任何東西(最多 base 再前進一次);R-43 驗收時 push 之後的第一次 pull 若不是「無變更」,再 pull 一次應該就是了——這一點要在 R-43 記下實際看到的。
 
+**T3 實作時跟本文不同的地方**(2026-09-29,指南 + web 收尾):
+- web 的搬家精靈與搜尋頁其實在 T1 / T2 就做完了(READ_ONLY / CAN_CREATE、搜尋頁的「在 YouTube Music 開啟」連結、帳號頁);T3 只補搬家精靈「先說清楚的事」的一張 YouTube 卡(只寫自己建的清單、沒有 ISRC 靠歌名 / 歌手 / 時長)。
+- 指南 ×2:能力表加第四欄、搬家範例加 `--to youtube`、「幾件先知道」加兩則(cookie 揭露 + 寫入語意,跟 `auth login youtube` 的揭露同一套事實)、其餘「三個平台 / Spotify 與 Apple Music」的列舉逐句補;`site/public/{,en/}guide.html` 用 `-update` 重生、兩個 Artifact 重發。
+- ISRC 查詢頁維持「三個平台」:YouTube provider 沒有 `CapISRCLookup`,那一頁不會出現它。
+
 使用者(2026-09-29):「我想是時候增加另一個音樂平台 provider 的歌曲清單搬遷、同步功能了。這次目標是 youtube music。考量使用者可能有多個帳號,
 所以我們的 youtube music 的登入帳號有可能會和現在既有的 google drive 的登入帳號不同,可能要留意一下並且區分開來。請先草擬出完整的 plan,
 我們確認定案方向以後再進行開發實作。」
