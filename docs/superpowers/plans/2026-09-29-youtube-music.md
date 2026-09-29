@@ -31,6 +31,10 @@ doctor 的帳號不一致訊息兩邊都印頻道 id;搜尋頁的 youtube 列放
 - 共用的假伺服器 `internal/provider/youtube/youtubetest`(照 drivetest):整包驗證整包套用、不帶 dedupeOption 的重複 ADD 回 STATUS_FAILED、
   `playlist/delete` 直接讓測試失敗;provider 的寫端測試與 cli 的端對端(搬家、同步、`--create`)都用它。
 - web:`move.js` 的 `READ_ONLY` 回空、`CAN_CREATE` 加 youtube(契約測試對 Go 的能力釘);首頁與 README 的「還在開發中」拿掉。
+- **live 測試**(`internal/provider/youtube/live_test.go`,`CAPY_YOUTUBE_LIVE_HEADERS=<headers 檔>` 才跑):Go 的寫端真的對真平台跑一遍——建拋棄式清單、
+  純 append 三首、反序 + 改名的整批取代、錯的 current 零寫入,結尾由測試自己送 `playlist/delete`。2026-09-29 真帳號通過。**發現:寫完立刻讀回會落後約 3 秒**
+  (第一次讀還是舊序,3 秒後才是新序)——push.go 規則 7 寫完重讀 L′ 記 base 可能記到舊狀態,但正本已經等於平台的新狀態,下一輪 pull 把「base → 平台」的差
+  當成平台端的變更套到正本時不會改到任何東西(最多 base 再前進一次);R-43 驗收時 push 之後的第一次 pull 若不是「無變更」,再 pull 一次應該就是了——這一點要在 R-43 記下實際看到的。
 
 使用者(2026-09-29):「我想是時候增加另一個音樂平台 provider 的歌曲清單搬遷、同步功能了。這次目標是 youtube music。考量使用者可能有多個帳號,
 所以我們的 youtube music 的登入帳號有可能會和現在既有的 google drive 的登入帳號不同,可能要留意一下並且區分開來。請先草擬出完整的 plan,

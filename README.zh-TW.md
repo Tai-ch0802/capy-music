@@ -174,11 +174,11 @@ capy seek 1:23          # 跳到曲目內的位置;也吃 h:mm:ss(1:05:30)與純
 capy vol 40             # 音量 0-100
 capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
-capy pl link 通勤 spotify --create          # 在 Spotify / Apple Music 建一個跟 canonical 同名的私人空清單再連上(local 不行);複製清單見下方
+capy pl link 通勤 spotify --create          # 在 Spotify / Apple Music / YouTube Music 建一個跟 canonical 同名的私人空清單再連上(local 不行);複製清單見下方
 capy pl unlink 通勤 spotify
-capy pl show / link / unlink / pull / push / sync / dedup   # 不帶清單名且在終端機裡 = 開挑選器(link 三段,第二段也能選在 Spotify / Apple Music 建新的空清單;unlink 兩段);pipe / cron 維持原本的參數錯誤
+capy pl show / link / unlink / pull / push / sync / dedup   # 不帶清單名且在終端機裡 = 開挑選器(link 三段,第二段也能選在 Spotify / Apple Music / YouTube Music 建新的空清單;unlink 兩段);pipe / cron 維持原本的參數錯誤
 capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
-capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # canonical → 平台(Spotify、Apple Music、本機曲庫);要先 pull 過、平台沒有未 pull 的變更
+capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provider spotify]   # canonical → 平台(Spotify、Apple Music、YouTube Music、本機曲庫);要先 pull 過、平台沒有未 pull 的變更
 capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
 capy pl dedup 通勤 [--dry-run] [--yes] [--force]   # 去掉正本裡重複的曲目(同平台 id 或同 ISRC;保留第一份、順序不動),再推到可寫的平台;沒有重複就零寫入
 capy pl dedup apple:冬日暖調                     # 直接讀平台清單、只報告哪幾首重複(不碰 Drive、不需要連結);要由 capy 去掉就用上一行的寫法
@@ -286,7 +286,7 @@ capy --web
 
 **打開就是「搬家」:把一個平台的播放清單搬到另一個平台,三步做完。** 選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度(「比對歌曲 37 / 120」),搬不過去的歌會逐首列出來。它不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。
 
-先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify 與 Apple Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify 或 Apple Music。
+先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify、Apple Music 與 YouTube Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify 或 Apple Music。
 
 其他頁面:**我的清單**、**同步**、**搜尋**、**歌曲 wiki**(正在播那首歌背後的故事,由你自己的 AI 端點用你的母語寫;見[歌曲 wiki](#歌曲-wiki選用接上你自己的-ai-端點)——這一頁跑的是 `capy wiki`,「設定 AI 端點」鈕就地開設定精靈)、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**(播放狀態面板):現在放什麼、進度、播放控制,`capy now` 的內容都在那裡。它跟著真正在播的平台走(只有正在播的平台會把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),控制鈕作用在它顯示的那個平台上;`capy --web --provider X` 可以把它釘在一個平台。頁面上的每一個動作背後都是一條 capy 命令,主控台留著完整紀錄;要確認的事一律由命令自己問,頁面不會替你按。側欄最下面還有語言選單(見上方「介面語言」)。
 
