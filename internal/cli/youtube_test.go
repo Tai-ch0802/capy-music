@@ -16,6 +16,7 @@ import (
 	ytauth "github.com/Tai-ch0802/capy-music/internal/auth/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
+	"github.com/Tai-ch0802/capy-music/internal/provider"
 	youtubeprov "github.com/Tai-ch0802/capy-music/internal/provider/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
@@ -295,5 +296,82 @@ func TestWebDeniesHeadersFile(t *testing.T) {
 	}
 	if why := webDenied([]string{"auth", "login", "youtube", "--headers-file=/x"}); why == "" {
 		t.Error("= 形式也要擋")
+	}
+}
+
+// fakeYouTubeMusic:假 InnerTube,回 provider 套件的 fixture(真回應去識別化修剪的):帳號、清單列表(舊式 continuation 走查詢參數)、
+// 清單 PLtest001(4 列 + 續頁 2 列)。給 pl link / pl pull 的端對端測試用。
+func fakeYouTubeMusic(t *testing.T) *httptest.Server {
+	t.Helper()
+	fx := func(name string) []byte {
+		b, err := os.ReadFile("../provider/youtube/testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		browseID, _ := body["browseId"].(string)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/account/account_menu"):
+			_, _ = w.Write(fx("account_menu.json"))
+		case r.URL.Query().Get("ctoken") != "":
+			_, _ = w.Write(fx("library_cont.json"))
+		case browseID == "FEmusic_liked_playlists":
+			_, _ = w.Write(fx("library_first.json"))
+		case browseID == "VLPLtest001":
+			_, _ = w.Write(fx("playlist_first.json"))
+		case body["continuation"] != nil:
+			_, _ = w.Write(fx("playlist_cont.json"))
+		default:
+			t.Errorf("非預期的 YouTube 請求:%s %v", r.URL.Path, body)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// pl link + pl pull 走真的 provider(對假 InnerTube):id 只打後半段也能連(前綴是帳號的頻道)、6 首進正本(cid p:youtube:…,沒有 ISRC)、
+// 第二次 pull 無變更;換了帳號(頻道 id 不同)舊連結只跳過、不 unlink(決策 60,同 local 的決策 33)。
+func TestYouTubePullEndToEnd(t *testing.T) {
+	_, dc, _ := pullWorld(t)
+	srv := fakeYouTubeMusic(t)
+	channel := "UCtestchannel000000000000"
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "youtube" {
+			return youtubeprov.New(srv.Client(), srv.URL, ytauth.Headers{Cookie: "__Secure-3PSID=p; __Secure-3PAPISID=a", AuthUser: "0"}, "en", channel), nil
+		}
+		return orig(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = orig })
+
+	mustPull(t, "pl", "link", "Road trip", "youtube:PLtest001")
+	pl := drivePlaylist(t, dc)
+	if pl.Links["youtube"] != channel+"/PLtest001" {
+		t.Fatalf("link 要帶帳號前綴:%v", pl.Links)
+	}
+	out, _ := mustPull(t, "pl", "pull", "Road trip", "--yes")
+	if strings.Count(out, "\n") != 6 || !strings.Contains(out, "p:youtube:vid00000001") {
+		t.Fatalf("第一次 pull 要 6 首新增、cid 是 p:youtube:…:%q", out)
+	}
+	pl = drivePlaylist(t, dc)
+	if len(pl.Items) != 6 || pl.Items[5].CID != "p:youtube:vid00000006" {
+		t.Fatalf("正本要有 6 首(含續頁):%+v", cidsOf(pl))
+	}
+	if out, errs := mustPull(t, "pl", "pull", "Road trip", "--yes"); out != "" || !strings.Contains(errs, "無變更") {
+		t.Fatalf("第二次 pull 要無變更:%q %q", out, errs)
+	}
+
+	channel = "UCsomeoneelse00000000000" // 換帳號登入:舊帳號的連結是別人的
+	out, errs := mustPull(t, "pl", "pull", "--all", "--yes")
+	if out != "" || !strings.Contains(errs, "UCtestchannel000000000000") || !strings.Contains(errs, "跳過") || strings.Contains(errs, "取消連結") {
+		t.Fatalf("別的帳號的連結只跳過、不 unlink:%q %q", out, errs)
+	}
+	if pl = drivePlaylist(t, dc); pl.Links["youtube"] != "UCtestchannel000000000000/PLtest001" || len(pl.Items) != 6 {
+		t.Fatalf("跳過不能動到 link 與正本:%v %d", pl.Links, len(pl.Items))
 	}
 }

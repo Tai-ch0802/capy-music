@@ -16,6 +16,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	ytauth "github.com/Tai-ch0802/capy-music/internal/auth/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
@@ -41,6 +42,7 @@ func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 		"spotify access": gen(40), "spotify refresh": gen(40), "spotify legacy refresh": gen(40),
 		"google access": gen(40), "google refresh": gen(40), "google client secret": gen(35),
 		"apple developer token": gen(36) + "." + gen(48) + "." + gen(64), "apple user token": gen(60),
+		"youtube cookie": gen(40), "youtube sidts": gen(40),
 	}
 	must := func(err error) {
 		t.Helper()
@@ -54,8 +56,9 @@ func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 	must(secret.Set(auth.KeyGoogleClientSecret, sec["google client secret"]))
 	must(apple.SaveDeveloperToken(sec["apple developer token"], exp))
 	must(secret.Set(apple.KeyMusicUserToken, sec["apple user token"]))
+	must(ytauth.Save(ytauth.Headers{Cookie: "__Secure-3PSID=" + sec["youtube cookie"] + "; __Secure-3PAPISID=" + gen(40) + "; __Secure-3PSIDTS=" + sec["youtube sidts"], AuthUser: "0"}))
 	must(config.Save(&config.Config{SpotifyClientID: strings.Repeat("ab", 16), GoogleClientID: "1234-byo.apps.googleusercontent.com",
-		GoogleEmail: "me@example.com", DeviceID: "dev1", AppleStorefront: "tw"}))
+		GoogleEmail: "me@example.com", DeviceID: "dev1", AppleStorefront: "tw", YouTube: &config.YouTubeAccount{Name: "Tai", Handle: "@example", ChannelID: "UCx"}}))
 
 	for _, args := range [][]string{{"auth", "status", "--json"}, {"auth", "status"}} {
 		out, err := runCLI(t, args...) // runCLI 的 stdout 與 stderr 寫進同一個 buffer
@@ -81,7 +84,8 @@ func TestAuthStatusNeverLeaksSecrets(t *testing.T) {
 	want := exp.UTC().Format(time.RFC3339)
 	if st.Spotify.State != "ok" || st.Spotify.ClientID != "set" ||
 		st.Google.State != "ok" || st.Google.Client != "config" || st.Google.Email != "me@example.com" || st.Google.DeviceID != "dev1" || st.Google.AccessTokenExpiry != want ||
-		st.Apple.State != "ok" || st.Apple.DeveloperToken != "ok" || st.Apple.UserToken != "ok" || st.Apple.DeveloperTokenExpiry != want || st.Apple.Storefront != "tw" {
+		st.Apple.State != "ok" || st.Apple.DeveloperToken != "ok" || st.Apple.UserToken != "ok" || st.Apple.DeveloperTokenExpiry != want || st.Apple.Storefront != "tw" ||
+		st.YouTube.State != "ok" || st.YouTube.Account != "Tai" || st.YouTube.Handle != "@example" || st.YouTube.ChannelID != "UCx" {
 		t.Errorf("全部登入:%+v", st)
 	}
 }
@@ -105,10 +109,10 @@ func TestAuthStatusJSONStates(t *testing.T) {
 	}
 	st, out := status()
 	if st.Spotify.State != "missing" || st.Spotify.ClientID != "missing" || st.Google.State != "missing" || st.Google.Client != "none" ||
-		st.Apple.State != "missing" || st.Apple.DeveloperToken != "missing" || st.Apple.UserToken != "missing" {
+		st.Apple.State != "missing" || st.Apple.DeveloperToken != "missing" || st.Apple.UserToken != "missing" || st.YouTube.State != "missing" {
 		t.Errorf("什麼都沒有:%+v", st)
 	}
-	for _, field := range []string{`"email"`, `"device_id"`, `"storefront"`, `"access_token_expiry"`, `"developer_token_expiry"`} {
+	for _, field := range []string{`"email"`, `"device_id"`, `"storefront"`, `"access_token_expiry"`, `"developer_token_expiry"`, `"account"`, `"handle"`, `"channel_id"`} {
 		if strings.Contains(out, field) {
 			t.Errorf("沒有值的欄位不印(%s):%s", field, out)
 		}

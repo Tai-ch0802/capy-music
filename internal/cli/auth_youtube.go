@@ -91,6 +91,7 @@ func youtubeWizardInput() (string, error) {
 	var raw string
 	if err := newForm(huh.NewGroup(
 		huh.NewNote().Title(i18n.T("auth.youtube.wizard.guide_title")).Description(youtubeGuide()),
+		// 貼上的整段常 8 KB / 30 多行:bubbles v2 的 textarea 預設沒有字元上限(defaultCharLimit = 0),這裡不再設一個。
 		huh.NewText().Title(i18n.T("auth.youtube.wizard.headers_label")).Value(&raw).Validate(func(s string) error {
 			if strings.TrimSpace(s) == "" {
 				return i18n.Errorf("auth.youtube.err.empty")
@@ -103,11 +104,19 @@ func youtubeWizardInput() (string, error) {
 	return raw, nil
 }
 
+// youtubeAccountLabel:「名稱(@handle)」;沒有 handle 的帳號(探測看過)只印名稱,不印空括號。
+func youtubeAccountLabel(name, handle string) string {
+	if handle == "" {
+		return name
+	}
+	return i18n.T("auth.youtube.account_label", "name", name, "handle", handle)
+}
+
 // youtubeConfirmAccount:貼上後的帳號確認(預設「是」)。
 func youtubeConfirmAccount(name, handle string) error {
 	yes := true
 	if err := newForm(huh.NewGroup(
-		huh.NewConfirm().Title(i18n.T("auth.youtube.wizard.account_question", "name", name, "handle", handle)).
+		huh.NewConfirm().Title(i18n.T("auth.youtube.wizard.account_question", "account", youtubeAccountLabel(name, handle))).
 			Affirmative(i18n.T("auth.youtube.wizard.account_yes")).Negative(i18n.T("auth.youtube.wizard.account_no")).Value(&yes),
 	)).Run(); err != nil {
 		return err
@@ -139,7 +148,7 @@ func youtubePersist(ctx context.Context, out, errw io.Writer, raw string, confir
 			return err
 		}
 	} else {
-		fmt.Fprintln(errw, i18n.T("auth.youtube.account_detected", "name", acc.Name, "handle", acc.Handle))
+		fmt.Fprintln(errw, i18n.T("auth.youtube.account_detected", "account", youtubeAccountLabel(acc.Name, acc.Handle)))
 	}
 	if err := ytauth.Save(h); err != nil {
 		return err
@@ -148,7 +157,7 @@ func youtubePersist(ctx context.Context, out, errw io.Writer, raw string, confir
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, i18n.T("auth.youtube.done", "name", acc.Name, "handle", acc.Handle))
+	fmt.Fprintln(out, i18n.T("auth.youtube.done", "account", youtubeAccountLabel(acc.Name, acc.Handle)))
 	return nil
 }
 
@@ -181,7 +190,7 @@ func youtubeStatusText(w io.Writer, cfg *config.Config) {
 		fmt.Fprintln(w, "  cookie: "+i18n.T("auth.status.keychain_read_failed", "err", err))
 	}
 	if cfg.YouTube != nil {
-		fmt.Fprintln(w, "  account: "+i18n.T("auth.status.youtube_account", "name", cfg.YouTube.Name, "handle", cfg.YouTube.Handle))
+		fmt.Fprintln(w, "  account: "+youtubeAccountLabel(cfg.YouTube.Name, cfg.YouTube.Handle))
 	}
 }
 
@@ -201,7 +210,7 @@ func checkYouTubeAccount(ctx context.Context) (string, error) {
 	if err != nil || cfg.YouTube == nil || cfg.YouTube.ChannelID == "" {
 		return "", i18n.Errorf("doctor.youtube.account.err.unset")
 	}
-	return i18n.T("auth.status.youtube_account", "name", cfg.YouTube.Name, "handle", cfg.YouTube.Handle), nil
+	return youtubeAccountLabel(cfg.YouTube.Name, cfg.YouTube.Handle), nil
 }
 
 // checkYouTubeAPI:account_menu 打得通,而且回來的帳號跟 config 記的是同一個(cookie 被換成別的帳號的、config 卻沒跟上)。

@@ -46,6 +46,22 @@ func TestParseCopyAsCURL(t *testing.T) {
 	}
 }
 
+// Windows Chrome 的「Copy as cURL (cmd)」:^" 當引號、行尾 ^ 接續。
+func TestParseCopyAsCURLCmd(t *testing.T) {
+	raw := "curl ^\"https://music.youtube.com/youtubei/v1/browse?prettyPrint=false^\" ^\r\n" +
+		"  -H ^\"accept: */*^\" ^\r\n" +
+		"  -b ^\"" + fullCookie + "^\" ^\r\n" +
+		"  -H ^\"x-goog-authuser: 1^\" ^\r\n" +
+		"  --data-raw ^\"^{^}^\"\r\n"
+	h, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(h.Cookie, "__Secure-1PSID=p1; ") || h.AuthUser != "1" {
+		t.Errorf("cmd 格式:%+v", h)
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string

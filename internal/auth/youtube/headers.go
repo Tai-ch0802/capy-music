@@ -49,11 +49,14 @@ var (
 )
 
 // Parse 解析使用者貼上的整段標頭。兩種格式都收:DevTools「Request Headers」的純文字(一行一個 name: value)與
-// 「Copy as cURL」(-H 'name: value' \ 與 -b '<cookie>')。只取 cookie / x-goog-authuser / x-goog-pageid,其他一律丟掉;
+// 「Copy as cURL」(-H 'name: value' \ 與 -b '<cookie>';Windows 的 cmd 變體用 ^" 與 ^ 也認得)。只取 cookie / x-goog-authuser / x-goog-pageid,其他一律丟掉;
 // cookie 只留白名單。沒有 cookie、cookie 裡沒有 SAPISID、或沒有 session cookie 各回不同錯誤(貼錯地方的人才知道下一步)。
 func Parse(raw string) (Headers, error) {
 	var h Headers
 	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+		// Windows Chrome 的「Copy as cURL (cmd)」:引號是 ^",換行接續是 ^;先還原成 bash 的樣子再比對。
+		line = strings.ReplaceAll(line, `^"`, `"`)
+		line = strings.TrimSuffix(strings.TrimRight(line, " \t"), "^")
 		if m := curlCookieRe.FindStringSubmatch(line); m != nil {
 			h.Cookie = m[1]
 			continue

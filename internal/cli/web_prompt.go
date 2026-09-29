@@ -309,7 +309,7 @@ func (s *webServer) webYouTubeWizardInput() (string, error) {
 
 // webYouTubeAccountConfirm:貼上後帳號確認(抄錯 x-goog-authuser 會變成別人,決策 60)。
 func (s *webServer) webYouTubeAccountConfirm(name, handle string) error {
-	a, err := s.ask(webPrompt{Kind: "confirm", Title: i18n.T("auth.youtube.wizard.account_question", "name", name, "handle", handle),
+	a, err := s.ask(webPrompt{Kind: "confirm", Title: i18n.T("auth.youtube.wizard.account_question", "account", youtubeAccountLabel(name, handle)),
 		Affirmative: i18n.T("auth.youtube.wizard.account_yes"), Negative: i18n.T("auth.youtube.wizard.account_no"), Default: true})
 	if err != nil || a.Cancel {
 		return huh.ErrUserAborted
