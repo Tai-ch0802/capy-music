@@ -52,7 +52,7 @@ func TestEnglishResolveErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"resolve", "--provider", "bogus"}, `unknown provider "bogus" (available: spotify|apple|local)`},
+		{[]string{"resolve", "--provider", "bogus"}, `unknown provider "bogus" (available: spotify|apple|local|youtube)`},
 		{[]string{"resolve", "--review", "--dry-run"}, "--review can't be combined with --dry-run (review decisions are always written; to look at the queue first, use capy resolve --dry-run)"},
 		{[]string{"resolve", "pin", "i:nope", "apple:none"}, "no cid i:nope in tracks (run capy pl pull first)"},
 	} {

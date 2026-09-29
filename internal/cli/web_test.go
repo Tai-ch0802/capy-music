@@ -24,12 +24,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	ytauth "github.com/Tai-ch0802/capy-music/internal/auth/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/provider/local"
 	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
+	youtubeprov "github.com/Tai-ch0802/capy-music/internal/provider/youtube"
 )
 
 // ── 測試骨架 ──
@@ -425,7 +427,7 @@ func TestWebCommandsListExcludesHiddenAndAutoFlag(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil || resp.StatusCode != 200 {
 		t.Fatal(resp.StatusCode, err)
 	}
-	if d.Version != version || len(d.Providers) != 3 || d.DefaultProvider != "spotify" {
+	if d.Version != version || len(d.Providers) != 4 || d.DefaultProvider != "spotify" {
 		t.Errorf("version / providers / default_provider:%+v", d)
 	}
 	var login *webCommand
@@ -1109,8 +1111,8 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
 		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
 	}
-	if !strings.Contains(move, "const READ_ONLY = [];") || !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? t('webui.move.source_only') : ''") {
-		t.Error("只讀平台當目的地要是不可選並說明原因,不是直接消失(目前沒有只讀平台:Apple 自決策 49 起可寫)")
+	if !strings.Contains(move, "role === 'to' && READ_ONLY.includes(id) ? t('webui.move.source_only') : ''") { // 清單本身由 TestWebMoveWizardCapabilitiesAndHeadersMatchGo 對 Go 的能力釘
+		t.Error("只讀平台當目的地要是不可選並說明原因,不是直接消失(YouTube Music 在 T1 只有讀端)")
 	}
 	// 精靈的命令走 args 陣列(決策 46;review #66 第 2 點):splitArgs 沒有跳脫,local 的清單 ID 含空白 / 雙引號會組不出來。
 	if !strings.Contains(move, "args: ['migrate', state.src.id, '--from', state.from, '--to', target],") || strings.Contains(move, "quote(") {
@@ -1407,6 +1409,7 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 		"spotify": spotify.New(http.DefaultClient, "http://127.0.0.1:1"),
 		"apple":   apple.New(http.DefaultClient, "http://127.0.0.1:1", "dev", "user", "tw"),
 		"local":   local.New(t.TempDir(), "dev1"),
+		"youtube": youtubeprov.New(http.DefaultClient, "http://127.0.0.1:1", ytauth.Headers{Cookie: "__Secure-3PAPISID=x"}, "en", "UC1"),
 	}
 	var readOnly, canCreate []string
 	for _, id := range providerIDs {

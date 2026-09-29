@@ -50,7 +50,7 @@ func TestEnglishPushSyncHelp(t *testing.T) {
 func TestEnglishPushSyncArgErrors(t *testing.T) {
 	enPushWorld(t, "a")
 	for _, verb := range []string{"push", "sync"} {
-		if _, _, err := runPull(t, "pl", verb, "Commute", "--provider", "tidal"); err == nil || err.Error() != `provider must be spotify|apple|local: "tidal"` {
+		if _, _, err := runPull(t, "pl", verb, "Commute", "--provider", "tidal"); err == nil || err.Error() != `provider must be spotify|apple|local|youtube: "tidal"` {
 			t.Errorf("pl %s --provider tidal:%v", verb, err)
 		}
 		want := "--force works with a single playlist only (capy pl " + verb + " <name> --force), not with --all"

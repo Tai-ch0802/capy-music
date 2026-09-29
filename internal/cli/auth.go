@@ -18,6 +18,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/auth"
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	ytauth "github.com/Tai-ch0802/capy-music/internal/auth/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/browser"
 	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/config"
@@ -44,7 +45,7 @@ func newAuthCmd() *cobra.Command {
 
 func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "login <spotify|apple|google>",
+		Use:   "login <spotify|apple|google|youtube>",
 		Short: i18n.T("cmd.auth.login.short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,6 +58,12 @@ func newAuthLoginCmd() *cobra.Command {
 				return nil
 			case "google":
 				return googleLogin(cmd) // 不是音樂 provider,不提示 default_provider
+			case "youtube":
+				if err := youtubeLogin(cmd); err != nil {
+					return err
+				}
+				defaultProviderHint(cmd, "youtube")
+				return nil
 			case "spotify":
 				// 走下方既有流程。
 			case "local":
@@ -106,6 +113,7 @@ func newAuthLoginCmd() *cobra.Command {
 	cmd.Flags().String("developer-token", "", i18n.T("cmd.auth.login.flag.developer_token"))
 	cmd.Flags().String("user-token", "", i18n.T("cmd.auth.login.flag.user_token"))
 	cmd.Flags().Bool("i-understand", false, i18n.T("cmd.auth.login.flag.i_understand"))
+	cmd.Flags().String("headers-file", "", i18n.T("cmd.auth.login.flag.headers_file"))
 	cmd.Flags().Bool("auto", false, "")
 	_ = cmd.Flags().MarkHidden("auto") // 未文件化、opt-in、開發者自負(CLAUDE.md 鐵則的唯一例外,見 auto_darwin.go)
 	return cmd
@@ -426,6 +434,7 @@ func newAuthStatusCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(w, "  storefront: "+i18n.T("auth.status.not_set"))
 			}
+			youtubeStatusText(w, cfg)
 			return nil
 		},
 	}
@@ -457,6 +466,13 @@ type authStatus struct {
 		UserToken            string `json:"user_token"` // ok | missing | keychain_error
 		Storefront           string `json:"storefront,omitempty"`
 	} `json:"apple"`
+	// YouTube(決策 60):cookie 在不在;帳號是登入時 account_menu 回的(名字、handle、頻道 id),跟 google.email 是兩個帳號。
+	YouTube struct {
+		State     string `json:"state"` // ok | missing | keychain_error(cookie)
+		Account   string `json:"account,omitempty"`
+		Handle    string `json:"handle,omitempty"`
+		ChannelID string `json:"channel_id,omitempty"`
+	} `json:"youtube"`
 }
 
 // keychainState:讀 keychain 的結果 → ok / missing / keychain_error。
@@ -521,12 +537,18 @@ func authStatusOf(cfg *config.Config) authStatus {
 		a.State = "missing"
 	}
 	a.Storefront = cfg.AppleStorefront
+
+	_, err = ytauth.Load()
+	st.YouTube.State = keychainState(err)
+	if cfg.YouTube != nil {
+		st.YouTube.Account, st.YouTube.Handle, st.YouTube.ChannelID = cfg.YouTube.Name, cfg.YouTube.Handle, cfg.YouTube.ChannelID
+	}
 	return st
 }
 
 func newAuthLogoutCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "logout <spotify|apple|google>",
+		Use:   "logout <spotify|apple|google|youtube>",
 		Short: i18n.T("cmd.auth.logout.short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -541,6 +563,10 @@ func newAuthLogoutCmd() *cobra.Command {
 					return err
 				}
 				if err := secret.Delete(apple.KeyDeveloperToken); err != nil && !errors.Is(err, secret.ErrNotFound) {
+					return err
+				}
+			case "youtube":
+				if err := youtubeLogout(cmd); err != nil {
 					return err
 				}
 			case "google":

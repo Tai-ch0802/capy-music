@@ -266,6 +266,8 @@ func newDoctorCmd() *cobra.Command {
 				checks = appleChecks()
 			case "local":
 				checks = localChecks()
+			case "youtube":
+				checks = youtubeChecks()
 			default:
 				return i18n.Errorf("doctor.err.unknown_provider", "provider", strconv.Quote(provider), "valid", strings.Join(providerIDs, i18n.T("sep.list")))
 			}

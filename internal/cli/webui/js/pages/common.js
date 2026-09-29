@@ -4,7 +4,7 @@ import { t } from '../i18n.js';
 
 // 平台的顯示名稱:文字就好,不用官方標誌(決策 48)。表寫在函式裡、用到時才算(i18n.js 開頭的載入順序鐵則)。
 // 本機曲庫跟 CLI 用同一個 key(web.go 的 webSharedKeys);平台名本身不翻。
-export const providerName = (id) => ({ spotify: 'Spotify', apple: 'Apple Music', local: t('local.display_name'), google: 'Google Drive' })[id] || id;
+export const providerName = (id) => ({ spotify: 'Spotify', apple: 'Apple Music', local: t('local.display_name'), youtube: 'YouTube Music', google: 'Google Drive' })[id] || id;
 export const el = (tag, cls, text) => {
   const x = document.createElement(tag);
   if (cls) x.className = cls;

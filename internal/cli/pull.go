@@ -579,7 +579,7 @@ func newPlLinkCmd() *cobra.Command {
 						return i18n.Errorf("link.err.already_linked", "name", pl.Name, "pid", pl.PID, "platform", prov, "id", cur)
 					}
 					// 決策 33 / Q30:撞到別台裝置的本機清單 → 接管(重灌後 device_id 變了也靠這條接回來);原裝置下一輪起變 foreign
-					fmt.Fprintln(&done, i18n.T("link.taken_over", "name", pl.Name, "pid", pl.PID, "device", deviceName(s, cur), "platform", prov))
+					fmt.Fprintln(&done, i18n.T("link.taken_over", "name", pl.Name, "pid", pl.PID, "owner", linkOwner(p, s, cur), "platform", prov))
 					delete(s.mine().Base[pl.PID], prov) // 舊 base 是別台的觀測,對本機的檔沒意義
 				}
 				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單。
@@ -840,7 +840,7 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			}
 			link := pl.Links[prov]
 			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單——不是 gone、不動 base、不 unlink
-				fmt.Fprintln(stderr, i18n.T("pull.skip.foreign", "name", pl.Name, "platform", prov, "id", link, "device", deviceName(s, link)))
+				fmt.Fprintln(stderr, i18n.T("pull.skip.foreign", "name", pl.Name, "platform", prov, "id", link, "owner", linkOwner(p, s, link)))
 				continue
 			}
 			r, refs, err := pf.reader(prov)
@@ -907,6 +907,23 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 		}
 	}
 	return rows, blocked, lives, nil
+}
+
+// linkOwner:綁範圍的 id 屬於誰(訊息用)。local 是裝置(manifest 的 hostname);youtube 是另一個 YouTube Music 帳號——只有目前登入的
+// 帳號有名字,別的帳號只印得出前綴的頻道 id,所以順便說目前登入的是誰(不然看不出自己在哪個帳號)。
+func linkOwner(p provider.Provider, s *canonState, id string) string {
+	if p.ID() == "youtube" {
+		channel, _, _ := strings.Cut(id, "/")
+		current := ""
+		if cfg, err := config.Load(); err == nil && cfg.YouTube != nil {
+			current = cfg.YouTube.Handle
+			if current == "" {
+				current = cfg.YouTube.Name
+			}
+		}
+		return i18n.T("pull.owner.youtube", "channel", channel, "current", current)
+	}
+	return i18n.T("pull.owner.device", "device", deviceName(s, id))
 }
 
 // deviceName:綁裝置的 id(<device_id>/…)的擁有裝置名(manifest 的 hostname),沒有就印 id。

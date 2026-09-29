@@ -1,0 +1,757 @@
+{
+ "contents": {
+  "singleColumnBrowseResultsRenderer": {
+   "tabs": [
+    {
+     "tabRenderer": {
+      "endpoint": {
+       "commandExecutorCommand": {
+        "commands": [
+         {
+          "musicLibraryPersistLaunchNavigationCommand": {
+           "command": {
+            "browseEndpoint": {
+             "browseId": "FEmusic_library_landing"
+            }
+           }
+          }
+         },
+         {
+          "browseEndpoint": {
+           "browseId": "FEmusic_library_landing",
+           "browseEndpointContextSupportedConfigs": {
+            "browseEndpointContextMusicConfig": {
+             "pageType": "MUSIC_PAGE_TYPE_LIBRARY_CONTENT_LANDING_PAGE"
+            }
+           }
+          }
+         }
+        ]
+       }
+      },
+      "title": "Library",
+      "selected": true,
+      "content": {
+       "sectionListRenderer": {
+        "contents": [
+         {
+          "gridRenderer": {
+           "items": [
+            {
+             "musicTwoRowItemRenderer": {
+              "title": {
+               "runs": [
+                {
+                 "text": "New playlist",
+                 "navigationEndpoint": {
+                  "createPlaylistEndpoint": {
+                   "params": "CAI%3D",
+                   "createPlaylistDialog": {
+                    "createPlaylistDialogRenderer": {
+                     "dialogTitle": {
+                      "runs": [
+                       {
+                        "text": "New playlist"
+                       }
+                      ]
+                     },
+                     "titlePlaceholder": "Title",
+                     "privacyOption": {
+                      "dropdownRenderer": {
+                       "entries": [
+                        {
+                         "dropdownItemRenderer": {
+                          "label": {
+                           "runs": [
+                            {
+                             "text": "Public"
+                            }
+                           ]
+                          },
+                          "isSelected": true,
+                          "int32Value": 1,
+                          "icon": {
+                           "iconType": "PRIVACY_PUBLIC"
+                          },
+                          "descriptionText": {
+                           "runs": [
+                            {
+                             "text": "Anyone can search for and view"
+                            }
+                           ]
+                          }
+                         }
+                        },
+                        {
+                         "dropdownItemRenderer": {
+                          "label": {
+                           "runs": [
+                            {
+                             "text": "Unlisted"
+                            }
+                           ]
+                          },
+                          "isSelected": false,
+                          "int32Value": 2,
+                          "icon": {
+                           "iconType": "LINK"
+                          },
+                          "descriptionText": {
+                           "runs": [
+                            {
+                             "text": "Anyone with the link can view"
+                            }
+                           ]
+                          }
+                         }
+                        },
+                        {
+                         "dropdownItemRenderer": {
+                          "label": {
+                           "runs": [
+                            {
+                             "text": "Private"
+                            }
+                           ]
+                          },
+                          "isSelected": false,
+                          "int32Value": 0,
+                          "icon": {
+                           "iconType": "LOCK"
+                          },
+                          "descriptionText": {
+                           "runs": [
+                            {
+                             "text": "Only you can view"
+                            }
+                           ]
+                          }
+                         }
+                        }
+                       ],
+                       "label": "Privacy"
+                      }
+                     },
+                     "cancelButton": {
+                      "buttonRenderer": {
+                       "style": "STYLE_LIGHT_TEXT",
+                       "isDisabled": false,
+                       "text": {
+                        "runs": [
+                         {
+                          "text": "Cancel"
+                         }
+                        ]
+                       }
+                      }
+                     },
+                     "createButton": {
+                      "buttonRenderer": {
+                       "style": "STYLE_PRIMARY",
+                       "isDisabled": false,
+                       "text": {
+                        "runs": [
+                         {
+                          "text": "Create"
+                         }
+                        ]
+                       }
+                      }
+                     },
+                     "playlistCollaborateToggle": {
+                      "switchListItemViewModel": {
+                       "title": {
+                        "content": "Collaborate"
+                       },
+                       "isDisabled": false,
+                       "a11yLabelSwitchedOn": "On",
+                       "a11yLabelSwitchedOff": "Off"
+                      }
+                     },
+                     "createPlaylistParamsCollaborationEnabled": "KAE%3D",
+                     "createPlaylistParamsCollaborationDisabled": "KAA%3D",
+                     "errorMessages": [
+                      {
+                       "type": "CREATE_PLAYLIST_DIALOG_FIELD_ERROR_MESSAGE_TYPE_VISIBILITY_INVALID",
+                       "errorMessage": {
+                        "runs": [
+                         {
+                          "text": "Change privacy to allow collaboration. "
+                         },
+                         {
+                          "text": "Learn more",
+                          "navigationEndpoint": {
+                           "urlEndpoint": {
+                            "url": "https://example.invalid/x",
+                            "target": "TARGET_NEW_WINDOW"
+                           }
+                          }
+                         }
+                        ]
+                       }
+                      }
+                     ]
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {},
+              "navigationEndpoint": {
+               "createPlaylistEndpoint": {
+                "params": "CAI%3D",
+                "createPlaylistDialog": {
+                 "createPlaylistDialogRenderer": {
+                  "dialogTitle": {
+                   "runs": [
+                    {
+                     "text": "New playlist"
+                    }
+                   ]
+                  },
+                  "titlePlaceholder": "Title",
+                  "privacyOption": {
+                   "dropdownRenderer": {
+                    "entries": [
+                     {
+                      "dropdownItemRenderer": {
+                       "label": {
+                        "runs": [
+                         {
+                          "text": "Public"
+                         }
+                        ]
+                       },
+                       "isSelected": true,
+                       "int32Value": 1,
+                       "icon": {
+                        "iconType": "PRIVACY_PUBLIC"
+                       },
+                       "descriptionText": {
+                        "runs": [
+                         {
+                          "text": "Anyone can search for and view"
+                         }
+                        ]
+                       }
+                      }
+                     },
+                     {
+                      "dropdownItemRenderer": {
+                       "label": {
+                        "runs": [
+                         {
+                          "text": "Unlisted"
+                         }
+                        ]
+                       },
+                       "isSelected": false,
+                       "int32Value": 2,
+                       "icon": {
+                        "iconType": "LINK"
+                       },
+                       "descriptionText": {
+                        "runs": [
+                         {
+                          "text": "Anyone with the link can view"
+                         }
+                        ]
+                       }
+                      }
+                     },
+                     {
+                      "dropdownItemRenderer": {
+                       "label": {
+                        "runs": [
+                         {
+                          "text": "Private"
+                         }
+                        ]
+                       },
+                       "isSelected": false,
+                       "int32Value": 0,
+                       "icon": {
+                        "iconType": "LOCK"
+                       },
+                       "descriptionText": {
+                        "runs": [
+                         {
+                          "text": "Only you can view"
+                         }
+                        ]
+                       }
+                      }
+                     }
+                    ],
+                    "label": "Privacy"
+                   }
+                  },
+                  "cancelButton": {
+                   "buttonRenderer": {
+                    "style": "STYLE_LIGHT_TEXT",
+                    "isDisabled": false,
+                    "text": {
+                     "runs": [
+                      {
+                       "text": "Cancel"
+                      }
+                     ]
+                    }
+                   }
+                  },
+                  "createButton": {
+                   "buttonRenderer": {
+                    "style": "STYLE_PRIMARY",
+                    "isDisabled": false,
+                    "text": {
+                     "runs": [
+                      {
+                       "text": "Create"
+                      }
+                     ]
+                    }
+                   }
+                  },
+                  "playlistCollaborateToggle": {
+                   "switchListItemViewModel": {
+                    "title": {
+                     "content": "Collaborate"
+                    },
+                    "isDisabled": false,
+                    "a11yLabelSwitchedOn": "On",
+                    "a11yLabelSwitchedOff": "Off"
+                   }
+                  },
+                  "createPlaylistParamsCollaborationEnabled": "KAE%3D",
+                  "createPlaylistParamsCollaborationDisabled": "KAA%3D",
+                  "errorMessages": [
+                   {
+                    "type": "CREATE_PLAYLIST_DIALOG_FIELD_ERROR_MESSAGE_TYPE_VISIBILITY_INVALID",
+                    "errorMessage": {
+                     "runs": [
+                      {
+                       "text": "Change privacy to allow collaboration. "
+                      },
+                      {
+                       "text": "Learn more",
+                       "navigationEndpoint": {
+                        "urlEndpoint": {
+                         "url": "https://example.invalid/x",
+                         "target": "TARGET_NEW_WINDOW"
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   }
+                  ]
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "title": {
+               "runs": [
+                {
+                 "text": "Liked Music",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLLM",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Auto playlist"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLLM",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "subtitleBadges": [
+               {
+                "musicInlineBadgeRenderer": {
+                 "icon": {
+                  "iconType": "KEEP"
+                 }
+                }
+               }
+              ]
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "title": {
+               "runs": [
+                {
+                 "text": "New Episodes",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDPN",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Auto playlist"
+                },
+                {
+                 "text": " • "
+                },
+                {
+                 "text": "38 episodes"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDPN",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "subtitleBadges": [
+               {
+                "musicInlineBadgeRenderer": {
+                 "icon": {
+                  "iconType": "KEEP"
+                 }
+                }
+               }
+              ]
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "title": {
+               "runs": [
+                {
+                 "text": "Road trip",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLPLtest001",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Someone",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "UCtestchannel000000000000",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_USER_CHANNEL"
+                    }
+                   }
+                  }
+                 }
+                },
+                {
+                 "text": " • "
+                },
+                {
+                 "text": "3 tracks"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLPLtest001",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "title": {
+               "runs": [
+                {
+                 "text": "Somebody's mix",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLPLtest001",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Other Person",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "UCartist000000",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_USER_CHANNEL"
+                    }
+                   }
+                  }
+                 }
+                },
+                {
+                 "text": " • "
+                },
+                {
+                 "text": "3 tracks"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLPLtest002",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              }
+             }
+            }
+           ],
+           "continuations": [
+            {
+             "nextContinuationData": {
+              "continuation": "CONTINUATION-TOKEN-4qmFsgLe"
+             }
+            }
+           ],
+           "itemSize": "COLLECTION_STYLE_ITEM_SIZE_SMALL"
+          }
+         }
+        ],
+        "header": {
+         "musicSideAlignedItemRenderer": {
+          "startItems": [
+           {
+            "chipCloudRenderer": {
+             "chips": [
+              {
+               "chipCloudChipRenderer": {
+                "navigationEndpoint": {
+                 "commandExecutorCommand": {
+                  "commands": [
+                   {
+                    "browseEndpoint": {
+                     "browseId": "FEmusic_library_landing"
+                    }
+                   },
+                   {
+                    "musicLibraryPersistLaunchNavigationCommand": {
+                     "command": {
+                      "browseEndpoint": {
+                       "browseId": "FEmusic_library_landing"
+                      }
+                     }
+                    }
+                   }
+                  ]
+                 }
+                },
+                "icon": {
+                 "iconType": "CLOSE"
+                },
+                "isSelected": true,
+                "onDeselectedCommand": {
+                 "commandExecutorCommand": {
+                  "commands": [
+                   {
+                    "browseEndpoint": {
+                     "browseId": "FEmusic_library_landing"
+                    }
+                   },
+                   {
+                    "musicLibraryPersistLaunchNavigationCommand": {
+                     "command": {
+                      "browseEndpoint": {
+                       "browseId": "FEmusic_library_landing"
+                      }
+                     }
+                    }
+                   }
+                  ]
+                 }
+                },
+                "uniqueId": "Clear filters"
+               }
+              },
+              {
+               "chipCloudChipRenderer": {
+                "text": {
+                 "runs": [
+                  {
+                   "text": "Playlists"
+                  }
+                 ]
+                },
+                "navigationEndpoint": {
+                 "commandExecutorCommand": {
+                  "commands": [
+                   {
+                    "browseEndpoint": {
+                     "browseId": "FEmusic_liked_playlists"
+                    }
+                   },
+                   {
+                    "musicLibraryPersistLaunchNavigationCommand": {
+                     "command": {
+                      "browseEndpoint": {
+                       "browseId": "FEmusic_liked_playlists"
+                      }
+                     }
+                    }
+                   }
+                  ]
+                 }
+                },
+                "isSelected": true,
+                "onDeselectedCommand": {
+                 "commandExecutorCommand": {
+                  "commands": [
+                   {
+                    "browseEndpoint": {
+                     "browseId": "FEmusic_library_landing"
+                    }
+                   },
+                   {
+                    "musicLibraryPersistLaunchNavigationCommand": {
+                     "command": {
+                      "browseEndpoint": {
+                       "browseId": "FEmusic_library_landing"
+                      }
+                     }
+                    }
+                   }
+                  ]
+                 }
+                },
+                "uniqueId": "Playlists"
+               }
+              }
+             ]
+            }
+           }
+          ],
+          "endItems": [
+           {
+            "musicSortFilterButtonRenderer": {
+             "title": {
+              "runs": [
+               {
+                "text": "Recently saved"
+               }
+              ]
+             },
+             "icon": {
+              "iconType": "CHEVRON_DOWN"
+             }
+            }
+           }
+          ]
+         }
+        }
+       }
+      },
+      "tabIdentifier": "FEmusic_library_landing"
+     }
+    },
+    {
+     "tabRenderer": {
+      "endpoint": {
+       "commandExecutorCommand": {
+        "commands": [
+         {
+          "musicLibraryPersistLaunchNavigationCommand": {
+           "command": {
+            "browseEndpoint": {
+             "browseId": "FEmusic_offline"
+            }
+           }
+          }
+         },
+         {
+          "browseEndpoint": {
+           "browseId": "FEmusic_offline",
+           "browseEndpointContextSupportedConfigs": {
+            "browseEndpointContextMusicConfig": {
+             "pageType": "MUSIC_PAGE_TYPE_DOWNLOADS_CONTENT_LANDING_PAGE"
+            }
+           }
+          }
+         }
+        ]
+       }
+      },
+      "title": "Downloads",
+      "selected": false,
+      "content": {
+       "sectionListRenderer": {
+        "continuations": [
+         {
+          "reloadContinuationData": {
+           "continuation": "CONTINUATION-TOKEN-4qmFsgId"
+          }
+         }
+        ]
+       }
+      },
+      "tabIdentifier": "FEmusic_offline"
+     }
+    }
+   ]
+  }
+ }
+}

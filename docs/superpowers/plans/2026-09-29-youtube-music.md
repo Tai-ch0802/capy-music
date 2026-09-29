@@ -1,5 +1,20 @@
 # YouTube Music provider:清單搬遷與同步(2026-09-29 研究與計畫)
 
+**T1 實作時跟本文不同的地方**(2026-09-29,讀端 + 登入):
+- **帳號範圍的清單 id(§3.4)提前到 T1**:`pl link` 一寫進 Drive 就是永久 id,晚一步換前綴等於決策 33 修過的「重鍵 = 孤兒」;前綴確定用 `account_menu` 的 channel id(探測拿得到)。
+  跳過訊息的三句 i18n 從 `{device}` 改成 `{owner}`(local = 「裝置 X」、youtube = 「YouTube Music 帳號 UC…(你現在登入的是 @handle)」),接手的指路寫成 `<id 或名稱>`。
+- **貼上的格式兩種都收**:DevTools 的 Request Headers 純文字,以及 Chrome 的「Copy as cURL」(使用者第一次貼的就是後者);程式只留 `cookie` / `x-goog-authuser` / `x-goog-pageid`,
+  cookie 只留 `__Secure-3PSID` + `__Secure-3PAPISID` + `__Secure-3PSIDTS`(1P 那一組同在就也留)。真帳號登入後 keychain 那一筆只有幾百 bytes。
+- **`hl` 跟 config 的 `language`**(不是固定 en):探測看到 `hl=en` 時歌手名是羅馬拼音,zh-TW 才是「米津玄師」,跟 Apple TW 商店對得上;`gl` 取語系的地區(沒有就 US)。
+  代價:Spotify 那邊的羅馬拼音名 vs YouTube 的中文名會壓低 fuzzy 的歌手項——R-42 看分數,真的太差再考慮搜尋時改用 en。
+- **清單頁的偶發空頁**(探測 ADD 466 首後立刻讀回 0 列):`GetPlaylistItems` 對「沒有 header 也沒有列」的頁最多重讀 3 次、每次等 2 s;空清單有 header,不會被誤判。
+- **`Unwritable` 用 grid 副標的擁有者頻道**(`browseEndpoint.browseId` = UC…)比對帳號的 channel id,不看「Auto playlist」這種會跟語系變的字;`LM` 與 `RD…` 一律只讀。
+- 灰掉(下架)的列仍有 videoId → 留著;沒有 videoId 的才丟。歌手 / 專輯 / 時長靠端點型別與 browseId 前綴辨認,沒有端點的純文字(灰列、上傳)才看位置。
+- 登入的 401 / 貼錯訊息指「重新複製標頭」而不是 `auth login`(人就在登入裡);非 TTY 路徑把偵測到的帳號印到 stderr,TTY / web 是 Confirm。
+- web:帳號頁多一列(名稱 + handle;channel id 不上畫面)、搬家精靈把 youtube 標成只能當來源(`READ_ONLY`,T2 拿掉)、搜尋頁對 youtube 不放播放鈕;`--headers-file` 進 deny 表。
+- 政策 ×2 / 條款 ×2 / 首頁 ×2 / README ×2 / CLAUDE.md 同 PR;`site_test.go` 釘「music.youtube.com」「歌名與歌手」與「非 Google 官方支援」。指南兩份與 ARCHITECTURE 的 T1 收尾留 T3。
+- 沒做:寫端(T2)、`--auto`、播放、搜尋翻頁、ArtistSearch。
+
 使用者(2026-09-29):「我想是時候增加另一個音樂平台 provider 的歌曲清單搬遷、同步功能了。這次目標是 youtube music。考量使用者可能有多個帳號,
 所以我們的 youtube music 的登入帳號有可能會和現在既有的 google drive 的登入帳號不同,可能要留意一下並且區分開來。請先草擬出完整的 plan,
 我們確認定案方向以後再進行開發實作。」

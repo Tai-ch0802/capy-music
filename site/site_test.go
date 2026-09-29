@@ -93,6 +93,26 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 	}
 }
 
+// YouTube Music(決策 60):程式會連到 music.youtube.com(使用者自己複製的登入 cookie),而且 migrate / resolve 會把其他平台清單裡的
+// 歌名與歌手當搜尋字送給 Google——政策要說清楚是什麼、送了什麼;條款與首頁要說這不是官方支援。少一句這裡就紅。
+func TestPrivacyPolicyDisclosesYouTubeMusic(t *testing.T) {
+	for page, wants := range map[string][]string{
+		"privacy.html":    {"music.youtube.com", "YouTube Music", "歌名與歌手", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookie"},
+		"en/privacy.html": {"music.youtube.com", "YouTube Music", "song titles and artists", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookies"},
+		"terms.html":      {"YouTube Music", "不是 Apple 與 Google 官方支援"},
+		"en/terms.html":   {"YouTube Music", "not officially supported by Google"},
+		"index.html":      {"YouTube Music", "非 Google 官方支援"},
+		"en/index.html":   {"YouTube Music", "Google does not officially support"},
+	} {
+		html := read(t, page)
+		for _, want := range wants {
+			if !strings.Contains(html, want) {
+				t.Errorf("%s 沒有提到 %q", page, want)
+			}
+		}
+	}
+}
+
 // 中英文兩版的結構要一致:哪天只改了一邊、漏了一節,這裡要紅。
 func TestBothLanguagesHaveTheSameSections(t *testing.T) {
 	ids := func(html string) []string {

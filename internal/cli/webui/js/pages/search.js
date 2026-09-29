@@ -66,7 +66,8 @@ function resultTable(header, rows, prov, con, notice) {
       const line = said.trim();
       if (code === 0 && line && !line.startsWith('▶')) notice(line);
     };
-    td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
+    // YouTube Music 沒有播放(決策 60):不放播放鈕,那一列的歌名已連回 music.youtube.com(table.js)。
+    if (prov !== 'youtube') td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
     const link = prov === 'spotify' && spotifyLink('track', id, title);
     if (link) td.appendChild(link);
     tr.appendChild(td);

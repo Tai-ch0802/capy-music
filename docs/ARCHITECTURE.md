@@ -902,7 +902,7 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 
 第四個平台,使用者要的是清單搬遷與同步,而且 YouTube Music 帳號要跟 Google Drive 帳號分開(可以是不同帳號)。官方 Data API 每專案每天只有 100 次搜尋、sensitive scope 不能掛內建 client,所以走 music.youtube.com 自己用的 InnerTube + 使用者自抄 cookie(Apple 決策 8 同款 BYO;§1.5、§4.6)。Q1–Q11 全部照推薦定案。T0 計畫 + 探測腳本 `scripts/p10/youtube-probe.sh`(真帳號、拋棄式清單;使用者授權)+ 本文;T1 `internal/auth/youtube` + `internal/provider/youtube` 讀端 + `auth login | logout | status` / `doctor` + 政策 / 條款 / 首頁 / README / CLAUDE.md 同 PR;T2 寫端(一次 `edit_playlist` 整批取代、`CreatePlaylist`)+ 帳號範圍的清單 id + e2e;T3 web(搬家精靈、搜尋頁)+ 指南。驗收 R-39–R-46 在計畫 §10。
 
-**狀態(2026-09-29)**:T0 進行中(PR #116);探測還沒跑。
+**狀態(2026-09-29)**:T0 探測跑完(計畫 §4 的結果:白名單三個 `__Secure-3P*` cookie、channel id 拿得到、單請求 ADD 640 首、整批取代原子、壞 id 整包 400;cookie 壽命第 1 / 3 / 7 天 `MODE=ping` 待測);T1(讀端 + `auth login | logout | status` / `doctor` + 帳號範圍的清單 id + 政策 / 條款 / 首頁 / README / CLAUDE.md)在 PR 上;T2 / T3 未動。
 
 ---
 

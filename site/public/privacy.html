@@ -60,8 +60,8 @@
     <h2 id="storage">4. 資料存在哪裡</h2>
     <ul>
       <li><strong>你的 Google 雲端硬碟</strong>(應用程式專屬資料夾):第 3 節所列的同步資料。它佔用你的雲端硬碟空間,在雲端硬碟的介面裡看不到內容,也不能分享給別人。</li>
-      <li><strong>你的電腦</strong>:同一份資料的本機快取(SQLite 檔);設定檔(含上述電子郵件地址);Google、Spotify、Apple Music 的存取權杖,以及你自己設定的 AI 端點的 API key 與自訂標頭,只存在作業系統的鑰匙圈(macOS Keychain 或 Windows 認證管理員),不寫進設定檔、資料庫或雲端硬碟。</li>
-      <li><strong>我們這邊</strong>:什麼都沒有。capy 沒有後端伺服器、沒有帳號系統、沒有遙測或當機回報;程式只會連到你所使用的服務(Google、Spotify、Apple);<code>capy --web</code> 的頁面顯示專輯封面或試聽時,你的瀏覽器會直接向 Spotify 或 Apple 的內容伺服器載入圖片與音檔。另外只有在你執行 <code>capy update</code> 時才會連到 GitHub 檢查與下載新版本(<code>capy update --dev</code> 則由你電腦上的 Go 工具鏈從 GitHub 與 Go 模組代理下載原始碼)。如果你用 <code>capy wiki setup</code> 接上了自己的 AI 端點(capy 沒有預設的端點),<code>capy wiki setup</code> 會連到它確認連得上並列出它的模型;之後只有在你執行 <code>capy wiki</code> 時,capy 才會把那首歌的<strong>歌名、歌手、專輯、發行日期、曲風</strong>,以及你設定的母語(只用來指定回答的語言)送到那個端點——它是你自己選的服務(例如 OpenAI,或你自架的),適用它自己的政策。歌曲 wiki 附的 MV 連結只是 YouTube 的搜尋網址,由你的瀏覽器開啟,capy 本身不連 YouTube。</li>
+      <li><strong>你的電腦</strong>:同一份資料的本機快取(SQLite 檔);設定檔(含上述電子郵件地址);Google、Spotify、Apple Music 的存取權杖、YouTube Music 的登入 cookie(只留三個 session cookie),以及你自己設定的 AI 端點的 API key 與自訂標頭,只存在作業系統的鑰匙圈(macOS Keychain 或 Windows 認證管理員),不寫進設定檔、資料庫或雲端硬碟。</li>
+      <li><strong>我們這邊</strong>:什麼都沒有。capy 沒有後端伺服器、沒有帳號系統、沒有遙測或當機回報;程式只會連到你所使用的服務(Google、Spotify、Apple、YouTube Music);連接 YouTube Music 用的是你自己從 music.youtube.com 複製的登入 cookie(非 Google 官方支援),capy 用它讀寫你 YouTube Music 帳號裡的播放清單;<code>capy migrate</code>、<code>capy resolve</code> 要在 YouTube Music 找同一首歌時,會把你其他平台清單裡的<strong>歌名與歌手</strong>當搜尋字送給 Google;<code>capy --web</code> 的頁面顯示專輯封面或試聽時,你的瀏覽器會直接向 Spotify 或 Apple 的內容伺服器載入圖片與音檔。另外只有在你執行 <code>capy update</code> 時才會連到 GitHub 檢查與下載新版本(<code>capy update --dev</code> 則由你電腦上的 Go 工具鏈從 GitHub 與 Go 模組代理下載原始碼)。如果你用 <code>capy wiki setup</code> 接上了自己的 AI 端點(capy 沒有預設的端點),<code>capy wiki setup</code> 會連到它確認連得上並列出它的模型;之後只有在你執行 <code>capy wiki</code> 時,capy 才會把那首歌的<strong>歌名、歌手、專輯、發行日期、曲風</strong>,以及你設定的母語(只用來指定回答的語言)送到那個端點——它是你自己選的服務(例如 OpenAI,或你自架的),適用它自己的政策。歌曲 wiki 附的 MV 連結只是 YouTube 的搜尋網址,由你的瀏覽器開啟,capy 本身不連 YouTube。</li>
     </ul>
 
     <h2 id="sharing">5. 分享與移轉</h2>
@@ -78,7 +78,7 @@
     </ul>
 
     <h2 id="security">7. 安全</h2>
-    <p>capy 與 Google、Spotify、Apple 之間的連線一律使用 HTTPS。權杖只存在作業系統的鑰匙圈。<code>capy --web</code> 的網頁介面只綁定 127.0.0.1(只有你這台電腦連得到),每次啟動使用一次性的存取碼,頁面上不會出現任何權杖或密鑰。你自己設定的 AI 端點如果用明文 http、又不在這台電腦上,capy 會在設定時警告你(API key 與自訂標頭會不加密地傳送)。</p>
+    <p>capy 與 Google、Spotify、Apple、YouTube Music 之間的連線一律使用 HTTPS。權杖只存在作業系統的鑰匙圈。<code>capy --web</code> 的網頁介面只綁定 127.0.0.1(只有你這台電腦連得到),每次啟動使用一次性的存取碼,頁面上不會出現任何權杖或密鑰。你自己設定的 AI 端點如果用明文 http、又不在這台電腦上,capy 會在設定時警告你(API key 與自訂標頭會不加密地傳送)。</p>
 
     <h2 id="site">8. 這個網站</h2>
     <p>capy.taislife.work 是純靜態網頁:本網站不設任何 cookie、不載入任何第三方資源、沒有表單,也沒有自建任何分析或追蹤程式。網站由 Cloudflare 代管,代管商可能在網域層級自動往網頁加入分析用的程式碼;本網站以內容安全政策(CSP,<code>default-src 'none'</code>)禁止頁面執行或載入任何 script,實測這些程式碼會被你的瀏覽器擋下,不會執行、也不會載入。</p>
@@ -104,7 +104,7 @@
       <a href="https://github.com/Tai-ch0802/capy-music/blob/main/LICENSE">MIT License</a>
     </nav>
     <p>capy 是 Tai(GitHub:Tai-ch0802)以個人名義維護的開源專案,以 MIT 授權釋出。</p>
-    <p>capy 與 Spotify、Apple、Google 沒有隸屬、贊助或背書關係;這些名稱是各自所有者的商標,這裡只用來說明 capy 能連接哪些服務。</p>
+    <p>capy 與 Spotify、Apple、Google(含 YouTube)沒有隸屬、贊助或背書關係;這些名稱是各自所有者的商標,這裡只用來說明 capy 能連接哪些服務。</p>
     <p>這個網站不設 cookie、不執行任何 script,也不載入任何第三方資源。</p>
   </footer>
 </div>

@@ -51,7 +51,7 @@ func TestDoctorEnglishFailedCount(t *testing.T) {
 func TestDoctorEnglishUnknownProvider(t *testing.T) {
 	setCLITestConfig(t)
 	withLanguage(t, "en")
-	if _, err := runCLI(t, "doctor", "--provider", "nope"); err == nil || err.Error() != `unknown provider "nope" (available: spotify, apple, local)` {
+	if _, err := runCLI(t, "doctor", "--provider", "nope"); err == nil || err.Error() != `unknown provider "nope" (available: spotify, apple, local, youtube)` {
 		t.Fatalf("%v", err)
 	}
 	if got := newDoctorCmd().Short; got != "Check your setup and connections (one stop for BYO credential problems)" {

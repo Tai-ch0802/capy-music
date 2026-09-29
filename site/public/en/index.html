@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>capy: a free, open-source tool to move and sync playlists</title>
-<meta name="description" content="capy is a free, open-source music tool that runs on your own computer: move playlists between Apple Music, Spotify and a local music folder, keep them in sync, search, and control playback.">
+<meta name="description" content="capy is a free, open-source music tool that runs on your own computer: move playlists between Apple Music, Spotify, YouTube Music and a local music folder, keep them in sync, search, and control playback.">
 <link rel="canonical" href="https://capy.taislife.work/en/">
 <link rel="alternate" hreflang="en" href="https://capy.taislife.work/en/">
 <link rel="alternate" hreflang="zh-Hant" href="https://capy.taislife.work/">
 <link rel="alternate" hreflang="x-default" href="https://capy.taislife.work/">
 <meta property="og:url" content="https://capy.taislife.work/en/">
 <meta property="og:title" content="capy: a free, open-source tool to move and sync playlists">
-<meta property="og:description" content="capy is a free, open-source music tool that runs on your own computer: move playlists between Apple Music, Spotify and a local music folder, keep them in sync, search, and control playback.">
+<meta property="og:description" content="capy is a free, open-source music tool that runs on your own computer: move playlists between Apple Music, Spotify, YouTube Music and a local music folder, keep them in sync, search, and control playback.">
 <meta property="og:type" content="website">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
@@ -36,13 +36,13 @@
       <div>
         <p class="eyebrow">Open source · Free · Runs on your own computer</p>
         <h1>capy moves your playlists<br>to another music service.</h1>
-        <p class="lede">Nothing to rebuild by hand: capy is a free, open-source tool that reads a playlist from Spotify or Apple Music, finds the same songs on another service, and puts them there in the original order. It also searches music and controls playback. It is installed on your own computer, with a terminal version and a web interface, and your accounts never pass through anyone's server.</p>
+        <p class="lede">Nothing to rebuild by hand: capy is a free, open-source tool that reads a playlist from Spotify, Apple Music or YouTube Music, finds the same songs on another service, and puts them there in the original order. It also searches music and controls playback. It is installed on your own computer, with a terminal version and a web interface, and your accounts never pass through anyone's server.</p>
         <p class="lede lede--why">To sync or transfer playlists, capy asks you to sign in with Google. It only stores the master copy of your playlists in <strong>your own Google Drive</strong>, in an application data folder that only capy can read, and it cannot see any of your other files. <a href="#google">Why, and which permissions</a></p>
         <div class="cta">
           <a class="btn btn--go" href="https://github.com/Tai-ch0802/capy-music/releases">Download capy</a>
           <a class="btn btn--quiet" href="https://github.com/Tai-ch0802/capy-music">View source</a>
         </div>
-        <p class="fine">macOS and Windows. Playlists can be read from and written to Apple Music, Spotify or a music folder on your computer. On Apple Music, capy only writes playlists you created yourself.</p>
+        <p class="fine">macOS and Windows. Playlists can be read from and written to Apple Music, Spotify or a music folder on your computer, and read from YouTube Music as a source (writing to YouTube Music is in development). On Apple Music, capy only writes playlists you created yourself.</p>
       </div>
       <div class="route" aria-hidden="true">
         <div class="route__ends">
@@ -146,7 +146,7 @@
 
 <span class="c"># or straight from the terminal</span>
 <span class="p">$ </span>capy migrate "Commute" --from apple --to spotify</pre>
-          <p class="fine">Spotify requires you to create your own free developer app (capy walks you through it). Apple Music relies on a method Apple does not officially support (you copy the web player's tokens yourself; removing and reordering use the web player's own endpoints). capy only writes Apple Music playlists you created yourself; whether songs added to a playlist also go into your Apple Music library depends on your Apple Music settings. Writing to Spotify playlists follows the official documentation and is still being verified on real accounts; please report problems. See the README for details.</p>
+          <p class="fine">Spotify requires you to create your own free developer app (capy walks you through it). Apple Music relies on a method Apple does not officially support (you copy the web player's tokens yourself; removing and reordering use the web player's own endpoints). YouTube Music also relies on a method Google does not officially support (you copy the login cookie from music.youtube.com yourself; it can be a different account from the one you use for Google Drive); capy only writes Apple Music playlists you created yourself; whether songs added to a playlist also go into your Apple Music library depends on your Apple Music settings. Writing to Spotify playlists follows the official documentation and is still being verified on real accounts; please report problems. See the README for details.</p>
         </div>
       </div>
     </section>

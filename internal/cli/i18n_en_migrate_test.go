@@ -59,7 +59,7 @@ func TestEnglishMigrateHelp(t *testing.T) {
 		"migrate [source-playlist-id-or-name] --from <platform> --to <platform>[:<existing-playlist-id-or-name>]",
 		"dir action provider playlist pos cid provider_id title artists reason reason_code; dir ∈ pull / migrate / push",
 		"Tracks moved into Apple Music may also be added to your Apple Music library (depending on your Apple Music settings; this is Apple's behavior)",
-		"source platform (spotify|apple|local); picked interactively in a terminal if omitted",
+		"source platform (spotify|apple|local|youtube); picked interactively in a terminal if omitted",
 		"skip the confirmation (for cron / pipelines); unmatched tracks aren't reviewed on the spot",
 	} {
 		if !strings.Contains(out, want) {

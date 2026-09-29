@@ -8,10 +8,11 @@ import { t } from '../i18n.js';
 const providerRows = () => [
   { id: 'spotify', label: providerName('spotify') },
   { id: 'apple', label: providerName('apple') },
+  { id: 'youtube', label: providerName('youtube') },
   { id: 'google', label: t('webui.account.google_label', { name: providerName('google') }) },
 ];
 
-// parseStatus:auth status --json 的輸出(README「登入狀態給腳本讀」;欄位只增不改、列舉值不翻譯)→ { spotify, google, apple }。
+// parseStatus:auth status --json 的輸出(README「登入狀態給腳本讀」;欄位只增不改、列舉值不翻譯)→ { spotify, google, apple, youtube }。
 // 讀不懂就是 {}(頁面畫「讀不到帳號狀態」)。move.js 也用它:跑的命令要帶 --json。
 export function parseStatus(text) {
   try {
@@ -73,6 +74,8 @@ const details = {
     st.client_id === 'malformed' && t('webui.account.detail.client_id_malformed'),
   ],
   google: (st) => [st.email],
+  // youtube(決策 60):登入時記下的帳號名與 handle;跟 Google Drive 的 email 是兩個帳號,各自顯示、不比對。
+  youtube: (st) => [st.account && (st.handle ? `${st.account} (${st.handle})` : st.account)],
   apple: (st) => {
     const when = localTime(st.developer_token_expiry);
     return [
@@ -124,6 +127,7 @@ export function initAccount(root, api, con, notice) {
       out.appendChild(row);
     }
     out.appendChild(el('p', 'page__note', t('webui.account.apple_note')));
+    out.appendChild(el('p', 'page__note', t('webui.account.youtube_note')));
   }
 
   root.appendChild(btn(t('webui.account.refresh'), 'btn--ghost', refresh));

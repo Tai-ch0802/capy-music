@@ -29,7 +29,7 @@ func TestEnglishRootHelpAndFlags(t *testing.T) {
 		t.Errorf("root Short:%q", root.Short)
 	}
 	for flag, want := range map[string]string{
-		"provider": "platform (spotify|apple|local; defaults to default_provider in config)",
+		"provider": "platform (spotify|apple|local|youtube; defaults to default_provider in config)",
 		"web":      "use capy from your browser: binds to 127.0.0.1 only and prints a one-time URL at startup",
 		"port":     "port for --web (default 0 = any free port; 8888, 80 and 443 are not allowed)",
 	} {
@@ -70,7 +70,7 @@ func TestEnglishPlaybackDoneAndErrors(t *testing.T) {
 func TestEnglishProviderErrors(t *testing.T) {
 	setCLITestConfig(t)
 	withLanguage(t, "en")
-	if _, err := newProvider(context.Background(), "tidal"); err == nil || err.Error() != `unknown provider "tidal" (available: spotify, apple, local)` {
+	if _, err := newProvider(context.Background(), "tidal"); err == nil || err.Error() != `unknown provider "tidal" (available: spotify, apple, local, youtube)` {
 		t.Errorf("未知 provider:%v", err)
 	}
 	for _, tc := range []struct {

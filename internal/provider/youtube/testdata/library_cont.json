@@ -1,0 +1,117 @@
+{
+ "continuationContents": {
+  "gridContinuation": {
+   "items": [
+    {
+     "musicTwoRowItemRenderer": {
+      "title": {
+       "runs": [
+        {
+         "text": "Playlist 1",
+         "navigationEndpoint": {
+          "browseEndpoint": {
+           "browseId": "VLPLtest003",
+           "browseEndpointContextSupportedConfigs": {
+            "browseEndpointContextMusicConfig": {
+             "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+            }
+           }
+          }
+         }
+        }
+       ]
+      },
+      "subtitle": {
+       "runs": [
+        {
+         "text": "Someone",
+         "navigationEndpoint": {
+          "browseEndpoint": {
+           "browseId": "UCtestchannel000000000000",
+           "browseEndpointContextSupportedConfigs": {
+            "browseEndpointContextMusicConfig": {
+             "pageType": "MUSIC_PAGE_TYPE_USER_CHANNEL"
+            }
+           }
+          }
+         }
+        },
+        {
+         "text": " • "
+        },
+        {
+         "text": "30 tracks"
+        }
+       ]
+      },
+      "navigationEndpoint": {
+       "browseEndpoint": {
+        "browseId": "VLPLtest003",
+        "browseEndpointContextSupportedConfigs": {
+         "browseEndpointContextMusicConfig": {
+          "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+         }
+        }
+       }
+      }
+     }
+    },
+    {
+     "musicTwoRowItemRenderer": {
+      "title": {
+       "runs": [
+        {
+         "text": "Playlist 2",
+         "navigationEndpoint": {
+          "browseEndpoint": {
+           "browseId": "VLPLtest004",
+           "browseEndpointContextSupportedConfigs": {
+            "browseEndpointContextMusicConfig": {
+             "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+            }
+           }
+          }
+         }
+        }
+       ]
+      },
+      "subtitle": {
+       "runs": [
+        {
+         "text": "Someone",
+         "navigationEndpoint": {
+          "browseEndpoint": {
+           "browseId": "UCtestchannel000000000000",
+           "browseEndpointContextSupportedConfigs": {
+            "browseEndpointContextMusicConfig": {
+             "pageType": "MUSIC_PAGE_TYPE_USER_CHANNEL"
+            }
+           }
+          }
+         }
+        },
+        {
+         "text": " • "
+        },
+        {
+         "text": "64 tracks"
+        }
+       ]
+      },
+      "navigationEndpoint": {
+       "browseEndpoint": {
+        "browseId": "VLPLtest004",
+        "browseEndpointContextSupportedConfigs": {
+         "browseEndpointContextMusicConfig": {
+          "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+         }
+        }
+       }
+      }
+     }
+    }
+   ],
+   "itemSize": "COLLECTION_STYLE_ITEM_SIZE_SMALL"
+  }
+ }
+}

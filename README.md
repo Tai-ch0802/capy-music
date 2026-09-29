@@ -2,7 +2,7 @@
 
 # capy-music
 
-A cross-platform music CLI: search, playback control and playlist sync (Spotify and Apple Music; playlists sync to your own Google Drive). Open source and free, and **every credential is your own (BYO)** — this project holds no tokens for you and runs no service.
+A cross-platform music CLI: search, playback control and playlist sync (Spotify, Apple Music and YouTube Music; playlists sync to your own Google Drive). Open source and free, and **every credential is your own (BYO)** — this project holds no tokens for you and runs no service.
 
 Website: <https://capy.taislife.work/en/> (an introduction for general users, the [privacy policy](https://capy.taislife.work/en/privacy) and the [terms of service](https://capy.taislife.work/en/terms); the source is in [`site/`](site/). The `/guide` and `/en/guide` pages are generated from `docs/guide.html` and `docs/guide.en.html`: after editing either guide, run `go test ./site/ -run TestGuideOnSiteIsCurrent -update`. The repo is connected to Cloudflare Workers Builds; after merging into main, check that the live site has updated, and if it hasn't, deploy by hand with `cd site && wrangler deploy`.)
 
@@ -74,6 +74,17 @@ Requires Spotify Premium (both remote playback control and Development Mode requ
 
 Requires an Apple Music subscription. Playback control works only on macOS (through the Music app), and capy can only start songs that are already in your Music library, because the Music app's scripting interface can't play anything else. capy looks the song up in the Music library on your computer (read-only): if exactly one track matches, it plays it and checks that it really started. For any other song, `capy play` (and the **Open in Music.app** button on the Search page of `capy --web`) opens it in the Music app with the song highlighted, and you double-click it there; the command still exits 0 but doesn't print ▶. Search and playlists work on both macOS and Windows. capy can create playlists, and it only edits (adds, removes and reorders tracks, renames) playlists you created yourself. Whether tracks added to a playlist are also added to your Apple Music library depends on your settings in Apple Music — that's Apple's behavior, and capy doesn't add them separately. On the account tested on 2026-09-23, the playlists already had many songs that weren't in the library, and the songs capy added to playlists didn't go into the library either.
 
+## YouTube Music: copy your own login cookie
+
+> ⚠️ **Not officially supported by Google.** What you paste is your Google account's YouTube login session (cookies from music.youtube.com): anyone holding it can act as you on all of YouTube, and automated access to YouTube is against YouTube's Terms of Service — using capy with it is at your own risk. Google may invalidate it at any time (then run `capy auth login youtube` again). capy only guides you and **never reads your browser's data**; it keeps only the three session cookies it needs, in the OS keychain. Checked on 2026-09-29: the cookie doesn't log in to other Google services (myaccount.google.com redirects to sign-in, the Drive API answers 401). The YouTube Music account **can be a different Google account** from the one you use for Google Drive; `capy auth status` shows both.
+
+1. Open https://music.youtube.com in a browser and, top right, switch to the account you want
+2. Open DevTools (F12 / ⌥⌘I) → Network tab, filter by `browse`, click **Library** on the left
+3. Right-click any `browse` request → Copy → **Copy as cURL** (or copy the whole Request Headers block)
+4. Run `capy auth login youtube`, paste when the wizard asks, and confirm the detected account (in non-interactive environments, save the text to a file and use `--headers-file <path>` or the `CAPY_YOUTUBE_HEADERS` environment variable, and add `--i-understand`)
+
+Reading works today: `capy search --provider youtube`, `capy pl list --provider youtube`, `capy pl show`, `capy pl link` / `pl pull`, and YouTube Music as the **source** of `capy migrate`. Writing to YouTube Music (push / sync / migrating into it) is in development. YouTube Music has no ISRC, so matching against other platforms is by title, artist and duration (`capy resolve`); the same recording can exist as an audio track and as a music video with two different ids, which only `capy resolve --review` can merge. Playlist ids carry the account's channel id: if you log in to a different YouTube Music account, playlists linked under the previous account are skipped (not unlinked) until you link them again.
+
 ## Local library (optional): M3U playlists + library.json
 
 ```bash
@@ -99,7 +110,7 @@ After `capy auth login google`, your playlists sync to the app data folder in yo
   5. ⚠️ Under Audience, click "Publish app" to switch to In production — if it stays in Testing, the refresh token expires after 7 days and you get logged out for no obvious reason
   6. Paste the Client ID and Client secret into the wizard. In non-interactive environments, use `--client-id` / `--client-secret` or `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`.
 
-Either way, `--client-id` / `--client-secret` always override the built-in values. Your own client's secret goes only into the OS keychain. `capy auth status` shows the email of the Google account you're logged in with and this device's `device_id`; `capy auth logout google` deletes the token and your own client's secret. `capy auth logout spotify` / `apple` also deletes that platform's playlist list, recent items (the ones used for completion and `play --pick`) and the playlist tracks remembered for sync (so an unchanged Spotify playlist isn't re-read every round; used for a week at most) cached on this computer, including in older copies of the local database (Spotify's Developer Policy asks apps to delete your data when you disconnect). The playlist master copies in your own Google Drive, and this computer's mirror of them, stay: they're your data, in your own storage.
+Either way, `--client-id` / `--client-secret` always override the built-in values. Your own client's secret goes only into the OS keychain. `capy auth status` shows the email of the Google account you're logged in with and this device's `device_id`; `capy auth logout google` deletes the token and your own client's secret. `capy auth logout spotify` / `apple` / `youtube` also deletes that platform's playlist list, recent items (the ones used for completion and `play --pick`) and the playlist tracks remembered for sync (so an unchanged Spotify playlist isn't re-read every round; used for a week at most) cached on this computer, including in older copies of the local database (Spotify's Developer Policy asks apps to delete your data when you disconnect). The playlist master copies in your own Google Drive, and this computer's mirror of them, stay: they're your data, in your own storage.
 
 ## Song wiki (optional): bring your own AI endpoint
 
@@ -127,7 +138,8 @@ capy config set native_language ja                # BCP 47 (ja, zh-TW, pt-BR); u
 {
   "spotify": { "state": "ok", "client_id": "set", "refresh_token_expiry": "2027-03-26T09:00:00Z" },
   "google": { "state": "ok", "client": "builtin", "access_token_expiry": "2026-09-23T09:00:00Z", "email": "you@example.com", "device_id": "…" },
-  "apple": { "state": "ok", "developer_token": "ok", "developer_token_expiry": "2026-11-01T00:00:00Z", "user_token": "ok", "storefront": "tw" }
+  "apple": { "state": "ok", "developer_token": "ok", "developer_token_expiry": "2026-11-01T00:00:00Z", "user_token": "ok", "storefront": "tw" },
+  "youtube": { "state": "ok", "account": "Tai", "handle": "@example", "channel_id": "UC…" }
 }
 ```
 
@@ -144,6 +156,8 @@ capy config set native_language ja                # BCP 47 (ja, zh-TW, pt-BR); u
 | `apple.developer_token` | `ok` / `missing` / `expired` / `keychain_error`; `developer_token_expiry` is given when it's `ok` or `expired` |
 | `apple.user_token` | `ok` / `missing` / `keychain_error` |
 | `apple.storefront` | e.g. `tw` |
+| `youtube.state` | `ok` cookie in the keychain / `missing` / `keychain_error` |
+| `youtube.account`, `youtube.handle`, `youtube.channel_id` | the YouTube Music account recorded at login (name, `@handle`, channel id); it can differ from `google.email`. Left out when not logged in |
 
 ## Common commands
 
@@ -318,7 +332,7 @@ capy pl push Roadtrip --provider spotify            # 7. push for real
 
 - **Don't skip step 3.** push requires that this device has pulled that Spotify playlist; the playlist just created in step 2 has no base yet, and pushing straight away stops with exit 3.
 - **Nothing gets deleted.** It's the Spotify side's first pull (no base means no removals), everything pushed is an addition, and the removal threshold won't trigger.
-- **Not everything necessarily comes across.** Apple tracks with a catalog match carry an ISRC and are looked up exactly on Spotify (confidence 95, written automatically); tracks you uploaded yourself that exist only in your library have no ISRC and rely on fuzzy matching of title, artists and duration, and below 85 they go into the review queue; songs Spotify doesn't have at all get pinned as unavailable in `--review`. The `skip` rows in step 6's table are the tracks that won't be copied this time.
+- **Not everything necessarily comes across.** YouTube Music has no ISRC at all, and the same recording can be an audio track or a music video with different ids, so tracks from YouTube Music are matched by title, artist and duration only (below 85 they go to `capy resolve --review`). Apple tracks with a catalog match carry an ISRC and are looked up exactly on Spotify (confidence 95, written automatically); tracks you uploaded yourself that exist only in your library have no ISRC and rely on fuzzy matching of title, artists and duration, and below 85 they go into the review queue; songs Spotify doesn't have at all get pinned as unavailable in `--review`. The `skip` rows in step 6's table are the tracks that won't be copied this time.
 - **The playlist `--create` makes has the master copy's name**, so push won't add a `rename` row. If you already have your own playlist with the same name on Spotify (e.g. you created it in the app earlier), it stops and gives you the command to link that one instead; playlists by other people that you follow can't be linked and don't count. In a terminal you can also just type `capy pl link` and choose "Create a new empty playlist on spotify" at the second step.
 - **Afterwards both sides stay linked.** When either side changes, run `capy pl sync Roadtrip` to carry the change over. For a one-time copy, run `capy pl unlink Roadtrip apple` when you're done.
 - **The other direction (Spotify → Apple) works the same way**: `capy migrate Roadtrip --from spotify --to apple`, or swap the two platforms in the manual flow (`capy pl link Roadtrip apple --create`). On the Apple side, adding tracks uses Apple's documented endpoint, and removals and reorders use the endpoint the web player itself uses (Apple makes no official commitment to it; details in docs/ARCHITECTURE.md §1.2). capy writes only playlists you created yourself, and whether tracks added to a playlist also go into your library depends on your Apple Music settings.
