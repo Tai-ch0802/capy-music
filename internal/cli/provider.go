@@ -175,7 +175,7 @@ func newYouTubeProvider(ctx context.Context) (*youtubeprov.Provider, error) {
 	if cfg.YouTube == nil || cfg.YouTube.ChannelID == "" {
 		return nil, i18n.Errorf("platform.err.youtube_not_logged_in")
 	}
-	hc := &http.Client{Timeout: 30 * time.Second}
+	hc := &http.Client{} // 逾時由 provider 依端點給(讀 60 s、整批取代 10 分鐘:5000 首要兩分多鐘),client 不再設一個蓋過去的 Timeout
 	return youtubeprov.New(hc, youtubeAPIBaseSeed, h, cfg.Language, cfg.YouTube.ChannelID), nil
 }
 

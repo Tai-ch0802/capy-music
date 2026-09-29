@@ -1532,6 +1532,7 @@
   "youtube.err.no_session": "the cookie has no __Secure-3PSID session — copy a /browse request from a logged-in music.youtube.com tab",
   "youtube.err.no_set_video_id": "row {pos} of YouTube Music playlist {id} has no row id, so it can't be removed — nothing was written",
   "youtube.err.not_editable": "YouTube Music playlist {id} isn't yours to edit (saved from another channel, or an automatic playlist) — nothing was written",
+  "youtube.err.not_owner": "YouTube Music playlist {id} was created by another channel (you're a collaborator) — capy only writes playlists you created, nothing was written",
   "youtube.err.too_many_pages": "{what} has more than {pages} pages — capy stops rather than sync a truncated list",
   "youtube.err.unexpected_page": "YouTube Music returned a page without a playlist for {id} (after retries) — its page layout may have changed; try again later",
   "youtube.err.write_failed": "writing YouTube Music playlist {id} failed, nothing was changed: {err}",

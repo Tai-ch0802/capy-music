@@ -13,12 +13,14 @@ import (
 // 寫端(決策 60,T2;計畫 §3.3、§4 補測):
 //   - 建清單走 playlist/create(PRIVATE),再輪詢列表到出現(真帳號 3 s;Apple 同一套退避與逾時契約)。
 //   - 所有會讓整輪放棄的檢查(可編輯、重讀對齊)都在第一個寫入之前,而且是**同一次**重讀:不然 rename 已落地、items 才拒絕。
-//   - rename → 一個 edit_playlist(先做便宜的,同 Spotify / Apple)。
-//   - 純尾端 append(want 的前綴 = current)→ 一個 edit_playlist,每首 ACTION_ADD_VIDEO 帶 DEDUPE_OPTION_SKIP(決策 38 的重複要留得住)。
-//   - 其他形狀 → 一個 edit_playlist:先 ACTION_REMOVE_VIDEO 每一列(靠重讀拿到的 setVideoId,同一首兩列各自不同)、再 ACTION_ADD_VIDEO 照 want 順序
-//     = Spotify PUT / Apple PUT 同款的整批取代;加入日期會重設。2026-09-29 真帳號:478 首(956 個 action)與 640 首(1280 個 action)都是一個請求
-//     STATUS_SUCCEEDED、順序正確;夾一個壞 id 是 HTTP 400 且清單原封不動 → **原子**,所以不分批、沒有 PartialWriteError;
-//     rename 成功、items 失敗回普通 error(名字晚一輪 no-op;PartialWriteError 的前綴語意在整批失敗時不成立,計畫 §1.3 第 8 點)。
+//   - **整輪就是一個 edit_playlist 請求**:ACTION_SET_PLAYLIST_NAME(有改名時)+ 純尾端 append(want 的前綴 = current)的每首 ACTION_ADD_VIDEO
+//     (帶 DEDUPE_OPTION_SKIP,決策 38 的重複要留得住),或其他形狀的 ACTION_REMOVE_VIDEO 每一列(靠重讀拿到的 setVideoId,同一首兩列各自不同)
+//     + ACTION_ADD_VIDEO 照 want 順序 = Spotify PUT / Apple PUT 同款的整批取代;加入日期會重設。
+//     2026-09-29 真帳號:478 / 640 / 2000 / 5000 首(5000 = YouTube 的清單上限,10000 個 action、143 s)都是一個請求 STATUS_SUCCEEDED、順序正確;
+//     夾一個壞 id 是 HTTP 400 且清單與名稱都原封不動(rename 在同一個請求裡也一起被拒,PR #118 review 第 1 點)→ **原子**:不分批、
+//     沒有 PartialWriteError、也沒有「名字改了曲目沒寫」的中間狀態;失敗回普通 error,push.go 當「平台沒動」就是事實。
+//   - 只寫自己建的清單(決策 60):可編輯 header 子樹裡的擁有者頻道 id 要等於自己的(別人建、自己是協作者的清單 header 也可能是可編輯的,
+//     PR #118 review 第 2 點);plan 階段的 PlaylistRef.Unwritable 是第一道,這裡是第二道。
 //   - 灰掉(下架)的列 ADD 得回去(補測),留在 current / want 裡沒問題。
 //   - 絕不送 playlist/delete。
 
@@ -90,13 +92,16 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 	if err != nil {
 		return nil, err
 	}
-	// 一次重讀:可編輯 + 對齊,都在第一個寫入之前(這次重讀就是 §6.5.2 規則 6 的併發比對)。
-	rows, editable, err := p.playlistRows(ctx, id)
+	// 一次重讀:可編輯 + 擁有者 + 對齊,都在唯一的寫入之前(這次重讀就是 §6.5.2 規則 6 的併發比對)。
+	rows, meta, err := p.playlistRows(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if !editable { // 第二道防線:plan 階段的 PlaylistRef.Unwritable 已擋過一次(別人的、自動清單)
+	if !meta.editable { // 第二道防線:plan 階段的 PlaylistRef.Unwritable 已擋過一次(別人的、自動清單)
 		return nil, i18n.Errorf("youtube.err.not_editable", "id", plid)
+	}
+	if !slices.Contains(meta.owners, p.channelID) { // 可編輯但不是自己建的(協作者):不寫
+		return nil, i18n.Errorf("youtube.err.not_owner", "id", plid)
 	}
 	live := make([]string, len(rows))
 	for i, r := range rows {
@@ -114,18 +119,15 @@ func (p *Provider) ApplyOps(ctx context.Context, id string, current []string, op
 			}
 		}
 	}
-	if name != "" {
-		if err := p.c.editPlaylist(ctx, plid, []map[string]any{{"action": "ACTION_SET_PLAYLIST_NAME", "playlistName": name}}); err != nil {
-			return nil, i18n.Errorf("youtube.err.write_failed", "id", plid, "err", err)
-		}
-	}
-	if !itemsChanged {
-		return nil, nil
-	}
 	var actions []map[string]any
-	if appendOnly {
-		actions = addActions(want[n:])
-	} else {
+	if name != "" {
+		actions = append(actions, map[string]any{"action": "ACTION_SET_PLAYLIST_NAME", "playlistName": name})
+	}
+	switch {
+	case !itemsChanged:
+	case appendOnly:
+		actions = append(actions, addActions(want[n:])...)
+	default:
 		for _, r := range rows {
 			actions = append(actions, map[string]any{"action": "ACTION_REMOVE_VIDEO", "setVideoId": r.setVideoID, "removedVideoId": r.videoID})
 		}

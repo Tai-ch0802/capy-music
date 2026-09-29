@@ -86,6 +86,11 @@ func (s *Server) AddForeignPlaylist(id, name, owner string, ids ...string) *Play
 	return s.addList(id, name, owner, false, ids...)
 }
 
+// AddCollaborativePlaylist:別人建、自己是協作者的清單——header 可編輯,但擁有者是別人;capy 不寫它(決策 60)。
+func (s *Server) AddCollaborativePlaylist(id, name, owner string, ids ...string) *Playlist {
+	return s.addList(id, name, owner, true, ids...)
+}
+
 func (s *Server) addList(id, name, owner string, editable bool, ids ...string) *Playlist {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -197,8 +202,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			items = append(items, map[string]any{"continuationItemRenderer": map[string]any{"continuationEndpoint": map[string]any{"continuationCommand": map[string]any{"token": token}}}})
 		}
 		header := map[string]any{"musicResponsiveHeaderRenderer": map[string]any{"title": runs(pl.Name)}}
-		if pl.Editable {
-			header["musicEditablePlaylistDetailHeaderRenderer"] = map[string]any{"header": map[string]any{"musicResponsiveHeaderRenderer": map[string]any{"title": runs(pl.Name)}}}
+		if pl.Editable { // 真回應:可編輯 header 的子樹裡有擁有者的頻道 id(自己的清單 = 自己的頻道;協作者看到的會是別人的)
+			header["musicEditablePlaylistDetailHeaderRenderer"] = map[string]any{"header": map[string]any{"musicResponsiveHeaderRenderer": map[string]any{"title": runs(pl.Name),
+				"straplineTextOne": map[string]any{"runs": []any{map[string]any{"text": s.ownerName(pl.Owner), "navigationEndpoint": browse(pl.Owner, "MUSIC_PAGE_TYPE_USER_CHANNEL")}}}}}}
 		}
 		resp = map[string]any{"contents": map[string]any{"twoColumnBrowseResultsRenderer": map[string]any{
 			"tabs":              []any{map[string]any{"tabRenderer": map[string]any{"content": map[string]any{"sectionListRenderer": map[string]any{"contents": []any{header}}}}}},

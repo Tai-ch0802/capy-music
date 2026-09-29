@@ -142,19 +142,16 @@ func TestApplyOpsRemoveMoveIsOneReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := editWrites(srv)
-	if len(ws) != 2 {
-		t.Fatalf("rename 一個請求、整批取代一個請求:%d", len(ws))
+	if len(ws) != 1 {
+		t.Fatalf("改名 + 整批取代 = 一個請求(真平台驗過同一請求也原子):%d", len(ws))
 	}
-	if strings.Join(actionsOf(ws[0]), " ") != "ACTION_SET_PLAYLIST_NAME:Renamed" {
-		t.Errorf("先改名:%v", actionsOf(ws[0]))
-	}
-	got := actionsOf(ws[1])
-	want := "ACTION_REMOVE_VIDEO:v1 ACTION_REMOVE_VIDEO:v2 ACTION_REMOVE_VIDEO:v3 ACTION_REMOVE_VIDEO:v2 ACTION_ADD_VIDEO:v2 ACTION_ADD_VIDEO:v4 ACTION_ADD_VIDEO:v2 ACTION_ADD_VIDEO:v3"
+	got := actionsOf(ws[0])
+	want := "ACTION_SET_PLAYLIST_NAME:Renamed ACTION_REMOVE_VIDEO:v1 ACTION_REMOVE_VIDEO:v2 ACTION_REMOVE_VIDEO:v3 ACTION_REMOVE_VIDEO:v2 ACTION_ADD_VIDEO:v2 ACTION_ADD_VIDEO:v4 ACTION_ADD_VIDEO:v2 ACTION_ADD_VIDEO:v3"
 	if strings.Join(got, " ") != want {
-		t.Errorf("整批取代 = 先 REMOVE 每一列再 ADD 照 want:\n got %v\nwant %s", got, want)
+		t.Errorf("同一請求:改名、REMOVE 每一列、ADD 照 want:\n got %v\nwant %s", got, want)
 	}
 	sets := map[string]bool{}
-	for _, a := range ws[1].Body["actions"].([]any) {
+	for _, a := range ws[0].Body["actions"].([]any) {
 		if s, ok := a.(map[string]any)["setVideoId"].(string); ok {
 			sets[s] = true
 		}
@@ -171,6 +168,7 @@ func TestApplyOpsGuardsWriteNothing(t *testing.T) {
 	p, srv := newWriteProvider(t)
 	srv.AddPlaylist("PL1", "Road trip", "v1", "v2")
 	srv.AddForeignPlaylist("PLx", "Somebody's mix", "UCother", "v5")
+	srv.AddCollaborativePlaylist("PLc", "Shared", "UCother", "v5") // header 可編輯,但擁有者是別人:不寫(決策 60)
 	ch := srv.Account.ChannelID
 	rm := []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 0}, {Kind: provider.OpRename, Name: "X"}}
 	for name, tc := range map[string]struct {
@@ -179,6 +177,7 @@ func TestApplyOpsGuardsWriteNothing(t *testing.T) {
 		want    string
 	}{
 		"別人的清單":    {ch + "/PLx", []string{"v5"}, "PLx"},
+		"協作清單":     {ch + "/PLc", []string{"v5"}, "PLc"},
 		"別的帳號的 id": {"UCother/PL1", []string{"v1", "v2"}, "UCother/PL1"},
 		"讀過之後變了":   {ch + "/PL1", []string{"v1", "v2", "v3"}, "PL1"},
 	} {
@@ -190,7 +189,7 @@ func TestApplyOpsGuardsWriteNothing(t *testing.T) {
 	if _, err := p.ApplyOps(context.Background(), ch+"/PL1", []string{"v1", "v2"}, []provider.PlaylistOp{{Kind: provider.OpAdd, Pos: 2, ProviderID: ""}}); err == nil {
 		t.Error("空 id 要擋")
 	}
-	if len(editWrites(srv)) != 0 || srv.Name("PL1") != "Road trip" {
+	if len(editWrites(srv)) != 0 || srv.Name("PL1") != "Road trip" || srv.Name("PLc") != "Shared" {
 		t.Errorf("以上全部零寫入(連 rename 都不能先落地):%v", srv.Writes())
 	}
 	// 沒動到 items、也沒改名:不打任何請求。

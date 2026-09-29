@@ -1451,6 +1451,7 @@
   "youtube.err.no_session": "cookie 裡沒有 __Secure-3PSID 的登入 session——請從已登入的 music.youtube.com 分頁複製 /browse 請求",
   "youtube.err.no_set_video_id": "YouTube Music 清單 {id} 的第 {pos} 列沒有列 id,移不掉 — 什麼都沒寫",
   "youtube.err.not_editable": "YouTube Music 清單 {id} 不是你能編輯的(別的頻道的、或自動清單)— 什麼都沒寫",
+  "youtube.err.not_owner": "YouTube Music 清單 {id} 是別的頻道建的(你是協作者)— capy 只寫你自己建的清單,什麼都沒寫",
   "youtube.err.too_many_pages": "{what} 超過 {pages} 頁——capy 寧可停下來,也不拿截斷的清單去同步",
   "youtube.err.unexpected_page": "YouTube Music 對 {id} 回了一頁沒有清單的東西(重試過了)——可能是版面改了;稍後再試",
   "youtube.err.write_failed": "寫 YouTube Music 清單 {id} 失敗,沒有任何變動:{err}",

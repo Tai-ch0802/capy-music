@@ -23,9 +23,11 @@
 doctor 的帳號不一致訊息兩邊都印頻道 id;搜尋頁的 youtube 列放「在 YouTube Music 開啟」連結。
 
 **T2 實作時跟本文不同的地方**(2026-09-29,寫端):
-- **不分批、沒有 PartialWriteError**:§4 補測證明 478 / 640 首的整批取代一個請求就是原子的(夾壞 id 是 HTTP 400、清單原封不動),所以 `ApplyOps` 三種請求
-  (rename、純 append、REMOVE 全部 + ADD 全部)各是一個請求,失敗一律普通 error(push.go 當「平台沒動」;rename 成功 items 失敗 = 名字晚一輪 no-op)。
-- 可編輯與對齊是**同一次**重讀(`playlistRows` 回 header 的可編輯訊號),都在第一個寫入之前;沒有列 id 的列存在時非 append 形狀零寫入。
+- **整輪一個請求、不分批、沒有 PartialWriteError**:§4 兩次補測證明整批取代一個請求就是原子的(夾壞 id 是 HTTP 400、清單與名稱原封不動),
+  而且改名可以併進同一個 actions 陣列(#118 review 第 1 點),所以沒有「名字改了曲目沒寫」的中間狀態;上限探到 YouTube 的 5000 首(143 s),
+  所以不擋大小、改擋逾時(寫入 10 分鐘、讀 60 s,client 不設 Timeout;#118 review 第 3 點)。
+- 可編輯、**擁有者**(可編輯 header 子樹裡的 UC… 要等於自己的頻道;協作者看到的 header 也可能可編輯,#118 review 第 2 點)與對齊是**同一次**重讀,
+  都在唯一的寫入之前;沒有列 id的列存在時非 append 形狀零寫入。沒有 videoId 的列不被 REMOVE、取代後會集中到最前面(README 有寫)。
 - 灰掉(下架)的列 ADD 得回去(補測),留在 current / want 裡、不標 Unpushable。
 - `CreatePlaylist` 照 Apple 的契約:輪詢列表 1 → 2 → 4 → 8 → 15 s,逾時回錯帶 id 與 `pl link` 接回的命令。
 - 共用的假伺服器 `internal/provider/youtube/youtubetest`(照 drivetest):整包驗證整包套用、不帶 dedupeOption 的重複 ADD 回 STATUS_FAILED、
@@ -293,6 +295,17 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。前綴用 channel 
 | 同一首放三份 | 4 列、4 個不同的 setVideoId → REMOVE 靠 setVideoId 精準到列,重複曲目照決策 38 保留 |
 
 → T2 的 `ApplyOps` 用**一個請求**整批取代(不分批;驗過的上限是 640 首 / 1280 個 action,更大的清單若被拒是 400 且零寫入)。
+
+### 補測 2:rename 併進同一請求、上限(2026-09-29,#118 review 之後;`MODE=big`,拋棄式清單 `PLOMc7RJzqzx8` 結尾已刪)
+
+| 項目 | 結果 |
+|---|---|
+| SET_PLAYLIST_NAME + REMOVE 20 + ADD 20(反序)同一請求 | `STATUS_SUCCEEDED`、順序反序、標題已改 |
+| 同上但 ADD 裡夾一個壞 id | **HTTP 400,標題與曲目都原封不動** → 改名併進同一請求仍原子 |
+| 堆到 2000 首(ADD 每批 500,用重複的 id)→ REMOVE 2000 + ADD 2000 一個請求(4000 個 action) | 成功、59 s、順序正確;REMOVE 全部 21 s |
+| 堆到 5000 首(YouTube 清單上限)→ REMOVE 5000 + ADD 5000 一個請求(10000 個 action) | 成功、**143 s**、順序正確;REMOVE 全部 52 s |
+
+→ `ApplyOps` 整輪就是**一個請求**(改名也在裡面),沒有上限要擋;要擋的是 HTTP 逾時——寫入請求給 10 分鐘、client 本身不設 Timeout。
 
 ## 5. 測試(每一則都是修之前會 fail 的)
 

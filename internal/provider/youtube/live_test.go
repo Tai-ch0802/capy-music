@@ -87,9 +87,9 @@ func TestLiveWriteRoundTrip(t *testing.T) {
 		}
 		time.Sleep(3 * time.Second)
 	}
-	rows, editable, err := p.playlistRows(ctx, ref.ID)
-	if err != nil || !editable || len(rows) != 3 {
-		t.Fatalf("re-read:%v editable=%v rows=%d", err, editable, len(rows))
+	rows, meta, err := p.playlistRows(ctx, ref.ID)
+	if err != nil || !meta.editable || len(rows) != 3 || !slices.Contains(meta.owners, acc.ChannelID) {
+		t.Fatalf("re-read:%v meta=%+v rows=%d", err, meta, len(rows))
 	}
 	// 讀過之後平台變了(這裡用錯的 current 模擬)→ 零寫入。
 	if _, err := p.ApplyOps(ctx, ref.ID, []string{ids[0]}, []provider.PlaylistOp{{Kind: provider.OpRemove, Pos: 0}}); err == nil {

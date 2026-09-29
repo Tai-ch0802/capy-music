@@ -49,7 +49,7 @@ BODY="${OUT}/last.json"; HDRS="${OUT}/last.headers"
 yt() {
   local ep="$1" args="${2:-{\}}" c="${3:-${COOKIE}}" extra=()
   [ -n "${PAGEID}" ] && extra=(-H "X-Goog-PageId: ${PAGEID}")
-  curl -sS -o "${BODY}" -D "${HDRS}" -w '%{http_code}' -X POST \
+  curl -sS -m 900 -o "${BODY}" -D "${HDRS}" -w '%{http_code}' -X POST \
     -H "Cookie: ${c}" -H "Authorization: $(authz)" -H "X-Goog-AuthUser: ${AU}" -H "X-Origin: ${ORIGIN}" -H "Origin: ${ORIGIN}" \
     -H "Content-Type: application/json" -H "User-Agent: ${UA}" ${extra[@]+"${extra[@]}"} \
     --data-binary "$(ctx "${args}")" "${BASE}/${ep}?alt=json&prettyPrint=false"
@@ -171,7 +171,7 @@ if [ "${RATE:-1}" = "1" ]; then
 fi
 
 fi # MODE != cap
-[ "${WRITE:-0}" = "1" ] || [ "${MODE}" = "cap" ] || [ "${MODE}" = "replace" ] || { echo "(讀端完成;WRITE=1 才做寫端 ⑤ ⑦ ⑩)"; exit 0; }
+[ "${WRITE:-0}" = "1" ] || [ "${MODE}" = "cap" ] || [ "${MODE}" = "replace" ] || [ "${MODE}" = "big" ] || { echo "(讀端完成;WRITE=1 才做寫端 ⑤ ⑦ ⑩)"; exit 0; }
 
 ########## 寫端 ##########
 PL=""
@@ -201,12 +201,45 @@ cleanup() {
 trap cleanup EXIT
 
 MAT=($(awk -F'\t' '$1!="-" {print $1}' "${OUT}/04-rows.tsv" | awk '!seen[$0]++'))
-if [ "${MODE}" = "cap" ] || [ "${MODE}" = "replace" ]; then
+if [ "${MODE}" = "cap" ] || [ "${MODE}" = "replace" ] || [ "${MODE}" = "big" ]; then
   # 素材不夠就再讀第二、第三份清單湊(只讀)
   for extra in $(awk -F'\t' '$1 ~ /^VL/ && $1 != "VLLM" && $1 !~ /^VLRD/ { n=0; if (match($3, /[0-9,]+ (songs|tracks)/)) { n=substr($3, RSTART, RLENGTH); gsub(/[^0-9]/, "", n) } print n "\t" substr($1, 3) }' "${OUT}/03-playlists.tsv" | sort -rn | sed -n '2,3p' | cut -f2); do
     rows "${extra}" > "${OUT}/cap-extra-${extra}.tsv" || true
     MAT=($(printf '%s\n' "${MAT[@]}" "$(awk -F'\t' '$1!="-" {print $1}' "${OUT}/cap-extra-${extra}.tsv")" | awk 'NF && !seen[$0]++'))
   done
+  if [ "${MODE}" = "big" ]; then
+    # ⑤‴(PR #118 review):(1) rename 併進同一個 actions 陣列還原子嗎;(2) 整批取代的上限——用重複的 id 把清單堆到 2000 / 5000 首(5000 是 YouTube 的清單上限)。
+    echo "⑤‴ rename 併進同一請求 + 整批取代上限(素材 ${#MAT[@]} 首,尺寸 ${BIG_SIZES:-2000 5000})"
+    NAME="capy-probe-$(date +%s)"; code="$(yt playlist/create "$(jq -nc --arg t "${NAME}" '{title:$t, privacyStatus:"PRIVATE"}')")"; PL="$(jq -r '.playlistId // empty' "${BODY}")"
+    [ -n "${PL}" ] || { echo "建不出清單:$(head -c 200 "${BODY}")"; exit 1; }; echo "   playlist/create → HTTP ${code} id=${PL}"; sleep 3
+    # (1) rename + REMOVE + ADD 同一請求
+    code="$(edit "$(adds "${MAT[@]:0:20}")")"; st="$(ok)"; echo "   先放 20 首 → HTTP ${code} ${st};讀回 $(count_wait 20)"
+    rev=($(printf '%s\n' "${MAT[@]:0:20}" | tail -r))
+    code="$(edit "$(jq -nc --arg t "${NAME}-renamed" --argjson r "$(removes_all)" --argjson a "$(adds "${rev[@]}")" '[{action:"ACTION_SET_PLAYLIST_NAME", playlistName:$t}] + $r + $a')")"; st="$(ok)"
+    after="$(vids)"; sleep 4; after2="$(vids)"
+    if [ "${after2}" = "$(printf '%s ' "${rev[@]}")" ]; then order="順序 = 反序 ✓"; else order="順序不是反序 ✗"; fi
+    rows "${PL}" >/dev/null; title="$(jq -r '[.. | objects | (.musicResponsiveHeaderRenderer? // .musicDetailHeaderRenderer? // empty) | .title.runs[0].text // empty] | first // "-"' "${OUT}/rows-first.json")"
+    echo "   rename + REMOVE 20 + ADD 20(反序)同一請求 → HTTP ${code} ${st};${order};標題:${title}(立刻讀:$(printf '%s' "${after}" | cut -c1-24)…)"
+    bad=($(printf '%s\n' "${MAT[@]:0:10}" "zzzzzzzzzzz" "${MAT[@]:10:10}"))
+    code="$(edit "$(jq -nc --arg t "${NAME}-bad" --argjson r "$(removes_all)" --argjson a "$(adds "${bad[@]}")" '[{action:"ACTION_SET_PLAYLIST_NAME", playlistName:$t}] + $r + $a')")"; st="$(ok)"
+    sleep 4; rows "${PL}" >/dev/null; title2="$(jq -r '[.. | objects | (.musicResponsiveHeaderRenderer? // .musicDetailHeaderRenderer? // empty) | .title.runs[0].text // empty] | first // "-"' "${OUT}/rows-first.json")"
+    echo "   rename + REMOVE + ADD(夾壞 id)同一請求 → HTTP ${code} ${st};標題:${title2}(要還是 ${NAME}-renamed);列數 $(count)"
+    code="$(edit "$(removes_all)")"; count_wait 0 >/dev/null
+    # (2) 大清單:用重複的 id 堆(ADD 帶 dedupeOption),每批 500
+    for n in ${BIG_SIZES:-2000 5000}; do
+      pool=(); while [ "${#pool[@]}" -lt "${n}" ]; do pool+=("${MAT[@]}"); done; pool=("${pool[@]:0:${n}}")
+      T0=$(date +%s); fail=0
+      for ((i=0; i<n; i+=500)); do code="$(edit "$(adds "${pool[@]:i:500}")")"; st="$(ok)"; if [ "${code}" != "200" ] || [ "${st}" != "STATUS_SUCCEEDED" ]; then echo "   堆到 ${n}:第 $((i/500+1)) 批 ADD 500 → HTTP ${code} ${st}"; fail=1; break; fi; done
+      [ "${fail}" = "1" ] && { edit "$(removes_all)" >/dev/null; count_wait 0 >/dev/null; continue; }
+      echo "   堆到 ${n} 首(ADD 每批 500,$(( $(date +%s) - T0 )) s)→ 讀回 $(count_wait "${n}")"
+      revp=($(printf '%s\n' "${pool[@]}" | tail -r))
+      T1=$(date +%s); code="$(edit "$(jq -nc --argjson r "$(removes_all)" --argjson a "$(adds "${revp[@]}")" '$r + $a')")"; st="$(ok)"; keep "05b-replace-${n}"
+      sleep 5; got="$(count_wait "${n}")"; first3="$(vids | cut -d' ' -f1-3)"; want3="${revp[0]} ${revp[1]} ${revp[2]}"
+      echo "   REMOVE ${n} + ADD ${n}(反序)一個請求($((n*2)) 個 action)→ HTTP ${code} ${st}、$(( $(date +%s) - T1 )) s;讀回 ${got};前三首 ${first3}(要 ${want3})"
+      T2=$(date +%s); code="$(edit "$(removes_all)")"; st="$(ok)"; echo "      REMOVE 全部(${n} 個 action)→ HTTP ${code} ${st}、$(( $(date +%s) - T2 )) s;讀回 $(count_wait 0)"
+    done
+    exit 0
+  fi
   if [ "${MODE}" = "replace" ]; then
     # ⑤″ 真尺寸的整批取代(T2 前的最後一個未知,PR #117 review / advisor):REMOVE 全部 + ADD 全部一個請求在 N=478、640 是不是原子;
     #     大請求裡夾一個壞 id 是整包拒收還是半套用;灰掉(下架)的列能不能 ADD 回去;同一首兩份的 setVideoId 是否不同。

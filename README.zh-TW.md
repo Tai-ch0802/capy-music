@@ -83,7 +83,7 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 3. 對任一個 `browse` 請求按右鍵 → Copy → **Copy as cURL**(或整段複製 Request Headers)
 4. 執行 `capy auth login youtube`,依精靈貼上並確認偵測到的帳號(非互動環境:把那段文字存成檔案,用 `--headers-file <路徑>` 或 `CAPY_YOUTUBE_HEADERS` 環境變數,並加 `--i-understand`)
 
-YouTube Music 全部都能用:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link`(含 `--create`)/ `pl pull` / `pl push` / `pl sync` / `pl dedup`,以及兩個方向的 `capy migrate`。capy 只寫你自己建的清單(喜歡的音樂、自動清單、從別的頻道存進來的清單都只讀);變更只有新增時用一個請求接在尾端,否則用一個請求整份取代(先移除每一列、再照正本的順序加回去——640 首驗過;請求是原子的,被拒就是原封不動),平台的「加入日期」會重設。重複的曲目保留。capy 絕不刪除 YouTube Music 的清單。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有 `capy resolve --review` 能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
+YouTube Music 全部都能用:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link`(含 `--create`)/ `pl pull` / `pl push` / `pl sync` / `pl dedup`,以及兩個方向的 `capy migrate`。capy 只寫你自己建的清單(喜歡的音樂、自動清單、從別的頻道存進來的清單都只讀);一輪變更就是一個請求:只有新增時接在尾端,否則整份取代(先移除每一列、再照正本的順序加回去;改名也在同一個請求裡)——驗到 YouTube 的清單上限 5000 首,整份取代約兩分半;請求是原子的,被拒就是清單與名稱都原封不動。整份取代會重設平台的「加入日期」;影片已經完全不存在(沒有 video id)的列不會被動到,取代後會集中到清單最前面。重複的曲目保留。capy 絕不刪除 YouTube Music 的清單。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有 `capy resolve --review` 能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
 
 ## 本機曲庫(local,選用):M3U 清單 + library.json
 
