@@ -1430,6 +1430,16 @@ func TestWebMoveWizardCapabilitiesAndHeadersMatchGo(t *testing.T) {
 		}
 		return "['" + strings.Join(xs, "', '") + "']"
 	}
+	// /api/isrc 預設列舉的平台也是手抄本:要剛好是宣告 CapISRCLookup 的那些(YouTube Music 沒有 ISRC,不問)。
+	var isrcIDs []string
+	for _, id := range providerIDs {
+		if _, err := asISRCLookup(provs[id]); err == nil {
+			isrcIDs = append(isrcIDs, id)
+		}
+	}
+	if !slices.Equal(isrcProviderIDs, isrcIDs) {
+		t.Errorf("平台的 ISRC 反查能力變了,isrcProviderIDs 要是 %v(現在是 %v)", isrcIDs, isrcProviderIDs)
+	}
 	for _, want := range []string{
 		"const READ_ONLY = " + jsList(readOnly) + ";",
 		"const CAN_CREATE = " + jsList(canCreate) + ";",

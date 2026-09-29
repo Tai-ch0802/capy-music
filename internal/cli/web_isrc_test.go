@@ -104,6 +104,10 @@ func TestWebISRCEndpointAllProviders(t *testing.T) {
 	if !strings.Contains(provError(m, "local"), "local_root") {
 		t.Errorf("local 這格應帶 error 而不是擋掉整個回應:%v", m["providers"])
 	}
+	// YouTube Music 沒有 ISRC(決策 60):預設列舉不問它,不然頁面永遠多一張「不支援」的紅字卡。
+	if _, ok := m["providers"].(map[string]any)["youtube"]; ok {
+		t.Errorf("沒有 ISRC 反查的平台不該出現在預設列舉:%v", m["providers"])
+	}
 	// 只問一家時只回一家。
 	_, one := c.isrcGet("/api/isrc/" + isrc + "?provider=spotify")
 	if len(one["providers"].(map[string]any)) != 1 {
