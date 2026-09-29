@@ -22,6 +22,16 @@
 §4 補設定檔裡的 `youtube_account`、§6 補 `auth logout youtube` 與「登出所有裝置」、決策 59 的「capy 不連 YouTube」改成「歌曲 wiki 本身不連 YouTube」(CLAUDE.md、ARCHITECTURE、程式註解同改);
 doctor 的帳號不一致訊息兩邊都印頻道 id;搜尋頁的 youtube 列放「在 YouTube Music 開啟」連結。
 
+**T2 實作時跟本文不同的地方**(2026-09-29,寫端):
+- **不分批、沒有 PartialWriteError**:§4 補測證明 478 / 640 首的整批取代一個請求就是原子的(夾壞 id 是 HTTP 400、清單原封不動),所以 `ApplyOps` 三種請求
+  (rename、純 append、REMOVE 全部 + ADD 全部)各是一個請求,失敗一律普通 error(push.go 當「平台沒動」;rename 成功 items 失敗 = 名字晚一輪 no-op)。
+- 可編輯與對齊是**同一次**重讀(`playlistRows` 回 header 的可編輯訊號),都在第一個寫入之前;沒有列 id 的列存在時非 append 形狀零寫入。
+- 灰掉(下架)的列 ADD 得回去(補測),留在 current / want 裡、不標 Unpushable。
+- `CreatePlaylist` 照 Apple 的契約:輪詢列表 1 → 2 → 4 → 8 → 15 s,逾時回錯帶 id 與 `pl link` 接回的命令。
+- 共用的假伺服器 `internal/provider/youtube/youtubetest`(照 drivetest):整包驗證整包套用、不帶 dedupeOption 的重複 ADD 回 STATUS_FAILED、
+  `playlist/delete` 直接讓測試失敗;provider 的寫端測試與 cli 的端對端(搬家、同步、`--create`)都用它。
+- web:`move.js` 的 `READ_ONLY` 回空、`CAN_CREATE` 加 youtube(契約測試對 Go 的能力釘);首頁與 README 的「還在開發中」拿掉。
+
 使用者(2026-09-29):「我想是時候增加另一個音樂平台 provider 的歌曲清單搬遷、同步功能了。這次目標是 youtube music。考量使用者可能有多個帳號,
 所以我們的 youtube music 的登入帳號有可能會和現在既有的 google drive 的登入帳號不同,可能要留意一下並且區分開來。請先草擬出完整的 plan,
 我們確認定案方向以後再進行開發實作。」
@@ -268,6 +278,18 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。前綴用 channel 
 
 - 第 0 天(2026-09-29):讀端 + 寫端 + cap 全部用同一段 cookie,登入中。
 
+### 補測:真尺寸的整批取代(2026-09-29,T2 之前;`MODE=replace`,拋棄式清單 `PLFV9Du0QlL_k` 結尾已刪)
+
+| 項目 | 結果 |
+|---|---|
+| REMOVE 478 + ADD 478(反序)一個請求(956 個 action) | `STATUS_SUCCEEDED`、15 s,讀回 478 列、順序 = 反序 ✓ |
+| REMOVE 640 + ADD 640(反序)一個請求(1280 個 action) | `STATUS_SUCCEEDED`、18 s,讀回 640 列、順序 = 反序 ✓ |
+| REMOVE 400 + ADD 400、中間夾一個壞 videoId | **HTTP 400、清單原封不動**(400 列、原序)→ 整批取代在真尺寸也是原子的 |
+| 灰掉(下架)的 3 列 ADD 回去 | `STATUS_SUCCEEDED`、3 列都在(仍是灰的)→ 灰列留在 current / want 裡沒問題,不必標 Unpushable |
+| 同一首放三份 | 4 列、4 個不同的 setVideoId → REMOVE 靠 setVideoId 精準到列,重複曲目照決策 38 保留 |
+
+→ T2 的 `ApplyOps` 用**一個請求**整批取代(不分批;驗過的上限是 640 首 / 1280 個 action,更大的清單若被拒是 400 且零寫入)。
+
 ## 5. 測試(每一則都是修之前會 fail 的)
 
 - parser:每個 renderer 一個 fixture(來自 §4)+ 邊界(無 videoId 的列、無專輯、時長 `h:mm:ss`、explicit、continuation)。
@@ -287,7 +309,7 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。前綴用 channel 
 |---|---|---|
 | T0 | 本文;§8 拍板後同 PR 補探測腳本、ARCHITECTURE、附錄 C 決策 60 | §8;§4 的授權與結果 |
 | T1 | `internal/auth/youtube` + `internal/provider/youtube` 讀端(search / list / items / GetTrack)+ `auth login | logout | status` / `doctor` + i18n + 揭露守門測試 + **政策 ×2、條款 ×2、首頁 ×2、README ×2、CLAUDE.md、`site_test` 釘**;web 只加帳號頁與登入提示橋 | T0 的 fixture |
-| T2 | 寫端(`CreatePlaylist` / `ApplyOps` / `Pushable`)+ §3.4 帳號範圍 + e2e;README 搬家 / push 段補 YouTube | T0 第 5 項 |
+| T2 | 寫端(`CreatePlaylist` / `ApplyOps` / `Pushable`)+ e2e(帳號範圍的 id 已在 T1);README 搬家 / push 段補 YouTube | T0 第 5 項與 §4 補測 |
 | T3 | web 其餘(搬家精靈、搜尋頁)+ 指南 ×2 + 重發 Artifact + ARCHITECTURE P10 收尾 | — |
 
 ## 7. 明確不做(要就另開)

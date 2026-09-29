@@ -171,7 +171,7 @@ if [ "${RATE:-1}" = "1" ]; then
 fi
 
 fi # MODE != cap
-[ "${WRITE:-0}" = "1" ] || [ "${MODE}" = "cap" ] || { echo "(讀端完成;WRITE=1 才做寫端 ⑤ ⑦ ⑩)"; exit 0; }
+[ "${WRITE:-0}" = "1" ] || [ "${MODE}" = "cap" ] || [ "${MODE}" = "replace" ] || { echo "(讀端完成;WRITE=1 才做寫端 ⑤ ⑦ ⑩)"; exit 0; }
 
 ########## 寫端 ##########
 PL=""
@@ -201,12 +201,49 @@ cleanup() {
 trap cleanup EXIT
 
 MAT=($(awk -F'\t' '$1!="-" {print $1}' "${OUT}/04-rows.tsv" | awk '!seen[$0]++'))
-if [ "${MODE}" = "cap" ]; then
+if [ "${MODE}" = "cap" ] || [ "${MODE}" = "replace" ]; then
   # 素材不夠就再讀第二、第三份清單湊(只讀)
   for extra in $(awk -F'\t' '$1 ~ /^VL/ && $1 != "VLLM" && $1 !~ /^VLRD/ { n=0; if (match($3, /[0-9,]+ (songs|tracks)/)) { n=substr($3, RSTART, RLENGTH); gsub(/[^0-9]/, "", n) } print n "\t" substr($1, 3) }' "${OUT}/03-playlists.tsv" | sort -rn | sed -n '2,3p' | cut -f2); do
     rows "${extra}" > "${OUT}/cap-extra-${extra}.tsv" || true
     MAT=($(printf '%s\n' "${MAT[@]}" "$(awk -F'\t' '$1!="-" {print $1}' "${OUT}/cap-extra-${extra}.tsv")" | awk 'NF && !seen[$0]++'))
   done
+  if [ "${MODE}" = "replace" ]; then
+    # ⑤″ 真尺寸的整批取代(T2 前的最後一個未知,PR #117 review / advisor):REMOVE 全部 + ADD 全部一個請求在 N=478、640 是不是原子;
+    #     大請求裡夾一個壞 id 是整包拒收還是半套用;灰掉(下架)的列能不能 ADD 回去;同一首兩份的 setVideoId 是否不同。
+    echo "⑤″ 整批取代(素材 ${#MAT[@]} 首,尺寸 ${REPLACE_SIZES:-478 640})"
+    NAME="capy-probe-$(date +%s)"; code="$(yt playlist/create "$(jq -nc --arg t "${NAME}" '{title:$t, privacyStatus:"PRIVATE"}')")"; PL="$(jq -r '.playlistId // empty' "${BODY}")"
+    [ -n "${PL}" ] || { echo "建不出清單:$(head -c 200 "${BODY}")"; exit 1; }; echo "   playlist/create → HTTP ${code} id=${PL}"; sleep 3
+    for n in ${REPLACE_SIZES:-478 640}; do
+      [ "${n}" -le "${#MAT[@]}" ] || { echo "   ${n}:素材只有 ${#MAT[@]} 首,略過"; continue; }
+      code="$(edit "$(adds "${MAT[@]:0:${n}}")")"; st="$(ok)"; echo "   先放 ${n} 首 → HTTP ${code} ${st};讀回 $(count_wait "${n}")"
+      rev=($(printf '%s\n' "${MAT[@]:0:${n}}" | tail -r))
+      T1=$(date +%s); code="$(edit "$(jq -nc --argjson r "$(removes_all)" --argjson a "$(adds "${rev[@]}")" '$r + $a')")"; st="$(ok)"; keep "05r-replace-${n}"
+      after="$(vids)"
+      if [ "${after}" = "$(printf '%s ' "${rev[@]}")" ]; then order="順序 = 反序 ✓"; else order="順序不是反序 ✗"; fi
+      echo "   REMOVE ${n} + ADD ${n}(反序)一個請求($((n*2)) 個 action)→ HTTP ${code} ${st}、$(( $(date +%s) - T1 )) s;讀回 $(count_wait "${n}");${order}"
+      code="$(edit "$(removes_all)")"; st="$(ok)"; echo "      REMOVE 全部 → HTTP ${code} ${st};讀回 $(count_wait 0)"
+    done
+    m=400; [ "${m}" -le "${#MAT[@]}" ] || m="${#MAT[@]}"
+    code="$(edit "$(adds "${MAT[@]:0:${m}}")")"; st="$(ok)"; echo "   壞 id 測試:先放 ${m} 首 → HTTP ${code} ${st};讀回 $(count_wait "${m}")"
+    before="$(vids)"
+    bad=($(printf '%s\n' "${MAT[@]:0:$((m/2))}" "zzzzzzzzzzz" "${MAT[@]:$((m/2)):$((m-m/2))}"))
+    code="$(edit "$(jq -nc --argjson r "$(removes_all)" --argjson a "$(adds "${bad[@]}")" '$r + $a')")"; st="$(ok)"; keep "05r-bad-id"
+    after="$(vids)"
+    if [ "${after}" = "${before}" ]; then atom="清單原封不動(原子 ✓)"; else atom="清單變了(半套用 ✗):現在 $(count) 列"; fi
+    echo "   REMOVE ${m} + ADD ${m}(中間夾一個壞 id)一個請求 → HTTP ${code} ${st};${atom}"
+    code="$(edit "$(removes_all)")"; count_wait 0 >/dev/null
+    greys=($(awk -F'\t' '$5=="grey" && $1!="-" {print $1}' "${OUT}/04-rows.tsv" | head -n 3))
+    if [ "${#greys[@]}" -gt 0 ]; then
+      code="$(edit "$(adds "${greys[@]}")")"; st="$(ok)"; echo "   灰掉(下架)的列 ${#greys[@]} 首 ADD 回去 → HTTP ${code} ${st};讀回 $(count_wait "${#greys[@]}")"
+      rows "${PL}" | cut -f1,4,5 | sed 's/^/     /'
+      edit "$(removes_all)" >/dev/null; count_wait 0 >/dev/null
+    else
+      echo "   這份清單沒有灰掉的列,略過"
+    fi
+    code="$(edit "$(adds "${MAT[0]}" "${MAT[0]}" "${MAT[1]}" "${MAT[0]}")")"; st="$(ok)"
+    echo "   同一首放三份 → HTTP ${code} ${st};列數 $(count_wait 4);setVideoId 唯一數:$(rows "${PL}" | cut -f2 | sort -u | wc -l | tr -d ' ')(要是 4)"
+    exit 0
+  fi
   echo "⑤′ 單請求 ADD 上限與讀回延遲(素材 ${#MAT[@]} 首,尺寸 ${CAP_SIZES:-466 500 640})"
   NAME="capy-probe-$(date +%s)"; code="$(yt playlist/create "$(jq -nc --arg t "${NAME}" '{title:$t, privacyStatus:"PRIVATE"}')")"; PL="$(jq -r '.playlistId // empty' "${BODY}")"
   [ -n "${PL}" ] || { echo "建不出清單:$(head -c 200 "${BODY}")"; exit 1; }; echo "   playlist/create → HTTP ${code} id=${PL}"; sleep 3

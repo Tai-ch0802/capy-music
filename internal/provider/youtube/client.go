@@ -127,6 +127,19 @@ func (c *Client) post(ctx context.Context, endpoint string, body map[string]any,
 	}
 }
 
+// editPlaylist:一個 browse/edit_playlist 請求(整包驗證、整包套用:夾一個壞 id 是 HTTP 400 且零變動,探測驗過);
+// 回應的 status 不是 STATUS_SUCCEEDED 就是失敗(不帶 dedupeOption 的重複 ADD、不可編輯的清單都回 STATUS_FAILED)。
+func (c *Client) editPlaylist(ctx context.Context, playlistID string, actions []map[string]any) error {
+	root, err := c.post(ctx, "browse/edit_playlist", map[string]any{"playlistId": playlistID, "actions": actions}, "")
+	if err != nil {
+		return err
+	}
+	if st := root.get("status").str(); st != "STATUS_SUCCEEDED" {
+		return i18n.Errorf("youtube.client.err.edit_status", "status", st)
+	}
+	return nil
+}
+
 // userContext:品牌帳號(x-goog-pageid)要放進 context.user.onBehalfOfUser(ytmusicapi 同);一般帳號是空物件。
 func (c *Client) userContext() map[string]any {
 	if c.h.PageID != "" {

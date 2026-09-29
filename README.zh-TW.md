@@ -83,7 +83,7 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 3. 對任一個 `browse` 請求按右鍵 → Copy → **Copy as cURL**(或整段複製 Request Headers)
 4. 執行 `capy auth login youtube`,依精靈貼上並確認偵測到的帳號(非互動環境:把那段文字存成檔案,用 `--headers-file <路徑>` 或 `CAPY_YOUTUBE_HEADERS` 環境變數,並加 `--i-understand`)
 
-目前能讀:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link` / `pl pull`,以及當 `capy migrate` 的**來源**。寫入 YouTube Music(push / sync / 搬進去)還在開發中。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有 `capy resolve --review` 能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
+YouTube Music 全部都能用:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link`(含 `--create`)/ `pl pull` / `pl push` / `pl sync` / `pl dedup`,以及兩個方向的 `capy migrate`。capy 只寫你自己建的清單(喜歡的音樂、自動清單、從別的頻道存進來的清單都只讀);變更只有新增時用一個請求接在尾端,否則用一個請求整份取代(先移除每一列、再照正本的順序加回去——640 首驗過;請求是原子的,被拒就是原封不動),平台的「加入日期」會重設。重複的曲目保留。capy 絕不刪除 YouTube Music 的清單。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有 `capy resolve --review` 能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
 
 ## 本機曲庫(local,選用):M3U 清單 + library.json
 
@@ -333,7 +333,7 @@ capy pl push 公路旅行 --provider spotify              # 7. 真的推
 
 - **第 3 步不能省。** push 的前提是這台裝置對那個 Spotify 清單 pull 過;第 2 步剛建的清單還沒有 base,直接 push 會以 exit 3 擋下。
 - **不會刪到任何東西。** Spotify 那邊是第一次 pull(沒有 base 不產生 remove),push 全部是新增,刪除閾值不會觸發。
-- **不一定 100% 複製得過去。** YouTube Music 完全沒有 ISRC,而且同一首錄音可能是純音訊也可能是 MV、兩個不同的 id,所以來自 YouTube Music 的曲目只靠歌名、歌手與時長比對(85 分以下進 `capy resolve --review`)。 Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
+- **不一定 100% 複製得過去。** YouTube Music 完全沒有 ISRC,而且同一首錄音可能是純音訊也可能是 MV、兩個不同的 id,所以搬進或搬出 YouTube Music 的曲目只靠歌名、歌手與時長比對(85 分以下進 `capy resolve --review`)。 Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
 - **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單(例如之前先在 app 裡建好了)時會擋下,並給你連它的命令;追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
 - **之後兩邊保持連結。** 任一邊有變動時跑 `capy pl sync 公路旅行` 就會帶到另一邊。只要一次性複製的話,完成後 `capy pl unlink 公路旅行 apple`。
 - **反方向(Spotify → Apple)一樣**:`capy migrate 公路旅行 --from spotify --to apple`,或把手動流程裡的兩個平台對調(`capy pl link 公路旅行 apple --create`)。Apple 這一側的加歌走 Apple 文件化的端點,移除與換序走網頁播放器自己用的端點(Apple 沒有正式承諾;細節見 docs/ARCHITECTURE.md §1.2),只寫你自己建的清單,加進清單的曲目會不會同時進資料庫看你的 Apple Music 設定。
