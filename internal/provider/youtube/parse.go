@@ -230,6 +230,7 @@ type playlistPage struct {
 	hasHeader bool
 	hasShape  bool // 第一頁有 musicPlaylistShelfRenderer、續頁有 appendContinuationItemsAction:有結構但零列是清單完了,沒有結構才是版面變了
 	editable  bool
+	owners    []string // 可編輯 header 子樹裡的 UC… 頻道 id(2026-09-29 真回應:自己的清單就是自己的頻道);寫端拿它確認清單是自己建的
 	title     string
 }
 
@@ -257,7 +258,14 @@ func parsePlaylistPage(root node) playlistPage {
 			take(app.get("continuationItems").arr())
 		}
 	}
-	p.editable = len(root.find("musicEditablePlaylistDetailHeaderRenderer")) > 0
+	for _, eh := range root.find("musicEditablePlaylistDetailHeaderRenderer") {
+		p.editable = true
+		for _, ep := range eh.find("browseEndpoint") {
+			if id := ep.get("browseId").str(); strings.HasPrefix(id, "UC") && !slices.Contains(p.owners, id) {
+				p.owners = append(p.owners, id)
+			}
+		}
+	}
 	for _, name := range []string{"musicResponsiveHeaderRenderer", "musicDetailHeaderRenderer"} {
 		if hs := root.find(name); len(hs) > 0 {
 			p.hasHeader = true

@@ -59,6 +59,13 @@ type apiError struct {
 
 func (e *apiError) Error() string { return fmt.Sprintf("youtube API %d %s", e.Status, e.Detail) }
 
+// readTimeout / writeTimeout:每個請求的上限。讀端幾秒就回;edit_playlist 是伺服器端整批套用,5000 首(10000 個 action)真帳號量到 143 s,
+// 給它 10 分鐘——呼叫端的 http.Client 不要再設 Timeout(newYouTubeProvider 是 0),不然大清單的整批取代會被砍在半路(它是原子的,砍了等於白做)。
+var (
+	readTimeout  = 60 * time.Second
+	writeTimeout = 10 * time.Minute
+)
+
 // post:一個 InnerTube 呼叫。body 是端點自己的參數,context(client / user)這裡補;rawQuery 是額外的查詢字串(grid 的 continuation 用),
 // **原樣接上、不再編碼**:YouTube 給的 token 本身已經 URL 編碼過(尾端是 %3D),用 url.Values 會把 % 變成 %25——伺服器照樣回這一頁,
 // 卻多給一個通往空頁的 token(2026-09-29 真帳號:pl list 因此在「第 2 頁」失敗;ytmusicapi 也是字串直接相接)。
@@ -79,10 +86,26 @@ func (c *Client) post(ctx context.Context, endpoint string, body map[string]any,
 	if rawQuery != "" {
 		u += "&" + rawQuery
 	}
+	timeout := readTimeout
+	if endpoint == "browse/edit_playlist" {
+		timeout = writeTimeout
+	}
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(raw))
+		n, retry, err := c.once(ctx, u, raw, timeout, attempt)
+		if err != nil || !retry {
+			return n, err
+		}
+	}
+}
+
+// once:一次嘗試;retry = 429 / 5xx 退避後要再來一次。deadline 是這一次的,不是整個迴圈的。
+func (c *Client) once(ctx context.Context, u string, raw []byte, timeout time.Duration, attempt int) (node, bool, error) {
+	rctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	{
+		req, err := http.NewRequestWithContext(rctx, http.MethodPost, u, bytes.NewReader(raw))
 		if err != nil {
-			return node{}, err
+			return node{}, false, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", userAgent)
@@ -96,7 +119,7 @@ func (c *Client) post(ctx context.Context, endpoint string, body map[string]any,
 		}
 		resp, err := c.hc.Do(req)
 		if err != nil {
-			return node{}, err
+			return node{}, false, err
 		}
 		switch {
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
@@ -104,27 +127,40 @@ func (c *Client) post(ctx context.Context, endpoint string, body map[string]any,
 			if err := provider.Backoff(ctx, resp, attempt); err != nil {
 				var rl *provider.RateLimitError
 				if errors.As(err, &rl) {
-					return node{}, &apiError{Status: resp.StatusCode, Detail: rl.Message}
+					return node{}, false, &apiError{Status: resp.StatusCode, Detail: rl.Message}
 				}
-				return node{}, err
+				return node{}, false, err
 			}
-			continue
+			return node{}, true, nil
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			resp.Body.Close()
-			return node{}, i18n.Errorf("youtube.client.err.rejected", "status", resp.StatusCode, "err", provider.ErrAuthExpired)
+			return node{}, false, i18n.Errorf("youtube.client.err.rejected", "status", resp.StatusCode, "err", provider.ErrAuthExpired)
 		case resp.StatusCode != http.StatusOK:
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 			resp.Body.Close()
-			return node{}, &apiError{Status: resp.StatusCode, Detail: strings.TrimSpace(string(b))}
+			return node{}, false, &apiError{Status: resp.StatusCode, Detail: strings.TrimSpace(string(b))}
 		}
 		var v any
 		err = json.NewDecoder(resp.Body).Decode(&v)
 		resp.Body.Close()
 		if err != nil {
-			return node{}, i18n.Errorf("youtube.client.err.bad_json", "err", err)
+			return node{}, false, i18n.Errorf("youtube.client.err.bad_json", "err", err)
 		}
-		return node{v}, nil
+		return node{v}, false, nil
 	}
+}
+
+// editPlaylist:一個 browse/edit_playlist 請求(整包驗證、整包套用:夾一個壞 id 是 HTTP 400 且零變動,探測驗過);
+// 回應的 status 不是 STATUS_SUCCEEDED 就是失敗(不帶 dedupeOption 的重複 ADD、不可編輯的清單都回 STATUS_FAILED)。
+func (c *Client) editPlaylist(ctx context.Context, playlistID string, actions []map[string]any) error {
+	root, err := c.post(ctx, "browse/edit_playlist", map[string]any{"playlistId": playlistID, "actions": actions}, "")
+	if err != nil {
+		return err
+	}
+	if st := root.get("status").str(); st != "STATUS_SUCCEEDED" {
+		return i18n.Errorf("youtube.client.err.edit_status", "status", st)
+	}
+	return nil
 }
 
 // userContext:品牌帳號(x-goog-pageid)要放進 context.user.onBehalfOfUser(ytmusicapi 同);一般帳號是空物件。

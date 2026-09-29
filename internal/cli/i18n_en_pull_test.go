@@ -280,7 +280,7 @@ func TestEnglishPullHelp(t *testing.T) {
 	setCLITestConfig(t)
 	for args, wants := range map[string][]string{
 		"pl pull --help":   {"Platform → master copy → Drive (spec §6.1, §6.5)", "reason_code is a fixed code for scripts", "pull all linked playlists", "override the removal threshold"},
-		"pl link --help":   {"Link a master copy to a platform playlist", "link [name|pid] [provider]:[playlist-id|name] (or [provider] --create)", "works with Spotify and Apple Music, not local"},
+		"pl link --help":   {"Link a master copy to a platform playlist", "link [name|pid] [provider]:[playlist-id|name] (or [provider] --create)", "works with Spotify, Apple Music and YouTube Music, not local"},
 		"pl unlink --help": {"Unlink a master copy from a platform playlist"},
 	} {
 		out, err := runCLI(t, strings.Fields(args)...)

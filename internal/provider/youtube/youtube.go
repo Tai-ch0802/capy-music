@@ -38,9 +38,10 @@ func (p *Provider) ID() string          { return "youtube" }
 func (p *Provider) DisplayName() string { return i18n.T("youtube.display_name") }
 func (p *Provider) ChannelID() string   { return p.channelID }
 
-// Caps:沒有 ISRC(平台不給)、沒有播放、沒有 ArtistSearch(決策 60 Q8);CapDeviceBound 的範圍是帳號。
+// Caps:沒有 ISRC(平台不給)、沒有播放、沒有 ArtistSearch(決策 60 Q8);CapDeviceBound 的範圍是帳號;寫端四個位元 + 建清單(T2,write.go)。
 func (p *Provider) Caps() provider.Capability {
-	return provider.CapSearch | provider.CapPlaylistRead | provider.CapDeviceBound
+	return provider.CapSearch | provider.CapPlaylistRead | provider.CapDeviceBound |
+		provider.CapPlaylistCreate | provider.CapPlaylistAppend | provider.CapPlaylistRemove | provider.CapPlaylistReorder | provider.CapPlaylistRename
 }
 
 func (p *Provider) Health(ctx context.Context) error {
@@ -157,7 +158,7 @@ var (
 // GetPlaylistItems:VL<id> + 續頁(新式 continuationItemRenderer:token 放 body 的 continuation)。沒有 videoId 的列丟掉
 // (下架 / 刪除;寫端重讀對齊時用同一條規則)。
 func (p *Provider) GetPlaylistItems(ctx context.Context, id string) ([]provider.Track, error) {
-	rows, err := p.playlistRows(ctx, id)
+	rows, _, err := p.playlistRows(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -168,43 +169,50 @@ func (p *Provider) GetPlaylistItems(ctx context.Context, id string) ([]provider.
 	return out, nil
 }
 
-// playlistRows:清單的列(含 setVideoId,T2 的寫端要用);已經濾掉沒有 videoId 的。
-func (p *Provider) playlistRows(ctx context.Context, id string) ([]row, error) {
+// playlistMeta:第一頁 header 給寫端的訊號——可編輯(musicEditablePlaylistDetailHeaderRenderer)與它子樹裡的擁有者頻道 id。
+type playlistMeta struct {
+	editable bool
+	owners   []string
+}
+
+// playlistRows:清單的列(含 setVideoId,寫端的 REMOVE 要用)與第一頁 header 的訊號;已經濾掉沒有 videoId 的(寫端重讀對齊時用同一條規則;
+// 這些列不會被 REMOVE,整批取代後它們會集中到清單最前面——capy 看不到、使用者在 app 裡看得到,README 有寫)。
+func (p *Provider) playlistRows(ctx context.Context, id string) ([]row, playlistMeta, error) {
 	plid, err := p.own(id)
 	if err != nil {
-		return nil, err
+		return nil, playlistMeta{}, err
 	}
 	var first playlistPage
 	for attempt := 0; ; attempt++ {
 		root, err := p.c.post(ctx, "browse", map[string]any{"browseId": "VL" + plid}, "")
 		if err != nil {
-			return nil, err
+			return nil, playlistMeta{}, err
 		}
 		first = parsePlaylistPage(root)
 		if first.hasHeader || len(first.rows) > 0 {
 			break
 		}
 		if attempt >= playlistPageRetries {
-			return nil, i18n.Errorf("youtube.err.unexpected_page", "id", plid)
+			return nil, playlistMeta{}, i18n.Errorf("youtube.err.unexpected_page", "id", plid)
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, playlistMeta{}, ctx.Err()
 		case <-time.After(playlistPageWait):
 		}
 	}
 	rows, token := first.rows, first.token
 	for page := 1; token != ""; page++ {
-		if page > maxItemPages { // 截斷的清單會被觀測成一堆 remove、T2 的整批取代更會拿它對齊:寧可失敗
-			return nil, i18n.Errorf("youtube.err.too_many_pages", "what", "VL"+plid, "pages", maxItemPages)
+		if page > maxItemPages { // 截斷的清單會被觀測成一堆 remove、整批取代更會拿它對齊:寧可失敗
+			return nil, playlistMeta{}, i18n.Errorf("youtube.err.too_many_pages", "what", "VL"+plid, "pages", maxItemPages)
 		}
 		root, err := p.c.post(ctx, "browse", map[string]any{"continuation": token}, "")
 		if err != nil {
-			return nil, err
+			return nil, playlistMeta{}, err
 		}
 		next := parsePlaylistPage(root)
 		if !next.hasShape { // 連續頁的結構都沒有 = 版面變了;有結構但零列照常結束
-			return nil, i18n.Errorf("youtube.err.bad_continuation", "what", "VL"+plid, "page", page)
+			return nil, playlistMeta{}, i18n.Errorf("youtube.err.bad_continuation", "what", "VL"+plid, "page", page)
 		}
 		rows, token = append(rows, next.rows...), next.token
 	}
@@ -214,5 +222,5 @@ func (p *Provider) playlistRows(ctx context.Context, id string) ([]row, error) {
 			kept = append(kept, r)
 		}
 	}
-	return kept, nil
+	return kept, playlistMeta{editable: first.editable, owners: first.owners}, nil
 }
