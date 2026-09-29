@@ -268,6 +268,28 @@ func TestParseDuration(t *testing.T) {
 	}
 }
 
+// zh-TW 的歌手分隔 run 是「、」「和」(hl 跟語系走):同一欄有帶端點的 run 時,純文字就是分隔;整欄沒端點(灰列)才是內容。
+func TestParseRowLocalizedSeparators(t *testing.T) {
+	var v any
+	_ = json.Unmarshal([]byte(`{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"T"}]}}},
+	  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+	    {"text":"John","navigationEndpoint":{"browseEndpoint":{"browseId":"UCa"}}},{"text":"、"},
+	    {"text":"Brett","navigationEndpoint":{"browseEndpoint":{"browseId":"UCb"}}},{"text":"和"},
+	    {"text":"The Sydney Scoring Orchestra"}]}}},
+	  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"P.S.","navigationEndpoint":{"browseEndpoint":{"browseId":"MPREb_x"}}}]}}}]}`), &v)
+	r := parseRow(node{v})
+	if len(r.artists) != 3 || r.artists[0] != "John" || r.artists[2] != "The Sydney Scoring Orchestra" || r.album != "P.S." {
+		t.Errorf("分隔字不進歌手、沒有頻道頁的樂團要留:%+v", r)
+	}
+	_ = json.Unmarshal([]byte(`{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"T"}]}}},
+	  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"R-chord"}]}}},
+	  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Some Album"}]}}}],"musicItemRendererDisplayPolicy":"MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT"}`), &v)
+	g := parseRow(node{v})
+	if len(g.artists) != 1 || g.artists[0] != "R-chord" || g.album != "Some Album" || !g.grey {
+		t.Errorf("灰列沒端點才照位置:%+v", g)
+	}
+}
+
 func TestParseRowExplicitAndFallbacks(t *testing.T) {
 	var v any
 	_ = json.Unmarshal([]byte(`{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"T"}]}}},

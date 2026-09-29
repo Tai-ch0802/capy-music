@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // node:InnerTube 回應是 UI 樹(renderer 套 renderer),欄位靠路徑與端點型別辨認。這個薄包裝讓「路徑不在就零值」
@@ -115,20 +117,17 @@ const (
 	explicitBadge   = "MUSIC_EXPLICIT_BADGE"
 )
 
-func isSeparator(s string) bool {
-	switch strings.TrimSpace(s) {
-	case "", "•", "&", ",", "·":
-		return true
-	}
-	return false
-}
-
-// classifyRun:副標 / 欄位裡的一個 run 是歌手、專輯、時長還是年份。靠端點型別與 browseId 前綴(UC… 頻道、MPREb… 專輯),
-// 沒有端點的純文字(下架的列、上傳的歌)才看位置。
-func classifyRun(r node, col int, out *row) {
+// classifyRun:副標 / 欄位裡的一個 run 是歌手、專輯、時長還是年份。靠端點型別與 browseId 前綴(UC… 頻道、MPREb… 專輯)辨認;
+// 沒有端點的純文字:同一欄裡有帶端點的 run、而且它很短(≤ 3 個字元)就是分隔(「 • 」「, 」「 & 」,zh-TW 是「、」「和」——字跟語系走,
+// 不能列舉);長的純文字是沒有頻道頁的歌手(樂團、合唱團;2026-09-29 真清單:「The Sydney Scoring Orchestra」);整欄都沒有端點
+// (下架的列、上傳的歌)也照位置當歌手 / 專輯。時長與四位數年份在任何欄都先認出來。
+func classifyRun(r node, col int, hasNav bool, out *row) {
 	text := strings.TrimSpace(r.get("text").str())
-	if isSeparator(text) {
+	if text == "" {
 		return
+	}
+	if strings.IndexFunc(text, func(c rune) bool { return unicode.IsLetter(c) || unicode.IsDigit(c) }) < 0 {
+		return // 純符號(「•」「、」「&」「,」):任何欄都是分隔
 	}
 	browseID := r.get("navigationEndpoint", "browseEndpoint", "browseId").str()
 	pageType := r.get("navigationEndpoint", "browseEndpoint", "browseEndpointContextSupportedConfigs", "browseEndpointContextMusicConfig", "pageType").str()
@@ -141,11 +140,25 @@ func classifyRun(r node, col int, out *row) {
 		out.durationMS = parseDuration(text)
 	case browseID == "" && len(text) == 4 && strings.Trim(text, "0123456789") == "":
 		out.year = text
-	case browseID == "" && col <= 1:
+	case browseID != "":
+		// 別種端點(電台、播放清單):不是我們要的欄位
+	case hasNav && utf8.RuneCountInString(text) <= 3:
+		// 有字的分隔(「和」「and」「y」)都在 3 個字元內;沒有頻道頁的歌手(樂團、合唱團)名字長得多,留下來
+	case col <= 1:
 		out.artists = append(out.artists, text)
-	case browseID == "" && out.album == "":
+	case out.album == "":
 		out.album = text
 	}
+}
+
+// hasBrowse:這一組 runs 裡有沒有帶 browseEndpoint 的(決定純文字 run 是分隔還是內容)。
+func hasBrowse(runs []node) bool {
+	for _, r := range runs {
+		if r.get("navigationEndpoint", "browseEndpoint", "browseId").str() != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // parseRow:musicResponsiveListItemRenderer(清單列與搜尋結果共用同一個 renderer)。videoId 在 playlistItemData(清單列與歌曲
@@ -168,8 +181,10 @@ func parseRow(n node) row {
 		if ci == 0 {
 			continue
 		}
-		for _, r := range col.get("musicResponsiveListItemFlexColumnRenderer", "text", "runs").arr() {
-			classifyRun(r, ci, &out)
+		runs := col.get("musicResponsiveListItemFlexColumnRenderer", "text", "runs").arr()
+		nav := hasBrowse(runs)
+		for _, r := range runs {
+			classifyRun(r, ci, nav, &out)
 		}
 	}
 	for _, col := range n.get("fixedColumns").arr() {
@@ -189,8 +204,10 @@ func parseRow(n node) row {
 // parsePanelItem:playlistPanelVideoRenderer(next 端點的 watch 清單項目;GetTrack 用)。
 func parsePanelItem(n node) row {
 	out := row{raw: n.v, videoID: n.get("videoId").str(), title: strings.TrimSpace(n.get("title").text())}
-	for _, r := range n.get("longBylineText", "runs").arr() {
-		classifyRun(r, 1, &out)
+	runs := n.get("longBylineText", "runs").arr()
+	nav := hasBrowse(runs)
+	for _, r := range runs {
+		classifyRun(r, 1, nav, &out)
 	}
 	out.durationMS = parseDuration(n.get("lengthText").text())
 	for _, b := range n.get("badges").arr() {
