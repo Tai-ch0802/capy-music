@@ -1,8 +1,9 @@
 # capy-music — 跨平台音樂 CLI 架構規劃
 
 > 專案名稱 `capy-music`,binary `capy`
-> 文件版本 v0.16 — 2026-09-23(多語系實作完成,PR #86–#91:§2 非 TTY 契約措辭、§6.6 網頁邊界改成三個直達端點、§9 P7 / P8 補註、附錄 A 的 `auth status --json` / `--web` / `config`、附錄 C 決策 50 改寫成實作後的樣子;計畫 docs/superpowers/plans/2026-09-23-i18n.md 開頭的狀態)
-> 前版 v0.15 — 2026-09-23(多語系:附錄 C 決策 50;計畫 docs/superpowers/plans/2026-09-23-i18n.md)
+> 文件版本 v0.17 — 2026-09-29(YouTube Music provider 計畫:§1.5、§2 方框、§3 `CapDeviceBound` 註解、§4.5 兩列、§4.6、§5.2、§8、§8.5.4 R-7、§9 P10、附錄 A / B、附錄 C 決策 60;計畫 docs/superpowers/plans/2026-09-29-youtube-music.md)
+> 前版 v0.16 — 2026-09-23(多語系實作完成,PR #86–#91:§2 非 TTY 契約措辭、§6.6 網頁邊界改成三個直達端點、§9 P7 / P8 補註、附錄 A 的 `auth status --json` / `--web` / `config`、附錄 C 決策 50 改寫成實作後的樣子;計畫 docs/superpowers/plans/2026-09-23-i18n.md 開頭的狀態)
+> v0.15 — 2026-09-23(多語系:附錄 C 決策 50;計畫 docs/superpowers/plans/2026-09-23-i18n.md)
 > v0.14 — 2026-09-22(Apple 寫入研究與 R-8 真帳號探測:§1.2 表、§9 P0-2 ✅、附錄 C 決策 49 取代 30 的 append-only 預期;計畫 docs/superpowers/plans/2026-09-22-apple-write.md);v0.13 — 2026-09-18(P8 網頁介面面向一般使用者:§9 P8、附錄 C 決策 45–48;計畫在 docs/superpowers/plans/2026-09-18-web-consumer.md,視覺規格 v2 在 2026-09-18-web-consumer-design.md);v0.12 — 2026-09-17(P7 網頁介面 `capy --web`:§2 方框與互動場景、§6.6 加一列、§8 括號限定、§9 P7、附錄 A、附錄 B、附錄 C 決策 40–44;計畫在 docs/superpowers/plans/2026-09-17-web-mode.md,視覺規格在 2026-09-17-web-mode-design.md);v0.11 — 2026-09-15(`capy migrate`:附錄 A、附錄 C 決策 39;計畫 §3 在 docs/superpowers/plans/2026-09-15-order-dedup-migrate.md);v0.10 — 2026-09-15(清單順序寫成硬約束 + `pl dedup`:§6.6、附錄 A、附錄 C 決策 38);v0.9 — 2026-09-08(P6 計畫:`local` 綁裝置 provider(§1.4、§3 `CapDeviceBound` / `DeviceScoped`、附錄 C 決策 33–37);計畫在 docs/superpowers/plans/2026-09-08-p6-local.md);v0.8 — 2026-09-08(P5 對齊:不建 op log / HLC(§6.4 改寫、附錄 C 決策 26),DERIVE 規則 4′(§6.5.1),`pl push` / `pl sync` 契約(§6.5.2、附錄 A),共享檔版本守衛(§6.3、§6.6),Apple 寫入 gate 與 append-only fallback(決策 30);計畫在 docs/superpowers/plans/2026-09-08-p5-sync.md);v0.7 — 2026-09-08(P4 後半對齊:§5.1 觀測 cid 三段式身分規則、mapping 物件化與 schema 2(T2b 的 merged 再跳 3)、§5.3 review queue 契約、§6.5.1 base 只經 tombstone 重導、§7 schema v5、附錄 C 決策 19–25;計畫在 docs/superpowers/plans/2026-09-08-p4-resolver.md;v0.6 — 2026-09-03(P3 對齊:`pl pull` 方向、Drive 扁平佈局、`iid` 與決定性 `cid`、SQLite 移除兩張表、quota units、§4.5 憑證表、附錄 C 決策 9–13;v0.5 — 2026-09-03:Apple 改為使用者自抓 web token BYO,`.p8`/Worker/MusicKit 橋接移除,見附錄 C 決策 8 與附錄 D;v0.4 定案版:語言 Go、macOS+Windows、TUI 第一天進場、對外發佈;v0.3 專案定名 capy-music;v0.2 新增 §8.5 營運成本與風險)
 > 本文件為架構基準,所有「已驗證」標記的事實均於 2026-08 查證。
 
@@ -84,6 +85,17 @@
 | 寫入 | 整檔改寫 + 原子 rename,`#EXTINF` 與註解會被丟掉;全部 ops 都支援 | Apple 自決策 49 起也全部支援(PUT 整批取代) |
 | 錯誤族 | 只有 NotFound / 權限 / IO / JSON 壞;沒有 auth、rate limit、restricted | 每個 n/a 都是 SPI 假設的發現(計畫 §2) |
 
+### 1.5 YouTube Music(P10;計畫 docs/superpowers/plans/2026-09-29-youtube-music.md;2026-09-29 查證,真帳號探測見計畫 §4)
+
+| 項目 | 現況 | 影響 |
+|---|---|---|
+| 官方 YouTube Data API v3 | 每個 GCP 專案每天 **`search.list` 100 次**(2026-06 起獨立預算)、其他端點合計 10,000 units(`playlistItems.insert` 50 units → 200 首 / 日);擴配額要 compliance audit;`youtube` 系列 scope 是 **sensitive**(未驗證 → 警告畫面與 100 人上限);開發者政策 III.E.4.c 存下的資料 30 天要刷新或刪;只有 video 層 metadata、**無 ISRC** | **不採**(決策 60):搬 300 首要 3 天;sensitive scope 不能掛內建的 Google client(整個專案含 Drive 登入會送驗),只能 BYO GCP 專案 |
+| InnerTube(music.youtube.com 自己用的) | `POST music.youtube.com/youtubei/v1/*`,client `WEB_REMIX`;認證 = 使用者從 DevTools 複製的 `cookie`(含 `__Secure-3PAPISID`)+ `x-goog-authuser`(品牌帳號 `x-goog-pageid`),程式每次請求算 `SAPISIDHASH`;`account/account_menu` 給帳號名 / handle(無 email);搜尋有「歌曲」filter(歌名 / 歌手 / 專輯 / 時長,**無 ISRC**);清單列 id `playlistSetVideoId`(同一首兩列不同);`browse/edit_playlist` 一次多個 action(ADD 要帶 `DEDUPE_OPTION_SKIP` 才准重複、REMOVE 精準到列、MOVE_BEFORE、SET_PLAYLIST_NAME) | 採用(決策 60),Apple 決策 8 同一類的非官方 BYO;cid 一律 `p:youtube:<videoId>`,跨平台只有 Layer 2 + 人工 |
+| cookie 壽命 | ytmusicapi:約 2 年(除非登出);yt-dlp:開著的分頁會定期輪替 `__Secure-*PSIDTS` / `SIDCC` | 矛盾,T0 實測;會死就改指引成無痕視窗做法 |
+| keychain 上限 | Windows 2560 bytes、macOS 約 3 KB(go-keyring 經 `security -i` 的 4096 字命令);整段 cookie 常 2–4 KB | 只存白名單 cookie(T0 定) |
+| 同一首兩個 videoId | `ATV`(純音訊)與 `OMV`(MV)是兩個 id,沒有 ISRC 可併 | 只能決策 21 的人工合併;`pl dedup` 抓不到 |
+| ToS | YouTube 服務條款禁止自動化存取;貼的是 Google 帳號在 YouTube 的登入 session | 揭露要寫明(§4.6);對 Gmail / Drive 有沒有效 T0 唯讀驗過才寫 |
+
 ## 2. 系統分層
 
 ```
@@ -105,9 +117,9 @@
 └──┬──────────────┬──────────────┬──────────────┬──────────────┘
    │              │              │              │
 ┌──▼────────┐ ┌───▼────────┐ ┌───▼────────┐ ┌───▼────────────┐
-│ spotify   │ │ apple      │ │ local      │ │ (未來)          │
-│ WebAPI    │ │ AMAPI      │ │ m3u/json   │ │ ytm/tidal/amz  │
-│ +Connect  │ │ +osascript │ │ (測試用)    │ │                │
+│ spotify   │ │ apple      │ │ local      │ │ youtube (P10)  │
+│ WebAPI    │ │ AMAPI      │ │ m3u/json   │ │ InnerTube      │
+│ +Connect  │ │ +osascript │ │ (測試用)    │ │ cookie BYO     │
 └───────────┘ └────────────┘ └────────────┘ └────────────────┘
 
 ┌──────────────────────────────────────────────────────────────┐
@@ -163,17 +175,17 @@ const ( // 順序 = 位元位置,與 internal/provider/provider.go 一致;新能
     CapPlayPlaylist    // PlayRequest.PlaylistID
     CapPlayQueue       // Play 把 TrackIDs 全排進佇列
     CapPlaylistRename  // P5 T1 加(bit 14;CapSearch 是 bit 0);Spotify 有
-    CapDeviceBound     // P6 決策 33(bit 15):id 只在本裝置有意義;實作者同時實作 DeviceScoped
+    CapDeviceBound     // P6 決策 33(bit 15):id 只在一個範圍(裝置 / 帳號)有意義;實作者同時實作 DeviceScoped。2026-09-29 決策 60:youtube 也宣告,範圍 = YouTube 帳號(清單 id 前綴 = channel id)
 )
 
-// DeviceScoped(P6 決策 33):綁裝置的 provider 告訴 CLI 某個 id 是不是別台裝置的——是的話 pull / push / sync 一律跳過,
+// DeviceScoped(P6 決策 33):綁範圍的 provider 告訴 CLI 某個 id 是不是別台裝置(youtube:別個帳號)的——是的話 pull / push / sync 一律跳過,
 // 不算 gone、不算 refused、不動 base;pl link 只能連本機的。
 type DeviceScoped interface {
     Foreign(id string) bool
 }
 
 type Provider interface {
-    ID() string                     // "spotify" | "apple" | "local"
+    ID() string                     // "spotify" | "apple" | "local" | "youtube"(P10)
     DisplayName() string
     Caps() Capability
     Health(ctx context.Context) error
@@ -405,6 +417,8 @@ Scopes:
 | Google refresh token | **OS Keychain**(同上一筆記錄) | 長期 / **不輪替** | 標準 refresh;回應不帶新 refresh_token,寫回同一筆記錄 |
 | Google client_id | config 檔(非機密);內建值為 binary 常數 | 永久 | 使用者輸入或發行時注入(§4.4) |
 | Google client_secret | **OS Keychain**(`google.client_secret`,BYO);內建值編進 release binary(決策 9 的唯一放寬) | 永久 | 使用者輸入或發行時注入(§4.4) |
+| YouTube Music cookie(2026-09-29,決策 60) | **OS Keychain**(`youtube.headers`,JSON `{cookie, authuser, pageid}`;使用者從 DevTools 貼上,只留白名單 cookie) | 依 Google(社群觀察約 2 年;會不會被輪替 T0 實測) | 使用者重貼(`auth login youtube`);401 / 未登入畫面 → `ErrAuthExpired` |
+| YouTube 帳號(名稱 / handle / channel id) | config 檔(`youtube_account`,非機密) | — | 登入時寫、`auth logout youtube` 清 |
 
 Keychain 後端【定案】:**macOS Keychain / Windows Credential Manager**(`zalando/go-keyring` 皆支援)。**Linux 非目標,不實作。**
 
@@ -415,6 +429,28 @@ Keychain 後端【定案】:**macOS Keychain / Windows Credential Manager**(`zal
 **❌ 憑證永遠不進 Drive appData。** 每台裝置各自授權,理由見 §4.2 的 refresh token 輪替問題。
 
 ---
+
+### 4.6 YouTube Music:使用者自抄 cookie(BYO,非官方;2026-09-29 決策 60,計畫 docs/superpowers/plans/2026-09-29-youtube-music.md §3.1)
+
+跟 Google Drive 的登入(§4.4)**完全分開**:不同的 keychain 鍵、不同的 config 欄、可以是不同的 Google 帳號(使用者 2026-09-29 明說多帳號要區分)。
+不讀、不寫、不推導 `google.token`。
+
+```
+$ capy auth login youtube
+1. 揭露頁(Confirm 預設「否」,不可跳過;非 TTY 要 --i-understand):非 Google 官方支援;貼的是你 Google 帳號在 YouTube 的登入 session
+   (拿到它的人能以你的身分操作 YouTube,不只 YouTube Music;撤銷 = Google 帳號 → 安全性 → 登出所有裝置);Google 可能隨時讓它失效(重跑即可);
+   自動化存取 YouTube 違反其服務條款、風險自負;capy 只指導不擷取;只寫你自己建的清單。
+2. 指引頁:先在 music.youtube.com 右上角切到要用的帳號 → DevTools → Network → 篩 browse → 任一 POST → Request Headers 整段複製。
+3. 貼上(TTY 多行 Text;web 是 Secret textarea,逾時 30 分鐘)。只留 cookie / x-goog-authuser / x-goog-pageid;cookie 只留白名單。
+4. 驗證:account/account_menu → 印「偵測到的帳號:<name>(@handle)」→ TTY Confirm;401 / 未登入畫面 → 貼錯或失效。
+5. keychain 寫 youtube.headers;config 寫 youtube_account({name, handle, channel_id})。
+```
+
+- **非 TTY**:`CAPY_YOUTUBE_HEADERS` 環境變數(整段)或 `--headers-file <path>` + `--i-understand`;不收 argv 直帶(cookie 太長、`ps` 看得到)。web 對 `--headers-file` 403。
+- 每次請求算 `Authorization: SAPISIDHASH <ts>_<sha1("<ts> <SAPISID> https://music.youtube.com")>`(`__Secure-3PAPISID`),加 `X-Goog-AuthUser`、`X-Origin` / `Origin`;品牌帳號 `X-Goog-PageId`。
+- 失效偵測:401 / 403、或 200 但內容是未登入的畫面 → `ErrAuthExpired` 指向 `capy auth login youtube`;`auth status` 顯示帳號名與 handle;`doctor --provider youtube` 打 `account_menu` 並比對 config。
+- **隱藏 `--auto` 不做**(Apple 的是使用者點名的特例)。
+- 帳號範圍:清單 id = `<channel_id>/<playlistId>`(`account_menu` 沒給 channel id 就用 handle),`CapDeviceBound` + `Foreign` 讓換帳號、或別台登了別的帳號時只跳過、不 gone、不 unlink(§3、決策 33 的機制)。
 
 ## 5. 曲目識別與比對(Resolver)
 
@@ -457,7 +493,7 @@ Layer 3 — 人工釘選(最高優先)
 |---|---|---|
 | 一首錄音多個 ISRC | 重發、remaster、地區版各有 ISRC | 建 ISRC alias set,任一命中即視為同一錄音。**P3 不解**:`cid` 是決定性 ID(§6.2,`i:<正規化 ISRC>`),alias set 無法收斂成同一個 cid,跨 provider 會產生兩筆 canonical track;收斂是 P4 resolver 的工作。**P4 後半(決策 21)**:收斂 = cid 合併,只由人裁決,自動寫入絕不合併;合併後 alias set 聯集,之後觀測到任一 ISRC 都經 §5.1 身分規則對回同一 cid |
 | Apple 部分曲目缺 ISRC | `attributes.isrc` 為空 | 自動降級到 Layer 2 |
-| YouTube Music 完全無 ISRC | — | 未來接入時只能 Layer 2 + 人工 |
+| YouTube Music 完全無 ISRC(2026-09-29 決策 60 接入) | InnerTube 的搜尋 / 清單都沒有 ISRC;同一首還有 `ATV` / `OMV` 兩個 videoId | cid 一律 `p:youtube:<videoId>`;只能 Layer 2 + 人工;ATV / OMV 只能決策 21 人工合併 |
 | Live / Remix / Cover 誤配 | 標題相近、時長相近 | 標題含 live/remix/acoustic/cover 關鍵字時提高門檻 |
 | 中文簡繁 / 藝名別名 | 「五月天」vs「Mayday」 | 維護 artist alias 表,可從兩邊 API 的 artist 物件互相學習 |
 | 區域下架 | 某平台查得到但不可播 | `available_markets` 已被 Spotify 移除 → 只能靠播放時的錯誤回報 |
@@ -717,6 +753,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規;web 介面顯示 Spotify 曲目或清單的表格(搜尋、清單頁、同步頁、搬家精靈、主控台的變更表)連回 Spotify,連結字用設計規範核可的「Listen on Spotify」;播放列的曲名、ISRC 頁的平台卡片也連回去(Policy II.4.b)。規範要的 logo 依決策 48 不放;沒連的地方與理由見計畫 2026-09-24 §1.7 S7 |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
 | 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)加上母語的名稱(prompt 的 `{language}`,只用來指定回答的語言;政策中英都寫了)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,capy 不連 YouTube;AI 正文不逐字重製歌詞、結尾免責行不可關 |
+| YouTube 網頁播放器的 cookie 供第三方使用(2026-09-29,決策 60) | **Google 未授權**,YouTube 服務條款禁止自動化存取:cookie 由使用者自己複製、程式只指導不擷取、指令內強制揭露(明講是 Google 帳號在 YouTube 的 session)、風險自負;只寫使用者自建的清單、絕不 `playlist/delete`;`migrate` / `resolve` 送給 Google 的只有搜尋字(歌名與歌手),政策中英都寫 |
 
 本專案沒有任何遠端伺服器端元件(v0.5 起 Worker 已移除;`capy --web` 只在使用者自己的電腦 127.0.0.1 起 HTTP,不對外、資料不離開那台電腦、不經過我們):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google OAuth 同意畫面與 basic verification 需要的 URL)掛在品牌網站 <https://capy.taislife.work>(2026-09-21;首頁 / `/privacy` / `/terms`,中英各一份,原始檔在 `site/`):Cloudflare Workers 的**純靜態資產**——沒有 Worker 程式、沒有 binding、零外部資源、沒有 cookie 與分析,不構成「伺服器端元件」。政策的核心就是上面那一句;`site/site_test.go` 釘住「政策揭露的 scope = `auth.GoogleScopes`」,兩邊不一致測試會紅。(2026-09-28,決策 59:歌曲 wiki 的 AI 端點也在這句的範圍內——它是使用者自己設定的服務,資料直接從使用者的電腦送到使用者選的端點,不經過我們;政策 §4 / §5 同 PR 補上,`site_test` 另釘一條。)
 
@@ -763,6 +800,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | **R-4** | **平台政策變動頻率高** | Spotify 半年內改兩次:2026-02 使用者上限 25→5 且強制 owner 持有 Premium;2026-07 Client ID 上限 1→25。Apple 亦有非預告的 MusicKit 更新紀錄 | 附錄 B 的監控清單;CI 週期性 API 斷言 |
 | **R-5** | **支援負擔** | BYO 流程(Spotify app、Apple web token)必然產生大量「設定不起來」的 issue,最常見是 redirect URI 寫成 `localhost`、Apple token 貼到過期的 | `capy doctor` 列為一等公民;錯誤訊息直接指出正確值;Apple 登入三段驗證各給不同訊息 |
 | **R-6** | **Apple 單方面改變網頁播放器認證即全體失效,無預警、無替代** | 這是 v0.5 用 $99/年 換來的存在性風險:token 格式、取得位置、amp-api 行為都可能一夜改變;社群工具多年未被封鎖不構成保證 | **唯一緩解是把重登成本壓到像重新登入一樣低**(§4.3(b) 只更新 developer token 的路徑);附錄 B 監控;若 Apple 封鎖,恢復官方路徑的快照在 `3649b7b` |
+| **R-7** | **YouTube 單方面改 InnerTube 版面或 cookie 機制即全體失效;而且綁的是 Google 帳號**(2026-09-29,決策 60) | 跟 R-6 同款,多兩點:InnerTube 的 JSON 是 UI 樹(2024 的 twoColumn 改版讓社群 parser 全面重寫)、cookie 可能被輪替;帳號被 Google 停權的後果比 Apple Music 大(社群工具多年未見,但無保證) | 揭露明講;重貼成本壓到像重新登入;parser 集中一檔 + 真回應 fixture;失效訊息準確指向 `auth login youtube`;官方 Data API 路線留在計畫 §1.1 當備援起點 |
 
 ### 8.5.5 時間成本(實際上最貴的一項)
 
@@ -860,6 +898,12 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 
 **狀態(2026-09-29)**:程式全部進 main——#112 計畫、#113 T1(`internal/ai`、設定、`wiki setup`、政策)、#114 T2(`capy wiki`、prompt、`wiki_cache` v7、TUI 的 `w`;review 三點:不完整的回答不進快取、出錯也印免責行、「來自快取」走 stderr)、T3(web 第 5 頁、指南兩份)。**仍在維護者手上**:計畫 §13 的 R-28…R-38(真端點、真終端機、真網頁),跑完才在標題打 ✅,同 P7 / P8 的慣例。
 
+### P10 — YouTube Music provider(2026-09-29 計畫:docs/superpowers/plans/2026-09-29-youtube-music.md;決策 60)
+
+第四個平台,使用者要的是清單搬遷與同步,而且 YouTube Music 帳號要跟 Google Drive 帳號分開(可以是不同帳號)。官方 Data API 每專案每天只有 100 次搜尋、sensitive scope 不能掛內建 client,所以走 music.youtube.com 自己用的 InnerTube + 使用者自抄 cookie(Apple 決策 8 同款 BYO;§1.5、§4.6)。Q1–Q11 全部照推薦定案。T0 計畫 + 探測腳本 `scripts/p10/youtube-probe.sh`(真帳號、拋棄式清單;使用者授權)+ 本文;T1 `internal/auth/youtube` + `internal/provider/youtube` 讀端 + `auth login | logout | status` / `doctor` + 政策 / 條款 / 首頁 / README / CLAUDE.md 同 PR;T2 寫端(一次 `edit_playlist` 整批取代、`CreatePlaylist`)+ 帳號範圍的清單 id + e2e;T3 web(搬家精靈、搜尋頁)+ 指南。驗收 R-39–R-46 在計畫 §10。
+
+**狀態(2026-09-29)**:T0 進行中(PR #116);探測還沒跑。
+
 ---
 
 ## 10. 交接給 Claude Code 的重點
@@ -889,7 +933,8 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 ## 附錄 A:CLI 命令表面(草案)
 
 ```
-capy auth login   <spotify|apple|google>                  # google:BYO client 或內建(release binary);--client-id/--client-secret 或 CAPY_GOOGLE_CLIENT_*
+capy auth login   <spotify|apple|google|youtube>          # google:BYO client 或內建(release binary);--client-id/--client-secret 或 CAPY_GOOGLE_CLIENT_*
+capy auth login youtube [--i-understand] [--headers-file F]   # 2026-09-29(P10 決策 60,T1 實作):使用者從 music.youtube.com 的 /browse 請求複製 Request Headers 貼上(TTY 精靈 / CAPY_YOUTUBE_HEADERS / --headers-file),揭露不可跳過,貼上後 account_menu 顯示帳號並確認;keychain youtube.headers、config youtube_account;跟 Google Drive 登入完全分開;web 對 --headers-file 403
 capy auth status [--json]                                 # --json(2026-09-23,決策 50):給腳本與網頁帳號頁的 JSON(各平台 state、到期時間、client 來源、Google email、Apple storefront);欄位只增不改、列舉值不翻譯、絕不含 token / secret(schema 在 README;auth_status_json_test.go 種哨兵值驗);純文字輸出跟著語系
 capy auth logout  <provider>
 
@@ -956,6 +1001,7 @@ capy config set ai_base_url|ai_model|native_language <值>   # 2026-09-28(決策
 | Drive API quota units 計費時程 | 每專案每日 >400,000,000 quota units「planned to incur charges … later in 2026」(§8.5.1),Google 承諾至少 90 天預告;個人用量遠低於門檻,但一旦開始計費,§8.5.3「成本與人數無關」就多一個條件 | 每季對照 developers.google.com/workspace/drive/api/guides/limits;訂閱 Google Workspace 開發者公告 |
 | Spotify Lossless over Connect | 目前 Connect 端點只給 320k Ogg | 若開放,遙控播放的音質敘述要更新 |
 | Spotify `preview_url` | 2024-11 起新建的 app 拿到的 `preview_url` 為 null(既有 app 不受影響);ISRC 頁的試聽可能永遠只有 Apple 有 | ISRC 頁把 null 當「無」;真帳號 smoke(R-10)時記錄兩家回應的實際欄位 |
+| YouTube InnerTube 版面與 cookie(2026-09-29,決策 60) | `browse` / `search` 的 renderer 結構、`edit_playlist` 的 action 名、cookie 輪替政策都可能無預警改變(R-7) | 定期跑 `MODE=ping scripts/p10/youtube-probe.sh` 與讀端;issue 回報即為監控 |
 
 ## 附錄 C:定案紀錄(2026-09-01;決策 8–13 為 2026-09-03)
 
@@ -1021,6 +1067,7 @@ capy config set ai_base_url|ai_model|native_language <值>   # 2026-09-28(決策
 | 57 | 同步不重讀沒變的清單(2026-09-28;計畫 docs/superpowers/plans/2026-09-24-web-player-follow-apple-play.md §1.7 S3、§1.9) | `PlaylistRef` 多一個平台中立的 `Version`(Spotify 清單列表本來就附的 `snapshot_id`,零額外呼叫;Apple、local 不給 = 空)。pull / sync 讀連結清單的曲目時,版本非空、跟本機快取的相同、快取的曲目數等於列表的 Total、快取不到 7 天,而且快取的曲目跟 base(所有裝置合併後最後一次看到的這份清單)一模一樣 → 用快取;其他一律真的讀,讀到了就記下(版本空的不記),同時刪掉超過 7 天的列(解除連結的清單不會再被覆寫,不刪就永遠留著)。快取在 `state.db` 的 `playlist_items_cache`(schema 5 → 6,舊檔照 T9 改名保留),只放同步要用的欄位(白名單:id、ISRC、歌名、歌手、專輯、時長、explicit、unpushable),不放 Raw 與封面、試聽。列表的版本可能落後(寫完之後一陣子還回舊的 snapshot_id),所以另有三道:比 base(別台裝置或我們自己剛推過,base 已前進、快取還停在寫之前;信快取的話 DERIVE 會把那次寫入讀成平台改回去,撤銷使用者的修改);我們寫過的清單(`pushPlan.apply` 的 ApplyOps 之後,不管成功、半截或第一個就失敗)立刻刪掉那一列、不拿寫入回傳的版本記快取(寫成了但 COMMIT 失敗時 base 沒前進,只有這道擋得住);寫之前的重讀發現平台跟計畫對不上(stale)也刪(計畫可能是照快取排的)。push 寫之前的那次重讀照舊(安全網,快取錯了也寫不出錯的東西);快取讀寫失敗不擋一輪;`auth logout spotify` / `apple` 連這張表一起清(計畫 §1.7 S5 那套,含舊檔)。已知限制:清單裡有空項目(已下架的曲目、podcast 單集)時列表的 Total 比讀到的多,這種清單每輪照讀;不再同步的話,超過 7 天的列留到下次同步或登出 | 每一輪都把每份清單的每一頁重讀一次,用 cron 同步的人配額吃最重(配額以開發者帳號計算)。7 天上限引用 Spotify Developer Terms IV.3.2:只准為了效能暫時快取 metadata、不可無限期;曲目本身(下架、換版本)也可能在清單版本不變時變動。研究過不採用:ETag / If-None-Match(就算平台給,也是每份清單每頁照打一次,省頻寬不省呼叫數)、逐份 `GET /playlists/{id}?fields=snapshot_id`(每份多一次呼叫,列表已經有了)、把快取放進 Drive 的裝置檔(那是 Spotify 的 metadata,只准暫時快取,而且跨裝置沒有好處) |
 | 58 | `now --watch` 跟著正在播的平台(2026-09-28;決策 53 的 follow-up) | 同 TUI(決策 53):沒用 `--provider` 釘住時走 `nowTracker` 的跟隨規則(只有正在播的能把畫面拉走;預設平台建不起來就退到建得起來的,決策 51、54)與節流(Spotify 真的被打幾次看有效期:在播最多 10 s、閒置 15 s、限流照 `Retry-After` 至少 60 s,冷卻期內只端出快取;畫面照舊每 2 秒問一輪)。釘住的只問那一家,而且照舊在開畫面之前先建好(平台名打錯、沒登入、不支援播放,一開始就 exit 1)。一輪、控制鍵與「等太久先說」跟 TUI 同一套程式(`nowPoll` / `nowRound` / `nowControl`、`tuiAwait`;n / p 限時,全部帶 `WithoutWait`);每個控制鍵開新的輪詢鏈、舊鏈停掉(順手修掉:以前每按一次鍵就多一條永遠停不了的鏈);換平台時上一家的曲目與失敗次數不留;換 token 等鎖、429 退避的提示不印進畫面。跟 TUI 不同的地方:連續 5 次**真的問到**的失敗就離開(exit 1;watch 沒有命令列可以留下來用。快取端出的同一則錯誤不算,所以 Spotify 約 75 秒、登入過期約 5 分鐘、Apple 約 10 秒);沒釘住而且哪一家都建不起來時,畫出一格後離開,錯誤原樣回(exit 1,同以前開畫面之前的訊息);之後任何一輪建不起來(例如登入過期、controller 被丟掉後重建失敗)也一樣離開,釘住的也是。從 TUI 命令列打的 `now --watch` 照舊附加狀態列上的平台(跟其他播放命令一樣,決策 53;不附加的話子程式從 `default_provider` 起算,Apple 暫停、Spotify 閒置時會跑去顯示 Spotify,空白鍵播的就不是剛剛看著的那首)。想要會跟隨的 watch,在一般的 shell 打 `capy now --watch`。單次的 `capy now` 不變(照舊用 `default_provider` / `--provider`);沒有 TTY 的 `--watch` 照舊直接報錯 | 決策 53 留下的 follow-up:`now --watch` 一開就綁死一個平台、每 2 秒打一次,限流時自己照 `Retry-After` 延後。行為變化:沒釘住時預設平台沒登入但別家建得起來,以前一開始就 exit 1,現在開得起來、顯示那一家;Spotify 上別的裝置暫停或換歌要 10–15 秒才看得到(同 web 與 TUI,Q65);space 的播放 / 暫停看畫面上的狀態(可能是快取、不一定是現在的狀態:在播最多 10 秒、暫停或閒置最多 15 秒,限流或出錯期間是出錯前最後一次讀到的),送錯方向會說,並讓快取過期、下一輪重問。已知限制:從 TUI 開的 watch 與 TUI 各有一個 tracker(冷卻不共用);在子程式裡按的鍵,回到 TUI 後狀態列可能晚 10–15 秒才跟上 |
 | 59 | 歌曲 wiki:`capy wiki` / `capy wiki setup`(2026-09-28;計畫 docs/superpowers/plans/2026-09-28-song-wiki.md,Q69–Q82 全部照推薦) | AI 端點全面 BYO(OpenAI 相容 `chat/completions`;`ai_base_url` / `ai_model` / `native_language` 在 config.json、`config set` 只管這三個;API key 與自訂標頭整包在 keychain `ai.api_key` / `ai.headers`,標頭上限 2 KB、一律 `Header.Set` 且在 Bearer 之後套用;`http:` 打非本機 host 只警告)。`wiki setup` 兩段精靈(存了才探測 `GET /models`:≤ 30 個開選單、404 / 405 退回 1-token chat 驗;401 / 403 保留設定、exit 1),web 走提示橋(Secret / Multiline 欄,逾時 30 分鐘),非 TTY 用旗標,web 對 `--api-key` / `--header` 403。`capy wiki`:位置參數或 `--title` 指定,否則抓正在播的歌——`--provider` 釘住,沒釘就先問預設平台、有曲目(在播或暫停)就用,沒有再照 `providerIDs` 問其他家、第一家有曲目的就用;一次 `chat/completions` 串流、**逐行**寫 stdout(TTY 看到整行才知道是不是標題);prompt 常數全英文、只有 `{language}` 一個洞(母語的英文名稱加代碼,例如 `Chinese (Taiwan) (zh-TW)`;沒設 = 介面語系)、固定四段(基本資料 / 故事 / 歌詞在說什麼 / 延伸聆聽)、輸入包成資料區塊、整份最多引用原文兩句、不確定就直說、不放連結;送出的欄位固定為 `ai.SentFields` = 歌名、歌手、專輯、發行日期、曲風,政策 / README 一字對齊並釘測試;MV 是 YouTube 搜尋連結(本機組字串);免責行不可關;結果進 SQLite `wiki_cache`(schema v7、純快取、不過期、key 含母語與 prompt 版號不含 model、`--refresh`);`--json` 整批;AI 正文跟 `native_language`、框架字跟 `language`;TUI 跟隨狀態列平台 + `w`;web 第 5 頁走序列槽(AI 回應期間播放列按鈕被擋、中止可按、面板照常更新)。不做:整段 prompt 自訂、非 OpenAI 原生 provider、YouTube Data API 與內嵌播放器、抓歌詞、分段旗標、多輪追問、doctor 檢查、快取過期 | 使用者 2026-09-28:讓人類創作的經典歌曲靠 AI 再次出圈,不要沒有靈魂的 AI 歌曲浪費注意力;設定要能接 OpenAI 相容端點與自訂標頭(Zero Trust),母語要能設。不架服務、不代持金鑰是專案一貫的 BYO 精神(決策 8);決策 42 的「不接外部資料源」指 capy 自己打第三方資料庫,使用者自選的端點不在其內;歌詞不逐字重製是著作權(開源公開)與幻覺(背錯比沒有更糟)兩個理由,而且播放器本身有歌詞;搜尋連結不會編出不存在的影片 |
+| 60 | YouTube Music provider(2026-09-29;計畫 docs/superpowers/plans/2026-09-29-youtube-music.md,Q1–Q11 全部照推薦) | InnerTube(music.youtube.com 自己用的端點)+ 使用者自抄 cookie(BYO,非官方):keychain `youtube.headers`(JSON,只留白名單 cookie)、config `youtube_account`;**跟 Google Drive 登入完全分開,可以是不同帳號**,貼上後 `account_menu` 顯示帳號並確認;provider id `youtube`、顯示名「YouTube Music」;清單 id `<channel_id>/<playlistId>`,`CapDeviceBound` 的語意擴成「範圍」(換帳號只跳過不 unlink,`pl link` 接管);能力 = 搜尋 + 清單讀寫七個位元(無 ISRC、無播放、無 ArtistSearch);搜尋只取第一頁「歌曲」filter;`LM` 列出但只讀;寫入只寫自己建的清單、rename 先、純 append 一個請求 ADD(帶 `DEDUPE_OPTION_SKIP`)、其他形狀一個請求 REMOVE 全部 + ADD 全部(整批取代;rename 成功 items 失敗回普通 error)、`CreatePlaylist` 輪詢到列表出現、**絕不 `playlist/delete`**;不做 `--auto`、不做播放;官方 Data API 不採 | 官方 API 每個專案每天只有 100 次搜尋(搬 300 首要 3 天)、寫入 200 首,擴配額要 compliance audit;`youtube` scope 是 sensitive,掛上內建 client 會讓整個專案(含 Drive)送驗,只能 BYO GCP 專案;沒有 ISRC 與歌手 / 專輯欄位。InnerTube 是 Apple 決策 8 同一類的灰色地帶,揭露明講「這是 Google 帳號在 YouTube 的 session」;帳號範圍的 id 是因為使用者明說多帳號、而 gone 會靜默 unlink;整批取代跟 Spotify / Apple 同形,`PartialWriteError` 的前綴語意在整批失敗時不成立所以回普通 error |
 
 ## 附錄 D:已移除的官方路徑(v0.4 原文,供恢復時參考)
 
