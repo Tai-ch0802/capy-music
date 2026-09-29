@@ -4,7 +4,9 @@
 所以我們的 youtube music 的登入帳號有可能會和現在既有的 google drive 的登入帳號不同,可能要留意一下並且區分開來。請先草擬出完整的 plan,
 我們確認定案方向以後再進行開發實作。」
 
-狀態:**草案,待 §8 定案**。T0 = 本文(拍板後同一個 PR 補探測腳本、ARCHITECTURE 與附錄 C 決策 60);之後依 §6 開 T1–T3。
+狀態:**定案(2026-09-29)**。使用者:「全部照推薦,探測授權,可以開始跑」→ Q1–Q11 全部照推薦(B InnerTube + 自抄 cookie、清單 id 帶帳號、整段 headers、整批取代、
+`LM` 只讀、不做 `--auto`、id `youtube`、七個位元、搜尋一頁、位元不動、探測授權);決策 60 已寫進附錄 C。T0 = 本文 + `scripts/p10/youtube-probe.sh` + ARCHITECTURE(PR #116);
+探測結果補在 §4 下方;之後依 §6 開 T1–T3。
 
 研究方式:讀了 capy 的 Provider SPI、Apple 的憑證與寫入路徑(揭露、精靈、web 接縫、`ApplyOps` 對齊)、P5 / P6 的同步機制(foreign、gone、
 `PartialWriteError` 的判準)、web 提示橋、i18n 守門測試、網站測試。YouTube 側對照了 Google 官方的 Data API 配額頁、OAuth 驗證頁、YouTube API
@@ -262,7 +264,7 @@ link 就接管;`resolvePlaylistID` 已接受只打後半段。前綴用 channel 
 - **Q11 T0 探測授權**:要用你的 YouTube Music 帳號貼一次 headers、建一個拋棄式清單(結尾刪掉),並在接下來 7 天照常用瀏覽器以測 cookie 壽命。
   我不會自己跑任何寫入:你說可以我才跑,或你自己跑腳本把輸出貼給我。
 
-## 9. 決策 60(草稿;§8 定案後寫進附錄 C)
+## 9. 決策 60(2026-09-29 定案,已寫進附錄 C;以附錄 C 為準)
 
 | # | 議題 | 定案 | 摘要理由 |
 |---|---|---|---|
