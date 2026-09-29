@@ -16,11 +16,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/auth/apple"
+	ytauth "github.com/Tai-ch0802/capy-music/internal/auth/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	appleprov "github.com/Tai-ch0802/capy-music/internal/provider/apple"
 	"github.com/Tai-ch0802/capy-music/internal/provider/local"
+	youtubeprov "github.com/Tai-ch0802/capy-music/internal/provider/youtube"
 	"github.com/Tai-ch0802/capy-music/internal/secret"
 )
 
@@ -28,7 +30,7 @@ const flagProvider = "provider"
 
 // providerIDs:合法 provider 的唯一清單(flag 說明、newProvider 的錯誤、config set 的驗證、default_provider
 // 的讀取都用它;加第三個 provider 只改這裡)。
-var providerIDs = []string{"spotify", "apple", "local"}
+var providerIDs = []string{"spotify", "apple", "local", "youtube"}
 
 func isProviderID(id string) bool { return slices.Contains(providerIDs, id) }
 
@@ -42,6 +44,8 @@ var newProvider = func(ctx context.Context, id string) (provider.Provider, error
 		return newAppleProvider(ctx)
 	case "local":
 		return newLocalProvider()
+	case "youtube":
+		return newYouTubeProvider(ctx)
 	default:
 		return nil, i18n.Errorf("platform.err.unknown", "id", strconv.Quote(id), "ids", strings.Join(providerIDs, i18n.T("sep.list")))
 	}
@@ -144,10 +148,35 @@ func newLocalProvider() (provider.Provider, error) {
 	return local.New(cfg.LocalRoot, cfg.DeviceID), nil
 }
 
-// foreignLink:綁裝置的 provider(決策 33)說這個 id 是別台裝置的——pull / push / sync 一律跳過,不算 gone、不 refused、不動 base。
+// foreignLink:綁範圍的 provider(決策 33 的裝置、決策 60 的 YouTube 帳號)說這個 id 是別的範圍的——pull / push / sync 一律跳過,
+// 不算 gone、不 refused、不動 base。
 func foreignLink(p provider.Provider, id string) bool {
 	ds, ok := p.(provider.DeviceScoped)
 	return ok && p.Caps().Has(provider.CapDeviceBound) && ds.Foreign(id)
+}
+
+// youtubeAPIBaseSeed:測試用種子(httptest);正式為空(用預設 base)。
+var youtubeAPIBaseSeed string
+
+// newYouTubeProvider(決策 60):keychain 的 cookie(缺 → 提示 login)+ config 的帳號(頻道 id 是清單 id 的前綴,登入時寫;
+// 缺 → 同一個提示)。語系決定 hl(歌手名跟著語系)。
+func newYouTubeProvider(ctx context.Context) (*youtubeprov.Provider, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	h, err := ytauth.Load()
+	if errors.Is(err, secret.ErrNotFound) {
+		return nil, i18n.Errorf("platform.err.youtube_not_logged_in")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cfg.YouTube == nil || cfg.YouTube.ChannelID == "" {
+		return nil, i18n.Errorf("platform.err.youtube_not_logged_in")
+	}
+	hc := &http.Client{Timeout: 30 * time.Second}
+	return youtubeprov.New(hc, youtubeAPIBaseSeed, h, cfg.Language, cfg.YouTube.ChannelID), nil
 }
 
 // friendlyErr 把語意化錯誤轉成可行動訊息(spec R-5),指向對應 provider 的下一步。

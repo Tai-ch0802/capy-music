@@ -1,0 +1,90 @@
+{
+ "actions": [
+  {
+   "openPopupAction": {
+    "popup": {
+     "multiPageMenuRenderer": {
+      "header": {
+       "activeAccountHeaderRenderer": {
+        "accountName": {
+         "runs": [
+          {
+           "text": "Someone"
+          }
+         ]
+        },
+        "accountPhoto": {
+         "thumbnails": [
+          {
+           "url": "https://example.invalid/x",
+           "width": 108,
+           "height": 108
+          }
+         ]
+        },
+        "settingsEndpoint": {
+         "applicationSettingsEndpoint": {
+          "hack": true
+         }
+        },
+        "manageAccountTitle": {
+         "runs": [
+          {
+           "text": "Manage your Google Account",
+           "navigationEndpoint": {
+            "urlEndpoint": {
+             "url": "https://example.invalid/x",
+             "target": "TARGET_NEW_WINDOW"
+            }
+           }
+          }
+         ]
+        },
+        "channelHandle": {
+         "runs": [
+          {
+           "text": "@someone"
+          }
+         ]
+        }
+       }
+      },
+      "sections": [
+       {
+        "multiPageMenuSectionRenderer": {
+         "items": [
+          {
+           "compactLinkRenderer": {
+            "icon": {
+             "iconType": "ACCOUNT_BOX"
+            },
+            "title": {
+             "runs": [
+              {
+               "text": "Your channel"
+              }
+             ]
+            },
+            "navigationEndpoint": {
+             "browseEndpoint": {
+              "browseId": "UCtestchannel000000000000",
+              "canonicalBaseUrl": "/@someone",
+              "browseEndpointContextSupportedConfigs": {
+               "browseEndpointContextMusicConfig": {
+                "pageType": "MUSIC_PAGE_TYPE_USER_CHANNEL"
+               }
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -11,7 +11,7 @@ import { t } from '../i18n.js';
 // 首頁的每一句主張都要查得到出處(決策 48):MIT LICENSE、憑證只進鑰匙圈、migrate 只新增不刪來源、順序不動(決策 38)。
 // 使用者看得到的字一律是函式、用到時才算(i18n.js 開頭的載入順序鐵則)。
 const factTexts = () => [t('webui.move.fact.free'), t('webui.move.fact.open_source'), t('webui.move.fact.local'), t('webui.move.fact.no_delete')];
-const READ_ONLY = [];                    // 不能當目的地的平台(目前沒有;Apple 自決策 49 起可寫)
+const READ_ONLY = ['youtube'];           // 不能當目的地的平台:YouTube Music 在 T1 只有讀端(決策 60;T2 寫端進來後拿掉)
 const CAN_CREATE = ['spotify', 'apple']; // 能新建清單的平台;其餘(local)只能加進既有的
 const NO_LOGIN = ['local'];
 // 「逐筆裁決」那一則靠提示事件的 key 認(confirmWrite 帶的 i18n key;TestWebMigrateReviewPromptCarriesKey 釘住),

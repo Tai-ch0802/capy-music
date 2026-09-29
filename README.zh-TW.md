@@ -2,7 +2,7 @@
 
 # capy-music
 
-跨平台音樂 CLI:搜尋、播放遙控、播放清單同步(Spotify、Apple Music;播放清單同步到你自己的 Google Drive)。開源、免費,**所有憑證都是你自己的(BYO)** —— 本專案不代持任何 token、不架任何服務。
+跨平台音樂 CLI:搜尋、播放遙控、播放清單同步(Spotify、Apple Music、YouTube Music;播放清單同步到你自己的 Google Drive)。開源、免費,**所有憑證都是你自己的(BYO)** —— 本專案不代持任何 token、不架任何服務。
 
 網站:<https://capy.taislife.work>(給一般使用者的介紹、[隱私權政策](https://capy.taislife.work/privacy)、[服務條款](https://capy.taislife.work/terms);原始檔在 [`site/`](site/);`/guide` 與 `/en/guide` 兩頁分別由 `docs/guide.html`、`docs/guide.en.html` 轉出來,改了任一份指南之後跑 `go test ./site/ -run TestGuideOnSiteIsCurrent -update`;repo 接了 Cloudflare Workers Builds,合併進 main 之後確認線上有更新,沒有的話手動 `cd site && wrangler deploy`)。
 
@@ -74,6 +74,17 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 
 需要 Apple Music 訂閱。播放遙控只在 macOS(透過 Music.app),而且 capy 只能替你播資料庫裡有的歌:Music.app 的腳本介面播不了其他的歌。capy 會在你電腦上的 Music 資料庫裡找那一首(只讀不寫),剛好對到一首就直接播,並確認真的開始播了。其他的歌,`capy play`(以及 `capy --web` 搜尋頁的「**在 Music.app 開啟**」按鈕)會在 Music.app 打開那一首並標出來,請你在那裡對它點兩下;這時命令一樣回 exit 0,但不印 ▶。搜尋與播放清單在 macOS / Windows 皆可用。寫入播放清單(建清單、加歌、移除、換序、改名)只對你自己建的清單;加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你在 Apple Music 裡的設定——這是 Apple 的行為,capy 不另外加;2026-09-23 實測的帳號,清單裡本來就有很多歌不在資料庫,capy 加進清單的歌也沒有進資料庫。
 
+## YouTube Music:複製你自己的登入 cookie
+
+> ⚠️ **非 Google 官方支援。** 你貼上的是你的 Google 帳號在 YouTube 的登入 session(music.youtube.com 的 cookie):拿到它的人能以你的身分操作整個 YouTube,而且用自動化工具存取 YouTube 違反 YouTube 的服務條款——用 capy 連 YouTube Music 的風險由你自行承擔。Google 可能隨時讓它失效(屆時重跑一次 `capy auth login youtube`)。capy 只指導,**絕不讀取你的瀏覽器資料**;只留三個必要的 session cookie,存在 OS keychain。2026-09-29 實測:這段 cookie 登不進 Google 的其他服務(myaccount.google.com 會導去登入、Drive API 回 401)。YouTube Music 的帳號**可以跟 Google Drive 用的不同**,`capy auth status` 兩個都會顯示。
+
+1. 瀏覽器開 https://music.youtube.com,右上角切到你要用的帳號
+2. 開 DevTools(F12 / ⌥⌘I)→ Network 分頁,篩選 `browse`,點左邊的**媒體庫**
+3. 對任一個 `browse` 請求按右鍵 → Copy → **Copy as cURL**(或整段複製 Request Headers)
+4. 執行 `capy auth login youtube`,依精靈貼上並確認偵測到的帳號(非互動環境:把那段文字存成檔案,用 `--headers-file <路徑>` 或 `CAPY_YOUTUBE_HEADERS` 環境變數,並加 `--i-understand`)
+
+目前能讀:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link` / `pl pull`,以及當 `capy migrate` 的**來源**。寫入 YouTube Music(push / sync / 搬進去)還在開發中。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有 `capy resolve --review` 能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
+
 ## 本機曲庫(local,選用):M3U 清單 + library.json
 
 ```bash
@@ -99,7 +110,7 @@ capy pl link 通勤 local:通勤.m3u8            # 只打檔名;連結 id 會帶
   5. ⚠️ Audience 按「Publish app」切到 In production —— 停在 Testing 的話 refresh token 7 天就過期,你會莫名被登出
   6. 把 Client ID 與 Client secret 貼進精靈。非互動環境用 `--client-id` / `--client-secret` 或 `CAPY_GOOGLE_CLIENT_ID` / `CAPY_GOOGLE_CLIENT_SECRET`。
 
-不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。`capy auth logout spotify` / `apple` 也會刪掉這台電腦快取裡那個平台的清單列表、最近項目(補全與 `play --pick` 用的)與同步記下的清單曲目(Spotify 清單沒變就不必每輪重讀;最多用一週),本機資料庫的舊檔也一起清(Spotify 的 Developer Policy 要求你中斷連線時,應用程式要刪掉你的資料)。你自己 Google Drive 裡的清單正本與它在這台電腦上的鏡像不動:那是你的資料,放在你自己的空間。
+不管哪一種,`--client-id` / `--client-secret` 永遠可以覆寫內建值。自建 client 的 secret 只進 OS keychain。`capy auth status` 會顯示登入的 Google 帳號 email 與這台裝置的 `device_id`;`capy auth logout google` 刪 token 與自建 client 的 secret。`capy auth logout spotify` / `apple` / `youtube` 也會刪掉這台電腦快取裡那個平台的清單列表、最近項目(補全與 `play --pick` 用的)與同步記下的清單曲目(Spotify 清單沒變就不必每輪重讀;最多用一週),本機資料庫的舊檔也一起清(Spotify 的 Developer Policy 要求你中斷連線時,應用程式要刪掉你的資料)。你自己 Google Drive 裡的清單正本與它在這台電腦上的鏡像不動:那是你的資料,放在你自己的空間。
 
 ## 歌曲 wiki(選用):接上你自己的 AI 端點
 
@@ -127,7 +138,8 @@ capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);�
 {
   "spotify": { "state": "ok", "client_id": "set", "refresh_token_expiry": "2027-03-26T09:00:00Z" },
   "google": { "state": "ok", "client": "builtin", "access_token_expiry": "2026-09-23T09:00:00Z", "email": "you@example.com", "device_id": "…" },
-  "apple": { "state": "ok", "developer_token": "ok", "developer_token_expiry": "2026-11-01T00:00:00Z", "user_token": "ok", "storefront": "tw" }
+  "apple": { "state": "ok", "developer_token": "ok", "developer_token_expiry": "2026-11-01T00:00:00Z", "user_token": "ok", "storefront": "tw" },
+  "youtube": { "state": "ok", "account": "Tai", "handle": "@example", "channel_id": "UC…" }
 }
 ```
 
@@ -144,6 +156,8 @@ capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);�
 | `apple.developer_token` | `ok` / `missing` / `expired` / `keychain_error`;`developer_token_expiry` 在 `ok` 與 `expired` 時給 |
 | `apple.user_token` | `ok` / `missing` / `keychain_error` |
 | `apple.storefront` | 例如 `tw` |
+| `youtube.state` | `ok` keychain 有 cookie / `missing` / `keychain_error` |
+| `youtube.account`、`youtube.handle`、`youtube.channel_id` | 登入時記下的 YouTube Music 帳號(名稱、`@handle`、頻道 id);可以跟 `google.email` 不同。沒登入就沒有這幾個欄位 |
 
 ## 常用命令
 
@@ -319,7 +333,7 @@ capy pl push 公路旅行 --provider spotify              # 7. 真的推
 
 - **第 3 步不能省。** push 的前提是這台裝置對那個 Spotify 清單 pull 過;第 2 步剛建的清單還沒有 base,直接 push 會以 exit 3 擋下。
 - **不會刪到任何東西。** Spotify 那邊是第一次 pull(沒有 base 不產生 remove),push 全部是新增,刪除閾值不會觸發。
-- **不一定 100% 複製得過去。** Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
+- **不一定 100% 複製得過去。** YouTube Music 完全沒有 ISRC,而且同一首錄音可能是純音訊也可能是 MV、兩個不同的 id,所以來自 YouTube Music 的曲目只靠歌名、歌手與時長比對(85 分以下進 `capy resolve --review`)。 Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
 - **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單(例如之前先在 app 裡建好了)時會擋下,並給你連它的命令;追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
 - **之後兩邊保持連結。** 任一邊有變動時跑 `capy pl sync 公路旅行` 就會帶到另一邊。只要一次性複製的話,完成後 `capy pl unlink 公路旅行 apple`。
 - **反方向(Spotify → Apple)一樣**:`capy migrate 公路旅行 --from spotify --to apple`,或把手動流程裡的兩個平台對調(`capy pl link 公路旅行 apple --create`)。Apple 這一側的加歌走 Apple 文件化的端點,移除與換序走網頁播放器自己用的端點(Apple 沒有正式承諾;細節見 docs/ARCHITECTURE.md §1.2),只寫你自己建的清單,加進清單的曲目會不會同時進資料庫看你的 Apple Music 設定。

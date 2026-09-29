@@ -60,6 +60,17 @@ acct() { jq -r "${ACC} | [(.accountName.runs[0].text // \"-\"), (.channelHandle.
 logged_in() { jq -e "${ACC}.accountName" "${BODY}" >/dev/null 2>&1; }
 ok() { jq -r '.status // "-"' "${BODY}"; }
 
+if [ "${MODE}" = "grid" ]; then # 唯讀:清單列表的 continuation(舊式 nextContinuationData → ctoken / continuation / type=next 查詢參數)
+  code="$(yt browse '{"browseId":"FEmusic_liked_playlists"}')"; n=0; tok="$(jq -r '[.. | objects | .continuations? // empty | .[0].nextContinuationData.continuation] | first // ""' "${BODY}")"
+  echo "第一頁 HTTP ${code};grid 項目 $(jq '[.. | objects | select(has("musicTwoRowItemRenderer"))] | length' "${BODY}");continuation token 長度 ${#tok}"
+  while [ -n "${tok}" ] && [ "${n}" -lt 5 ]; do
+    n=$((n+1)); code="$(curl -sS -o "${BODY}" -w '%{http_code}' -X POST -H "Cookie: ${COOKIE}" -H "Authorization: $(authz)" -H "X-Goog-AuthUser: ${AU}" -H "X-Origin: ${ORIGIN}" -H "Origin: ${ORIGIN}" -H "Content-Type: application/json" -H "User-Agent: ${UA}" --data-binary "$(ctx '{}')" "${BASE}/browse?alt=json&prettyPrint=false&ctoken=${tok}&continuation=${tok}&type=next")"
+    cp "${BODY}" "${OUT}/grid-cont-${n}.json"
+    echo "續頁 ${n} HTTP ${code};頂層鍵:$(jq -r 'keys | join(",")' "${BODY}");continuationContents 的鍵:$(jq -r '.continuationContents // {} | keys | join(",")' "${BODY}");項目 $(jq '[.. | objects | select(has("musicTwoRowItemRenderer"))] | length' "${BODY}")"
+    tok="$(jq -r '[.. | objects | .continuations? // empty | .[0].nextContinuationData.continuation] | first // ""' "${BODY}")"
+  done
+  exit 0
+fi
 if [ "${MODE}" = "ping" ]; then
   code="$(yt account/account_menu '{}')"; printf '%s ping account_menu → HTTP %s ' "$(date -u +%FT%TZ)" "${code}"
   if logged_in; then echo "登入中($(acct | cut -f2))"; else echo "未登入 / 失效"; fi
@@ -117,6 +128,7 @@ rows() {
   tok="$(jq -r "${TOK}" "${BODY}")"
   while [ -n "${tok}" ] && [ "${i}" -lt "${max}" ]; do
     i=$((i+1)); code="$(yt browse "$(jq -nc --arg t "${tok}" '{continuation:$t}')")"; [ "${code}" = "200" ] || { echo "   continuation ${i} → HTTP ${code}" >&2; return 1; }
+    cp "${BODY}" "${OUT}/rows-cont-${i}.json" # 給 fixture 用(去識別化後)
     jq -r "${ROWS}" "${BODY}"; tok="$(jq -r "${TOK}" "${BODY}")"
   done
   CONT_N="${i}"

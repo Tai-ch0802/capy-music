@@ -26,6 +26,16 @@ type Config struct {
 	AIBaseURL      string `json:"ai_base_url,omitempty"`     // 到 /v1 為止、尾端沒有 /(ai.NormalizeBaseURL)
 	AIModel        string `json:"ai_model,omitempty"`        // 原樣送進 chat/completions 的 model 欄
 	NativeLanguage string `json:"native_language,omitempty"` // 母語,BCP 47 正規化後的代碼;空 = 跟介面語系(language)
+	// YouTube(決策 60):登入的 YouTube Music 帳號(非機密;顯示用,ChannelID 是清單 id 的前綴)。跟 GoogleEmail 是兩個帳號,
+	// 可以不同;cookie 在 keychain(youtube.headers)。
+	YouTube *YouTubeAccount `json:"youtube_account,omitempty"`
+}
+
+// YouTubeAccount:account_menu 回的帳號名、handle(@…)與頻道 id(UC…)。
+type YouTubeAccount struct {
+	Name      string `json:"name"`
+	Handle    string `json:"handle,omitempty"`
+	ChannelID string `json:"channel_id"`
 }
 
 // Dir 回傳設定目錄(不建立)。CAPY_CONFIG_DIR 可整個覆寫(測試與可攜設定用)。

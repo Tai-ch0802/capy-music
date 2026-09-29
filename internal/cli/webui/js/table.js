@@ -61,6 +61,18 @@ export function spotifyLink(kind, id, title, cls = 'btn btn--ghost') {
   return a;
 }
 
+// youtubeLink:連回 music.youtube.com 上的那一首(YouTube Music 沒有播放遙控,決策 60;顯示 YouTube 內容要讓人回得去)。
+export function youtubeLink(id, title, cls = 'btn btn--ghost') {
+  const a = document.createElement('a');
+  a.className = cls;
+  a.href = `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = t('webui.search.open_youtube');
+  a.setAttribute('aria-label', `${t('webui.search.open_youtube')}: ${title}`);
+  return a;
+}
+
 // linkColumn:在 renderTable 畫好的表最後補一欄 Spotify 連結(只在頁面上,不動命令的 TSV 與機器欄位)。
 // pick(row, i) 回 { kind, id, title } 或 null。一列都連不出去就不補——Apple 或本機的表不會多出一欄空白。
 export function linkColumn(tbl, rows, pick) {

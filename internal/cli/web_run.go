@@ -158,7 +158,8 @@ var webDenyTokens = map[string]error{
 	"--client-secret":   i18n.Errorf("web.deny.client_secret"),
 	"--developer-token": i18n.Errorf("web.deny.token"),
 	"--user-token":      i18n.Errorf("web.deny.token"),
-	"--api-key":         i18n.Errorf("web.deny.api_key"), // wiki setup(決策 59):金鑰與自訂標頭走精靈的 Secret 欄
+	"--headers-file":    i18n.Errorf("web.deny.headers_file"), // youtube(決策 60):cookie 走精靈的 Secret 欄;檔案路徑會讓伺服器讀任意檔
+	"--api-key":         i18n.Errorf("web.deny.api_key"),      // wiki setup(決策 59):金鑰與自訂標頭走精靈的 Secret 欄
 	"--header":          i18n.Errorf("web.deny.header"),
 }
 

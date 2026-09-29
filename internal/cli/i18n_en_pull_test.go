@@ -59,8 +59,8 @@ func TestEnglishPlLinkPullUnlink(t *testing.T) {
 		"pl pull nothing":                  `master copy "nothing" not found — run capy pl link nothing <provider>:<playlist> first`,
 		"pl unlink commute apple":          "commute (" + pid + ") isn't linked to apple",
 		"pl unlink nothing apple":          `master copy "nothing" not found`,
-		"pl unlink commute tidal":          `provider must be spotify|apple|local: "tidal"`,
-		"pl pull commute --provider tidal": `provider must be spotify|apple|local: "tidal"`,
+		"pl unlink commute tidal":          `provider must be spotify|apple|local|youtube: "tidal"`,
+		"pl pull commute --provider tidal": `provider must be spotify|apple|local|youtube: "tidal"`,
 		"pl pull --all --yes --force":      "--force works with a single playlist only (capy pl pull <name> --force), not with --all",
 	} {
 		if _, _, err := runPull(t, strings.Fields(args)...); err == nil || err.Error() != want {
@@ -89,13 +89,13 @@ func TestEnglishPlLinkRefusals(t *testing.T) {
 		{"pl link hits spotify:ed", "can't read the contents of spotify playlist ed (an app in development mode can't read Spotify's own or other users' playlists), so it can't be linked"},
 		{"pl link other spotify:p1", "spotify:p1 is already linked to master copy commute (" + pid + "); a platform playlist can be linked to only one master copy"},
 		{"pl link commute spotify:p2", "commute (" + pid + ") is already linked to spotify:p1; run capy pl unlink commute spotify first"},
-		{"pl link commute tidal:p2", `the format is <provider>:<playlist-id-or-name>, where provider is spotify|apple|local: "tidal:p2"`},
+		{"pl link commute tidal:p2", `the format is <provider>:<playlist-id-or-name>, where provider is spotify|apple|local|youtube: "tidal:p2"`},
 		{"pl link public spotify:" + pub, "spotify:" + pub + " isn't in your list of playlists (only what capy pl list shows counts): pull treats playlists missing from that list as deleted and unlinks them automatically, so it can't be linked"},
 		{"pl link 01ARZ3NDEKTSV4RRFFQ69G5FAV spotify:p10", "no master copy has pid 01ARZ3NDEKTSV4RRFFQ69G5FAV"},
 		// --create:平台上已有同名(一個 / 多個)、第二個參數給成 provider:ref,都在建清單之前擋下。
 		{"pl link --create winter spotify", `spotify already has a playlist named "winter" (p2): to link it, run capy pl link "winter" spotify:p2; if you really want another one, create it in the app first and link it with spotify:<ID>`},
 		{"pl link --create run spotify", `spotify already has 2 playlists named "run" (p5, p6): pick one and link it with capy pl link "run" spotify:<ID>`},
-		{"pl link --create night spotify:p1", `"spotify:p1" isn't a platform: with --create, the second argument is just the platform (spotify|apple|local), and the new playlist is named after the master copy`},
+		{"pl link --create night spotify:p1", `"spotify:p1" isn't a platform: with --create, the second argument is just the platform (spotify|apple|local|youtube), and the new playlist is named after the master copy`},
 	} {
 		if _, _, err := runPull(t, strings.Fields(c.args)...); err == nil || err.Error() != c.want {
 			t.Errorf("%s:\n got %v\nwant %s", c.args, err, c.want)
@@ -189,11 +189,11 @@ func TestEnglishPlLocalForeignAndTakeover(t *testing.T) {
 	device := host + " (" + devA + ")"
 	setDevice(t, devB)
 	_, errs := mustPull(t, "pl", "pull", "commute", "--yes")
-	if want := "Skipping local:" + devA + "/mix.m3u8 of commute: it belongs to device " + device + " (to take it over on this computer: capy pl link commute local:<file-name>)\n"; !strings.Contains(errs, want) {
+	if want := "Skipping local:" + devA + "/mix.m3u8 of commute: it belongs to device " + device + " (to take it over on this computer: capy pl link commute local:<id-or-name>)\n"; !strings.Contains(errs, want) {
 		t.Fatalf("stderr 少了 %q:\n%s", want, errs)
 	}
 	out, _ := mustPull(t, "pl", "link", "commute", "local:mix.m3u8")
-	if want := "commute (" + pid + ") was linked to local on device " + device + "; it now points to this computer, and that device will skip this playlist from now on\n"; !strings.HasPrefix(out, want) {
+	if want := "commute (" + pid + ") was linked to local of device " + device + "; it now points to this one, and that side will skip this playlist from now on\n"; !strings.HasPrefix(out, want) {
 		t.Fatalf("接管:\n got %q\nwant %q", out, want)
 	}
 }

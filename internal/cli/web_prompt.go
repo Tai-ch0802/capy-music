@@ -249,6 +249,7 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 	origCID, origDisclosure, origApple := runClientIDWizard, confirmAppleDisclosure, runAppleWizardInputs
 	origGoogle, origGoogleSecret, origOpen := googleWizard, googleSecretPrompt, openBrowser
 	origWiki := wikiSetupForm
+	origYTDisclosure, origYTInput, origYTAccount := confirmYouTubeDisclosure, runYouTubeWizardInput, confirmYouTubeAccount
 	isInteractive = func(*cobra.Command) bool { return true }
 	stdinIsTTY = func() bool { return true }
 	bothTTY = func(*cobra.Command) bool { return true } // reviewIsTTY / migrateIsTTY 委派到這裡(T1)
@@ -263,13 +264,60 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 	googleSecretPrompt = s.webGoogleSecretPrompt
 	openBrowser = s.webOpenBrowser
 	wikiSetupForm = s.webWikiSetupForm
+	confirmYouTubeDisclosure, runYouTubeWizardInput, confirmYouTubeAccount = s.webYouTubeDisclosure, s.webYouTubeWizardInput, s.webYouTubeAccountConfirm
 	return func() {
 		isInteractive, stdinIsTTY, bothTTY = origInteractive, origStdin, origBoth
 		confirmWrite, pickOne, promptNewName, reviewPrompt = origConfirm, origPick, origName, origReview
 		runClientIDWizard, confirmAppleDisclosure, runAppleWizardInputs = origCID, origDisclosure, origApple
 		googleWizard, googleSecretPrompt, openBrowser = origGoogle, origGoogleSecret, origOpen
 		wikiSetupForm = origWiki
+		confirmYouTubeDisclosure, runYouTubeWizardInput, confirmYouTubeAccount = origYTDisclosure, origYTInput, origYTAccount
 	}
+}
+
+// webYouTubeDisclosure:同 Apple——揭露不可跳過,由伺服器判定(決策 60)。
+func (s *webServer) webYouTubeDisclosure() error {
+	a, err := s.ask(webPrompt{Kind: "confirm", Title: i18n.T("auth.youtube.confirm.question"), Note: &webNote{Title: i18n.T("auth.youtube.confirm.title"), Body: youtubeDisclosure()},
+		Affirmative: i18n.T("auth.youtube.confirm.agree"), Negative: i18n.T("auth.youtube.confirm.cancel"), Default: false})
+	if err != nil || a.Cancel {
+		return huh.ErrUserAborted
+	}
+	if !a.boolValue() {
+		return i18n.Errorf("auth.youtube.err.declined")
+	}
+	return nil
+}
+
+// webYouTubeWizardInput:貼整段標頭的 Secret + Multiline 欄(cookie 不進事件、不記 log、不回顯;同 wiki setup 的標頭欄);
+// 逾時 30 分鐘(去 DevTools 抄可能超過 5 分鐘)。
+func (s *webServer) webYouTubeWizardInput() (string, error) {
+	p := webPrompt{Kind: "form", Title: i18n.T("webprompt.youtube.paste_headers"), Note: &webNote{Title: i18n.T("auth.youtube.wizard.guide_title"), Body: youtubeGuide()},
+		Fields: []webField{{Name: "headers", Label: i18n.T("auth.youtube.wizard.headers_label"), Secret: true, Multiline: true}}}
+	for {
+		a, err := s.ask(p)
+		if err != nil || a.Cancel {
+			return "", huh.ErrUserAborted
+		}
+		v := a.formValue()
+		if strings.TrimSpace(v["headers"]) == "" {
+			p.Error = i18n.T("webprompt.err.field", "field", "headers", "err", i18n.T("auth.youtube.err.empty"))
+			continue
+		}
+		return v["headers"], nil
+	}
+}
+
+// webYouTubeAccountConfirm:貼上後帳號確認(抄錯 x-goog-authuser 會變成別人,決策 60)。
+func (s *webServer) webYouTubeAccountConfirm(name, handle string) error {
+	a, err := s.ask(webPrompt{Kind: "confirm", Title: i18n.T("auth.youtube.wizard.account_question", "account", youtubeAccountLabel(name, handle)),
+		Affirmative: i18n.T("auth.youtube.wizard.account_yes"), Negative: i18n.T("auth.youtube.wizard.account_no"), Default: true})
+	if err != nil || a.Cancel {
+		return huh.ErrUserAborted
+	}
+	if !a.boolValue() {
+		return i18n.Errorf("auth.youtube.err.wrong_account")
+	}
+	return nil
 }
 
 // webConfirmWrite:按「取消」回 (false, nil)(pull.go → PendingError exit 2,同終端機選取消);

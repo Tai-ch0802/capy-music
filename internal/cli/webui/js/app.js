@@ -105,7 +105,7 @@ document.addEventListener('capy:busy', () => notice(busyHint())); // 頁面按�
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
 // ── 路由:九頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–9;
 // 預設落在搬家(決策 45),後三頁收在「進階」;歌曲 wiki(決策 59)在搜尋之後。
-const providers = { list: ['spotify', 'apple', 'local'], current: 'spotify' };
+const providers = { list: ['spotify', 'apple', 'local', 'youtube'], current: 'spotify' };
 const PAGES = ['move', 'playlists', 'sync', 'search', 'wiki', 'account', 'console', 'isrc', 'doctor'];
 const ADVANCED = ['console', 'isrc', 'doctor'];
 const ready = new Set();

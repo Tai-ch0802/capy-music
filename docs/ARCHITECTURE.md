@@ -752,7 +752,7 @@ SQLite 是 **cache**,不是 source of truth。刪掉整個 db 應該能從 Drive
 | 不可下載/修改 MusicKit Content | 我們只碰 metadata,不碰音訊 |
 | Spotify Developer Policy | BYO Client ID,使用者自負其 app 的合規;web 介面顯示 Spotify 曲目或清單的表格(搜尋、清單頁、同步頁、搬家精靈、主控台的變更表)連回 Spotify,連結字用設計規範核可的「Listen on Spotify」;播放列的曲名、ISRC 頁的平台卡片也連回去(Policy II.4.b)。規範要的 logo 依決策 48 不放;沒連的地方與理由見計畫 2026-09-24 §1.7 S7 |
 | Google API Services User Data Policy | 只用非敏感 scope,資料只存使用者自己的 appDataFolder,**我們的伺服器不存任何使用者資料** |
-| 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)加上母語的名稱(prompt 的 `{language}`,只用來指定回答的語言;政策中英都寫了)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,capy 不連 YouTube;AI 正文不逐字重製歌詞、結尾免責行不可關 |
+| 使用者自己的 AI 端點(2026-09-28,決策 59;T1 起) | 全面 BYO:capy 不預設、不架、不代持任何 AI 端點或金鑰;只有使用者用 `capy wiki setup` 設定後,`wiki setup` 會連到那個端點驗證連線、`capy wiki` 會把那首歌的**歌名、歌手、專輯、發行日期、曲風**(`ai.SentFields`,程式 / 政策 / README 三處一字對齊並釘測試)加上母語的名稱(prompt 的 `{language}`,只用來指定回答的語言;政策中英都寫了)送過去;端點是使用者自選的服務、適用它的政策;API key 與自訂標頭只在 keychain;MV 只是 YouTube 的搜尋網址、由瀏覽器開,歌曲 wiki 本身不連 YouTube(連 YouTube Music 的是 provider,決策 60);AI 正文不逐字重製歌詞、結尾免責行不可關 |
 | YouTube 網頁播放器的 cookie 供第三方使用(2026-09-29,決策 60) | **Google 未授權**,YouTube 服務條款禁止自動化存取:cookie 由使用者自己複製、程式只指導不擷取、指令內強制揭露(明講是 Google 帳號在 YouTube 的 session)、風險自負;只寫使用者自建的清單、絕不 `playlist/delete`;`migrate` / `resolve` 送給 Google 的只有搜尋字(歌名與歌手),政策中英都寫 |
 
 本專案沒有任何遠端伺服器端元件(v0.5 起 Worker 已移除;`capy --web` 只在使用者自己的電腦 127.0.0.1 起 HTTP,不對外、資料不離開那台電腦、不經過我們):**沒有任何使用者資料或憑證經過我們**。隱私權政策(Google OAuth 同意畫面與 basic verification 需要的 URL)掛在品牌網站 <https://capy.taislife.work>(2026-09-21;首頁 / `/privacy` / `/terms`,中英各一份,原始檔在 `site/`):Cloudflare Workers 的**純靜態資產**——沒有 Worker 程式、沒有 binding、零外部資源、沒有 cookie 與分析,不構成「伺服器端元件」。政策的核心就是上面那一句;`site/site_test.go` 釘住「政策揭露的 scope = `auth.GoogleScopes`」,兩邊不一致測試會紅。(2026-09-28,決策 59:歌曲 wiki 的 AI 端點也在這句的範圍內——它是使用者自己設定的服務,資料直接從使用者的電腦送到使用者選的端點,不經過我們;政策 §4 / §5 同 PR 補上,`site_test` 另釘一條。)
@@ -902,7 +902,7 @@ canonical model → `pl pull`(平台 → canonical)→ resolver(ISRC + fuzzy)→
 
 第四個平台,使用者要的是清單搬遷與同步,而且 YouTube Music 帳號要跟 Google Drive 帳號分開(可以是不同帳號)。官方 Data API 每專案每天只有 100 次搜尋、sensitive scope 不能掛內建 client,所以走 music.youtube.com 自己用的 InnerTube + 使用者自抄 cookie(Apple 決策 8 同款 BYO;§1.5、§4.6)。Q1–Q11 全部照推薦定案。T0 計畫 + 探測腳本 `scripts/p10/youtube-probe.sh`(真帳號、拋棄式清單;使用者授權)+ 本文;T1 `internal/auth/youtube` + `internal/provider/youtube` 讀端 + `auth login | logout | status` / `doctor` + 政策 / 條款 / 首頁 / README / CLAUDE.md 同 PR;T2 寫端(一次 `edit_playlist` 整批取代、`CreatePlaylist`)+ 帳號範圍的清單 id + e2e;T3 web(搬家精靈、搜尋頁)+ 指南。驗收 R-39–R-46 在計畫 §10。
 
-**狀態(2026-09-29)**:T0 進行中(PR #116);探測還沒跑。
+**狀態(2026-09-29)**:T0 探測跑完(計畫 §4 的結果:白名單三個 `__Secure-3P*` cookie、channel id 拿得到、單請求 ADD 640 首、整批取代原子、壞 id 整包 400;cookie 壽命第 1 / 3 / 7 天 `MODE=ping` 待測);T1(讀端 + `auth login | logout | status` / `doctor` + 帳號範圍的清單 id + 政策 / 條款 / 首頁 / README / CLAUDE.md)在 PR 上;T2 / T3 未動。
 
 ---
 

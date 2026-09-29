@@ -131,7 +131,7 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	writeFile(t, root, "通勤.m3u8", "#EXTM3U\na.mp3\nwith space.mp3\n")
 	before := driveFiles(t, dc)
 	out, errs := mustPull(t, "pl", "sync", "--all", "--yes")
-	if !strings.Contains(errs, "跳過 通勤 的 local:"+devA+"/通勤.m3u8 屬於裝置") || !strings.Contains(errs, "capy pl link 通勤 local:<檔名>") || strings.Contains(errs, "取消連結") {
+	if !strings.Contains(errs, "跳過 通勤 的 local:"+devA+"/通勤.m3u8 屬於裝置") || !strings.Contains(errs, "capy pl link 通勤 local:<id 或名稱>") || strings.Contains(errs, "取消連結") {
 		t.Fatalf("foreign 只跳過並指路:%s%s", out, errs)
 	}
 	if strings.Count(errs, "跳過 通勤 的 local") != 1 { // push 半邊不重印(也不印「不支援寫入」)
@@ -155,7 +155,7 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 			}
 		}
 	}
-	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "屬於裝置") || !strings.Contains(err.Error(), "capy pl link 通勤 local:<檔名>") {
+	if _, _, err := runPull(t, "pl", "push", "通勤", "--yes", "--provider", "local"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "屬於裝置") || !strings.Contains(err.Error(), "capy pl link 通勤 local:<id 或名稱>") {
 		t.Fatalf("B 上明說 --provider local 推別台的:exit 1 並指路(不是靜靜的無變更):%v", err)
 	}
 	if _, errs, err := runPull(t, "pl", "push", "通勤", "--yes"); err != nil || !strings.Contains(errs, "屬於裝置") {
@@ -163,7 +163,7 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	}
 	// B 接管
 	out, _ = mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
-	if !strings.Contains(out, "原本連到裝置") || !strings.Contains(out, "已改為本機") {
+	if !strings.Contains(out, "原本連到裝置") || !strings.Contains(out, "已改為這裡") {
 		t.Fatalf("接管要說明:%s", out)
 	}
 	if pl := drivePlaylist(t, dc); pl.Links["local"] != devB+"/通勤.m3u8" {

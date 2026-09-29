@@ -149,10 +149,10 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			link := pl.Links[prov]
 			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單只跳過——不算 refused;明說要推這個平台才算錯(同下面寫入端的規矩)
 				if strict && only == prov {
-					return nil, nil, nil, nil, i18n.Errorf("push.err.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "device", deviceName(s, link))
+					return nil, nil, nil, nil, i18n.Errorf("push.err.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "owner", linkOwner(p, s, link))
 				}
 				if strict { // 單獨 push 沒人說過;sync 的 pull 半邊已經說過一次,不重印
-					fmt.Fprintln(stderr, i18n.T("push.skip.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "device", deviceName(s, link)))
+					fmt.Fprintln(stderr, i18n.T("push.skip.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "owner", linkOwner(p, s, link)))
 				}
 				continue
 			}

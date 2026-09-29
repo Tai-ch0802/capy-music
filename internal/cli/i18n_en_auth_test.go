@@ -122,7 +122,7 @@ func TestAuthLoginEnglish(t *testing.T) {
 	out, err := runCLI(t, "auth", "login", "--help")
 	if err != nil || strings.Contains(out, "--auto") ||
 		!strings.Contains(out, "Log in to a platform (Spotify: your own app + PKCE;") ||
-		!strings.Contains(out, `confirms you have read the "not officially supported by Apple" disclosure`) {
+		!strings.Contains(out, `confirms you have read the "not officially supported" disclosure`) {
 		t.Errorf("auth login --help:%v %q", err, out)
 	}
 	if out, _ := runCLI(t, "auth", "--help"); !strings.Contains(out, "Show each platform's authorization status") ||
@@ -134,8 +134,8 @@ func TestAuthLoginEnglish(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"auth", "login", "tidal"}, "currently supported: spotify, apple, google"},
-		{[]string{"auth", "logout", "tidal"}, "currently supported: spotify, apple, google"},
+		{[]string{"auth", "login", "tidal"}, "currently supported: spotify, apple, google, youtube"},
+		{[]string{"auth", "logout", "tidal"}, "currently supported: spotify, apple, google, youtube"},
 		{[]string{"auth", "login", "local"}, "local has no credentials (plan §2 A8): just run capy config set local_root <directory>"},
 		{[]string{"auth", "login", "spotify", "--client-id", "not-hex"}, "the client ID should be 32 lowercase hex characters (copy it from the dashboard)"},
 		{[]string{"auth", "login", "apple", "--user-token", "MUT1"}, "got a user token (--user-token / CAPY_APPLE_USER_TOKEN) but no developer token — pass both, or neither (wizard / --auto)"},
@@ -260,7 +260,9 @@ func TestAuthStatusEnglish(t *testing.T) {
 		"apple:\n" +
 		"  developer token: valid until " + exp.Format(time.RFC3339) + "\n" +
 		"  user token: present\n" +
-		"  storefront: not set\n"
+		"  storefront: not set\n" +
+		"youtube:\n" +
+		"  cookie: missing (run capy auth login youtube)\n"
 	if err != nil || out != want {
 		t.Fatalf("auth status:\n got %q\nwant %q", out, want)
 	}

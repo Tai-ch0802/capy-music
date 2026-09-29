@@ -1,6 +1,6 @@
 // search.js:#/search —— 表單組出 capy search,結果表加一個「播放」列動作(play --id 是精確命中、不再搜尋;Apple 叫「在 Music.app 開啟」)。
 import { el, quote, btn, field, input, select, providerOptions, providerName, emptyState, pageHead } from './common.js';
-import { renderTable, spotifyLink } from '../table.js';
+import { renderTable, spotifyLink, youtubeLink } from '../table.js';
 import { t } from '../i18n.js';
 
 export function initSearch(root, api, con, notice, providers) {
@@ -66,8 +66,9 @@ function resultTable(header, rows, prov, con, notice) {
       const line = said.trim();
       if (code === 0 && line && !line.startsWith('▶')) notice(line);
     };
-    td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
-    const link = prov === 'spotify' && spotifyLink('track', id, title);
+    // YouTube Music 沒有播放(決策 60):不放播放鈕,改放連回 music.youtube.com 的連結(table.js 的 youtubeLink)。
+    if (prov !== 'youtube') td.appendChild(btn(apple ? t('webui.search.open_music') : t('webui.search.play'), 'btn--ghost', play));
+    const link = (prov === 'spotify' && spotifyLink('track', id, title)) || (prov === 'youtube' && youtubeLink(id, title));
     if (link) td.appendChild(link);
     tr.appendChild(td);
   });

@@ -1121,7 +1121,10 @@ func TestWebNowUnsupportedNotRetried(t *testing.T) {
 		if id == "local" {
 			localBuilt.Add(1)
 		}
-		return fakes[id], nil
+		if p, ok := fakes[id]; ok {
+			return p, nil
+		}
+		return nil, errors.New(id + ":沒登入") // youtube:沒登入(newProvider 的契約是 provider 或 error,不會 nil, nil)
 	}
 	t.Cleanup(func() { newProvider = orig })
 	s, c := startWeb(t)

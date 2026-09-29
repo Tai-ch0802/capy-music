@@ -1284,7 +1284,7 @@ await scenario('14', async () => {
 
   const zh = await draw();
   check(zh.runs.join('|') === 'auth status --json|doctor', `帳號頁跑 --json、診斷頁的預設平台不帶 --provider:${zh.runs}`);
-  check(zh.rows.join('|') === '✓ 已登入|⚠ 已過期|⚠ 讀取 keychain 失敗', `三列的狀態看 state:${zh.rows}`);
+  check(zh.rows.join('|') === '✓ 已登入|⚠ 已過期|· 未登入|⚠ 讀取 keychain 失敗', `四列的狀態看 state(YouTube Music 沒有 youtube 段 = 未登入):${zh.rows}`);
   check(stateOf('apple', parseStatus('spotify:\n  refresh token: keychain 存在\n').apple).text === '未登入', '讀不懂(不是 JSON)就是未登入,不回頭解析文字');
   check(zh.acct.includes('Google Drive(保管你的清單)') && zh.acct.includes('重新連接') && zh.acct.includes('client ID 已設定') && !zh.acct.includes('client_id'), `帳號頁的 zh-TW:${zh.acct}`);
   check(zh.running === '檢查中…' && zh.doctor.includes('還沒檢查過。按「開始檢查」。'), `診斷頁的 zh-TW:${zh.running} ${zh.doctor}`);
@@ -1299,7 +1299,7 @@ await scenario('14', async () => {
     const en = await draw();
     const all = [en.acct, en.doctor, en.running, en.isrc].join('\n');
     check(!/[\p{Script=Han}　-〿＀-￯]/u.test(all), `英文畫出來不可以有中文字:${all}`);
-    check(en.rows.join('|') === "✓ Logged in|⚠ Expired|⚠ Couldn't read the keychain", `英文的三列狀態:${en.rows}`);
+    check(en.rows.join('|') === "✓ Logged in|⚠ Expired|· Not logged in|⚠ Couldn't read the keychain", `英文的四列狀態:${en.rows}`);
     check(JSON.stringify(en.labels) === JSON.stringify(['Checking account connections', 'Checking config, logins and connections']) && /^Switching /.test(t('webui.lang.switching')),
       `英文的 label 是進行式:${JSON.stringify(en.labels)} / ${t('webui.lang.switching')}`);
     check(en.running === 'Checking…' && en.isrc.includes('ISRC lookup') && en.isrc.includes('Look up') && en.isrc.includes('Taiwan') && en.isrc.includes('Open in Spotify') && en.isrc.includes('(unavailable) · confidence 95 · isrc · pinned'),
@@ -1312,28 +1312,30 @@ await scenario('14', async () => {
 
 // 14b. 帳號頁的細節欄(i18n T3 自審):auth status --json 的事實畫成給人看、跟著語系的句子,沒有的事實不畫(整欄都沒有就是 —);
 //      JSON 的欄名與列舉值(client_id: / missing / developer_token …)不上畫面。到期時間用這台電腦的時區
-//      (預期值用同一台機器的 Date 算,不靠 TZ:CI 的 Windows 不一定吃 TZ 環境變數)。三列的順序是 Spotify、Apple Music、Google Drive。
+//      (預期值用同一台機器的 Date 算,不靠 TZ:CI 的 Windows 不一定吃 TZ 環境變數)。四列的順序是 Spotify、Apple Music、YouTube Music、Google Drive;
+//      YouTube Music 的細節是登入時記下的帳號名與 handle(決策 60),channel_id 不上畫面。
 await scenario('14b', async () => {
   const { initAccount } = await import('./pages/account.mjs');
   const fixtures = [
     { spotify: { state: 'ok', client_id: 'set' },
       google: { state: 'ok', client: 'builtin', access_token_expiry: '2026-09-24T05:00:00Z', email: 'me@example.com', device_id: 'dev1' },
-      apple: { state: 'ok', developer_token: 'ok', developer_token_expiry: '2026-10-01T04:30:00Z', user_token: 'ok', storefront: 'tw' } },
+      apple: { state: 'ok', developer_token: 'ok', developer_token_expiry: '2026-10-01T04:30:00Z', user_token: 'ok', storefront: 'tw' },
+      youtube: { state: 'ok', account: 'Someone', handle: '@someone', channel_id: 'UC1' } },
     { spotify: { state: 'keychain_error', client_id: 'malformed' }, google: { state: 'missing', client: 'none' },
       apple: { state: 'expired', developer_token: 'expired', developer_token_expiry: '2026-01-01T00:00:00Z', user_token: 'missing' } },
     { spotify: { state: 'missing', client_id: 'missing' }, google: { state: 'keychain_error', client: 'config' },
-      apple: { state: 'keychain_error', developer_token: 'keychain_error', user_token: 'keychain_error' } },
+      apple: { state: 'keychain_error', developer_token: 'keychain_error', user_token: 'keychain_error' }, youtube: { state: 'keychain_error' } },
   ];
   const p2 = (n) => String(n).padStart(2, '0');
   const local = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
   const [valid, expired] = [local('2026-10-01T04:30:00Z'), local('2026-01-01T00:00:00Z')];
   const want = {
-    'zh-TW': [['不知道登入何時失效(用舊版的 capy 登入的;Spotify 的登入六個月失效,按「重新連接」之後就會顯示日期) · client ID 已設定', `developer token 有效至 ${valid} · 商店地區:台灣`, 'me@example.com'],
-      ['client ID 格式不對', `developer token 已於 ${expired} 過期`, '—'], ['—', '—', '—']],
-    en: [['Login expiry unknown (you logged in with an older version of capy; Spotify logins expire after six months, and the date shows up after you press "Reconnect") · client ID set', `developer token valid until ${valid} · store region: Taiwan`, 'me@example.com'],
-      ['client ID has the wrong format', `developer token expired on ${expired}`, '—'], ['—', '—', '—']],
+    'zh-TW': [['不知道登入何時失效(用舊版的 capy 登入的;Spotify 的登入六個月失效,按「重新連接」之後就會顯示日期) · client ID 已設定', `developer token 有效至 ${valid} · 商店地區:台灣`, 'Someone (@someone)', 'me@example.com'],
+      ['client ID 格式不對', `developer token 已於 ${expired} 過期`, '—', '—'], ['—', '—', '—', '—']],
+    en: [['Login expiry unknown (you logged in with an older version of capy; Spotify logins expire after six months, and the date shows up after you press "Reconnect") · client ID set', `developer token valid until ${valid} · store region: Taiwan`, 'Someone (@someone)', 'me@example.com'],
+      ['client ID has the wrong format', `developer token expired on ${expired}`, '—', '—'], ['—', '—', '—', '—']],
   };
-  const raw = ['client_id', 'developer_token', 'user_token', 'access_token', 'device_id', 'dev1', 'storefront', 'missing', 'keychain_error', 'builtin', 'malformed', 'T04:30', ': ok', ': set'];
+  const raw = ['client_id', 'developer_token', 'user_token', 'access_token', 'device_id', 'dev1', 'storefront', 'missing', 'keychain_error', 'builtin', 'malformed', 'T04:30', ': ok', ': set', 'channel_id', 'UC1'];
   try {
     for (const [lang, file] of [['zh-TW', './i18n.json'], ['en', './i18n-en.json']]) {
       i18nFile = file;

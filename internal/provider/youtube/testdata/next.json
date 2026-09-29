@@ -1,0 +1,120 @@
+{
+ "contents": {
+  "singleColumnMusicWatchNextResultsRenderer": {
+   "tabbedRenderer": {
+    "watchNextTabbedResultsRenderer": {
+     "tabs": [
+      {
+       "tabRenderer": {
+        "content": {
+         "musicQueueRenderer": {
+          "content": {
+           "playlistPanelRenderer": {
+            "contents": [
+             {
+              "playlistPanelVideoWrapperRenderer": {
+               "primaryRenderer": {
+                "playlistPanelVideoRenderer": {
+                 "title": {
+                  "runs": [
+                   {
+                    "text": "Song 1"
+                   }
+                  ]
+                 },
+                 "longBylineText": {
+                  "runs": [
+                   {
+                    "text": "Artist 1",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "UCartistsPuxpg",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "Album 1",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "MPREb_albumPfJu",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "2013"
+                   }
+                  ]
+                 },
+                 "lengthText": {
+                  "runs": [
+                   {
+                    "text": "4:18"
+                   }
+                  ]
+                 },
+                 "selected": true,
+                 "navigationEndpoint": {
+                  "watchEndpoint": {
+                   "videoId": "vid00000001",
+                   "params": "OAHyAQIIAZIEI1FQSXJMZENfWm9VM1FPdVBHb2JYaXFQbWs4N0Qtc194ODQ56gQLX0dXS2txTm95RUE%3D",
+                   "watchEndpointMusicSupportedConfigs": {
+                    "watchEndpointMusicConfig": {
+                     "hasPersistentPlaylistPanel": true,
+                     "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                    }
+                   }
+                  }
+                 },
+                 "videoId": "vid00000001",
+                 "shortBylineText": {
+                  "runs": [
+                   {
+                    "text": "OneRepublic"
+                   }
+                  ]
+                 },
+                 "canReorder": true,
+                 "playlistEditParams": "SiNRUElyTGRDX1pvVTNRT3VQR29iWGlxUG1rODdELXNfeDg0OQ%3D%3D",
+                 "queueNavigationEndpoint": {
+                  "queueAddEndpoint": {
+                   "queueTarget": {
+                    "videoId": "vid00000001",
+                    "backingQueuePlaylistId": "QPIrLdC_ZoU3QOuPGobXiqPmk87D-s_x849"
+                   },
+                   "queueInsertPosition": "INSERT_AT_END",
+                   "params": "Q0FJJTNE"
+                  }
+                 }
+                }
+               }
+              }
+             }
+            ]
+           }
+          }
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}
