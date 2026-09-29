@@ -131,7 +131,7 @@ echo "   HTTP ${code};第一項:$(jq -r '[.. | objects | .playlistPanelVideoRend
 echo "⑪ 同一段 cookie 對 google.com(唯讀)"
 printf '   myaccount.google.com → HTTP %s\n' "$(curl -sS -o /dev/null -w '%{http_code} → %{redirect_url}' -H "Cookie: ${COOKIE}" -H "User-Agent: ${UA}" https://myaccount.google.com/)"
 printf '   drive/v3/about(SAPISIDHASH,origin music)→ HTTP %s\n' "$(curl -sS -o "${OUT}/11-drive.json" -w '%{http_code}' -H "Cookie: ${COOKIE}" -H "Authorization: $(authz)" -H "X-Origin: ${ORIGIN}" -H "User-Agent: ${UA}" 'https://www.googleapis.com/drive/v3/about?fields=user')"
-printf '   www.youtube.com/youtubei/v1/account/account_menu(同 cookie、origin 改 www)→ HTTP %s\n' "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Cookie: ${COOKIE}" -H "X-Goog-AuthUser: ${AU}" -H "Content-Type: application/json" -H "User-Agent: ${UA}" --data-binary "$(ctx '{}' | sed 's/WEB_REMIX/WEB/')" 'https://www.youtube.com/youtubei/v1/account/account_menu?alt=json&prettyPrint=false')"
+printf '   www.youtube.com/youtubei/v1/account/account_menu(同 cookie、origin 改 www)→ HTTP %s\n' "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Cookie: ${COOKIE}" -H "X-Goog-AuthUser: ${AU}" -H "Content-Type: application/json" -H "User-Agent: ${UA}" --data-binary "$(ctx '{}' | sed -e 's/WEB_REMIX/WEB/' -e 's/"1\.\([0-9]*\)\.01\.00"/"2.\1.00.00"/')" 'https://www.youtube.com/youtubei/v1/account/account_menu?alt=json&prettyPrint=false')"
 
 if [ "${RATE:-1}" = "1" ]; then
   echo "⑨ 限流:連打 60 次 search"
@@ -153,7 +153,8 @@ edit() { # edit <actions json 陣列>:一個 browse/edit_playlist 請求
 }
 adds() { printf '%s\n' "$@" | jq -R . | jq -sc 'map({action:"ACTION_ADD_VIDEO", addedVideoId:., dedupeOption:"DEDUPE_OPTION_SKIP"})'; }
 removes_all() { rows "${PL}" | awk -F'\t' '$1!="-"' | jq -R 'split("\t") | {action:"ACTION_REMOVE_VIDEO", removedVideoId:.[0], setVideoId:.[1]}' | jq -sc .; }
-count() { rows "${PL}" | wc -l | tr -d ' '; }
+count() { rows "${PL}" | awk -F'\t' '$1!="-"' | wc -l | tr -d ' '; }
+vids() { rows "${PL}" | awk -F'\t' '$1!="-" {print $1}' | tr '\n' ' '; }
 cleanup() {
   [ -n "${PL}" ] || return 0
   if [ "${KEEP:-0}" = "1" ]; then echo "KEEP=1:保留測試清單 ${PL},請手動刪"; return 0; fi
@@ -169,45 +170,46 @@ MAXN="${PROBE_MAX:-${#MAT[@]}}"; [ "${MAXN}" -le "${#MAT[@]}" ] || MAXN="${#MAT[
 echo "⑤ 寫端(素材 ${#MAT[@]} 首,寫入上限 ${MAXN})"
 NAME="capy-probe-$(date +%s)"
 T0=$(date +%s); code="$(yt playlist/create "$(jq -nc --arg t "${NAME}" '{title:$t, privacyStatus:"PRIVATE"}')")"; keep 05a-create
-PL="$(jq -r '.playlistId // empty' "${BODY}")"; echo "   5a playlist/create → HTTP ${code} $(ok) id=${PL:-?}"
+PL="$(jq -r '.playlistId // empty' "${BODY}")"; st="$(ok)"; echo "   5a playlist/create → HTTP ${code} ${st} id=${PL:-?}"
 [ -n "${PL}" ] || { echo "   建不出清單,回應:$(head -c 300 "${BODY}")"; PL=""; exit 1; }
 for i in $(seq 1 30); do yt browse '{"browseId":"FEmusic_liked_playlists"}' >/dev/null; jq -e --arg b "VL${PL}" '[.. | objects | .browseId? // empty] | index($b) != null' "${BODY}" >/dev/null && { echo "   列表 $(( $(date +%s) - T0 )) s 後出現"; break; }; sleep 1; done
 
 n=100; [ "${n}" -le "${MAXN}" ] || n="${MAXN}"
 while :; do
-  code="$(edit "$(adds "${MAT[@]:0:${n}}")")"; keep "05b-add-${n}"
-  echo "   5b ADD ${n} 首一個請求 → HTTP ${code} $(ok);edit 結果 $(jq '.playlistEditResults | length' "${BODY}") 筆;讀回 $(count) 列"
-  [ "${code}" = "200" ] && [ "$(ok)" = "STATUS_SUCCEEDED" ] || break
-  code="$(edit "$(removes_all)")"; echo "      REMOVE 全部一個請求 → HTTP ${code} $(ok);讀回 $(count) 列"
+  code="$(edit "$(adds "${MAT[@]:0:${n}}")")"; keep "05b-add-${n}"; st="$(ok)"; nres="$(jq '.playlistEditResults | length' "${BODY}")"
+  echo "   5b ADD ${n} 首一個請求 → HTTP ${code} ${st};edit 結果 ${nres} 筆;讀回 $(count) 列"
+  [ "${code}" = "200" ] && [ "${st}" = "STATUS_SUCCEEDED" ] || break
+  code="$(edit "$(removes_all)")"; st="$(ok)"; echo "      REMOVE 全部一個請求 → HTTP ${code} ${st};讀回 $(count) 列"
   [ "${n}" -ge "${MAXN}" ] && break
   n=$((n*2)); [ "${n}" -le "${MAXN}" ] || n="${MAXN}"
 done
 
 m=50; [ "${m}" -le "${MAXN}" ] || m="${MAXN}"
-code="$(edit "$(adds "${MAT[@]:0:${m}}")")"; echo "   5c 先放 ${m} 首 → HTTP ${code} $(ok)"
-before="$(rows "${PL}" | cut -f1 | tr '\n' ' ')"
+if [ "$(count)" -gt 0 ]; then edit "$(removes_all)" >/dev/null; fi # 從空清單開始
+code="$(edit "$(adds "${MAT[@]:0:${m}}")")"; st="$(ok)"; echo "   5c 先放 ${m} 首 → HTTP ${code} ${st}"
+before="$(vids)"
 rev=($(printf '%s\n' "${MAT[@]:0:${m}}" | tail -r))
-code="$(edit "$(jq -nc --argjson r "$(removes_all)" --argjson a "$(adds "${rev[@]}")" '$r + $a')")"; keep 05c-replace
-after="$(rows "${PL}" | cut -f1 | tr '\n' ' ')"
+code="$(edit "$(jq -nc --argjson r "$(removes_all)" --argjson a "$(adds "${rev[@]}")" '$r + $a')")"; keep 05c-replace; st="$(ok)"
+after="$(vids)"
 if [ "${after}" = "$(printf '%s ' "${rev[@]}")" ]; then order="順序 = 反序 ✓"; else order="順序不是反序 ✗(before: ${before:0:60}… after: ${after:0:60}…)"; fi
-echo "      REMOVE ${m} + ADD ${m}(反序)同一請求 → HTTP ${code} $(ok);讀回 $(count) 列;${order}"
+echo "      REMOVE ${m} + ADD ${m}(反序)同一請求 → HTTP ${code} ${st};讀回 $(count) 列;${order}"
 
-code="$(edit "$(jq -nc --arg a "${MAT[1]}" --arg b "${MAT[2]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a, dedupeOption:"DEDUPE_OPTION_SKIP"},{action:"ACTION_ADD_VIDEO", addedVideoId:"zzzzzzzzzzz", dedupeOption:"DEDUPE_OPTION_SKIP"},{action:"ACTION_ADD_VIDEO", addedVideoId:$b, dedupeOption:"DEDUPE_OPTION_SKIP"}]')")"; keep 05d-bad_id
-echo "   5d 好 / 壞 / 好 三個 ADD 一個請求 → HTTP ${code} $(ok);讀回 $(count) 列(原子 = 還是 ${m};部分套用 = ${m}+2)"
+code="$(edit "$(jq -nc --arg a "${MAT[1]}" --arg b "${MAT[2]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a, dedupeOption:"DEDUPE_OPTION_SKIP"},{action:"ACTION_ADD_VIDEO", addedVideoId:"zzzzzzzzzzz", dedupeOption:"DEDUPE_OPTION_SKIP"},{action:"ACTION_ADD_VIDEO", addedVideoId:$b, dedupeOption:"DEDUPE_OPTION_SKIP"}]')")"; keep 05d-bad_id; st="$(ok)"
+echo "   5d 好 / 壞 / 好 三個 ADD 一個請求 → HTTP ${code} ${st};讀回 $(count) 列(原子 = 還是 ${m};部分套用 = ${m}+2)"
 
 c0="$(count)"
-code="$(edit "$(jq -nc --arg a "${MAT[0]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a}]')")"; echo "   5e 再加已在清單裡的一首、不帶 dedupeOption → HTTP ${code} $(ok);列數 ${c0} → $(count)"
-code="$(edit "$(jq -nc --arg a "${MAT[0]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a, dedupeOption:"DEDUPE_OPTION_SKIP"}]')")"; echo "      帶 DEDUPE_OPTION_SKIP → HTTP ${code} $(ok);列數 → $(count)"
+code="$(edit "$(jq -nc --arg a "${MAT[0]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a}]')")"; st="$(ok)"; echo "   5e 再加已在清單裡的一首、不帶 dedupeOption → HTTP ${code} ${st};列數 ${c0} → $(count)"
+code="$(edit "$(jq -nc --arg a "${MAT[0]}" '[{action:"ACTION_ADD_VIDEO", addedVideoId:$a, dedupeOption:"DEDUPE_OPTION_SKIP"}]')")"; st="$(ok)"; echo "      帶 DEDUPE_OPTION_SKIP → HTTP ${code} ${st};列數 → $(count)"
 
-code="$(edit "$(jq -nc --arg t "${NAME}-renamed" '[{action:"ACTION_SET_PLAYLIST_NAME", playlistName:$t}]')")"; keep 05f-rename
-rows "${PL}" >/dev/null; echo "   5f 改名 → HTTP ${code} $(ok);讀回標題:$(jq -r '[.. | objects | .title? // empty | .runs[0]?.text // empty] | first // "-"' "${OUT}/rows-first.json")"
+code="$(edit "$(jq -nc --arg t "${NAME}-renamed" '[{action:"ACTION_SET_PLAYLIST_NAME", playlistName:$t}]')")"; keep 05f-rename; st="$(ok)"
+rows "${PL}" >/dev/null; echo "   5f 改名 → HTTP ${code} ${st};讀回標題:$(jq -r '[.. | objects | .title? // empty | .runs[0]?.text // empty] | first // "-"' "${OUT}/rows-first.json")"
 
 first="$(rows "${PL}" | head -n1)"; third="$(rows "${PL}" | sed -n 3p)"
-code="$(edit "$(jq -nc --arg s "$(printf '%s' "${first}" | cut -f2)" --arg t "$(printf '%s' "${third}" | cut -f2)" '[{action:"ACTION_MOVE_VIDEO_BEFORE", setVideoId:$s, movedSetVideoIdSuccessor:$t}]')")"
-echo "   5g 第 1 列搬到第 3 列前 → HTTP ${code} $(ok);現在前 3 列:$(rows "${PL}" | head -n3 | cut -f1 | tr '\n' ' ')"
+code="$(edit "$(jq -nc --arg s "$(printf '%s' "${first}" | cut -f2)" --arg t "$(printf '%s' "${third}" | cut -f2)" '[{action:"ACTION_MOVE_VIDEO_BEFORE", setVideoId:$s, movedSetVideoIdSuccessor:$t}]')")"; st="$(ok)"
+echo "   5g 第 1 列搬到第 3 列前 → HTTP ${code} ${st};現在前 3 列:$(vids | cut -d' ' -f1-3)"
 
 echo "⑦ 上傳的歌"
 code="$(yt browse '{"browseId":"FEmusic_library_privately_owned_tracks"}')"; keep 07-uploads
 UP="$(jq -r "${ROWS}" "${BODY}" | awk -F'\t' '$1!="-" {print $1; exit}')"
-if [ -n "${UP}" ]; then code="$(edit "$(adds "${UP}")")"; echo "   有上傳的歌 ${UP};ADD 進測試清單 → HTTP ${code} $(ok);列數 → $(count)"; else echo "   HTTP ${code};這個帳號沒有上傳的歌,略過"; fi
+if [ -n "${UP}" ]; then code="$(edit "$(adds "${UP}")")"; st="$(ok)"; echo "   有上傳的歌 ${UP};ADD 進測試清單 → HTTP ${code} ${st};列數 → $(count)"; else echo "   HTTP ${code};這個帳號沒有上傳的歌,略過"; fi
 echo "(寫端完成;結尾自動 playlist/delete)"
