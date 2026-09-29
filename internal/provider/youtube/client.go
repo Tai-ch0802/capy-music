@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -60,9 +59,11 @@ type apiError struct {
 
 func (e *apiError) Error() string { return fmt.Sprintf("youtube API %d %s", e.Status, e.Detail) }
 
-// post:一個 InnerTube 呼叫。body 是端點自己的參數,context(client / user)這裡補;q 是額外的查詢參數(grid 的 continuation 用)。
+// post:一個 InnerTube 呼叫。body 是端點自己的參數,context(client / user)這裡補;rawQuery 是額外的查詢字串(grid 的 continuation 用),
+// **原樣接上、不再編碼**:YouTube 給的 token 本身已經 URL 編碼過(尾端是 %3D),用 url.Values 會把 % 變成 %25——伺服器照樣回這一頁,
+// 卻多給一個通往空頁的 token(2026-09-29 真帳號:pl list 因此在「第 2 頁」失敗;ytmusicapi 也是字串直接相接)。
 // 401 / 403 → ErrAuthExpired(cookie 貼錯或失效);429 / 5xx 交給 provider.Backoff(有 Retry-After 照它);其他非 200 回 apiError。
-func (c *Client) post(ctx context.Context, endpoint string, body map[string]any, q url.Values) (node, error) {
+func (c *Client) post(ctx context.Context, endpoint string, body map[string]any, rawQuery string) (node, error) {
 	payload := map[string]any{"context": map[string]any{
 		"client": map[string]any{"clientName": "WEB_REMIX", "clientVersion": "1." + c.now().UTC().Format("20060102") + ".01.00", "hl": c.hl, "gl": c.gl},
 		"user":   c.userContext(),
@@ -75,8 +76,8 @@ func (c *Client) post(ctx context.Context, endpoint string, body map[string]any,
 		return node{}, err
 	}
 	u := c.base + "/" + endpoint + "?alt=json&prettyPrint=false"
-	if len(q) > 0 {
-		u += "&" + q.Encode()
+	if rawQuery != "" {
+		u += "&" + rawQuery
 	}
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(raw))
@@ -141,13 +142,16 @@ type Account struct {
 
 // AccountInfo:回應裡沒有帳號 = cookie 已失效或抄到未登入的請求(HTTP 仍是 200)→ ErrAuthExpired。
 func (c *Client) AccountInfo(ctx context.Context) (Account, error) {
-	root, err := c.post(ctx, "account/account_menu", map[string]any{}, nil)
+	root, err := c.post(ctx, "account/account_menu", map[string]any{}, "")
 	if err != nil {
 		return Account{}, err
 	}
-	a, ok := parseAccount(root)
-	if !ok {
+	a, err := parseAccount(root)
+	switch {
+	case errors.Is(err, errNoAccount):
 		return Account{}, i18n.Errorf("youtube.client.err.not_logged_in", "err", provider.ErrAuthExpired)
+	case err != nil: // 頻道 id 不唯一或沒有:不能拿去當清單 id 的前綴,登入就要擋下來(不是靜默挑一個)
+		return Account{}, i18n.Errorf("youtube.client.err.channel_id", "err", err)
 	}
 	return a, nil
 }

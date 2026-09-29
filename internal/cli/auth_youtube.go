@@ -228,7 +228,7 @@ func checkYouTubeAPI(ctx context.Context) (string, error) {
 		return "", i18n.Errorf("doctor.api.err.failed", "err", friendlyErr("youtube", err))
 	}
 	if acc.ChannelID != yp.ChannelID() {
-		return "", i18n.Errorf("doctor.youtube.err.account_mismatch", "got", acc.Handle, "want", yp.ChannelID())
+		return "", i18n.Errorf("doctor.youtube.err.account_mismatch", "handle", youtubeAccountLabel(acc.Name, acc.Handle), "got", acc.ChannelID, "want", yp.ChannelID())
 	}
 	return i18n.T("doctor.api.ok.youtube", "handle", acc.Handle), nil
 }

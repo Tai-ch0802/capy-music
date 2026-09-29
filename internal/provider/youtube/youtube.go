@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -76,7 +75,7 @@ func toTrack(r row) provider.Track {
 
 // Search:一頁(約 20 筆)的「歌曲」filter;Limit 超過一頁就截(決策 60 Q9,不翻頁)。
 func (p *Provider) Search(ctx context.Context, q provider.Query) ([]provider.Track, error) {
-	root, err := p.c.post(ctx, "search", map[string]any{"query": q.Text, "params": songsParams}, nil)
+	root, err := p.c.post(ctx, "search", map[string]any{"query": q.Text, "params": songsParams}, "")
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +94,7 @@ func (p *Provider) Search(ctx context.Context, q provider.Query) ([]provider.Tra
 
 // GetTrack:next 端點的 watch 清單第一項就是這首(player 端點要 signatureTimestamp,重)。
 func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, error) {
-	root, err := p.c.post(ctx, "next", map[string]any{"videoId": id, "isAudioOnly": true, "tunerSettingValue": "AUTOMIX_SETTING_NORMAL", "enablePersistentPlaylistPanel": true}, nil)
+	root, err := p.c.post(ctx, "next", map[string]any{"videoId": id, "isAudioOnly": true, "tunerSettingValue": "AUTOMIX_SETTING_NORMAL", "enablePersistentPlaylistPanel": true}, "")
 	if err != nil {
 		return provider.Track{}, err
 	}
@@ -115,13 +114,19 @@ func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, err
 // (副標的擁有者頻道不是自己)標 Unwritable:plan 階段就跳過,同 Apple 的 canEdit:false。
 func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
 	var refs []provider.PlaylistRef
-	body, q := map[string]any{"browseId": "FEmusic_liked_playlists"}, url.Values(nil)
-	for page := 0; page < 50; page++ {
+	body, q := map[string]any{"browseId": "FEmusic_liked_playlists"}, ""
+	for page := 0; ; page++ {
+		if page >= maxListPages { // 靜默截斷會讓沒列到的已連結清單被 pull 當成 gone 而 unlink(PR #117 review 第 4 點):寧可整輪失敗
+			return nil, i18n.Errorf("youtube.err.too_many_pages", "what", "FEmusic_liked_playlists", "pages", maxListPages)
+		}
 		root, err := p.c.post(ctx, "browse", body, q)
 		if err != nil {
 			return nil, err
 		}
-		items, token := parseLibraryGrid(root)
+		items, token, hasGrid := parseLibraryGrid(root)
+		if !hasGrid { // 連 grid 的結構都沒有 = 版面變了;有結構但零項目(最後一頁)照常結束
+			return nil, i18n.Errorf("youtube.err.bad_continuation", "what", "FEmusic_liked_playlists", "page", page)
+		}
 		for _, it := range items {
 			ref := provider.PlaylistRef{ID: p.idOf(it.playlistID), Name: it.title, Owner: it.ownerName, Total: it.count}
 			switch {
@@ -135,16 +140,18 @@ func (p *Provider) ListPlaylists(ctx context.Context) ([]provider.PlaylistRef, e
 		if token == "" {
 			break
 		}
-		body, q = map[string]any{}, url.Values{"ctoken": {token}, "continuation": {token}, "type": {"next"}}
+		body, q = map[string]any{}, "ctoken="+token+"&continuation="+token+"&type=next" // token 原樣接上(見 post 的註解)
 	}
 	return refs, nil
 }
 
 // playlistPageRetries / playlistPageWait:剛寫完立刻讀,曾回過一頁沒有列也沒有 header 的東西(2026-09-29 探測 ADD 466 首後);
-// 等一下重讀就正常。空清單有 header、只是沒有列,不會被當成這種情況。測試替換點。
+// 等一下重讀就正常。空清單有 header、只是沒有列,不會被當成這種情況。maxListPages / maxItemPages:續頁上限,到了回錯不截斷。測試替換點。
 var (
 	playlistPageRetries = 3
 	playlistPageWait    = 2 * time.Second
+	maxListPages        = 50
+	maxItemPages        = 200
 )
 
 // GetPlaylistItems:VL<id> + 續頁(新式 continuationItemRenderer:token 放 body 的 continuation)。沒有 videoId 的列丟掉
@@ -169,7 +176,7 @@ func (p *Provider) playlistRows(ctx context.Context, id string) ([]row, error) {
 	}
 	var first playlistPage
 	for attempt := 0; ; attempt++ {
-		root, err := p.c.post(ctx, "browse", map[string]any{"browseId": "VL" + plid}, nil)
+		root, err := p.c.post(ctx, "browse", map[string]any{"browseId": "VL" + plid}, "")
 		if err != nil {
 			return nil, err
 		}
@@ -187,12 +194,18 @@ func (p *Provider) playlistRows(ctx context.Context, id string) ([]row, error) {
 		}
 	}
 	rows, token := first.rows, first.token
-	for page := 0; token != "" && page < 200; page++ {
-		root, err := p.c.post(ctx, "browse", map[string]any{"continuation": token}, nil)
+	for page := 1; token != ""; page++ {
+		if page > maxItemPages { // 截斷的清單會被觀測成一堆 remove、T2 的整批取代更會拿它對齊:寧可失敗
+			return nil, i18n.Errorf("youtube.err.too_many_pages", "what", "VL"+plid, "pages", maxItemPages)
+		}
+		root, err := p.c.post(ctx, "browse", map[string]any{"continuation": token}, "")
 		if err != nil {
 			return nil, err
 		}
 		next := parsePlaylistPage(root)
+		if !next.hasShape { // 連續頁的結構都沒有 = 版面變了;有結構但零列照常結束
+			return nil, i18n.Errorf("youtube.err.bad_continuation", "what", "VL"+plid, "page", page)
+		}
 		rows, token = append(rows, next.rows...), next.token
 	}
 	kept := rows[:0]

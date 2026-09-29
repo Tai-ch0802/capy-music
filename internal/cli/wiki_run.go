@@ -165,7 +165,7 @@ func wikiLine(tty bool, line string) string {
 	return line
 }
 
-// wikiYouTubeURL:MV 是 YouTube 的搜尋網址(本機組字串,不叫 AI 猜連結、capy 不連 YouTube;決策 59 / Q70)。
+// wikiYouTubeURL:MV 是 YouTube 的搜尋網址(本機組字串,不叫 AI 猜連結、歌曲 wiki 本身不連 YouTube——連 YouTube Music 的是 provider,決策 60;決策 59 / Q70)。
 func wikiYouTubeURL(song ai.Song) string {
 	q := strings.TrimSpace(strings.Join(append([]string{song.Title}, song.Artists...), " ") + " MV")
 	return "https://www.youtube.com/results?search_query=" + url.QueryEscape(q)

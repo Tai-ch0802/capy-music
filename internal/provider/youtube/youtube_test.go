@@ -30,12 +30,14 @@ func fixture(t *testing.T, name string) []byte {
 
 // fakeInnerTube:照端點與 body 回 fixture(2026-09-29 真帳號回應去識別化後修剪的),並記下最後一個請求的標頭與 body。
 type fakeInnerTube struct {
-	t        *testing.T
-	lastHdr  http.Header
-	lastBody map[string]any
-	lastURL  string
-	calls    atomic.Int32
-	emptyVL  int32 // 前幾次 VL 回一頁沒有清單的東西(探測看過的偶發延遲)
+	t         *testing.T
+	lastHdr   http.Header
+	lastBody  map[string]any
+	lastURL   string
+	calls     atomic.Int32
+	emptyVL   int32 // 前幾次 VL 回一頁沒有清單的東西(探測看過的偶發延遲)
+	badCont   bool  // 續頁回奇怪的形狀(連結構都沒有)
+	emptyCont bool  // 續頁有結構但零項目(清單剛好在頁界結束)
 }
 
 func (f *fakeInnerTube) handler(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +55,14 @@ func (f *fakeInnerTube) handler(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("continuation") == "" || r.URL.Query().Get("type") != "next" {
 			f.t.Errorf("grid continuation 要三個查詢參數:%s", r.URL.String())
 		}
+		if f.badCont {
+			_, _ = w.Write([]byte(`{"responseContext":{}}`))
+			return
+		}
+		if f.emptyCont {
+			_, _ = w.Write([]byte(`{"continuationContents":{"gridContinuation":{"items":[]}}}`))
+			return
+		}
 		name = "library_cont.json"
 	case ep == "browse" && browseID == "FEmusic_liked_playlists":
 		name = "library_first.json"
@@ -64,6 +74,14 @@ func (f *fakeInnerTube) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		name = "playlist_first.json"
 	case ep == "browse" && body["continuation"] != nil:
+		if f.badCont {
+			_, _ = w.Write([]byte(`{"responseContext":{}}`))
+			return
+		}
+		if f.emptyCont {
+			_, _ = w.Write([]byte(`{"onResponseReceivedActions":[{"appendContinuationItemsAction":{"continuationItems":[]}}]}`))
+			return
+		}
 		name = "playlist_cont.json"
 	case ep == "search":
 		if body["params"] != songsParams {
@@ -299,5 +317,105 @@ func TestParseRowExplicitAndFallbacks(t *testing.T) {
 	r := parseRow(node{v})
 	if r.videoID != "vX" || !r.explicit || r.videoType != "MUSIC_VIDEO_TYPE_UGC" || r.durationMS != 180000 || len(r.artists) != 1 || r.artists[0] != "A" || r.title != "T" {
 		t.Errorf("%+v", r)
+	}
+}
+
+// 頻道 id 是所有清單 id 的前綴、會寫進 Drive:走固定路徑、照陣列順序、要唯一;不只一個或沒有都不准登入(PR #117 review 第 3 點)。
+func TestParseAccountChannelID(t *testing.T) {
+	menu := func(items ...string) string {
+		return `{"actions":[{"openPopupAction":{"popup":{"multiPageMenuRenderer":{"header":{"activeAccountHeaderRenderer":{"accountName":{"runs":[{"text":"S"}]},"channelHandle":{"runs":[{"text":"@s"}]}}},
+		  "sections":[{"multiPageMenuSectionRenderer":{"items":[` + strings.Join(items, ",") + `]}}]}}}}]}`
+	}
+	link := func(id, pt string) string {
+		return `{"compactLinkRenderer":{"navigationEndpoint":{"browseEndpoint":{"browseId":"` + id + `","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"` + pt + `"}}}}}}`
+	}
+	parse := func(js string) (Account, error) {
+		var v any
+		if err := json.Unmarshal([]byte(js), &v); err != nil {
+			t.Fatal(err)
+		}
+		return parseAccount(node{v})
+	}
+	if a, err := parse(menu(link("FEmusic_history", ""), link("UCme", "MUSIC_PAGE_TYPE_USER_CHANNEL"), link("UCme", "MUSIC_PAGE_TYPE_USER_CHANNEL"))); err != nil || a.ChannelID != "UCme" {
+		t.Errorf("同一個 id 重複算一個:%+v %v", a, err)
+	}
+	if _, err := parse(menu(link("UCme", "MUSIC_PAGE_TYPE_USER_CHANNEL"), link("UCother", "MUSIC_PAGE_TYPE_USER_CHANNEL"))); !errors.Is(err, errChannelID) {
+		t.Errorf("兩個不同的 UC… 要回錯,不能挑一個:%v", err)
+	}
+	if _, err := parse(menu(link("FEmusic_history", ""))); !errors.Is(err, errChannelID) {
+		t.Errorf("沒有 UC… 要回錯:%v", err)
+	}
+	if _, err := parse(`{"actions":[]}`); !errors.Is(err, errNoAccount) {
+		t.Errorf("沒有帳號:%v", err)
+	}
+	// 走 provider:兩個 UC… 時 AccountInfo 回錯而且不是 ErrAuthExpired(不是「沒登入」)。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(menu(link("UCme", "MUSIC_PAGE_TYPE_USER_CHANNEL"), link("UCother", "MUSIC_PAGE_TYPE_USER_CHANNEL"))))
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := New(srv.Client(), srv.URL, testHeaders, "en", "UCme").AccountInfo(context.Background()); err == nil || errors.Is(err, provider.ErrAuthExpired) || !strings.Contains(err.Error(), "UCother") {
+		t.Errorf("AccountInfo:%v", err)
+	}
+}
+
+// 分隔看交錯位置,不看長度:2–3 個字、沒有頻道頁的 CJK 歌手要留下(PR #117 review 第 6 點)。
+func TestParseRowShortArtistsWithoutChannel(t *testing.T) {
+	var v any
+	_ = json.Unmarshal([]byte(`{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"T"}]}}},
+	  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+	    {"text":"A","navigationEndpoint":{"browseEndpoint":{"browseId":"UCa"}}},{"text":"、"},{"text":"林俊傑"},{"text":"和"},{"text":"蘇打綠"},{"text":" & "},
+	    {"text":"B","navigationEndpoint":{"browseEndpoint":{"browseId":"UCb"}}}]}}}]}`), &v)
+	r := parseRow(node{v})
+	if strings.Join(r.artists, "|") != "A|林俊傑|蘇打綠|B" {
+		t.Errorf("短的 CJK 歌手不能被當分隔吃掉:%v", r.artists)
+	}
+	_ = json.Unmarshal([]byte(`{"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"T"}]}}},
+	  {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"蘇打綠"},{"text":"、"},{"text":"B","navigationEndpoint":{"browseEndpoint":{"browseId":"UCb"}}}]}}}]}`), &v)
+	if r := parseRow(node{v}); strings.Join(r.artists, "|") != "蘇打綠|B" {
+		t.Errorf("沒端點的在前面也一樣:%v", r.artists)
+	}
+}
+
+// 續頁上限與空續頁都回錯:靜默截斷會讓 pull 把沒列到的清單當 gone(PR #117 review 第 4 點)。
+func TestContinuationNeverTruncates(t *testing.T) {
+	origList, origItems := maxListPages, maxItemPages
+	t.Cleanup(func() { maxListPages, maxItemPages = origList, origItems })
+	p, f := newTestProvider(t, "en")
+	maxListPages = 1 // 第一頁有續頁 token,但不准再翻 → 錯
+	if _, err := p.ListPlaylists(context.Background()); err == nil || !strings.Contains(err.Error(), "FEmusic_liked_playlists") {
+		t.Errorf("清單列表到上限要回錯:%v", err)
+	}
+	maxListPages = origList
+	maxItemPages = 0
+	if _, err := p.GetPlaylistItems(context.Background(), testChannel+"/PLtest001"); err == nil || !strings.Contains(err.Error(), "PLtest001") {
+		t.Errorf("清單內容到上限要回錯:%v", err)
+	}
+	maxItemPages = origItems
+	// 續頁回奇怪的形狀(一列都沒解析出來)→ 錯,不當成最後一頁。
+	f.badCont = true
+	if _, err := p.GetPlaylistItems(context.Background(), testChannel+"/PLtest001"); err == nil || !strings.Contains(err.Error(), "VLPLtest001") {
+		t.Errorf("空續頁要回錯:%v", err)
+	}
+	if _, err := p.ListPlaylists(context.Background()); err == nil || !strings.Contains(err.Error(), "FEmusic_liked_playlists") {
+		t.Errorf("清單列表的空續頁要回錯:%v", err)
+	}
+	// 有結構但零項目 = 清單剛好在頁界結束(YouTube 會這樣回):照常結束,只有第一頁的東西。
+	f.badCont, f.emptyCont = false, true
+	if tracks, err := p.GetPlaylistItems(context.Background(), testChannel+"/PLtest001"); err != nil || len(tracks) != 4 {
+		t.Errorf("有結構的空續頁 = 結尾:%v %d", err, len(tracks))
+	}
+	if refs, err := p.ListPlaylists(context.Background()); err != nil || len(refs) != 4 {
+		t.Errorf("清單列表有結構的空續頁 = 結尾:%v %d", err, len(refs))
+	}
+}
+
+// continuation token 原樣接進查詢字串:YouTube 給的 token 尾端是 %3D(已經 URL 編碼),再編一次會變 %253D。
+func TestContinuationTokenNotReencoded(t *testing.T) {
+	p, f := newTestProvider(t, "en")
+	if _, err := p.ListPlaylists(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.lastURL, "ctoken=CONTINUATION-TOKEN-") || strings.Contains(f.lastURL, "%25") {
+		t.Errorf("token 不可以再編碼:%s", f.lastURL)
 	}
 }

@@ -15,6 +15,13 @@
 - 政策 ×2 / 條款 ×2 / 首頁 ×2 / README ×2 / CLAUDE.md 同 PR;`site_test.go` 釘「music.youtube.com」「歌名與歌手」與「非 Google 官方支援」。指南兩份與 ARCHITECTURE 的 T1 收尾留 T3。
 - 沒做:寫端(T2)、`--auto`、播放、搜尋翻頁、ArtistSearch。
 
+**#117 review 後的修正**(2026-09-29):白名單真的只留三個(3P 的 SID + APISID 都在就留 3P 那三個,否則留 1P 那三個;揭露 / 政策 / CLAUDE.md 的「只留三個」才跟程式一致);
+頻道 id 走 account_menu 的固定路徑(`sections[*].items[*].compactLinkRenderer`)、去重後不唯一就拒絕登入(不靠 `find` 走 map 的隨機順序挑);清單列表與清單內容的續頁到上限、
+或某一頁一格都解析不出來,一律回錯不截斷(靜默截斷會讓 pull 把沒列到的清單當 gone);歌手欄的分隔改看交錯位置(純符號一律分隔;有端點的欄裡奇數索引的純文字是分隔),
+不看長度(「林俊傑」「蘇打綠」這種沒有頻道頁的 2–3 字歌手不能被吃掉);cURL 的 `$'…'` 引號與 Windows cmd 的 `^"` / `^` 都解得開;政策 §3 補「YouTube 頻道 ID/清單 ID」會進 Drive、
+§4 補設定檔裡的 `youtube_account`、§6 補 `auth logout youtube` 與「登出所有裝置」、決策 59 的「capy 不連 YouTube」改成「歌曲 wiki 本身不連 YouTube」(CLAUDE.md、ARCHITECTURE、程式註解同改);
+doctor 的帳號不一致訊息兩邊都印頻道 id;搜尋頁的 youtube 列放「在 YouTube Music 開啟」連結。
+
 使用者(2026-09-29):「我想是時候增加另一個音樂平台 provider 的歌曲清單搬遷、同步功能了。這次目標是 youtube music。考量使用者可能有多個帳號,
 所以我們的 youtube music 的登入帳號有可能會和現在既有的 google drive 的登入帳號不同,可能要留意一下並且區分開來。請先草擬出完整的 plan,
 我們確認定案方向以後再進行開發實作。」

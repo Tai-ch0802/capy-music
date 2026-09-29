@@ -1,11 +1,13 @@
 package youtube
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // node:InnerTube 回應是 UI 樹(renderer 套 renderer),欄位靠路徑與端點型別辨認。這個薄包裝讓「路徑不在就零值」
@@ -118,10 +120,11 @@ const (
 )
 
 // classifyRun:副標 / 欄位裡的一個 run 是歌手、專輯、時長還是年份。靠端點型別與 browseId 前綴(UC… 頻道、MPREb… 專輯)辨認;
-// 沒有端點的純文字:同一欄裡有帶端點的 run、而且它很短(≤ 3 個字元)就是分隔(「 • 」「, 」「 & 」,zh-TW 是「、」「和」——字跟語系走,
-// 不能列舉);長的純文字是沒有頻道頁的歌手(樂團、合唱團;2026-09-29 真清單:「The Sydney Scoring Orchestra」);整欄都沒有端點
-// (下架的列、上傳的歌)也照位置當歌手 / 專輯。時長與四位數年份在任何欄都先認出來。
-func classifyRun(r node, col int, hasNav bool, out *row) {
+// 純符號(「•」「、」「&」)一律是分隔。有字的純文字:同一欄的 runs 是「內容、分隔、內容、分隔…」交錯,分隔一定夾在兩個內容之間
+// (奇數索引),所以有帶端點的 run 時看它的位置——不看長度(「林俊傑」「蘇打綠」這種 2–3 個字、沒有頻道頁的歌手不能被吃掉;
+// 「和」「and」「y」這種有字的分隔跟語系走,不能列舉);整欄都沒有端點(下架的列、上傳的歌)照位置當歌手 / 專輯。
+// 時長與四位數年份在任何欄都先認出來。
+func classifyRun(r node, col, idx int, hasNav bool, out *row) {
 	text := strings.TrimSpace(r.get("text").str())
 	if text == "" {
 		return
@@ -142,8 +145,8 @@ func classifyRun(r node, col int, hasNav bool, out *row) {
 		out.year = text
 	case browseID != "":
 		// 別種端點(電台、播放清單):不是我們要的欄位
-	case hasNav && utf8.RuneCountInString(text) <= 3:
-		// 有字的分隔(「和」「and」「y」)都在 3 個字元內;沒有頻道頁的歌手(樂團、合唱團)名字長得多,留下來
+	case hasNav && idx%2 == 1:
+		// 交錯序列的奇數位:有字的分隔(「和」「and」「y」)
 	case col <= 1:
 		out.artists = append(out.artists, text)
 	case out.album == "":
@@ -183,8 +186,8 @@ func parseRow(n node) row {
 		}
 		runs := col.get("musicResponsiveListItemFlexColumnRenderer", "text", "runs").arr()
 		nav := hasBrowse(runs)
-		for _, r := range runs {
-			classifyRun(r, ci, nav, &out)
+		for i, r := range runs {
+			classifyRun(r, ci, i, nav, &out)
 		}
 	}
 	for _, col := range n.get("fixedColumns").arr() {
@@ -206,8 +209,8 @@ func parsePanelItem(n node) row {
 	out := row{raw: n.v, videoID: n.get("videoId").str(), title: strings.TrimSpace(n.get("title").text())}
 	runs := n.get("longBylineText", "runs").arr()
 	nav := hasBrowse(runs)
-	for _, r := range runs {
-		classifyRun(r, 1, nav, &out)
+	for i, r := range runs {
+		classifyRun(r, 1, i, nav, &out)
 	}
 	out.durationMS = parseDuration(n.get("lengthText").text())
 	for _, b := range n.get("badges").arr() {
@@ -225,6 +228,7 @@ type playlistPage struct {
 	rows      []row
 	token     string
 	hasHeader bool
+	hasShape  bool // 第一頁有 musicPlaylistShelfRenderer、續頁有 appendContinuationItemsAction:有結構但零列是清單完了,沒有結構才是版面變了
 	editable  bool
 	title     string
 }
@@ -244,10 +248,14 @@ func parsePlaylistPage(root node) playlistPage {
 		}
 	}
 	for _, shelf := range root.find("musicPlaylistShelfRenderer") {
+		p.hasShape = true
 		take(shelf.get("contents").arr())
 	}
 	for _, action := range root.get("onResponseReceivedActions").arr() {
-		take(action.get("appendContinuationItemsAction", "continuationItems").arr())
+		if app := action.get("appendContinuationItemsAction"); app.ok() {
+			p.hasShape = true
+			take(app.get("continuationItems").arr())
+		}
 	}
 	p.editable = len(root.find("musicEditablePlaylistDetailHeaderRenderer")) > 0
 	for _, name := range []string{"musicResponsiveHeaderRenderer", "musicDetailHeaderRenderer"} {
@@ -270,7 +278,9 @@ type gridItem struct {
 }
 
 // parseLibraryGrid:第一頁與 gridContinuation 都適用;舊式 continuation 在 continuations[0].nextContinuationData.continuation。
-func parseLibraryGrid(root node) (items []gridItem, token string) {
+// hasGrid:回應裡有 grid 的結構(gridRenderer / gridContinuation)——有結構但零項目是清單完了,沒有結構才是版面變了。
+func parseLibraryGrid(root node) (items []gridItem, token string, hasGrid bool) {
+	hasGrid = len(root.find("gridRenderer")) > 0 || len(root.find("gridContinuation")) > 0
 	for _, n := range root.find("musicTwoRowItemRenderer") {
 		browseID := n.get("navigationEndpoint", "browseEndpoint", "browseId").str()
 		if !strings.HasPrefix(browseID, "VL") {
@@ -293,7 +303,7 @@ func parseLibraryGrid(root node) (items []gridItem, token string) {
 	if c := root.find("nextContinuationData"); len(c) > 0 {
 		token = c[0].get("continuation").str()
 	}
-	return items, token
+	return items, token, hasGrid
 }
 
 // parseSearch:歌曲 filter 的結果只有一個 musicShelfRenderer;還是把每個 shelf 的列都收(版面多一個 shelf 也不會漏)。
@@ -309,21 +319,41 @@ func parseSearch(root node) []row {
 	return rows
 }
 
-// parseAccount:account_menu 的 activeAccountHeaderRenderer;頻道 id 是選單裡第一個 UC… 的 browseId(「你的頻道」)。
-func parseAccount(root node) (Account, bool) {
+// errNoAccount:回應裡沒有帳號(cookie 失效或抄到未登入的請求);errChannelID:選單裡找不到唯一的頻道 id。
+var (
+	errNoAccount = errors.New("no account in account_menu")
+	errChannelID = errors.New("channel id not unique in account_menu")
+)
+
+// parseAccount:account_menu 的 activeAccountHeaderRenderer;頻道 id 走固定路徑
+// actions[*].openPopupAction.popup.multiPageMenuRenderer.sections[*].multiPageMenuSectionRenderer.items[*].compactLinkRenderer
+// 的 browseEndpoint(pageType MUSIC_PAGE_TYPE_USER_CHANNEL、UC… 開頭;2026-09-29 真回應就一個),照陣列順序、去重——它是所有清單 id 的前綴、
+// 會寫進 Drive,不能靠 find 走 map 的隨機順序挑;不只一個或一個都沒有就回 errChannelID(PR #117 review 第 3 點)。
+func parseAccount(root node) (Account, error) {
 	hs := root.find("activeAccountHeaderRenderer")
 	if len(hs) == 0 {
-		return Account{}, false
+		return Account{}, errNoAccount
 	}
 	a := Account{Name: strings.TrimSpace(hs[0].get("accountName").text()), Handle: strings.TrimSpace(hs[0].get("channelHandle").text())}
 	if a.Name == "" {
-		return Account{}, false
+		return Account{}, errNoAccount
 	}
-	for _, ep := range root.find("browseEndpoint") {
-		if id := ep.get("browseId").str(); strings.HasPrefix(id, "UC") {
-			a.ChannelID = id
-			break
+	var ids []string
+	for _, action := range root.get("actions").arr() {
+		for _, sec := range action.get("openPopupAction", "popup", "multiPageMenuRenderer", "sections").arr() {
+			for _, it := range sec.get("multiPageMenuSectionRenderer", "items").arr() {
+				ep := it.get("compactLinkRenderer", "navigationEndpoint", "browseEndpoint")
+				id := ep.get("browseId").str()
+				pt := ep.get("browseEndpointContextSupportedConfigs", "browseEndpointContextMusicConfig", "pageType").str()
+				if strings.HasPrefix(id, "UC") && (pt == "" || pt == pageTypeChannel) && !slices.Contains(ids, id) {
+					ids = append(ids, id)
+				}
+			}
 		}
 	}
-	return a, true
+	if len(ids) != 1 {
+		return a, fmt.Errorf("%w: %v", errChannelID, ids)
+	}
+	a.ChannelID = ids[0]
+	return a, nil
 }

@@ -97,8 +97,8 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 // 歌名與歌手當搜尋字送給 Google——政策要說清楚是什麼、送了什麼;條款與首頁要說這不是官方支援。少一句這裡就紅。
 func TestPrivacyPolicyDisclosesYouTubeMusic(t *testing.T) {
 	for page, wants := range map[string][]string{
-		"privacy.html":    {"music.youtube.com", "YouTube Music", "歌名與歌手", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookie"},
-		"en/privacy.html": {"music.youtube.com", "YouTube Music", "song titles and artists", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookies"},
+		"privacy.html":    {"music.youtube.com", "YouTube Music", "歌名與歌手", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookie", "YouTube 頻道 ID/清單 ID", "<code>capy auth logout youtube</code>", "登出所有裝置", "歌曲 wiki 本身不連 YouTube"},
+		"en/privacy.html": {"music.youtube.com", "YouTube Music", "song titles and artists", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookies", "YouTube channel ID/playlist ID", "<code>capy auth logout youtube</code>", "sign out of all devices", "the song wiki itself never contacts YouTube"},
 		"terms.html":      {"YouTube Music", "不是 Apple 與 Google 官方支援"},
 		"en/terms.html":   {"YouTube Music", "not officially supported by Google"},
 		"index.html":      {"YouTube Music", "非 Google 官方支援"},
@@ -108,6 +108,11 @@ func TestPrivacyPolicyDisclosesYouTubeMusic(t *testing.T) {
 		for _, want := range wants {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s 沒有提到 %q", page, want)
+			}
+		}
+		for _, never := range []string{"capy 本身不連 YouTube", "capy itself never contacts YouTube"} { // 決策 59 的舊句跟決策 60 矛盾
+			if strings.Contains(html, never) {
+				t.Errorf("%s 還留著 %q:連 YouTube Music 的是 provider,不連 YouTube 的只有歌曲 wiki", page, never)
 			}
 		}
 	}

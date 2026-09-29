@@ -20,8 +20,9 @@ func TestParsePlainRequestHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 只留白名單、照原順序;其他全部丟掉(整段 2 KB 會撞 keychain 上限,而且 LOGIN_INFO / SIDCC 都不需要)
-	want := "__Secure-1PSID=p1; __Secure-3PSID=p3; __Secure-1PAPISID=ap1; __Secure-3PAPISID=ap3/xyz; __Secure-1PSIDTS=ts1; __Secure-3PSIDTS=ts3"
+	// 只留三個(3P 齊全就 3P)、照原順序;其他全部丟掉(整段 2 KB 會撞 keychain 上限,而且 LOGIN_INFO / SIDCC 都不需要;
+	// 揭露與政策寫的就是「只留三個 session cookie」)
+	want := "__Secure-3PSID=p3; __Secure-3PAPISID=ap3/xyz; __Secure-3PSIDTS=ts3"
 	if h.Cookie != want {
 		t.Errorf("cookie 白名單:\n got %q\nwant %q", h.Cookie, want)
 	}
@@ -41,8 +42,19 @@ func TestParseCopyAsCURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(h.Cookie, "__Secure-1PSID=p1; ") || h.AuthUser != "0" || h.PageID != "" {
+	if !strings.HasPrefix(h.Cookie, "__Secure-3PSID=p3; ") || h.AuthUser != "0" || h.PageID != "" {
 		t.Errorf("cURL 格式:%+v", h)
+	}
+	// 值裡有 ' 時 Chrome 用 $'…',裡面的 ' 寫成 \'。
+	ansi := "curl 'https://music.youtube.com/youtubei/v1/browse' \\\n  -H $'cookie: NAME=it\\'s; __Secure-3PSID=p3; __Secure-3PAPISID=ap3; __Secure-3PSIDTS=ts3' \\\n  -H $'x-goog-authuser: 0' \\\n"
+	h, err = Parse(ansi)
+	if err != nil || h.Cookie != "__Secure-3PSID=p3; __Secure-3PAPISID=ap3; __Secure-3PSIDTS=ts3" {
+		t.Errorf("$'…' 格式:%+v %v", h, err)
+	}
+	// 只有 1P 家族(探測驗過也能登入)就留 1P 那三個。
+	h, err = Parse("cookie: __Secure-1PSID=p1; __Secure-1PAPISID=ap1; __Secure-1PSIDTS=ts1; SIDCC=cc\n")
+	if err != nil || h.Cookie != "__Secure-1PSID=p1; __Secure-1PAPISID=ap1; __Secure-1PSIDTS=ts1" {
+		t.Errorf("1P 家族:%+v %v", h, err)
 	}
 }
 
@@ -57,7 +69,7 @@ func TestParseCopyAsCURLCmd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(h.Cookie, "__Secure-1PSID=p1; ") || h.AuthUser != "1" {
+	if !strings.HasPrefix(h.Cookie, "__Secure-3PSID=p3; ") || h.AuthUser != "1" {
 		t.Errorf("cmd 格式:%+v", h)
 	}
 }

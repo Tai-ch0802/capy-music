@@ -32,19 +32,19 @@ type Headers struct {
 	PageID   string `json:"pageid,omitempty"`
 }
 
-// cookieAllow:留下來的 cookie 名。3P 三個是探測驗過的最小集合;1P 三個是同一組的另一個家族(探測也能單獨登入),
-// 兩家都在就都留(Google 哪天先收掉一家,另一家還在),仍遠在 keychain 上限之下。
-var cookieAllow = []string{
-	"__Secure-3PSID", "__Secure-3PAPISID", "__Secure-3PSIDTS",
-	"__Secure-1PSID", "__Secure-1PAPISID", "__Secure-1PSIDTS",
-}
+// cookie3P / cookie1P:留下來的三個 cookie。3P 是探測驗過的最小集合;1P 是同一組的另一個家族(探測也能單獨登入),
+// 只在 3P 不齊時才改留 1P——揭露、政策、CLAUDE.md 都寫「只留三個 session cookie」,程式要跟字面一致(PR #117 review 第 1 點)。
+var (
+	cookie3P = []string{"__Secure-3PSID", "__Secure-3PAPISID", "__Secure-3PSIDTS"}
+	cookie1P = []string{"__Secure-1PSID", "__Secure-1PAPISID", "__Secure-1PSIDTS"}
+)
 
 var (
 	ErrNoCookie   = i18n.Errorf("youtube.err.no_cookie")
 	ErrNoSAPISID  = i18n.Errorf("youtube.err.no_sapisid")
 	ErrNoSession  = i18n.Errorf("youtube.err.no_session")
-	curlHeaderRe  = regexp.MustCompile(`^\s*-H\s+['"](.*?)['"]\s*\\?\s*$`)
-	curlCookieRe  = regexp.MustCompile(`^\s*(?:-b|--cookie)\s+['"](.*?)['"]\s*\\?\s*$`)
+	curlHeaderRe  = regexp.MustCompile(`^\s*-H\s+\$?['"](.*?)['"]\s*\\?\s*$`) // $'…' 是 bash 版值裡有 ' 時 Chrome 用的 ANSI-C 引號
+	curlCookieRe  = regexp.MustCompile(`^\s*(?:-b|--cookie)\s+\$?['"](.*?)['"]\s*\\?\s*$`)
 	plainHeaderRe = regexp.MustCompile(`^\s*([A-Za-z0-9-]+):\s*(.*?)\s*$`)
 )
 
@@ -58,11 +58,11 @@ func Parse(raw string) (Headers, error) {
 		line = strings.ReplaceAll(line, `^"`, `"`)
 		line = strings.TrimSuffix(strings.TrimRight(line, " \t"), "^")
 		if m := curlCookieRe.FindStringSubmatch(line); m != nil {
-			h.Cookie = m[1]
+			h.Cookie = unquoteANSIC(m[1])
 			continue
 		}
 		if m := curlHeaderRe.FindStringSubmatch(line); m != nil {
-			line = m[1]
+			line = unquoteANSIC(m[1])
 		}
 		m := plainHeaderRe.FindStringSubmatch(line)
 		if m == nil {
@@ -80,13 +80,13 @@ func Parse(raw string) (Headers, error) {
 	if strings.TrimSpace(h.Cookie) == "" {
 		return Headers{}, ErrNoCookie
 	}
-	h.Cookie = trimCookie(h.Cookie)
-	if sapisid(h.Cookie) == "" {
+	if sapisid(h.Cookie) == "" { // 先在整段上驗,錯誤才分得出「沒登入」與「缺 session」
 		return Headers{}, ErrNoSAPISID
 	}
 	if !hasCookie(h.Cookie, "__Secure-3PSID") && !hasCookie(h.Cookie, "__Secure-1PSID") {
 		return Headers{}, ErrNoSession
 	}
+	h.Cookie = trimCookie(h.Cookie)
 	if h.AuthUser == "" {
 		h.AuthUser = "0"
 	}
@@ -96,8 +96,15 @@ func Parse(raw string) (Headers, error) {
 	return h, nil
 }
 
-// trimCookie:只留白名單、照原本的順序,重組成 "a=1; b=2"。
+// unquoteANSIC:$'…' 裡的 \' 還原成 '(其他跳脫 cookie 值裡不會出現)。
+func unquoteANSIC(s string) string { return strings.ReplaceAll(s, `\'`, `'`) }
+
+// trimCookie:只留三個 cookie、照原本的順序,重組成 "a=1; b=2"。3P 的 SID 與 APISID 都在就留 3P 那三個,否則留 1P 那三個。
 func trimCookie(cookie string) string {
+	allow := cookie3P
+	if !hasCookie(cookie, "__Secure-3PSID") || !hasCookie(cookie, "__Secure-3PAPISID") {
+		allow = cookie1P
+	}
 	var kept []string
 	for _, pair := range strings.Split(cookie, ";") {
 		pair = strings.TrimSpace(pair)
@@ -105,8 +112,8 @@ func trimCookie(cookie string) string {
 		if !ok {
 			continue
 		}
-		for _, allow := range cookieAllow {
-			if name == allow {
+		for _, a := range allow {
+			if name == a {
 				kept = append(kept, pair)
 				break
 			}
