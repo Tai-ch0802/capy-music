@@ -124,8 +124,8 @@ func TestPrivacyPolicyDisclosesYouTubeMusic(t *testing.T) {
 	for page, wants := range map[string][]string{
 		"privacy.html":    {"music.youtube.com", "YouTube Music", "歌名與歌手", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookie", "YouTube 頻道 ID/清單 ID", "<code>capy auth logout youtube</code>", "登出所有裝置", "歌曲 wiki 本身不連 YouTube"},
 		"en/privacy.html": {"music.youtube.com", "YouTube Music", "song titles and artists", "<code>capy migrate</code>", "<code>capy resolve</code>", "session cookies", "YouTube channel ID/playlist ID", "<code>capy auth logout youtube</code>", "sign out of all devices", "the song wiki itself never contacts YouTube"},
-		"terms.html":      {"YouTube Music", "不是 Apple 與 Google 官方支援"},
-		"en/terms.html":   {"YouTube Music", "not officially supported by Google"},
+		"terms.html":      {"YouTube Music", "不是 Apple 與 Google 官方支援", "Apple Music 與 YouTube Music 只寫你自己建的清單", "登入 Apple Music 或 YouTube Music 時"},
+		"en/terms.html":   {"YouTube Music", "not officially supported by Google", "on Apple Music and YouTube Music, only playlists you created yourself", "when you sign in to Apple Music or YouTube Music"},
 		"index.html":      {"YouTube Music", "非 Google 官方支援"},
 		"en/index.html":   {"YouTube Music", "Google does not officially support"},
 	} {

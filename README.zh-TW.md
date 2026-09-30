@@ -83,7 +83,7 @@ Spotify 的開發者政策限制每個 app 只能有 5 位使用者,所以要用
 3. 對任一個 `browse` 請求按右鍵 → Copy → **Copy as cURL**(或整段複製 Request Headers)
 4. 執行 `capy auth login youtube`,依精靈貼上並確認偵測到的帳號(非互動環境:把那段文字存成檔案,用 `--headers-file <路徑>` 或 `CAPY_YOUTUBE_HEADERS` 環境變數,並加 `--i-understand`)
 
-YouTube Music 全部都能用:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link`(含 `--create`)/ `pl pull` / `pl push` / `pl sync` / `pl dedup`,以及兩個方向的 `capy migrate`。capy 只寫你自己建的清單(喜歡的音樂、自動清單、從別的頻道存進來的清單都只讀);一輪變更就是一個請求:只有新增時接在尾端,否則整份取代(先移除每一列、再照正本的順序加回去;改名也在同一個請求裡)——驗到 YouTube 的清單上限 5000 首,整份取代約兩分半;請求是原子的,被拒就是清單與名稱都原封不動。整份取代會重設平台的「加入日期」;影片已經完全不存在(沒有 video id)的列不會被動到,取代後會集中到清單最前面。重複的曲目保留。capy 絕不刪除 YouTube Music 的清單。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有 `capy resolve --review` 能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
+YouTube Music 能用的命令:`capy search --provider youtube`、`capy pl list --provider youtube`、`capy pl show`、`capy pl link`(含 `--create`)/ `pl pull` / `pl push` / `pl sync` / `pl dedup`,以及兩個方向的 `capy migrate`;沒有播放遙控,也沒有 ISRC 查詢。capy 只寫你自己建的清單(喜歡的音樂、自動清單、從別的頻道存進來的清單都只讀);一輪變更就是一個請求:只有新增時接在尾端,否則整份取代(先移除每一列、再照正本的順序加回去;改名也在同一個請求裡)——用探測腳本在真帳號上試到 YouTube 的清單上限 5000 首,整份取代約兩分半;請求是原子的,被拒就是清單與名稱都原封不動。整份取代會重設平台的「加入日期」;影片已經完全不存在(沒有 video id)的列不會被動到,取代後會集中到清單最前面。重複的曲目保留。capy 絕不刪除 YouTube Music 的清單。YouTube Music 沒有 ISRC,跟其他平台的對應靠歌名、歌手與時長(`capy resolve`);同一首歌可能同時有純音訊與 MV 兩個 id,只有人工決定(`capy resolve --review` 或 `capy resolve pin`)能把它們併起來。清單 id 帶著帳號的頻道 id:換另一個 YouTube Music 帳號登入後,原帳號連結的清單只會被跳過(不會解除連結),重新 `pl link` 就接回來。
 
 ## 本機曲庫(local,選用):M3U 清單 + library.json
 
@@ -286,7 +286,7 @@ capy --web
 
 **打開就是「搬家」:把一個平台的播放清單搬到另一個平台,三步做完。** 選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度(「比對歌曲 37 / 120」),搬不過去的歌會逐首列出來。它不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。
 
-先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify、Apple Music 與 YouTube Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify 或 Apple Music。
+先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify、Apple Music 與 YouTube Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token、YouTube Music 要自己複製登入 cookie,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify、Apple Music 或 YouTube Music。
 
 其他頁面:**我的清單**、**同步**、**搜尋**、**歌曲 wiki**(正在播那首歌背後的故事,由你自己的 AI 端點用你的母語寫;見[歌曲 wiki](#歌曲-wiki選用接上你自己的-ai-端點)——這一頁跑的是 `capy wiki`,「設定 AI 端點」鈕就地開設定精靈)、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**(播放狀態面板):現在放什麼、進度、播放控制,`capy now` 的內容都在那裡。它跟著真正在播的平台走(只有正在播的平台會把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),控制鈕作用在它顯示的那個平台上;`capy --web --provider X` 可以把它釘在一個平台。頁面上的每一個動作背後都是一條 capy 命令,主控台留著完整紀錄;要確認的事一律由命令自己問,頁面不會替你按。側欄最下面還有語言選單(見上方「介面語言」)。
 
