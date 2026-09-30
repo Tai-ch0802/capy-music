@@ -627,10 +627,10 @@ func TestPlLinkCreate(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"公路旅行", "spotify"}, "先 capy pl unlink"},                                // 已經連了:不可再建一個蓋過去
+		{[]string{"公路旅行", "spotify"}, "先 capy pl unlink"},     // 已經連了:不可再建一個蓋過去
 		{[]string{"通勤", "spotify"}, "已經有叫「通勤」的清單(p1),而且不是空的"}, // 同名而且有歌:連它會照平台順序重排正本(決策 38),不建議
-		{[]string{"午睡", "spotify"}, "已經有叫「午睡」的清單(e404),而且不是空的(或讀不出有幾首)"},
-		{[]string{"夜車", "spotify:p1"}, "只給平台"},                                           // 清單還不存在,沒有 ID 或名稱可給
+		{[]string{"午睡", "spotify"}, `capy 讀不出它有幾首(spotify 對空清單也是這樣回)。如果它是上次 --create 留下的空清單,先確認真的是空的,再用 capy pl link "午睡" spotify:e404 接回去`},
+		{[]string{"夜車", "spotify:p1"}, "只給平台"}, // 清單還不存在,沒有 ID 或名稱可給
 		{[]string{"夜車", "tidal"}, "只給平台"},
 		{[]string{"晨跑", "spotify"}, "已經有 2 個叫「晨跑」的清單(p5、p6):先在 spotify 上把它們改名再重跑"},
 	} {
@@ -638,7 +638,7 @@ func TestPlLinkCreate(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%v:%v", c.args, err)
 		}
-		if c.args[0] != "夜車" && c.args[1] == "spotify" && strings.Contains(err.Error(), "capy pl link \"") { // 有歌、不知道幾首、好幾份:都不可以叫人連它
+		if c.args[0] != "夜車" && c.args[0] != "午睡" && c.args[1] == "spotify" && strings.Contains(err.Error(), "capy pl link \"") { // 有歌、好幾份:都不可以叫人連它(不知道幾首的那份要先確認是空的)
 			t.Errorf("%v:同名清單不是確定空的,不可建議 pl link:%v", c.args, err)
 		}
 		if len(fs.written()) != 1 || !sameFiles(before, driveFiles(t, dc)) {

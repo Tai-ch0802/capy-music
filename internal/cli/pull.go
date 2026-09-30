@@ -611,6 +611,8 @@ func newPlLinkCmd() *cobra.Command {
 					switch {
 					case len(dup) == 1 && dup[0].songs == 0:
 						return i18n.Errorf("link.err.same_name_one", "platform", prov, "name", pl.Name, "id", dup[0].id, "quoted", strconv.Quote(pl.Name))
+					case len(dup) == 1 && dup[0].songs < 0: // 404:Apple 對空清單就是回 404,上次 --create 留下的那份常落在這裡——給命令,但請人先確認是空的(#123 review 第 2 點)
+						return i18n.Errorf("link.err.same_name_one_unknown", "platform", prov, "name", pl.Name, "id", dup[0].id, "quoted", strconv.Quote(pl.Name))
 					case len(dup) == 1:
 						return i18n.Errorf("link.err.same_name_one_songs", "platform", prov, "name", pl.Name, "id", dup[0].id)
 					case len(dup) > 1:
