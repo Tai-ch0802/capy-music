@@ -980,6 +980,15 @@ await scenario('8p', async () => {
     check(head(pl).includes('Apple Music') && buttons(cellOf(rows(pl)[0], 'Spotify')).length === 1, `keychain_error:▶ 照給、Apple 欄照出現:${JSON.stringify(head(pl))}`);
     pl = await open({ spotify: ok, apple: { state: 'expired' }, google: ok }, out(one));
     check(!head(pl).includes('Apple Music'), 'Apple 過期:整欄不出現');
+    pl = await open({ spotify: ok, apple: { state: 'missing' }, google: ok }, out(one));
+    check(!head(pl).includes('Apple Music'), 'Apple 沒登入:整欄不出現');
+    // 平台欄:只連著、一首對應都沒有也出現(c3 只有 Apple 釘成「沒有」);沒連也沒對應的不出現(完整度稽核)
+    pl = await open({ spotify: ok, apple: ok, youtube: ok, google: ok }, out({ ...one, 'pl__a.json': { ...one['pl__a.json'], links: { youtube: 'UCme/PLyt' }, items: [{ cid: 'c3' }] } }));
+    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'YouTube Music', '']), `只連著沒有對應也出現:${JSON.stringify(head(pl))}`);
+    // Apple 協作清單的資料庫列(a.)跟 i. 一樣不給 ▶(play --id 只收 catalog 的數字 id)
+    pl = await open({ spotify: ok, apple: ok, google: ok }, out({ 'pl__b.json': { pid: 'b', name: 'collab', links: { apple: 'p.B' }, items: [{ cid: 'c5' }] }, 'tracks.json': { tracks: { c5: { title: 'Song E', mappings: { apple: { id: 'a.COL' } } } } } }));
+    const ac = cellOf(rows(pl)[0], 'Apple Music');
+    check(allByClass(ac, 'pl__only')[0]?.textContent === '只在資料庫' && buttons(ac).length === 0, 'Apple 的 a. id 也不給 ▶');
     // 讀不到 auth(命令失敗):不知道 = 照給 ▶,讓 CLI 說原因
     ua(MAC);
     reset();
@@ -1127,6 +1136,7 @@ await scenario('8q', async () => {
       events: [{ type: 'prompt_closed', id: 1, reason: 'answered' }, done] },
     onAnswer: release,
   });
+  const blocks0 = allByClass(root, 'block').length; // 主控台(root)跨情境共用:比新增的區塊數
   byText(pl, '同步這份清單').click();
   await tick(20);
   const f = flowOf(pl);
@@ -1140,6 +1150,7 @@ await scenario('8q', async () => {
   await idle(); await tick(5); await idle();
   check(answers.length === 1 && answers[0].value === true, '確認是使用者按的,頁面不替人回答');
   check(status(pl) === '完成。' && calls.slice(-2).join() === 'auth status --json,export', `完成之後重讀、收尾那句留著:${status(pl)} ${calls.slice(-3)}`);
+  check(allByClass(root, 'block').length === blocks0 + 1, `寫入收尾後的重讀用 quiet:主控台只多 pl sync 那一塊:${allByClass(root, 'block').length - blocks0}`);
   // 收尾規則的其餘幾種(每次都是新的同步)
   const closing = async (spec, want, not = []) => {
     script['pl sync a'] = spec;
@@ -1157,6 +1168,7 @@ await scenario('8q', async () => {
   await closing({ first: [{ type: 'prompt', id: 3, kind: 'confirm', title: '?' }], events: [{ type: 'prompt_closed', id: 3, reason: 'timeout' }, exit(1, 'Error: user aborted', 'timeout')] },
     '等太久沒有回答,沒有寫入。', ['user aborted']);
   await closing({ events: [tbl, exit(3, 'Error: 這次會刪掉 12 首,超過閾值')] }, '這次會刪掉 12 首,超過閾值 capy 先停下來了,這一頁不會替你越過', ['Error:', '--force']);
+  await closing({ first: [tbl], events: [exit(130, '', 'cancelled')] }, '已中止。中止前已經寫入的不會撤回', ['失敗', '主控台']);
   await closing({ events: [exit(1, 'Error: 讀不到 Drive')] }, '讀不到 Drive');
   check(anchors(flowOf(pl)).some((a) => a.href === '#/console'), '其他失敗:連到主控台');
   // resolve 沒有自動對上、只剩等人決定的列:指到頁面上的「逐首決定」;表的註記只算會寫入的(review / conflict 不算)
@@ -1189,6 +1201,19 @@ await scenario('8q', async () => {
   page.refresh();
   await idle(); await tick(5); await idle();
   check(allByClass(pl, 'pl__item')[1].classList.contains('is-active') && calls.slice(-2).join() === 'auth status --json,export', '回到頁面重讀:選中的那份還是那份');
+  // 回到頁面的重讀:用 quiet(主控台不多區塊);有命令佔著序列槽時排在它後面(con.idle),不撞序列槽
+  const [g6, r6] = gate();
+  script.noop = { gate: g6, events: [done] };
+  con.run('noop');
+  await tick(10);
+  const c6 = calls.length;
+  const blocks6 = allByClass(root, 'block').length;
+  page.refresh();
+  await tick(10);
+  check(!calls.slice(c6).includes('export'), `有命令佔著序列槽時,回到頁面的重讀要等它:${calls.slice(c6)}`);
+  r6();
+  await idle(); await tick(5); await idle();
+  check(calls.slice(-2).join() === 'auth status --json,export' && allByClass(root, 'block').length === blocks6, `佔槽的命令結束後才重讀、主控台不多區塊:${calls.slice(-3)} ${allByClass(root, 'block').length - blocks6}`);
 
   // ── 在 YouTube Music 建一份:說明 → 開始 → 三步;第二步進行中排一個 con.idle,第三步照樣送出
   const [g2, release2] = gate();
@@ -1325,6 +1350,26 @@ await scenario('8q', async () => {
     const bad = all.filter((x) => CJK.test(x) || x.includes('webui.'));
     check(bad.length === 0, `英文目錄下連結面板與說明不該有中文:${JSON.stringify([...new Set(bad)])}`);
     check(info(row(pl, 'local')) === 'Linked on another computer ("MacBook Air")' && pl.textContent.includes('Master copy in Google Drive'), '英文的面板');
+    // 英文下把流程真的跑一次(計畫 §4 情境 14):執行狀態列的 label 是英文進行式、流程區的收尾句沒有中文
+    const labels = [];
+    con.run = (line, hooks, opts = {}) => { labels.push(opts.label || ''); return Console.prototype.run.call(con, line, hooks, opts); };
+    try {
+      pl = await open({ spotify: PL }, AUTH, { 'pl sync a': { events: [done] }, 'resolve a --provider spotify': { events: [done] }, 'resolve a --provider spotify --review': { events: [done] },
+        'pl link --new-only a youtube --create': { events: [done] }, 'resolve a --provider youtube': { events: [done] }, 'pl sync a --provider youtube': { events: [exit(130, '', 'cancelled')] } });
+      const settle = async () => { await idle(); await tick(5); await idle(); };
+      byText(pl, 'Sync this playlist').click(); await settle();
+      byText(row(pl, 'spotify'), 'Find matches').click(); await settle();
+      byText(row(pl, 'spotify'), 'Review one by one').click(); await settle();
+      byText(row(pl, 'youtube'), 'Create one on YouTube Music').click();
+      byText(allByClass(pl, 'pl__flow-card')[0], 'Start').click(); await settle(); await settle();
+      const flowText = [];
+      walk(flowOf(pl), (c) => flowText.push(c._text || '', ...Object.values(c.attrs || {})));
+      check(flowText.every((x) => !CJK.test(x) && !x.includes('webui.')) && flowOf(pl).textContent.includes('Stopped'), `英文的流程收尾句:${flowOf(pl).textContent.slice(0, 200)}`);
+    } finally {
+      delete con.run;
+    }
+    const want = ['Syncing', 'Matching', 'Reviewing', 'Creating', 'Adding songs'];
+    check(want.every((w) => labels.some((l) => l.startsWith(w))) && labels.every((l) => !CJK.test(l) && /^[A-Z][a-z]*ing /.test(l)), `英文的 label 都是進行式、沒有中文:${JSON.stringify(labels)}`);
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);
@@ -1467,6 +1512,19 @@ await scenario('8r', async () => {
     const bad = all.filter((x) => CJK.test(x) || x.includes('webui.'));
     check(bad.length === 0, `英文目錄下各平台上的清單不該有中文:${JSON.stringify([...new Set(bad)])}`);
     check(prow(pl, 'Chill').textContent.includes('5 songs · Not kept by capy yet'), `英文的列:${prow(pl, 'Chill').textContent}`);
+    // 納入兩步的 label:英文進行式、沒有中文(計畫 §4 情境 14)
+    const labels = [];
+    con.run = (line, hooks, opts = {}) => { labels.push(opts.label || ''); return Console.prototype.run.call(con, line, hooks, opts); };
+    try {
+      script['pl link --new-only -- Chill spotify:' + SP2] = { events: [done] };
+      script['pl pull -- Chill'] = { events: answered };
+      byText(prow(pl, 'Chill'), 'Add to capy').click();
+      await idle();
+    } finally {
+      delete con.run;
+    }
+    check(labels.some((l) => l.startsWith('Adding "Chill"')) && labels.some((l) => l.startsWith('Pulling')) && labels.every((l) => !CJK.test(l) && /^[A-Z][a-z]*ing /.test(l)),
+      `英文的納入 label:${JSON.stringify(labels)}`);
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);
@@ -1591,6 +1649,57 @@ await scenario('8s', async () => {
   await idle();
   check(status().textContent === 'not offered' && !byText(dlg, '設定 AI 端點') && byText(dlg, '查詢'), `被拒絕:${status().textContent}`);
   dlg.close();
+
+  // 英文輪(計畫 §4「中英各跑一輪」):對話框每一種收尾都畫得出英文、label 是英文進行式、沒有中文
+  i18nFile = './i18n-en.json';
+  const CJK = /[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/;
+  const labels = [];
+  try {
+    await loadI18n(api);
+    reset();
+    script = { 'auth status --json': out({ google: { state: 'ok' } }), export: out(data) };
+    const en = mk();
+    initPlaylists(en, api, con, (x) => notices.push(x), { list: ['spotify', 'apple', 'youtube'], current: 'spotify' });
+    await idle();
+    con.run = (line, hooks, opts = {}) => { labels.push(opts.label || ''); return Console.prototype.run.call(con, line, hooks, opts); };
+    const erows = allByClass(en, 'pl__tbl')[0].querySelectorAll('tbody tr');
+    const edlg = allByClass(en, 'pl__wiki-dlg')[0];
+    const est = () => allByClass(edlg, 'pl__wiki-status')[0].textContent;
+    const said = [];
+    const [ge, re] = gate();
+    script['wiki --title=--header --artist=X, Y'] = { gate: ge, events: [{ type: 'stdout', text: 'x\n' }, done] };
+    wiki(erows[0]).click();
+    await tick(5);
+    said.push(est());
+    check(est() === t('webui.playlists.wiki_running') && byText(edlg, 'Stop') && globalThis.document.getElementById('busy-cmd').textContent === 'Writing the song wiki for --header', `英文:跑的時候:${est()}`);
+    re();
+    await idle();
+    said.push(est());
+    check(est() === 'Done.' && byText(edlg, 'Ask again (ignore the cached answer)'), `英文:做完:${est()}`);
+    script['wiki --title=Solo'] = { events: [exit(130, '', 'cancelled')] };
+    wiki(erows[1]).click();
+    await idle();
+    said.push(est());
+    check(est() === 'Stopped.' && byText(edlg, 'Ask'), `英文:中止:${est()}`);
+    script['wiki --title=Solo'] = { events: [exit(1, 'Error: x')] };
+    wiki(erows[1]).click();
+    await idle();
+    script['wiki setup'] = { events: [{ type: 'prompt', id: 9, kind: 'input', title: 'Base URL' }, { type: 'prompt_closed', id: 9, reason: 'dismissed' }, exit(1, 'Error: user aborted')] };
+    byText(edlg, 'Set up the AI endpoint').click();
+    await idle();
+    said.push(est());
+    check(est() === "Setup didn't finish; you can run it again.", `英文:精靈沒做完:${est()}`);
+    const all = [];
+    walk(edlg, (c) => all.push(c._text || '', ...Object.values(c.attrs || {})));
+    const bad = all.concat(said).filter((x) => CJK.test(x) || x.includes('webui.'));
+    check(bad.length === 0, `英文目錄下對話框不該有中文:${JSON.stringify([...new Set(bad)])}`);
+    edlg.close();
+  } finally {
+    delete con.run;
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
+  check(labels.length >= 4 && labels.every((l) => !CJK.test(l) && /^[A-Z][a-z]*ing /.test(l)) && labels.some((l) => l === 'Setting up the AI endpoint'), `英文的 wiki label:${JSON.stringify(labels)}`);
 });
 
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,

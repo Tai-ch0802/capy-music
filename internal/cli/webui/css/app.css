@@ -278,7 +278,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .pl__c-spotify { width: 12rem; } /* ▶ + 英文的「Listen on Spotify」(S7 的字不能改短) */
 .pl__c-apple { width: 6.25rem; }
 .pl__c-youtube { width: 7.5rem; } /* 「YouTube Music」不截字 */
-.pl__c-wiki { width: 4.5rem; }
+.pl__c-wiki { width: 4.75rem; } /* ghost 的「Wiki」鈕約 47px,加上格子左右的 padding(計畫 §2) */
 .pl__tbl td { vertical-align: middle; }
 .pl__tbl th { overflow-wrap: anywhere; } /* 字型比較寬(Windows 的 Segoe UI)時表頭換行,不截成「Le…」 */
 .pl__tbl tr[hidden] { display: none; }

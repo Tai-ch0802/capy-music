@@ -33,7 +33,7 @@
   </header>
   <main id="main" class="doc">
     <h1>capy 隱私權政策</h1>
-    <p class="meta">生效日期:2026 年 9 月 30 日 · <a href="/en/privacy" lang="en" hreflang="en">English version</a></p>
+    <p class="meta">生效日期:2026 年 10 月 1 日 · <a href="/en/privacy" lang="en" hreflang="en">English version</a></p>
     <p>本隱私權政策說明 capy 這個應用程式如何取用、使用、儲存與分享你的資料——包括你登入 Google 並授權之後,capy 能存取的 Google 使用者資料——以及你如何撤銷授權與刪除資料。</p>
     <div class="short">
       <p><strong>一句話版本:</strong>capy 是在你自己電腦上執行的開源程式,沒有後端伺服器。你的資料只存在你的電腦、你自己的 Google 雲端硬碟,以及你所連接的音樂平台;沒有任何使用者資料或憑證會經過我們,我們也無從蒐集。</p>
@@ -54,6 +54,7 @@
     <ul>
       <li><strong>電子郵件地址</strong>只用來在 <code>capy auth status</code> 顯示「目前登入的是哪個帳號」,讓你察覺登錯帳號。capy 不會寄信給你,也不會把地址用於其他用途。</li>
       <li><strong>應用程式專屬資料夾</strong>用來存放讓播放清單能跨裝置同步的資料:播放清單(名稱、說明、曲目與順序、連結到哪些平台清單)、曲目資料(歌名、歌手、專輯、長度、ISRC,以及在各音樂平台上的曲目編號;如果你連接了電腦裡的音樂資料夾,這個「編號」就是該音樂檔在那個資料夾底下的相對路徑,本機清單的編號則是「裝置編號/清單檔名」——路徑與檔名可能帶有你自己取的名字)、裝置清單(capy 為每台電腦產生的隨機編號、電腦名稱、最後同步時間),以及每台裝置上次同步時看到的清單快照。如果你連接了 YouTube Music,連結到 YouTube Music 清單的 id 是「YouTube 頻道 ID/清單 ID」,頻道 ID 是那個 YouTube 帳號公開的識別碼(UC 開頭),用來分辨清單屬於哪個帳號。</li>
+      <li><strong>同步與搬移</strong>:你同步、搬移清單或替曲目找對應時(<code>capy pl pull</code> / <code>push</code> / <code>sync</code>、<code>capy migrate</code>、<code>capy resolve</code>,以及網頁上做同樣事情的按鈕),capy 依你的指示從上面的曲目資料取出曲目的識別資訊(例如 ISRC、歌名、歌手與平台曲目編號),送到你已登入的音樂平台查詢同一首歌或寫入清單;要在 YouTube Music 找同一首歌時,歌名與歌手會當搜尋字送給 Google(見第 4 節)。只在你執行這些操作時送出。</li>
       <li><strong>歌曲 wiki 的 Wiki 鈕</strong>:你在網頁版「我的清單」對某一首按 Wiki 時,capy 從上面的曲目資料取出那一首的<strong>歌名與歌手</strong>,連同你設的母語,送到你用 <code>capy wiki setup</code> 自己設定的 AI 端點,寫出你要看的那一頁歌曲 wiki(見第 4、5 節)。只在你按下時送出;Drive 裡的其他資料一概不送。</li>
       <li>capy 不會把 Google 使用者資料用於廣告、不用於訓練任何 AI 或機器學習模型、不建立使用者檔案,也不做本節以外的任何用途。</li>
     </ul>
@@ -66,7 +67,7 @@
     </ul>
 
     <h2 id="sharing">5. 分享與移轉</h2>
-    <p>capy 不會把你的 Google 使用者資料分享、出售或揭露給任何第三方,包括我們自己。唯一的移轉是第 3 節那一項、由你自己觸發:你在「我的清單」按 Wiki 時,那一首的歌名與歌手會送到你設定的 AI 端點。除此之外,資料從未離開你的電腦與你自己的 Google 帳號。當你用 capy 同步或搬移播放清單時,capy 會依你的指示,把曲目的公開識別資訊(例如 ISRC、歌名、歌手)送到你已登入的音樂平台查詢或寫入清單;這些是音樂本身的資料,不是你的 Google 使用者資料。</p>
+    <p>capy 不會把你的 Google 使用者資料分享、出售或揭露給任何第三方,包括我們自己。資料只在你自己觸發、為了你要用的功能時,依第 3 節送到你自己登入或設定的服務:同步、搬移、找對應時送到你已登入的音樂平台(在 YouTube Music 找歌時當搜尋字送給 Google),在「我的清單」按 Wiki 時送到你自己設定的 AI 端點。除此之外,資料不會離開你的電腦與你自己的 Google 帳號。capy 不會拿這些資料訓練任何 AI 或機器學習模型;收到資料的服務怎麼處理,適用它自己的政策。</p>
     <p>歌曲 wiki(<code>capy wiki</code>)問的是正在播的歌或你自己打的歌名時,會依你的指示把上一節所列的歌曲公開資訊送到你自己設定的 AI 端點;那些資料來自音樂平台或你的輸入,是音樂本身的資料,不是你的 Google 使用者資料,capy 不會把任何帳號資訊一起送過去。</p>
     <p>「我的清單」的 Wiki 鈕不一樣:它送出的歌名與歌手取自你存在 Google Drive 的清單正本,屬於 Google 使用者資料。capy 只為了提供你按下要看的那一頁歌曲 wiki 而移轉它們、只在你按下時、只送到你自己設定的端點,也不會拿它們訓練任何 AI 或機器學習模型。那個端點會不會保留或拿收到的內容來訓練,由那個服務自己的政策決定;請選你接受其條款的端點。</p>
     <p>capy 對於從 Google API 取得之資訊的使用與移轉,遵守 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API 服務使用者資料政策</a>,包括其中的「有限使用」(Limited Use)規定。</p>

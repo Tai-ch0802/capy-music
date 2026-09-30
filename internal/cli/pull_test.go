@@ -632,7 +632,7 @@ func TestPlLinkCreate(t *testing.T) {
 		{[]string{"午睡", "spotify"}, `capy 讀不出它有幾首(spotify 對空清單也是這樣回)。如果它是上次 --create 留下的空清單,先確認真的是空的,再用 capy pl link "午睡" spotify:e404 接回去`},
 		{[]string{"夜車", "spotify:p1"}, "只給平台"}, // 清單還不存在,沒有 ID 或名稱可給
 		{[]string{"夜車", "tidal"}, "只給平台"},
-		{[]string{"晨跑", "spotify"}, "已經有 2 個叫「晨跑」的清單(p5、p6):先在 spotify 上把它們改名再重跑"},
+		{[]string{"晨跑", "spotify"}, "已經有 2 個叫「晨跑」的清單(p5、p6):先在 spotify 上把它們改名再重跑;要把其中一份的曲目加進這份清單,用 capy migrate <其中一個 ID> --from spotify"},
 	} {
 		_, _, err := runPull(t, append([]string{"pl", "link", "--create"}, c.args...)...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -666,13 +666,19 @@ func TestPlLinkCreate(t *testing.T) {
 
 // pl link --new-only(計畫 2026-09-30 §3.5,web 介面發出的 pl link 都帶它):以名稱命中既有正本(不分大小寫)就擋、零寫入——
 // 頁面讀的是這台上次同步的快照,可能不知道別台剛建了同名正本;連上去的話第一次 pull 會照平台順序重排它(決策 38)。
-// 以 pid 指定照常;名字沒人用過照常建。接管的那一道在 TestPlLocalForeignSkippedAndRelinkTakesOver。
+// 以 pid 指定照常;名字沒人用過照常建。接管的那一道在 TestPlLocalForeignSkippedAndRelinkTakesOver(local)與 TestPlLinkNewOnlyRefusesForeignYouTubeAccount(YouTube)。
 func TestPlLinkNewOnly(t *testing.T) {
 	fs, dc, _ := pullWorld(t)
 	fs.set("p1", "Road Trip", "t1")
 	fs.set("p2", "road trip", "t2")
 	fs.set("p3", "Chill source", "t3") // 平台上的名字跟正本不同:之後 --create 不會撞到它
 	mustPull(t, "pl", "link", "Road Trip", "spotify:p1")
+	// 計畫 §3.5 的危險情境:正本在 Drive 上、沒連這個平台(連著的話會先被 already_linked 擋下,名稱護欄就沒測到),
+	// 而且這台的 state.db 沒有它(頁面讀的 export 過時)——不帶 --new-only 會真的連上,第一次 pull 就照平台順序重排它。
+	mustPull(t, "pl", "unlink", "Road Trip", "spotify")
+	if p, err := store.Path(); err != nil || os.Remove(p) != nil {
+		t.Fatalf("刪掉本機 state.db:%s %v", p, err)
+	}
 	before := driveFiles(t, dc)
 	for _, name := range []string{"Road Trip", "road trip"} { // 只差大小寫也算同名(canonState.find 是 EqualFold)
 		_, _, err := runPull(t, "pl", "link", "--new-only", name, "spotify:p2")
