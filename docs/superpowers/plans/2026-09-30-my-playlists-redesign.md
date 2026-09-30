@@ -7,7 +7,7 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 
 **T1 實作時跟本文不同的地方**(2026-09-30):
 - **Apple Music 欄只在這台放得了時出現**(macOS 而且 Apple 沒有「沒登入 / 過期」)。Apple 的格子只有 ▶、沒有連結,照 §3.2「不能用就只留連結」會變成一整欄空格,所以整欄不出現;Spotify 沒登入時照舊只拿掉 ▶、留連結。判斷 macOS 看 `navigator.userAgent`(瀏覽器與 capy 同一台)。
-- **讀不到 `auth status`(命令失敗)= 不知道 = ▶ 照給**,讓 CLI 說原因;只有讀到了而且那家不是 ok 才拿掉。
+- **讀不到 `auth status`(命令失敗)= 不知道 = ▶ 照給**,讓 CLI 說原因;只有讀到了而且那家是 missing(沒登入)或 expired(過期)才拿掉;keychain_error 是要到帳號頁處理的錯誤、不是沒登入,也照給 ▶(Apple 欄照出現),讓 CLI 把原因說出來(#122 review 第 2 點)。
 - 進頁先用 `quiet` 跑 `auth status --json`,在它的 `onExit` 裡再用 `quiet` 跑 `export`(不只重讀時才 quiet:整份 JSON 不灌進主控台)。
 - 「看 X 上的內容」按鈕、下方「平台上現有的清單」照舊保留到 T2(由連結面板與「各平台上的清單」取代)。T1 的空白態只指到搬家,「納入」的說法等 T2。
 - 窄版的位置欄釘在左邊(`position: absolute`),換行後的每一行都從同一條線開始;表格元素改 `display` 之後補上 `role="table" / row / cell / columnheader`,報讀還是表格。
@@ -16,12 +16,14 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 - 單鍵層放過 `<summary>` 上的空白鍵(app.js;根因修一處,清單頁的說明、側欄的「更多」、搬家精靈的完整表格一起好)。
 - 左欄清單是捲動容器,焦點環改畫在項目裡面(`outline-offset: -4px`)。
 
+**T2a 實作時跟本文不同的地方**(2026-09-30):同名平台清單讀不出幾首(404;Apple 對空清單就是這樣回)時不歸「不建議連」,另給 `link.err.same_name_one_unknown`:給 `capy pl link` 的命令,但請人先確認真的是空的,不是空的就先改名。照本文做的話,Apple 上重跑 `--create` 撞到自己上次建的空清單時永遠只會被叫去改名(#123 review 第 2 點)。
+
 **T2 拆成三個 PR**(2026-09-30):T2a = §3.5 的 CLI 前置(`pl link --new-only`、同名清單依曲數的說法;#123);T2b = 連結面板、「同步這份清單」、「在 X 建一份」、「找對應 / 逐首決定」、收尾規則、回到頁面時重讀;T2c = 「各平台上的清單」與「納入」。拆開是為了讓 web 那部分的 review 好讀,範圍不變。
 
 **T2b 實作時跟本文不同的地方**(2026-09-30):
 - 「看 X 上的內容」(`pl show`)從這一頁拿掉,由連結面板取代;Spotify 清單的連結搬到面板的 Spotify 那一列。
 - 變更表的畫法沒有搬到 table.js,改成從 sync.js 匯出 `changeTable`(同步頁行為不變,搬家頁已有從別頁 import 的先例)。
-- 「各平台上的清單已經讀過、那個平台有同名清單時不給『開始』」要等 T2c 才有資料可比,T2b 先靠 CLI 的同名說法(T2a 已改成只在確定是空的時才建議連)。
+- 「各平台上的清單已經讀過、那個平台有同名清單時不給『開始』」要等 T2c 才有資料可比,T2b 先靠 CLI 的同名說法(T2a 已改成依曲數:空的才建議連、讀不出幾首的給命令但請人先確認是空的)。
 - 每個寫入流程收尾後都用 `quiet` 重讀 export;就地流程區只在切到別份清單時清空,重讀後搬進新畫的右欄,收尾那句留著。
 - dock 的 notice 仍會同時出現 CLI 原句(主控台頁看不到時 `console.report()` 一律會說,那是所有頁共用的行為),頁面自己的收尾句照 §3.5 的表。
 
@@ -47,6 +49,7 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 **T4 實作時跟本文不同的地方**(2026-09-30):
 - 指南除了補「我的清單」一段,「歌曲 wiki」那一條也補了新入口(本來只寫「正在播的歌」);README 兩份的網頁頁面清單也替「我的清單」補一句說明。
 - §9 的歷史紀錄(決策 38、46 那兩列、2026-09-18-web-consumer.md)只追加日期註記、不改原文;附錄 A 的 migrate、dedup 兩行是現況描述,直接改。順手補了同一類過時的兩處(§3 的 `CreatePlaylist` 註解、附錄 A 的 `pl link --create`「目前只有 Spotify」):決策 49 / 60 之後 Apple 與 YouTube Music 也能建清單。
+- 文件照實寫:只有這台有那首資料的列才有 Wiki 鈕、只有有對應的歌才有 ▶、「各平台上的清單」不含本機曲庫。
 - 指南那一段照實寫確認的範圍:「在 X 建一份」與「納入 capy」的第一步沒有命令的確認(同 §3.5、R-52),其餘寫入都由命令問。
 
 本文送出前跑過一輪三視角的對抗式審查(硬約束 / 事實與命令 / 需求與易用性),31 則裡 24 則查證成立,都已改進本文;最重要的是 §3.5 的「只建新的」CLI 旗標。
@@ -278,7 +281,7 @@ node 替身沒有排版,寬度與捲動留給 §8 人工驗收。
 - **T1 歌曲表 + 點播**:固定高度的視窗、欄位與寬度規則、▶ / 連結 / 「只在資料庫」/「Spotify 本機檔」、左欄晶片與篩選、lead 與 `<details>`、空白態、清單內篩選(Q7)、`youtubeLink` 的 label 參數。需求 1、4,需求 2 的說明部分。
 - **T2 CLI 前置 + 連結面板 + 同步**:`pl link --new-only` 與 `link.err.same_name_*` 改說法(Go、i18n、README ×2)→ 連結面板、「同步這份清單」、「在 X 建一份」、「找對應」/「逐首決定」、收尾規則、各平台上的清單與「納入」、寫入後與回到頁面時重讀。需求 2、3。
 - **T3 wiki dialog**:dialog、停止、設定入口、鍵盤單鍵層、政策 ×2 / README ×2(Q5)。需求 5。
-- **T4 文件收尾**:指南 ×2(`docs/guide.html`、`docs/guide.en.html`)補「我的清單」一段 → `go test ./site/ -run TestGuideOnSiteIsCurrent -update` → 重發兩個指南 Artifact(英文那份的網址不在 repo,要向維護者拿)→ 合併後去看線上 `/guide`、`/en/guide`;附錄 C 決策 61;§9 的文件不一致。
+- **T4 文件收尾**:指南 ×2(`docs/guide.html`、`docs/guide.en.html`)補「我的清單」一段 → `go test ./site/ -run TestGuideOnSiteIsCurrent -update` → 重發兩個指南 Artifact(中文 https://claude.ai/artifact/UrD8FRjXPFG7ntMR5NrLpW、英文 https://claude.ai/artifact/BQw6dHPE1onBksSFYdyk59)→ 合併後去看線上 `/guide`、`/en/guide`;附錄 C 決策 61;§9 的文件不一致。
 
 每個 PR 都跑 `go test ./...`、`go mod tidy -diff`,node 情境中英兩輪。
 

@@ -617,7 +617,7 @@ func TestPlLinkCreate(t *testing.T) {
 	}
 	fs.set("p5", "晨跑") // 兩個自己的同名清單:兩個 id 都列出來,叫使用者先改名(不知道該連哪一份)
 	fs.set("p6", "晨跑")
-	fs.set("e404", "午睡") // 讀得到但 404(Apple 的空清單也是 404):不知道有幾首,歸「不建議連」那邊
+	fs.set("e404", "午睡") // 讀得到但 404(Apple 的空清單也是 404):不知道有幾首,給命令但請人先確認是空的
 	fs.missingItems["e404"] = true
 	mustPull(t, "pl", "link", "午睡", "spotify:p1")
 	mustPull(t, "pl", "unlink", "午睡", "spotify")
