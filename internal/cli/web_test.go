@@ -1320,6 +1320,18 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, ".dock__busy[hidden] { display: none; }") || !strings.Contains(css, "body[data-busy] .dock::after { opacity: 1; }") {
 		t.Error("執行狀態列要能藏起來,進行中 dock 頂線要亮(glow 在 budget 註解塊裡)")
 	}
+	// 我的清單(計畫 2026-09-30 §3.1):歌曲表在固定高度的視窗裡;篩選只設 hidden,而 display:grid(左欄)與窄版的
+	// display:flex(列)會蓋掉 UA 的 [hidden],少了這兩條畫面上就藏不掉;左欄是捲動容器,焦點環要畫在項目裡面才不會被裁掉。
+	// node 替身沒有排版,只看得到 hidden 屬性。
+	if !strings.Contains(read("js/pages/playlists.js"), "el('div', 'tbl-wrap tbl-wrap--tall pl__songs')") {
+		t.Error("清單頁的歌曲表要放在 .tbl-wrap--tall(固定高度的視窗)裡")
+	}
+	if !strings.Contains(css, ".pl__left .pl__item[hidden] { display: none; }") || !strings.Contains(css, ".pl__tbl tr[hidden] { display: none; }") {
+		t.Error("清單頁的篩選:display:grid / flex 會蓋掉 [hidden],要各有一條 display:none")
+	}
+	if !strings.Contains(css, ".pl__list > .pl__item:focus-visible { outline-offset: -4px; }") {
+		t.Error("左欄清單是捲動容器:焦點環要畫在項目裡面")
+	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".dock__busy-dot") {
 		t.Error("prefers-reduced-motion 要把 ● 脈衝改成靜態")
 	}
@@ -1385,9 +1397,9 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "const prompted = con.focusPrompt(root);") || !strings.Contains(app, "if (!prompted) input.focus();") {
 		t.Error("route() 到主控台時,有開著的提示要先把焦點給提示")
 	}
-	// 按鈕有焦點時空白鍵是「按下它」,單鍵層不可以搶(review #62 第 8 點)。
-	if !strings.Contains(app, "ev.key === ' ' && document.activeElement?.tagName === 'BUTTON'") {
-		t.Error("單鍵層要放過焦點在按鈕上的空白鍵")
+	// 按鈕有焦點時空白鍵是「按下它」、<summary> 上是「展開 / 收起」,單鍵層不可以搶(review #62 第 8 點;清單頁的說明是 <details>)。
+	if !strings.Contains(app, "ev.key === ' ' && ['BUTTON', 'SUMMARY'].includes(document.activeElement?.tagName)") {
+		t.Error("單鍵層要放過焦點在按鈕或 summary 上的空白鍵")
 	}
 	// z-index 一律走 tokens.css 的 --z-*(設計規格 §8 / §13),字面數字會跟之後加的層打架(review #62 第 15 點)。
 	if m := regexp.MustCompile(`z-index:\s*-?\d`).FindString(css); m != "" {

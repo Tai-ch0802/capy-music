@@ -603,9 +603,9 @@ await scenario('8k', async () => {
       script = { export: stdout(exported) };
       const pl = page(initPlaylists);
       await settle();
-      pl.children[2].querySelector('[data-run]').click(); // 右欄的「看 Spotify 上的內容」(不用 .btn--ghost:表裡的 Spotify 連結也是)
+      allByClass(pl, 'pl__acts')[0].querySelector('[data-run]').click(); // 右欄的「看 Spotify 上的內容」(不用 .btn--ghost:表裡的 ▶ 與 Spotify 連結也是)
       await settle();
-      pl.children[4].querySelector('.btn').click(); // 「列出來」
+      allByClass(pl, 'form-row').find((r) => r.querySelector('select')).querySelector('.btn').click(); // 「列出來」
       await settle();
       for (const s of [fail, stdout('not json')]) { script = { export: s }; page(initPlaylists); await settle(); }
 
@@ -647,13 +647,14 @@ await scenario('8k', async () => {
     return s;
   };
   const want = (r, lang, list) => { for (const s of list) check(r.seen.has(s), `${lang}:頁面上少了「${s}」:${JSON.stringify([...r.seen])}`); };
-  const cmds = JSON.stringify(['export', 'pl show x --provider spotify', 'pl list --provider spotify', 'export', 'export', 'search x --provider spotify --limit 10', 'search y --provider spotify --limit 10',
+  const cmds = JSON.stringify(['auth status --json', 'export', 'pl show x --provider spotify', 'pl list --provider spotify', 'auth status --json', 'export', 'auth status --json', 'export', 'search x --provider spotify --limit 10', 'search y --provider spotify --limit 10',
     'search z --provider spotify --limit 10', 'play --id sp1 --provider spotify',
     'pl pull --all --dry-run', 'pl push --all --dry-run', 'pl sync --all --dry-run', 'pl dedup --dry-run']);
 
   const zh = await paint();
-  want(zh, 'zh-TW', ['我的清單', 'capy 替你保管的清單(正本在你的 Google Drive),以及各平台上現有的清單。', '重新整理', '平台上現有的清單', '平台', '本機曲庫', '列出來',
-    'road trip(2 首)', '(本機沒有這首的資料)', '看 Spotify 上的內容', '還沒有清單。到「搬家」搬一個過來,或到「同步」把平台上的清單連起來。',
+  want(zh, 'zh-TW', ['我的清單', '每份清單的正本存在你自己的 Google Drive。正本可以連到每個平台(Spotify、Apple Music、YouTube Music)上各一份清單;同步時,兩邊的新增、刪除與順序會互相帶過去。',
+    '正本、連結、同步是什麼意思?', '搬家是一次性複製過去。同步是之後兩邊持續跟著彼此改。', '顯示的是這台電腦上次同步後的內容', '歌曲', '時長', '重新整理', '平台上現有的清單', '平台', '本機曲庫', '列出來',
+    'road trip(2 首)', '(本機沒有這首的資料)', '看 Spotify 上的內容', '這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。',
     '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
     '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
@@ -662,7 +663,8 @@ await scenario('8k', async () => {
     '選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。', '兩邊已經一致,沒有要改的東西。', '1 筆變更(skip 不算變更)',
     '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。']);
   check([...zh.seen].some((s) => s.startsWith('export 的輸出不是 JSON:') && s.length > 'export 的輸出不是 JSON:'.length), 'zh-TW:export 不是 JSON 要說出來並附上原因');
-  check(JSON.stringify(zh.labels) === JSON.stringify(['讀取你的清單', '讀取 Spotify 上的「road trip」', '讀取 Spotify 上的清單', '讀取你的清單', '讀取你的清單',
+  const st = t('webui.move.label.status');
+  check(JSON.stringify(zh.labels) === JSON.stringify([st, '讀取你的清單', '讀取 Spotify 上的「road trip」', '讀取 Spotify 上的清單', st, '讀取你的清單', st, '讀取你的清單',
     '在 Spotify 找「x」', '在 Spotify 找「y」', '在 Spotify 找「z」', '播放「Song One」', '把平台上的變更拉回來', '把 capy 保管的清單推到平台', '雙向同步', '去除重複的歌']), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
   check(JSON.stringify(zh.calls) === cmds && JSON.stringify(zh.all) === JSON.stringify(['', '全部平台']), `送出的命令與「全部平台」的值:${JSON.stringify(zh.calls)} ${JSON.stringify(zh.all)}`);
   check(JSON.stringify(zh.rowsDrawn) === JSON.stringify([['sp1', 'Song One', '播放']]), `zh-TW 的搜尋結果表:${JSON.stringify(zh.rowsDrawn)}`);
@@ -676,7 +678,7 @@ await scenario('8k', async () => {
     const CJK = /[　-〿㐀-鿿＀-￯]/;
     for (const s of [...en.seen, ...en.labels]) check(!CJK.test(s), `en:頁面或 label 還有中文:「${s}」`);
     for (const s of en.labels) check(/^[A-Z][a-z]*ing /.test(s), `en:執行狀態列的 label 要是進行式:「${s}」`);
-    want(en, 'en', ['My playlists', 'Local library', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
+    want(en, 'en', ['My playlists', 'What are master copies, links and syncing?', 'Song', 'Length', 'Local library', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
     check([...en.seen].some((s) => s.includes('Uncheck "Preview only, don\'t write yet"')), 'en:只看變更的收尾要指名那個勾選框');
     check(en.labels.includes('Reading "road trip" on Spotify') && en.labels.includes('Playing "Song One"') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
     check(JSON.stringify(en.rowsDrawn) === JSON.stringify([['sp1', 'Song One', 'Play']]), `en 的搜尋結果表:${JSON.stringify(en.rowsDrawn)}`);
@@ -727,39 +729,44 @@ await scenario('8n', async () => {
   const pl = mk();
   initPlaylists(pl, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
   await idle();
-  const [left, right] = pl.children[2].children;
-  const items = right.querySelector('.tbl-wrap');
+  const [left] = allByClass(pl, 'pl__left');
+  const [right] = allByClass(pl, 'pl__right');
+  const [pout] = allByClass(pl, 'page__out');
+  const pbar = allByClass(pl, 'form-row').find((r) => r.querySelector('select'));
+  const items = allByClass(right, 'pl__songs')[0];
   const il = anchors(items);
   check(il.length === 1 && il[0].href === track(T1) && il[0].target === '_blank' && il[0].rel === 'noopener noreferrer' && il[0].textContent === '在 Spotify 上聽' && label(il[0]) === '在 Spotify 上聽「Song A」',
     `正本曲目:有 Spotify 對應的才連(空字串、local file、只有 Apple 的不連):${JSON.stringify(il.map((a) => [a.href, label(a)]))}`);
-  check(JSON.stringify(widths(items)) === JSON.stringify([6, 6, 6, 6, 6]), `正本曲目表補一欄、每一列都有那一格:${JSON.stringify(widths(items))}`);
-  const run = right.querySelector('[data-run]');
-  const pa = anchors(right).find((a) => a.href.includes('/playlist/'));
-  check(pa && pa.href === `https://open.spotify.com/playlist/${PL}` && label(pa) === '在 Spotify 上聽「road trip」' && right.children.indexOf(pa) > right.children.indexOf(run),
+  // 欄:#、歌曲、時長 + 連著的 Spotify 一欄(Apple 的格子只有 ▶,node 不是 macOS,整欄不出現);每一列都有每一格
+  check(JSON.stringify(widths(items)) === JSON.stringify([4, 4, 4, 4, 4]), `正本曲目表的欄、每一列都有那一格:${JSON.stringify(widths(items))}`);
+  const [acts] = allByClass(right, 'pl__acts');
+  const run = acts.querySelector('[data-run]');
+  const pa = anchors(acts).find((a) => a.href.includes('/playlist/'));
+  check(pa && pa.href === `https://open.spotify.com/playlist/${PL}` && label(pa) === '在 Spotify 上聽「road trip」' && acts.children.indexOf(pa) > acts.children.indexOf(run),
     `連著的 Spotify 清單本身:放在「看平台上的內容」後面:${pa && pa.href}`);
   check(anchors(left).length === 0, '左欄那一列整個是按鈕:裡面不放連結');
   run.click();
   await idle();
-  const shown = anchors(pl.children[5]);
+  const shown = anchors(pout);
   check(shown.length === 1 && shown[0].href === track(T2) && label(shown[0]) === '在 Spotify 上聽「Live One」', `pl show(Spotify)的表:${JSON.stringify(shown.map((a) => a.href))}`);
 
-  left.children[1].click(); // mix:連著 apple;spotify 的值是物件的壞資料,不算連著、不出按鈕
+  allByClass(left, 'pl__item')[1].click(); // mix:連著 apple;spotify 的值是物件的壞資料,不算連著、不出按鈕
   await idle();
-  check(anchors(right).length === 0 && JSON.stringify(widths(right.querySelector('.tbl-wrap'))) === JSON.stringify([5, 5]), '沒有 Spotify 對應、清單的 spotify 連結不是字串:沒有連結、不多一欄');
-  right.querySelector('[data-run]').click();
+  check(anchors(right).length === 0 && JSON.stringify(widths(allByClass(right, 'pl__songs')[0])) === JSON.stringify([3, 3]), '沒有 Spotify 對應、清單的 spotify 連結不是字串:沒有連結、不多一欄');
+  allByClass(right, 'pl__acts')[0].querySelector('[data-run]').click();
   await idle();
-  check(anchors(pl.children[5]).length === 0 && JSON.stringify(widths(pl.children[5].querySelector('.tbl-wrap'))) === JSON.stringify([5, 5]), 'pl show(Apple)的表:id 長得像也不連、不多一欄');
+  check(anchors(pout).length === 0 && JSON.stringify(widths(pout.querySelector('.tbl-wrap'))) === JSON.stringify([5, 5]), 'pl show(Apple)的表:id 長得像也不連、不多一欄');
 
-  const sel = pl.children[4].querySelector('select');
+  const sel = pbar.querySelector('select');
   sel.value = 'spotify';
-  pl.children[4].querySelector('.btn').click();
+  pbar.querySelector('.btn').click();
   sel.value = 'apple'; // 命令還在跑就換掉選單:表照送出去的那一家(spotify)判斷
   await idle();
-  const listed = anchors(pl.children[5]);
+  const listed = anchors(pout);
   check(listed.length === 1 && listed[0].href === `https://open.spotify.com/playlist/${PL}` && label(listed[0]) === '在 Spotify 上聽「road trip」', `pl list(Spotify)的表連到清單:${JSON.stringify(listed.map((a) => a.href))}`);
-  pl.children[4].querySelector('.btn').click();
+  pbar.querySelector('.btn').click();
   await idle();
-  check(anchors(pl.children[5]).length === 0 && JSON.stringify(widths(pl.children[5].querySelector('.tbl-wrap'))) === JSON.stringify([4, 4]), 'pl list(Apple)的表:不連、不多一欄');
+  check(anchors(pout).length === 0 && JSON.stringify(widths(pout.querySelector('.tbl-wrap'))) === JSON.stringify([4, 4]), 'pl list(Apple)的表:不連、不多一欄');
 
   // ── 同步頁與主控台的變更表:PROVIDER / PROVIDER_ID 的位置在 pull 與 sync 的表不一樣,照表頭找
   const PH = ['ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
@@ -880,19 +887,178 @@ await scenario('8o', async () => {
   const pl = mk();
   initPlaylists(pl, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
   await idle();
-  const [left, right] = pl.children[2].children;
-  const cells = right.querySelector('.tbl-wrap').querySelector('tbody tr').children.map((td) => td.textContent);
-  const il = anchors(right.querySelector('.tbl-wrap'));
-  check(cells[0] === 'old' && cells[1] === 'Winner' && il.length === 1 && il[0].href === `https://open.spotify.com/track/${T1}`,
-    `敗者 cid 沿 merged 找到勝者的曲名與 Spotify 連結:${JSON.stringify(cells)} ${JSON.stringify(il.map((a) => a.href))}`);
+  const [left] = allByClass(pl, 'pl__left');
+  const [right] = allByClass(pl, 'pl__right');
+  const [pout] = allByClass(pl, 'page__out');
+  const row = allByClass(right, 'pl__songs')[0].querySelector('tbody tr');
+  const il = anchors(row);
+  check(row.dataset.cid === 'old' && allByClass(row, 'pl__title')[0]?.textContent === 'Winner' && il.length === 1 && il[0].href === `https://open.spotify.com/track/${T1}`,
+    `敗者 cid 沿 merged 找到勝者的曲名與 Spotify 連結:${row.dataset.cid} ${row.textContent} ${JSON.stringify(il.map((a) => a.href))}`);
   const chips = left.querySelector('.pl__chips').children.map((c) => c.textContent);
-  check(JSON.stringify(chips) === JSON.stringify(['apple ✓', 'spotify ✓']), `左欄只標真的連著的平台:${JSON.stringify(chips)}`);
-  const runs = right.querySelectorAll('[data-run]');
+  check(JSON.stringify(chips) === JSON.stringify(['Apple Music', 'Spotify']), `左欄只標真的連著的平台(顯示名稱,不是原始 id):${JSON.stringify(chips)}`);
+  const runs = allByClass(right, 'pl__acts')[0].querySelectorAll('[data-run]');
   check(JSON.stringify(runs.map((b) => b.textContent)) === JSON.stringify(['看 Apple Music 上的內容', '看 Spotify 上的內容']), `每個連著的平台各一顆:${JSON.stringify(runs.map((b) => b.textContent))}`);
   const shown = [];
-  for (const b of runs) { b.click(); await idle(); shown.push(anchors(pl.children[5]).length); }
-  check(JSON.stringify(calls) === JSON.stringify(['export', 'pl show p.AAAA --provider apple', `pl show ${PL} --provider spotify`]), `送 links 裡的 id,不是正本的名稱:${JSON.stringify(calls)}`);
+  for (const b of runs) { b.click(); await idle(); shown.push(anchors(pout).length); }
+  check(JSON.stringify(calls) === JSON.stringify(['auth status --json', 'export', 'pl show p.AAAA --provider apple', `pl show ${PL} --provider spotify`]), `送 links 裡的 id,不是正本的名稱:${JSON.stringify(calls)}`);
   check(JSON.stringify(shown) === JSON.stringify([0, 1]), `每顆按鈕照自己的平台判斷連不連:Apple 的表不連、Spotify 的表連:${JSON.stringify(shown)}`);
+});
+
+// 8p. 我的清單改版 T1(計畫 2026-09-30 §3.1–§3.2,決策 61):歌曲表的欄與格子、▶ 的條件與送出的命令(args 陣列)、
+//     篩選只藏列不重排(決策 38)、兩種空白態、英文目錄下沒有中文。navigator 換成 macOS / Windows 各跑一次(Apple 的 ▶ 只在 macOS)。
+await scenario('8p', async () => {
+  const { initPlaylists } = await import('./pages/playlists.mjs');
+  const T1 = '4uLU6hMCjMI75M1A2tKUQC';
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
+  const buttons = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'BUTTON') out.push(c); }); return out; };
+  const idle = () => new Promise((r) => con.idle(r));
+  const out = (o) => ({ events: [{ type: 'stdout', text: typeof o === 'string' ? o : JSON.stringify(o) }, done] });
+  const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const ua = (s) => Object.defineProperty(globalThis, 'navigator', { value: { userAgent: s }, configurable: true, writable: true });
+  const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15';
+  const WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+  const ok = { state: 'ok' };
+  const tracks = {
+    c1: { title: 'Song A', artists: ['X', 'Y'], album: 'Alb', duration_ms: 257000, mappings: { spotify: { id: T1 }, apple: { id: '1440' }, youtube: { id: 'vid-1' }, local: { id: 'Music/a.mp3' } } },
+    c2: { title: 'Song B', mappings: { spotify: { id: 'spotify:local:a:b:c:1' }, apple: { id: 'i.LIB' } } },
+    c3: { title: 'Song C', mappings: { apple: { id: '', pinned: true } } },
+    c4: { title: 'Song D', mappings: { spotify: { id: 'spotify:episode:xyz' } } },
+  };
+  const one = { 'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: 'PL', apple: 'p.A', local: 'dev/Music/road.m3u8' }, items: ['c1', 'c2', 'c1', 'c3', 'c4', 'gone'].map((cid) => ({ cid })) }, 'tracks.json': { tracks } };
+  const providers = { list: ['spotify', 'apple', 'local', 'youtube'], current: 'spotify' };
+  const open = async (auth, data) => {
+    reset();
+    script = { 'auth status --json': out(auth), export: data };
+    const pl = mk();
+    initPlaylists(pl, api, con, (x) => notices.push(x), providers);
+    await idle();
+    return pl;
+  };
+  const table = (pl) => allByClass(pl, 'pl__tbl')[0];
+  const head = (pl) => table(pl).querySelector('thead tr').children.map((th) => th.textContent);
+  const rows = (pl) => table(pl).querySelectorAll('tbody tr');
+  const cellOf = (tr, platform) => tr.children.find((td) => td.dataset.platform === platform);
+  try {
+    // ── macOS、三家都登入:三個平台欄;每一格照計畫 §3.2 的表
+    ua(MAC);
+    let pl = await open({ spotify: ok, apple: ok, youtube: ok, google: ok }, out(one));
+    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'Apple Music', 'YouTube Music']), `平台欄照 providers 的順序、本機連著也有對應但不佔欄:${JSON.stringify(head(pl))}`);
+    check(!anchors(table(pl)).some((a) => a.href.includes('a.mp3')) && !rows(pl).some((tr) => tr.children.some((td) => td.dataset.platform === '本機曲庫')), '本機沒有播放、沒有網頁:不佔欄、不連');
+    const tall = allByClass(pl, 'tbl-wrap--tall');
+    check(tall.length === 1 && allByClass(tall[0], 'pl__tbl').length === 1, '歌曲表放在固定高度的 .tbl-wrap--tall 裡');
+    const rs = rows(pl);
+    check(JSON.stringify(rs.map((tr) => tr.dataset.cid)) === JSON.stringify(['c1', 'c2', 'c1', 'c3', 'c4', 'gone']), `列序 = items 的順序,同一首兩次就兩列:${JSON.stringify(rs.map((tr) => tr.dataset.cid))}`);
+    check(rs.every((tr) => !tr.children.some((td) => td.textContent === 'c1' || td.textContent === 'gone')), 'CID 不上畫面');
+    const [r0, r1, , r3, r4, r5] = rs;
+    check(r0.children[0].textContent === '1' && allByClass(r0, 'pl__title')[0].textContent === 'Song A' && allByClass(r0, 'pl__sub')[0].textContent === 'X, Y · Alb' && r0.children[2].textContent === '4:17',
+      `位置、曲名、歌手 · 專輯、時長:${r0.textContent}`);
+    const sp0 = cellOf(r0, 'Spotify');
+    const [spPlay] = buttons(sp0);
+    const [spLink] = anchors(sp0);
+    check(spPlay && spPlay.textContent === '▶' && 'run' in spPlay.dataset && spPlay.getAttribute('aria-label') === '用 Spotify 播放「Song A」', `Spotify 的 ▶:${spPlay && spPlay.getAttribute('aria-label')}`);
+    check(spLink && spLink.href === `https://open.spotify.com/track/${T1}` && spLink.textContent === '在 Spotify 上聽', `Spotify 的連結看得到(S7):${spLink && spLink.href}`);
+    const [apPlay] = buttons(cellOf(r0, 'Apple Music'));
+    check(apPlay && apPlay.getAttribute('aria-label') === '用 Apple Music 播放「Song A」' && anchors(cellOf(r0, 'Apple Music')).length === 0, 'Apple 的格子只有 ▶');
+    const [yt] = anchors(cellOf(r0, 'YouTube Music'));
+    check(yt && yt.href === 'https://music.youtube.com/watch?v=vid-1' && yt.target === '_blank' && yt.textContent === '開啟' && yt.getAttribute('aria-label') === '開啟「Song A」(YouTube Music)' && buttons(cellOf(r0, 'YouTube Music')).length === 0,
+      `YouTube 只有「開啟」,報讀名稱以看得到的字開頭:${yt && [yt.textContent, yt.getAttribute('aria-label')]}`);
+    const only = (td) => allByClass(td, 'pl__only')[0];
+    const none = (td) => allByClass(td, 'pl__none')[0];
+    check(only(cellOf(r1, 'Spotify'))?.textContent === 'Spotify 本機檔' && buttons(cellOf(r1, 'Spotify')).length === 0 && anchors(cellOf(r1, 'Spotify')).length === 0, 'spotify:local:… 沒有 ▶、沒有連結,寫出是本機檔');
+    check(only(cellOf(r1, 'Apple Music'))?.textContent === '只在資料庫' && buttons(cellOf(r1, 'Apple Music')).length === 0, 'Apple 的 i. id 不給 ▶(play --id 會打 catalog 端點失敗)');
+    check(none(cellOf(r3, 'Apple Music'))?.title === '你標過 Apple Music 沒有這首' && none(cellOf(r3, 'Spotify'))?.title === '這首在 Spotify 還沒有對應', '沒有對應與釘成「沒有」說法不同');
+    check(none(cellOf(r4, 'Spotify'))?.title === 'capy 放不了這一首', '其他不是 22 碼的 Spotify id:放不了');
+    check(allByClass(r5, 'pl__title')[0].textContent === '(本機沒有這首的資料)', '懸空的 cid:照舊說這台電腦沒有資料');
+    // ▶ 走 args 陣列;Apple 只打開、沒開始播時,那句話進 notice(決策 52)
+    script['play --id ' + T1 + ' --provider spotify'] = out('▶ ' + T1 + '\n');
+    script['play --id 1440 --provider apple'] = out('opened in Music.app\n');
+    spPlay.click();
+    await idle(); await tick(5);
+    check(JSON.stringify(bodies.at(-1)) === JSON.stringify({ args: ['play', '--id', T1, '--provider', 'spotify'] }) && notices.every((n) => !n.startsWith('▶')), `Spotify 的 ▶:${JSON.stringify(bodies.at(-1))} ${JSON.stringify(notices)}`);
+    apPlay.click();
+    await idle(); await tick(5);
+    check(JSON.stringify(bodies.at(-1)) === JSON.stringify({ args: ['play', '--id', '1440', '--provider', 'apple'] }) && notices.includes('opened in Music.app'), `Apple 的 ▶ 只打開時 notice 照抄那句:${JSON.stringify(notices)}`);
+    check(allByClass(pl, 'pl__filter').length === 0, '清單與歌都不多時沒有篩選框');
+
+    // ── Windows、Spotify 沒登入:Spotify 只留連結;Apple 的格子只有 ▶,整欄不出現
+    ua(WIN);
+    pl = await open({ spotify: { state: 'missing' }, apple: ok, google: ok }, out(one));
+    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'YouTube Music']), `非 macOS 沒有 Apple 欄:${JSON.stringify(head(pl))}`);
+    const sp = cellOf(rows(pl)[0], 'Spotify');
+    check(buttons(sp).length === 0 && anchors(sp).length === 1, 'Spotify 沒登入:沒有 ▶,連結照給');
+    // keychain_error 不是沒登入:▶ 照給、Apple 欄照出現,讓 CLI 把原因說出來;expired 才跟 missing 一樣拿掉(#122 review 第 2 點)
+    ua(MAC);
+    pl = await open({ spotify: { state: 'keychain_error' }, apple: { state: 'keychain_error' }, google: ok }, out(one));
+    check(head(pl).includes('Apple Music') && buttons(cellOf(rows(pl)[0], 'Spotify')).length === 1, `keychain_error:▶ 照給、Apple 欄照出現:${JSON.stringify(head(pl))}`);
+    pl = await open({ spotify: ok, apple: { state: 'expired' }, google: ok }, out(one));
+    check(!head(pl).includes('Apple Music'), 'Apple 過期:整欄不出現');
+    // 讀不到 auth(命令失敗):不知道 = 照給 ▶,讓 CLI 說原因
+    ua(MAC);
+    reset();
+    script = { 'auth status --json': { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] }, export: out(one) };
+    pl = mk();
+    initPlaylists(pl, api, con, () => {}, providers);
+    await idle();
+    check(buttons(cellOf(rows(pl)[0], 'Spotify')).length === 1 && head(pl).includes('Apple Music'), '讀不到 auth:▶ 照給');
+
+    // ── 篩選:超過 20 首才有「在這份清單裡找歌」;只藏列、不重排;超過 8 份清單才有篩選清單
+    const many = { 'tracks.json': { tracks } };
+    for (let i = 0; i < 9; i++) many[`pl__p${i}.json`] = { pid: `p${i}`, name: i === 3 ? 'Mix Tape' : `list ${i}`, links: {}, items: [] };
+    many['pl__p0.json'].items = [...Array(21).fill('c2'), 'c1', 'c2', 'c1', 'c1', 'c1'].map((cid) => ({ cid })); // c1 在第 22、24、25、26 首
+    pl = await open({ spotify: ok, apple: ok, google: ok }, out(many));
+    const [lf, sf] = allByClass(pl, 'pl__filter');
+    check(lf && sf, '9 份清單有篩選清單、26 首有找歌');
+    const q = (box, v) => { const i = box.querySelector('input'); i.value = v; i.l.input(); };
+    q(sf, 'SONG a');
+    const vis = rows(pl).filter((tr) => !tr.hidden);
+    check(JSON.stringify(vis.map((tr) => [tr.dataset.cid, tr.children[0].textContent])) === JSON.stringify([['c1', '22'], ['c1', '24'], ['c1', '25'], ['c1', '26']]),
+      `找歌不分大小寫、只藏列、位置照原本的順序:${JSON.stringify(vis.map((tr) => tr.children[0].textContent))}`);
+    check(allByClass(pl, 'pl__shown')[0].textContent === '顯示 4 / 26 首', `顯示幾首:${allByClass(pl, 'pl__shown')[0].textContent}`);
+    q(sf, '');
+    check(rows(pl).every((tr) => !tr.hidden) && allByClass(pl, 'pl__shown')[0].textContent === '', '清掉就全部回來');
+    q(lf, 'mix');
+    const items = allByClass(pl, 'pl__item');
+    check(items.filter((b) => !b.hidden).length === 1 && !items[3].hidden, '篩選清單只留名稱符合的那一份');
+
+    // ── 空白態:還沒連 Google Drive / 連了但沒有清單
+    pl = await open({ google: { state: 'missing' } }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
+    const go = anchors(pl).find((a) => a.href === '#/account');
+    check(pl.textContent.includes('先連接 Google Drive') && go && go.textContent === '到「帳號」', `沒連 Google Drive:指到帳號頁:${pl.textContent.slice(0, 200)}`);
+    pl = await open({ google: ok }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
+    const sync = anchors(pl).find((a) => a.href === '#/sync');
+    check(pl.textContent.includes('這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來') && sync && sync.textContent === '到「同步」' && !pl.textContent.includes('capy 還沒有替你保管任何清單'),
+      `連了 Google Drive、這台沒有本機資料(第二台電腦):不說「沒有清單」,指到同步頁:${pl.textContent.slice(0, 200)}`);
+    pl = await open({ google: ok }, out({}));
+    check(pl.textContent.includes('capy 還沒有替你保管任何清單') && !anchors(pl).some((a) => a.href === '#/account' || a.href === '#/sync'), '讀過了、真的沒有清單:指到搬家');
+
+    // Google 的 keychain_error 不是「沒連」:說讀不到登入資料、指到帳號頁(#122 review 第 2 點)
+    pl = await open({ google: { state: 'keychain_error' } }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
+    check(pl.textContent.includes('讀不到你的 Google Drive 登入資料(鑰匙圈出錯)') && !pl.textContent.includes('先連接') && anchors(pl).some((a) => a.href === '#/account'), `Google 鑰匙圈出錯:${pl.textContent.slice(0, 160)}`);
+    // export 根本沒跑完(被別的分頁佔著 = refused)不是「這台沒有本機資料」:照說原因,不叫人去同步頁(#122 review 第 1 點)
+    pl = await open({ google: ok }, { status: 409, error: 'another tab is running a command' });
+    check(pl.textContent.includes('another tab is running a command') && !pl.textContent.includes('這台電腦還沒讀過') && !anchors(pl).some((a) => a.href === '#/sync'),
+      `export 被拒:照說原因:${pl.textContent.slice(0, 160)}`);
+    // ── 英文:整頁、報讀名稱、格子的說明都沒有中文
+    i18nFile = './i18n-en.json';
+    try {
+      await loadI18n(api);
+      pl = await open({ spotify: ok, apple: ok, youtube: ok, google: ok }, out(one));
+      const CJK = /[　-〿㐀-鿿＀-￯]/;
+      const all = [];
+      walk(pl, (c) => all.push(c._text || '', c.title || '', c.dataset?.platform || '', ...Object.values(c.attrs || {})));
+      const bad = all.filter((x) => CJK.test(x) || x.includes('webui.'));
+      check(bad.length === 0, `英文目錄下清單頁不該有中文或沒送到的 key:${JSON.stringify([...new Set(bad)])}`);
+      check(JSON.stringify(head(pl)) === JSON.stringify(['#', 'Song', 'Length', 'Spotify', 'Apple Music', 'YouTube Music']), `英文表頭:${JSON.stringify(head(pl))}`);
+      const e0 = rows(pl)[0];
+      check(anchors(cellOf(e0, 'Spotify'))[0]?.textContent === 'Listen on Spotify' && anchors(cellOf(e0, 'YouTube Music'))[0]?.textContent === 'Open', '英文的連結字');
+    } finally {
+      i18nFile = './i18n.json';
+      await loadI18n(api);
+    }
+  } finally {
+    if (nav) Object.defineProperty(globalThis, 'navigator', nav); else delete globalThis.navigator;
+  }
 });
 
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,
@@ -977,7 +1143,7 @@ await scenario('8m', async () => {
     reset();
     script = { [`search k --provider ${prov} --limit 10`]: { events: [{ type: 'table', header: ['ID', 'TITLE'], rows }, done] } };
     const r = mk();
-    initSearch(r, api, con, () => {}, { list: ['spotify', 'apple'], current: prov });
+    initSearch(r, api, con, () => {}, { list: ['spotify', 'apple', 'youtube'], current: prov });
     r.querySelector('input').value = 'k';
     r.querySelector('.btn--primary').click();
     await new Promise((res) => con.idle(res));
@@ -992,6 +1158,9 @@ await scenario('8m', async () => {
   check(sp[1].link === null, 'local file 沒有 Spotify 上的頁面:不給連結');
   const ap = await paint('apple', [['700050031', 'Radioactivity']]);
   check(ap[0].link === null, 'Apple 列沒有 Spotify 連結');
+  const yt = (await paint('youtube', [['vid-9', 'Tune']]))[0].link;
+  check(yt && yt.textContent === '在 YouTube Music 開啟' && yt.getAttribute('aria-label') === '在 YouTube Music 開啟: Tune' && yt.href === 'https://music.youtube.com/watch?v=vid-9' && yt.target === '_blank',
+    `搜尋頁的 YouTube 連結照舊用 youtubeLink 的預設字:${yt && [yt.textContent, yt.getAttribute('aria-label'), yt.href]}`);
 
   // 報讀名稱要以看得到的字開頭(WCAG 2.5.3 Label in Name):用語音控制說「Listen on Spotify」的人才點得到。英文是正式預設。
   i18nFile = './i18n-en.json';

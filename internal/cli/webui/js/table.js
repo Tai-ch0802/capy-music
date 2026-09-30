@@ -4,7 +4,7 @@ import { t } from './i18n.js';
 
 const ATOMIC = /^(ID|CID|PID|ISRC|DEVICE|REASON_CODE)$|_ID$/;
 
-function mmss(ms) {
+export function mmss(ms) {
   const s = Math.floor(ms / 1000); // 對齊 ui.FormatDuration 的整數除法:同一首歌在終端機與網頁要是同一個長度
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -42,7 +42,7 @@ export function renderTable(header, rows) {
 
 // SPOTIFY_ID:Spotify 的曲目與清單 id 是 22 碼 base62。spotify:local:…、spotify:episode:… 這類 URI 沒有頁面,空字串(釘成「沒有」)
 // 也不算;Apple 的 p. / i. / 數字 id 與本機的路徑形狀不同,但呼叫端仍要先確認這一列是 Spotify 的(路徑理論上也可能湊成 22 碼)。
-const SPOTIFY_ID = /^[0-9A-Za-z]{22}$/;
+export const SPOTIFY_ID = /^[0-9A-Za-z]{22}$/;
 
 // spotifyLink:連回 Spotify 上的那一首或那個清單(Spotify Developer Policy II.4.b 與設計規範:顯示 Spotify 的內容就要連回去;
 // 計畫 2026-09-24 §1.7 S7)。字用規範核可的「LISTEN ON SPOTIFY」,報讀名稱以它開頭、再說是哪一首(WCAG 2.5.3 Label in Name),
@@ -62,14 +62,16 @@ export function spotifyLink(kind, id, title, cls = 'btn btn--ghost') {
 }
 
 // youtubeLink:連回 music.youtube.com 上的那一首(YouTube Music 沒有播放遙控,決策 60;顯示 YouTube 內容要讓人回得去)。
-export function youtubeLink(id, title, cls = 'btn btn--ghost') {
+// text / label:清單頁的「YouTube Music」欄已經說了平台,格子裡只寫「開啟」(報讀名稱以看得到的字開頭,WCAG 2.5.3);
+// 不給就是搜尋頁的「在 YouTube Music 開啟」。
+export function youtubeLink(id, title, cls = 'btn btn--ghost', text = '', label = '') {
   const a = document.createElement('a');
   a.className = cls;
   a.href = `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`;
   a.target = '_blank';
   a.rel = 'noopener';
-  a.textContent = t('webui.search.open_youtube');
-  a.setAttribute('aria-label', `${t('webui.search.open_youtube')}: ${title}`);
+  a.textContent = text || t('webui.search.open_youtube');
+  a.setAttribute('aria-label', label || `${t('webui.search.open_youtube')}: ${title}`);
   return a;
 }
 

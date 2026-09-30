@@ -195,6 +195,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent);
 .btn--ghost { background: none; border-color: transparent; color: var(--accent); padding: 0 .5rem; }
 .btn--ghost:hover { background: rgb(var(--accent-rgb) / .12); }
 .btn--danger { color: var(--danger); border-color: var(--danger); background: var(--surface); }
+.btn--icon { min-width: 32px; padding: 0; } /* 只有一個符號的按鈕(清單頁的 ▶):寬度跟高度一樣 */
 a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* 連結長得跟按鈕一樣(搜尋頁的「在 Spotify 上聽」):min-height 要 flex 才生效 */
 .btn:disabled, #cancel[aria-disabled="true"] { opacity: .45; cursor: default; } /* [data-run] 的調暗看 body[data-busy],不看 aria-disabled */
 
@@ -246,10 +247,57 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .doctor__out:empty:not([data-running]) { display: none; }
 .doctor__out[data-running]::after { content: attr(data-running); color: var(--muted); } /* 字由 doctor.js 放進 data-running(CSS 叫不了 t()) */
 
-/* ── 播放清單:≥ 80rem 兩欄,以下上下疊 ── */
-.pl__cols { display: grid; grid-template-columns: 1fr; gap: 1.25rem; margin-top: 1rem; }
-@media (min-width: 80rem) { .pl__cols { grid-template-columns: 20rem minmax(0, 1fr); } }
-.pl__left { display: flex; flex-direction: column; gap: .35rem; }
+/* ── 我的清單(計畫 2026-09-30,決策 61):兩欄看這一頁自己的寬度(容器查詢;.page 是九頁共用的 class,容器設在這一頁的
+   section 上)≥ 64rem 並排,以下上下疊。歌曲表的容器 < 50rem 時一首拆成多行,每格前面寫出平台名(沒有表頭可以對)。 ── */
+#page-playlists { container-type: inline-size; }
+.pl__cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; margin-top: 1rem; align-items: start; }
+@container (min-width: 64rem) { .pl__cols { grid-template-columns: 16rem minmax(0, 1fr); } }
+.pl__left, .pl__right { min-width: 0; }
+.pl__list { display: flex; flex-direction: column; gap: .35rem; max-height: 15rem; overflow: auto; }
+.pl__list > .pl__item:focus-visible { outline-offset: -4px; } /* 捲動容器會裁掉畫在外面的焦點環:改畫在項目裡面 */
+@container (min-width: 64rem) { .pl__list { max-height: 60vh; } }
+.pl__left .pl__item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .5rem; flex: none; }
+.pl__left .pl__item[hidden] { display: none; } /* display:grid 會蓋掉 UA 的 [hidden] */
+.pl__left .pl__name { overflow-wrap: anywhere; }
+.pl__left .pl__chips { grid-column: 1 / -1; flex-wrap: wrap; }
+.pl__filter { margin-bottom: .5rem; align-items: center; }
+.pl__filter .in { flex: 1 1 12rem; min-width: 0; max-width: 24rem; }
+.pl__shown { color: var(--muted); font-size: var(--t-12); }
+.pl__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; margin: 0 0 .75rem; }
+.pl__head .card__sub, .pl__head .page__note { margin: 0; }
+.pl__about { margin: 0 0 1rem; font-size: var(--t-14); }
+.pl__about summary { color: var(--accent); cursor: pointer; width: max-content; max-width: 100%; }
+.pl__about-list { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .5rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.pl__about-list li { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: .6rem .8rem; }
+.pl__about-list strong { color: var(--text-hi); font-weight: 600; }
+.pl__about-list span { color: var(--muted); }
+.pl__songs { container-type: inline-size; }
+.pl__tbl { table-layout: fixed; }
+.pl__c-pos { width: 3rem; }
+.pl__c-dur { width: 4.5rem; }   /* 英文的「Length」在 12px 要 39px */
+.pl__c-spotify { width: 12rem; } /* ▶ + 英文的「Listen on Spotify」(S7 的字不能改短) */
+.pl__c-apple { width: 6.25rem; }
+.pl__c-youtube { width: 7.5rem; } /* 「YouTube Music」不截字 */
+.pl__tbl td { vertical-align: middle; }
+.pl__tbl th { overflow-wrap: anywhere; } /* 字型比較寬(Windows 的 Segoe UI)時表頭換行,不截成「Le…」 */
+.pl__tbl tr[hidden] { display: none; }
+.pl__pos, .pl__dur { color: var(--muted); font-size: var(--t-12); }
+.pl__title, .pl__sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl__title { color: var(--text-hi); }
+.pl__sub { color: var(--muted); font-size: var(--t-12); }
+.pl__none, .pl__only { color: var(--muted); font-size: var(--t-12); padding-left: .5rem; cursor: help; }
+@container (max-width: 50rem) {
+  .pl__tbl, .pl__tbl tbody, .pl__tbl td { display: block; }
+  .pl__tbl thead, .pl__tbl colgroup { display: none; }
+  /* 位置釘在左邊那一欄,換行後的每一行都從同一條線開始 */
+  .pl__tbl tr { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: .1rem .6rem; padding: .5rem .9rem .5rem 3.25rem; border-bottom: 1px solid var(--line); }
+  .pl__tbl tbody tr:last-child { border-bottom: 0; }
+  .pl__tbl td { padding: 0; border: 0; }
+  .pl__pos { position: absolute; left: .9rem; top: .75rem; }
+  .pl__song { flex: 1 1 calc(100% - 4rem); min-width: 0; }
+  .pl__cell { display: inline-flex; align-items: center; }
+  .pl__cell::before { content: attr(data-platform); color: var(--muted); font-size: var(--t-12); margin-right: .2rem; }
+}
 .pl__item { display: flex; gap: .5rem; align-items: center; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: .7rem .9rem; color: var(--text); cursor: pointer; font: 500 var(--t-14) var(--sans); transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease); }
 .pl__item:hover { border-color: var(--line-hi); }
 .pl__item.is-active { border-color: var(--accent); background: rgb(var(--accent-rgb) / .12); color: var(--text-hi); }
