@@ -1356,6 +1356,8 @@
   "webui.move.truths.setup.text": "capy uses your own account credentials, stored in this computer's keychain. Nobody holds them for you, so nobody can charge you for that either.",
   "webui.move.truths.setup.title": "Connecting accounts takes a few minutes",
   "webui.move.truths.title": "Good to know first",
+  "webui.move.truths.youtube.text": "Liked Music, automatic playlists and playlists saved from other channels stay read-only. YouTube Music has no ISRC, so songs are matched by title, artist and duration; ones that can't be matched are listed for you.",
+  "webui.move.truths.youtube.title": "YouTube Music only takes playlists you created",
   "webui.move.where.dup": "{provider} already has a playlist called \"{name}\", so adding to it is selected. If that playlist isn't yours (for example, someone else's playlist that you follow), choose \"Create a new playlist with the same name\" instead; you can also pick a different playlist above.",
   "webui.move.where.existing": "Add to an existing playlist, after the songs already in it",
   "webui.move.where.existing_aria": "Existing playlist",

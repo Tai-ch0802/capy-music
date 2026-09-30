@@ -295,7 +295,7 @@
      |__|            |__|</pre>
     <div>
       <h1>capy<span class="dot">.</span></h1>
-      <p class="lede">A music CLI that lives in your terminal. Search, control playback, and sync your Spotify and Apple Music playlists to your own Google Drive.</p>
+      <p class="lede">A music CLI that lives in your terminal. Search, control playback, and sync your Spotify, Apple Music and YouTube Music playlists to your own Google Drive.</p>
       <div class="install"><span class="p">$</span> go install github.com/Tai-ch0802/capy-music/cmd/capy@latest</div>
       <ul class="platforms">
         <li>macOS</li>
@@ -392,7 +392,7 @@ p.JL68l7EhogEeXd  Winter Warmth    -
     <h2>Web UI</h2>
     <p><code>capy --web</code> starts a web UI on this computer, bound to 127.0.0.1 only. At startup it prints a URL with a one-time token, and in a terminal it also opens your browser for you (in a pipeline or in the background it only prints the URL).</p>
     <p><b>It opens on Move</b>: move a playlist from one platform to another in three steps. Choose the source and the destination (you can see at a glance whether each platform is connected, and connect one on the spot) → pick a playlist and decide whether to create a new one or add to an existing one → review which songs will move; nothing is written until you confirm. Matching the songs shows real progress, and songs that can't be moved are listed one by one. It never deletes the source, only adds, and keeps the order; it's free and has no song limit, because it runs on your own computer with your own accounts.</p>
-    <p>The limits first: moving into the Local library can only add to an existing M3U file (Spotify and Apple Music can create new playlists); whether songs moved into Apple Music are also added to your Apple Music library depends on your Apple Music settings, and they can only be moved into playlists you created yourself; connecting your accounts the first time takes a few minutes (Spotify needs your own app, and for Apple you copy the token yourself), and in exchange nobody holds your credentials for you. M3U playlists on your disk can be moved to Spotify or Apple Music too.</p>
+    <p>The limits first: moving into the Local library can only add to an existing M3U file (Spotify, Apple Music and YouTube Music can create new playlists); whether songs moved into Apple Music are also added to your Apple Music library depends on your Apple Music settings, and they can only be moved into playlists you created yourself; songs moved into YouTube Music also only go into playlists you created, and since it has no ISRC they're matched by title, artist and duration only; connecting your accounts the first time takes a few minutes (Spotify needs your own app, for Apple you copy the token yourself, and for YouTube Music you copy the login cookie yourself), and in exchange nobody holds your credentials for you. M3U playlists on your disk can be moved to Spotify, Apple Music or YouTube Music too.</p>
     <p>The other pages: My playlists, Sync, Search, Song wiki (the story behind the song that's playing, written in your language by your own AI endpoint; see Song wiki below) and Accounts; under Advanced are Console (type any subcommand, just like in the terminal), ISRC lookup (asks all three platforms at once) and Diagnostics. The now-playing bar is always at the bottom of every page: what's playing, progress and playback controls, everything <code>capy now</code> shows. It follows whichever platform is actually playing (only a platform that is playing takes it over, a paused one doesn't; if the default platform isn't logged in or can't play on this computer, it shows the first one that can), its controls act on the platform it shows, and <code>capy --web --provider X</code> pins it to one platform. Every action on the page is a capy command behind the scenes, and Console keeps the full record; anything that needs your confirmation is asked by the command itself, and the page never answers for you. The Language menu in the navigation switches the interface language: it runs <code>capy config set language</code>, the same setting the terminal uses (so the terminal switches too), and the page reloads once the change is saved.</p>
     <p class="note">The web UI stays on your computer: it binds to 127.0.0.1 only, so other devices on your network can't reach it; a one-time token is generated at every start, and the URL stops working when the process exits. Credentials never pass through the page: a secret you type into a wizard only goes from the browser into the process and then into the keychain, and token values in command echoes are always masked as ***.</p>
     <p>It runs one command at a time (a second one is refused), because it shares the same Drive and local data as the terminal. While a command runs, a status line appears at the bottom: what it's doing, how long it has been running and the latest line it printed (while matching songs, which song it's on); the Stop button next to it stops it at any time (so does <kbd>Ctrl-C</kbd> on Console's command line). Once you've confirmed a write, Stop asks you to press it a second time, because stopping halfway may leave only part of the change written. A few commands aren't available on the web: the <code>debug</code> group, the three secret flags (use the wizard instead) and <code>now --watch</code> (the now-playing bar already shows it); <code>capy update</code> runs, but the web process is still the old version afterwards and asks you to restart it.</p>
@@ -406,7 +406,7 @@ p.JL68l7EhogEeXd  Winter Warmth    -
       <div class="group">
         <h3>Search and playback</h3>
         <ul class="cmds">
-          <li><b>capy search &lt;query&gt;</b><span>Searches for tracks. <code>--provider apple</code> switches the platform, and <code>--limit</code> sets how many results you get.</span></li>
+          <li><b>capy search &lt;query&gt;</b><span>Searches for tracks. <code>--provider apple</code> or <code>--provider youtube</code> switches the platform, and <code>--limit</code> sets how many results you get.</span></li>
           <li><b>capy play &lt;query&gt;</b><span>One entry point for tracks, an artist's top tracks and your own playlists. When several things match, a terminal opens a picker; a script gets exit code 2 and the list of candidates. capy never just picks one and plays it.</span></li>
           <li><b>capy play artist:Coldplay</b><span>A prefix sets the type: <code>artist:</code>, <code>pl:</code> or <code>track:</code>, the same as <code>--type</code>.</span></li>
           <li><b>capy pause / next / prev</b><span>Basic remote control.</span></li>
@@ -423,14 +423,14 @@ p.JL68l7EhogEeXd  Winter Warmth    -
           <li><b>capy pl list</b><span>Lists the playlists on a platform.</span></li>
           <li><b>capy pl show &lt;name&gt;</b><span>Shows a playlist's tracks.</span></li>
           <li><b>capy pl link &lt;name&gt; &lt;platform&gt;:&lt;playlist&gt;</b><span>Links a playlist on a platform to capy's master copy. Only the links you make explicitly count; capy never guesses from playlists that share a name.</span></li>
-          <li><b>capy pl link &lt;name&gt; spotify --create</b><span>Creates an empty private playlist with the master copy's name on Spotify or Apple Music (<code>apple --create</code>) and links it right away. Use it when you copy a playlist over from another platform, so you don't have to create it in the app first. If you already have a playlist of your own with that name on the platform, it stops and tells you how to link that one instead.</span></li>
+          <li><b>capy pl link &lt;name&gt; spotify --create</b><span>Creates an empty private playlist with the master copy's name on Spotify, Apple Music or YouTube Music (<code>apple --create</code>, <code>youtube --create</code>) and links it right away. Use it when you copy a playlist over from another platform, so you don't have to create it in the app first. If you already have a playlist of your own with that name on the platform, it stops and tells you how to link that one instead.</span></li>
           <li><b>capy pl pull</b><span>Brings a platform's changes into the master copy. It lists what will change first and writes only after you confirm.</span></li>
           <li><b>capy pl push</b><span>The other direction: from the master copy back to the platform. This device must have pulled before, and the platform must have no changes that haven't been pulled yet.</span></li>
           <li><b>capy pl sync</b><span>Pull, then push: one table, one confirmation. This is the one to use day to day.</span></li>
           <li><b>capy pl dedup &lt;name&gt;</b><span>Removes duplicate tracks from the master copy: the same platform id or the same ISRC counts as one track. The first copy is kept and the rest stay in order, then the result is pushed to the platforms capy can write to; if there are no duplicates, nothing is written. <code>capy pl dedup apple:Workout</code> instead reads the platform playlist directly and only prints a report (it doesn't touch Drive and needs no link); to have capy remove the duplicates, link the playlist to a master copy and use the first form.</span></li>
           <li><b>capy pl unlink &lt;name&gt; &lt;platform&gt;</b><span>Removes the link; the master copy's content stays as it is.</span></li>
         </ul>
-        <p class="note">Run these commands <b>without a playlist name</b> in a terminal and a picker opens: <code>pl link</code> asks three times (the platform → which playlist on that platform, where Spotify and Apple Music also offer "create a new empty playlist" → which master copy to link it to, where you can also create a new one on the spot), and <code>pl unlink</code> asks twice. Behind a pipeline or in cron it doesn't ask, and you still have to give every argument.</p>
+        <p class="note">Run these commands <b>without a playlist name</b> in a terminal and a picker opens: <code>pl link</code> asks three times (the platform → which playlist on that platform, where Spotify, Apple Music and YouTube Music also offer "create a new empty playlist" → which master copy to link it to, where you can also create a new one on the spot), and <code>pl unlink</code> asks twice. Behind a pipeline or in cron it doesn't ask, and you still have to give every argument.</p>
       </div>
 
       <div class="group">
@@ -454,7 +454,7 @@ p.JL68l7EhogEeXd  Winter Warmth    -
       <div class="group">
         <h3>Settings and maintenance</h3>
         <ul class="cmds">
-          <li><b>capy auth login / status / logout</b><span>Authorization for each of the three platforms. Credentials only go into your operating system's keychain, never into the config file or Drive. Logging out of Spotify or Apple Music also deletes that platform's playlist list, recent items (the ones used for completion and <code>play --pick</code>) and the playlist tracks remembered for sync, all cached on this computer.</span></li>
+          <li><b>capy auth login / status / logout</b><span>Authorization for each of the four platforms. Credentials only go into your operating system's keychain, never into the config file or Drive. Logging out of Spotify, Apple Music or YouTube Music also deletes that platform's playlist list, recent items (the ones used for completion and <code>play --pick</code>) and the playlist tracks remembered for sync, all cached on this computer.</span></li>
           <li><b>capy doctor</b><span>One-stop diagnostics: what's wrong with your settings, credentials and connections, each with a next step you can follow.</span></li>
           <li><b>capy config get / set / list</b><span>Non-secret settings, such as the default platform, the local library folder and the interface language (<code>language</code>): the interface is in English by default, <code>capy config set language zh-TW</code> switches it to Traditional Chinese, and <code>en</code> switches it back.</span></li>
           <li><b>capy export</b><span>Prints the master copies cached on this computer to standard output, exactly as they are. It touches neither the network nor the keychain.</span></li>
@@ -475,12 +475,14 @@ p.JL68l7EhogEeXd  Winter Warmth    -
             <th scope="col">Capability</th>
             <th scope="col">Spotify</th>
             <th scope="col">Apple Music</th>
+            <th scope="col">YouTube Music</th>
             <th scope="col">Local library</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <th scope="row">Search</th>
+            <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">Matches within the library</td>
@@ -490,9 +492,11 @@ p.JL68l7EhogEeXd  Winter Warmth    -
             <td class="yes">Connect</td>
             <td class="part">macOS only; songs not in your library only open in Music.app</td>
             <td class="no">Not supported</td>
+            <td class="no">Not supported</td>
           </tr>
           <tr>
             <th scope="row">Read playlists</th>
+            <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">M3U files</td>
@@ -501,10 +505,12 @@ p.JL68l7EhogEeXd  Winter Warmth    -
             <th scope="row">Write playlists</th>
             <td class="yes">Yes</td>
             <td class="yes">Only playlists you created</td>
+            <td class="yes">Only playlists you created</td>
             <td class="yes">Yes</td>
           </tr>
           <tr>
             <th scope="row">Create playlists</th>
+            <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="yes">Yes</td>
             <td class="part">Create the file yourself</td>
@@ -513,6 +519,7 @@ p.JL68l7EhogEeXd  Winter Warmth    -
             <th scope="row">Credentials</th>
             <td>Your own app</td>
             <td>A token you copy from the web player</td>
+            <td>A login cookie you copy from the web player</td>
             <td>Not needed</td>
           </tr>
         </tbody>
@@ -522,10 +529,11 @@ p.JL68l7EhogEeXd  Winter Warmth    -
 
   <section>
     <h2>Copy a playlist to another platform</h2>
-    <p class="sub">One command does it. The example copies the Apple Music playlist "Roadtrip" to Spotify; you need to be logged in to Spotify, Apple Music and Google first.</p>
+    <p class="sub">One command does it. The example copies the Apple Music playlist "Roadtrip" to Spotify; you need to be logged in to the source platform, the target platform and Google first (YouTube Music works as a source or a target too).</p>
 <pre><code><span class="c-p">$</span> capy migrate Roadtrip --from apple --to spotify           <span class="c-m"># create a private playlist with the same name on Spotify and move the tracks over</span>
 <span class="c-p">$</span> capy migrate Roadtrip --from apple --to spotify:Driving   <span class="c-m"># or add to an existing playlist, after the tracks it already has</span>
 <span class="c-p">$</span> capy migrate Roadtrip --from spotify --to apple           <span class="c-m"># the other way: create a playlist with the same name on Apple Music and move the Spotify tracks over</span>
+<span class="c-p">$</span> capy migrate Roadtrip --from spotify --to youtube         <span class="c-m"># to YouTube Music: creates a playlist with the same name there; no ISRC, so tracks are matched by title, artist and duration</span>
 <span class="c-p">$</span> capy migrate                                             <span class="c-m"># no arguments: pick the source, the playlist and the target step by step</span></code></pre>
     <p style="margin-top:1.25rem">It lists what it will move first and does nothing until you confirm; when a new playlist is needed, that too is created only after you confirm. The target's existing order comes first, and the source's tracks follow in the source's order; tracks the target already has (the same track, or the same ISRC) are skipped. The source is never touched, and the target only gets additions: if the target has removals, reorders or renames that haven't been synced, it stops and asks you to run <code>capy pl sync</code> first. Tracks that weren't found on the target platform aren't pushed this time; in a terminal you can review them one by one on the spot, otherwise the last lines give you the commands to add them later. Afterwards only the target is linked to the master copy (the source isn't linked: it's a one-time copy); if you want to follow the source's changes later, the last lines also give you the <code>pl link</code> and <code>pl sync</code> commands. The exception: if the master copy is already linked to the source (you were halfway through the manual steps below), the source side is pulled into the master copy too, the master copy wins, and the last lines say that both sides are linked. Whether tracks moved into Apple Music are also added to your Apple Music library depends on your Apple Music settings (that's Apple's behavior), and they can only be moved into playlists you created yourself.</p>
     <p style="margin-top:1.5rem"><b>What happens behind the scenes</b>: capy links both platforms to the same master copy, then pushes. If you want the two sides to stay in sync, do it by hand once as shown below; after that, <code>capy pl sync</code> is all you need.</p>
@@ -604,6 +612,14 @@ p.JL68l7EhogEeXd  Winter Warmth    -
       <div class="note">
         <h3>Apple Music only plays songs in your library</h3>
         <p>The Music app's scripting interface can only play tracks that are in your library. So when you play an Apple Music song (<code>capy play</code>, or the Search page of the web UI), capy first looks for it in the Music library on your computer, by title, artist and duration, and by album when that leaves more than one. If it finds exactly one, it plays it and checks that playback really started. Otherwise it opens the song in the Music app with the song highlighted, and you double-click it there (the Play button would resume whatever was playing before): the command still exits 0 but doesn't print ▶, and on the web UI's Search page the button for Apple Music songs says Open in Music.app. capy never adds songs to your library to get around this.</p>
+      </div>
+      <div class="note">
+        <h3>The YouTube Music cookie is one you copy from the web</h3>
+        <p>That isn't a use Google officially supports: what you paste is your Google account's YouTube login session (capy keeps only three session cookies, in the keychain), and anyone holding it can act as you on all of YouTube; automated access to YouTube is also against its Terms of Service, so you use it at your own risk. To revoke it, sign out of all devices in your Google Account → Security; Google may also invalidate it at any time, and then you just log in again. capy only guides you through copying it and never reads your browser. The YouTube Music account can be a different one from the account you use for Google Drive; <code>capy auth status</code> shows both. Playlist ids carry the account's channel id, so after logging in to another account the old account's links are skipped, not unlinked.</p>
+      </div>
+      <div class="note">
+        <h3>YouTube Music can be written to, but only playlists you created</h3>
+        <p>Liked Music, automatic playlists and playlists saved from other channels are read-only. One round of changes is one request: when the changes only add tracks they're appended, otherwise the whole playlist is replaced (every row removed, then added back in the master copy's order; a rename rides in the same request), verified up to YouTube's 5,000-track cap; the request is atomic, so a rejected change leaves the playlist untouched, but a replace resets "date added". YouTube Music has no ISRC, so cross-platform matching relies on title, artist and duration only; the audio version and the music video of the same song are two ids, and only <code>capy resolve --review</code> can merge them. capy doesn't play YouTube Music for you (on the web Search page that row only has an Open on YouTube Music link), and it never deletes a YouTube Music playlist.</p>
       </div>
       <div class="note">
         <h3>Every command works in a pipeline</h3>

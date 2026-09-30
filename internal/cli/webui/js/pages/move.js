@@ -512,6 +512,7 @@ function truths() {
     [t('webui.move.truths.no_delete.title'), t('webui.move.truths.no_delete.text')],
     [t('webui.move.truths.order.title'), t('webui.move.truths.order.text')],
     [t('webui.move.truths.apple_library.title'), t('webui.move.truths.apple_library.text')],
+    [t('webui.move.truths.youtube.title'), t('webui.move.truths.youtube.text')],
     [t('webui.move.truths.setup.title'), t('webui.move.truths.setup.text')],
     [t('webui.move.truths.drive.title'), t('webui.move.truths.drive.text')],
     [t('webui.move.truths.local.title'), t('webui.move.truths.local.text')],

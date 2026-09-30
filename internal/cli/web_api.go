@@ -39,6 +39,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // ── GET /api/isrc/{isrc} ──
 
+// isrcProviderIDs:/api/isrc 不帶 ?provider 時一次問的平台。YouTube Music 沒有 ISRC(決策 60,provider 不宣告
+// CapISRCLookup),問了那一格永遠是「不支援」的紅字卡,所以預設不問;明確 ?provider=youtube 仍照常回那個錯。
+// ponytail: 靜態手抄本,TestWebMoveWizardCapabilitiesAndHeadersMatchGo 釘它等於宣告 CapISRCLookup 的平台;
+// 能不登入就查到平台能力時再改成過濾。
+var isrcProviderIDs = []string{"spotify", "apple", "local"}
+
 type isrcResponse struct {
 	ISRC            string               `json:"isrc"`
 	Parts           *provider.ISRCParts  `json:"parts"` // null = 拆不出四段(平台照樣查,頁面把那一區留白)
@@ -115,7 +121,7 @@ func (s *webServer) handleISRC(w http.ResponseWriter, r *http.Request) {
 		resp.Parts = &p
 	}
 
-	ids := providerIDs
+	ids := isrcProviderIDs
 	if q := r.URL.Query().Get("provider"); q != "" && q != "all" {
 		if !isProviderID(q) {
 			httpErr(w, http.StatusBadRequest, i18n.T("web.err.unknown_provider", "id", q))
