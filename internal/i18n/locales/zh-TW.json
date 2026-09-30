@@ -1334,6 +1334,7 @@
   "webui.playlists.create.stop1": "第一步沒有完成。",
   "webui.playlists.create.stop2": "已經在 {platform} 建立並連上「{name}」;按「{button}」接著找對應。",
   "webui.playlists.create.stop3": "對應已經寫入;按「{button}」把歌加進 {platform}。",
+  "webui.playlists.create.stop3_nowrite": "已經在 {platform} 建立並連上「{name}」;按「{button}」把歌加進去。",
   "webui.playlists.empty": "capy 還沒有替你保管任何清單。到「搬家」搬一份過來。",
   "webui.playlists.empty_drive_error": "讀不到你的 Google Drive 登入資料(鑰匙圈出錯)。到「帳號」看看。",
   "webui.playlists.empty_no_drive": "capy 把清單的正本存在你的 Google Drive。先連接 Google Drive。",
@@ -1376,6 +1377,7 @@
   "webui.playlists.links.missing": {
     "other": "{count} 首還沒有對應,同步時會跳過"
   },
+  "webui.playlists.links.relogin": "這台電腦的 {platform} 登入少了帳號資料;到「帳號」重新登入一次",
   "webui.playlists.links.resolve": "找對應",
   "webui.playlists.links.review": "逐首決定",
   "webui.playlists.links.unlinked": "沒有連結",

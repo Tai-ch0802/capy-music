@@ -138,8 +138,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       .map((k) => files[k]);
     devices = ((files['manifest.json'] || {}).devices) || [];
     left.replaceChildren();
-    right.replaceChildren();
-    if (!pls.length) { empty(); return; }
+    if (!pls.length) { right.replaceChildren(); empty(); return; } // 右欄交給 showItems 換:它要先讀舊畫面的篩選字與捲動位置
     const list = el('div', 'pl__list');
     const rows = pls.map((pl) => {
       const row = el('button', 'pl__item');
@@ -168,6 +167,9 @@ export function initPlaylists(root, api, con, notice, providers) {
   }
 
   function showItems(pl, track) {
+    // 同一份重畫(寫入後、回到這一頁時的重讀):找歌的篩選字與歌曲表的捲動位置帶回去,不要每次都被重置(#124 review)
+    const keep = selected === pl.pid
+      ? { q: right.querySelector('.pl__filter input')?.value || '', top: right.querySelector('.pl__songs')?.scrollTop || 0 } : null;
     selected = pl.pid;
     right.replaceChildren();
     const items = pl.items || [];
@@ -193,9 +195,10 @@ export function initPlaylists(root, api, con, notice, providers) {
         let shown = 0;
         rows.forEach((tr, i) => { tr.hidden = !!q && !texts[i].includes(q); if (!tr.hidden) shown++; });
         count.textContent = q ? t('webui.playlists.shown', { shown, count: items.length }) : '';
-      }, count));
+      }, count, keep && keep.q));
     }
     right.appendChild(wrap);
+    if (keep) wrap.scrollTop = keep.top;
   }
 
   // songTable:這一頁自己的表(不是 TSV 的直譯,不用 renderTable):#、歌曲(曲名 + 歌手 · 專輯)、時長、每個平台一欄。
@@ -264,12 +267,14 @@ export function initPlaylists(root, api, con, notice, providers) {
   function linkState(p, pl) {
     const id = (pl.links || {})[p];
     const st = auth[p] && auth[p].state;
-    const out = st === 'missing' || st === 'expired' || (p === 'youtube' && auth.youtube && !auth.youtube.channel_id);
+    // YouTube 有登入卻沒有 channel_id(舊版登入):分不出清單是不是這個帳號的(CLI 也會當成別的帳號而跳過),請人重新登入一次(#124 review)
+    const relogin = p === 'youtube' && st === 'ok' && !(auth.youtube && auth.youtube.channel_id);
+    const out = st === 'missing' || st === 'expired' || relogin;
     if (typeof id !== 'string' || !id) {
       if (!COLUMNS.includes(p)) return null;
-      return { kind: out ? 'unlinked_out' : 'unlinked' };
+      return { kind: out ? 'unlinked_out' : 'unlinked', relogin };
     }
-    if (out) return { kind: 'out', id };
+    if (out) return { kind: 'out', id, relogin };
     const owner = id.split('/')[0]; // local:<device_id>/<檔名>;youtube:<channel_id>/<playlistId>
     const dev = auth.google && auth.google.device_id;
     if (p === 'local' && dev && owner !== dev) {
@@ -302,7 +307,7 @@ export function initPlaylists(root, api, con, notice, providers) {
           btn(t('webui.playlists.links.review'), 'btn--ghost', () => runOne(['resolve', pl.pid, '--provider', p, '--review'], t('webui.playlists.label.review', { name: pl.name, platform }))));
       }
     } else if (st.kind === 'out') {
-      info.textContent = t('webui.playlists.links.logged_out', { platform });
+      info.textContent = st.relogin ? t('webui.playlists.links.relogin', { platform }) : t('webui.playlists.links.logged_out', { platform });
       acts.appendChild(account());
       open();
     } else if (st.kind === 'foreign') {
@@ -310,7 +315,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     } else {
       state = t('webui.playlists.links.unlinked');
       if (st.kind === 'unlinked_out') {
-        info.textContent = t('webui.playlists.links.logged_out', { platform });
+        info.textContent = st.relogin ? t('webui.playlists.links.relogin', { platform }) : t('webui.playlists.links.logged_out', { platform });
         acts.appendChild(account());
       } else {
         const known = cids.filter((cid) => mappingOf(track(cid), p).id).length;
@@ -419,7 +424,9 @@ export function initPlaylists(root, api, con, notice, providers) {
         step(f, ['pl', 'sync', pl.pid, '--provider', p], t('webui.playlists.label.push', { name, platform }), (c3, o3, w3) => {
           if (c3 === 0 && w3) { markStep(f, 3); say(f, { text: t('webui.playlists.create.done', { platform, name }) }); }
           else if (c3 === 0) say(f, { text: t('webui.playlists.create.none', { platform, name, button: t('webui.playlists.links.review') }) }); // 一首都沒加:照實說
-          else say(f, o3, w2 ? t('webui.playlists.create.stop3', { platform, button: t('webui.playlists.sync') }) : stop2);
+          // 停在加歌:下一步一律是「同步這份清單」;「對應已經寫入」只在第二步真的寫了時才說(#124 review)
+          else say(f, o3, w2 ? t('webui.playlists.create.stop3', { platform, button: t('webui.playlists.sync') })
+            : t('webui.playlists.create.stop3_nowrite', { platform, name, button: t('webui.playlists.sync') }));
           load();
         });
       });
@@ -532,8 +539,8 @@ function cell(cls, text) {
   return td;
 }
 
-// filterBox:篩選框,不分大小寫比對;extra 是放在框旁邊的東西(顯示了幾首)。
-function filterBox(label, onFilter, extra) {
+// filterBox:篩選框,不分大小寫比對;extra 是放在框旁邊的東西(顯示了幾首);initial:重畫時帶回來的篩選字。
+function filterBox(label, onFilter, extra, initial) {
   const bar = el('div', 'form-row pl__filter');
   const f = input('sans', label);
   f.type = 'search';
@@ -541,6 +548,7 @@ function filterBox(label, onFilter, extra) {
   f.addEventListener('input', () => onFilter(f.value.trim().toLowerCase()));
   bar.appendChild(f);
   if (extra) bar.appendChild(extra);
+  if (initial) { f.value = initial; onFilter(initial.trim().toLowerCase()); }
   return bar;
 }
 

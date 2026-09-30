@@ -1117,8 +1117,8 @@ await scenario('8q', async () => {
   check(row(pl, 'youtube').dataset.state === 'unlinked_out' && info(row(pl, 'youtube')) === '這台電腦沒有登入 YouTube Music' && !byText(row(pl, 'youtube'), '在 YouTube Music 建一份'), '沒連、沒登入:不給建一份');
   check(row(pl, 'apple').dataset.state === 'unlinked' && byText(row(pl, 'apple'), '在 Apple Music 建一份') && !row(pl, 'local'), '沒連、有登入:給建一份;沒連的本機不出現');
   check(info(row(pl, 'apple')) === '已經知道其中 2 首在 Apple Music 是哪一首', `已經知道的對應(全域共用):${info(row(pl, 'apple'))}`);
-  pl = await open({ youtube: 'UCme/PLmine' }, { ...AUTH, youtube: { state: 'ok' } }); // 登入了卻沒有 channel_id:算沒登入,不算別的帳號
-  check(row(pl, 'youtube').dataset.state === 'out', `YouTube 沒有 channel_id:${row(pl, 'youtube').dataset.state}`);
+  pl = await open({ youtube: 'UCme/PLmine' }, { ...AUTH, youtube: { state: 'ok' } }); // 登入了卻沒有 channel_id(舊版登入):請人重新登入,不說成沒登入、也不算別的帳號
+  check(row(pl, 'youtube').dataset.state === 'out' && info(row(pl, 'youtube')) === '這台電腦的 YouTube Music 登入少了帳號資料;到「帳號」重新登入一次', `YouTube 沒有 channel_id:${info(row(pl, 'youtube'))}`);
 
   // ── 同步這份清單:沒有任何連結時停用;有的話表在提示之上、答了才寫、收尾照規則說,重讀後說明還在
   pl = await open({});
@@ -1170,6 +1170,22 @@ await scenario('8q', async () => {
   check(status(pl) === '沒有自動對上的;有 2 首要你決定。按「逐首決定」。', `resolve 只剩待決定的:${status(pl)}`);
   const note = allByClass(allByClass(pl, 'pl__flow-table')[0], 'page__note')[0]?.textContent;
   check(note === '0 筆會寫入的對應(其餘等你逐首決定)', `resolve 表的註記不算 review / conflict:${note}`);
+
+  // 重讀保留篩選字與捲動位置(同一份重畫時)
+  pl = await open({ spotify: PL }, AUTH);
+  script.export = out(data({ spotify: PL }, { 'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: PL }, items: Array.from({ length: 25 }, (_, i) => ({ cid: i === 7 ? 'c3' : 'c1' })) } }));
+  page.refresh();
+  await idle(); await tick(5); await idle();
+  const fbox = allByClass(pl, 'pl__filter')[0].querySelector('input');
+  fbox.value = 'song c';
+  fbox.l.input();
+  allByClass(pl, 'pl__songs')[0].scrollTop = 120;
+  page.refresh();
+  await idle(); await tick(5); await idle();
+  const fbox2 = allByClass(pl, 'pl__filter')[0].querySelector('input');
+  const shownRows = allByClass(pl, 'pl__tbl')[0].querySelectorAll('tbody tr').filter((tr) => !tr.hidden);
+  check(fbox2 !== fbox && fbox2.value === 'song c' && shownRows.length === 1 && allByClass(pl, 'pl__songs')[0].scrollTop === 120,
+    `重讀之後篩選字與捲動位置都帶回來:${JSON.stringify([fbox2 !== fbox, fbox2.value, shownRows.length, allByClass(pl, 'pl__songs')[0].scrollTop, allByClass(pl, 'pl__tbl')[0].querySelectorAll('tbody tr').length])}`);
 
   // 重讀保留選中的那份
   allByClass(pl, 'pl__item')[1].click();
@@ -1239,7 +1255,8 @@ await scenario('8q', async () => {
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
   await idle(); await tick(5); await idle(); await tick(5); await idle(); await tick(5); await idle();
-  check(status(pl).startsWith('已經在 YouTube Music 建立並連上「road trip」;按「找對應」') && !status(pl).includes('對應已經寫入'), `第二步沒寫入時第三步失敗:不說「對應已經寫入」:${status(pl)}`);
+  check(status(pl).startsWith('已經在 YouTube Music 建立並連上「road trip」;按「同步這份清單」把歌加進去。') && !status(pl).includes('對應已經寫入') && !status(pl).includes('找對應'),
+    `第二步沒寫入時第三步失敗:指到同步這份清單、不說「對應已經寫入」(對應早就都有時「找對應」那顆鈕根本不在):${status(pl)}`);
   // 第二步被拒、之後的重讀也被拒:畫面與「停在哪一步」那句都留著
   pl = await open({ spotify: PL }, AUTH, {
     'pl link --new-only a youtube --create': { events: [done] },
