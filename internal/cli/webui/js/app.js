@@ -110,6 +110,7 @@ const PAGES = ['move', 'playlists', 'sync', 'search', 'wiki', 'account', 'consol
 const ADVANCED = ['console', 'isrc', 'doctor'];
 const ready = new Set();
 let isrcPage = null;
+let playlistsPage = null;
 
 function showPage(name) {
   document.body.dataset.page = name; // 命令列只在主控台頁(CSS 看這個屬性)
@@ -136,7 +137,7 @@ function route() {
     const args = [root, api, con, notice, providers];
     if (name === 'move') initMove(...args);
     else if (name === 'search') initSearch(...args);
-    else if (name === 'playlists') initPlaylists(...args);
+    else if (name === 'playlists') playlistsPage = initPlaylists(...args);
     else if (name === 'sync') initSync(...args);
     else if (name === 'wiki') initWiki(...args, player);
     else if (name === 'account') initAccount(...args);
@@ -146,6 +147,8 @@ function route() {
     // 每次都餵目前 hash 的值:上一頁 / 直接改網址列都要生效,不然網址寫 A、畫面是 B(review #61)。
     // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
     isrcPage?.show(arg);
+  } else if (name === 'playlists') {
+    playlistsPage?.refresh(); // 別頁寫入之後回到這一頁:重讀 export,不留過時的畫面(計畫 2026-09-30 Q7)
   }
   const prompted = con.focusPrompt(root); // 這一頁有開著的提示(主控台的區塊或精靈的就地提示)就把焦點給它
   if (name === 'console') { con.showIdle(providers.current); if (!prompted) input.focus(); }
