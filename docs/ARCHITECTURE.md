@@ -954,7 +954,8 @@ capy devices                                              # P1 已實作:列 Spo
 capy pl list
 capy pl show   [name]                                     # 不帶參數 + TTY:挑選器列這個 provider 的清單(非 TTY 維持 cobra 的參數錯誤)
 capy pl link   [name|pid] [provider]:[playlist_id|name]   # 不帶參數 + TTY:三段挑選(平台 → 該平台的清單 → canonical 清單或建新的);P3(2026-09-08 T8 已實作):只認明確 link(Q5 B);canonical 清單不存在就建立;讀不到的清單不可連結
-capy pl link   <name|pid> <provider> --create   # 2026-09-14:在平台建一個跟 canonical 同名的私人空清單再連(目前只有 Spotify);會擋的檢查都在建之前(已連結、平台上已有連得上的同名清單;追蹤的別人清單讀不到,不算),COMMIT 失敗時訊息給新清單的 id 與接回去的命令
+capy pl link   <name|pid> <provider> --create   # 2026-09-14:在平台建一個跟 canonical 同名的私人空清單再連(目前只有 Spotify);會擋的檢查都在建之前(已連結、平台上已有連得上的同名清單;追蹤的別人清單讀不到,不算),COMMIT 失敗時訊息給新清單的 id 與接回去的命令。2026-09-30(計畫 2026-09-30-my-playlists-redesign.md §3.5):同名清單確定是空的才建議連它,有歌或讀不出幾首(404)就叫人先改名(連有歌的清單,第一次 pull 會照平台順序重排正本,決策 38)
+capy pl link   --new-only …   # 2026-09-30(同計畫 §3.5,Q9):只建新的——第一個參數以名稱命中既有 canonical 清單(EqualFold)就擋、那個平台已有連結(包括 foreign)就不接管,擋下來零寫入;以 pid 指定照常。web 介面發出的 pl link 都帶它:頁面讀的是這台上次同步的 export,可能過時,護欄只能放在 CLI
 capy pl unlink [name|pid] [provider]                      # 不帶參數 + TTY:兩段挑選(清單 → 它連的平台);P3(已實作);canonical 內容不動
 capy pl diff   <name>                                     # 延後(P3 用 pl pull --dry-run 看差異)
 capy pl pull   [name|pid] [--provider P] [--all] [--dry-run] [--yes] [--force]   # P3(已實作):平台 → canonical → Drive(§6.1);exit 0 無變更/已套用、1 錯誤、2 待套用(dry-run / 非 TTY 沒 --yes / 取消套用;挑選器取消是 exit 1,那時還沒選到目標)、3 安全閥(§6.6);--yes 跳過確認、--force 才越過刪除閾值且只能配單一清單(不能配 --all),兩者都不放行 Drive 不完整;gone = 不在清單列表(不是 404)→ 自動 unlink(Q6 B);有列出但 items 404 = 空清單(Apple library 端點);讀不到的清單跳過;link 用同一個「在清單列表裡」的存在定義

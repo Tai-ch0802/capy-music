@@ -615,8 +615,12 @@ func TestPlLinkCreate(t *testing.T) {
 	if linked != "new1" {
 		t.Fatalf("Drive 上的 公路旅行 要連 spotify:new1,實際 %q", linked)
 	}
-	fs.set("p5", "晨跑") // 兩個自己的同名清單:兩個 id 都列出來讓使用者挑
+	fs.set("p5", "晨跑") // 兩個自己的同名清單:兩個 id 都列出來,叫使用者先改名(不知道該連哪一份)
 	fs.set("p6", "晨跑")
+	fs.set("e404", "午睡") // 讀得到但 404(Apple 的空清單也是 404):不知道有幾首,歸「不建議連」那邊
+	fs.missingItems["e404"] = true
+	mustPull(t, "pl", "link", "午睡", "spotify:p1")
+	mustPull(t, "pl", "unlink", "午睡", "spotify")
 	// 擋下來的一律零寫入:不建清單、不動 Drive。
 	before := driveFiles(t, dc)
 	for _, c := range []struct {
@@ -624,14 +628,18 @@ func TestPlLinkCreate(t *testing.T) {
 		want string
 	}{
 		{[]string{"公路旅行", "spotify"}, "先 capy pl unlink"},                                // 已經連了:不可再建一個蓋過去
-		{[]string{"通勤", "spotify"}, `已經有叫「通勤」的清單(p1):要連它就 capy pl link "通勤" spotify:p1`}, // 同名的已經在平台上(照舊流程先在 app 裡建過):連它
+		{[]string{"通勤", "spotify"}, "已經有叫「通勤」的清單(p1),而且不是空的"}, // 同名而且有歌:連它會照平台順序重排正本(決策 38),不建議
+		{[]string{"午睡", "spotify"}, "已經有叫「午睡」的清單(e404),而且不是空的(或讀不出有幾首)"},
 		{[]string{"夜車", "spotify:p1"}, "只給平台"},                                           // 清單還不存在,沒有 ID 或名稱可給
 		{[]string{"夜車", "tidal"}, "只給平台"},
-		{[]string{"晨跑", "spotify"}, "已經有 2 個叫「晨跑」的清單(p5、p6)"},
+		{[]string{"晨跑", "spotify"}, "已經有 2 個叫「晨跑」的清單(p5、p6):先在 spotify 上把它們改名再重跑"},
 	} {
 		_, _, err := runPull(t, append([]string{"pl", "link", "--create"}, c.args...)...)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%v:%v", c.args, err)
+		}
+		if c.args[0] != "夜車" && c.args[1] == "spotify" && strings.Contains(err.Error(), "capy pl link \"") { // 有歌、不知道幾首、好幾份:都不可以叫人連它
+			t.Errorf("%v:同名清單不是確定空的,不可建議 pl link:%v", c.args, err)
 		}
 		if len(fs.written()) != 1 || !sameFiles(before, driveFiles(t, dc)) {
 			t.Fatalf("%v:擋下來就不可建清單、不可寫 Drive", c.args)
@@ -647,12 +655,47 @@ func TestPlLinkCreate(t *testing.T) {
 	if strings.Contains(out, "已連結") { // 沒寫進 Drive 就不是「已連結」:stdout 不可跟錯誤訊息互相打臉(PR #48 review)
 		t.Fatalf("COMMIT 失敗時 stdout 不可說已連結:%q", out)
 	}
-	if _, _, err := runPull(t, "pl", "link", "夜車", "spotify", "--create"); err == nil || !strings.Contains(err.Error(), "已經有叫「夜車」的清單(new2)") {
-		t.Fatalf("重跑 --create 要被同名擋下:%v", err)
+	if _, _, err := runPull(t, "pl", "link", "夜車", "spotify", "--create"); err == nil || !strings.Contains(err.Error(), `已經有一份叫「夜車」的空清單(new2)`) || !strings.Contains(err.Error(), `capy pl link "夜車" spotify:new2`) {
+		t.Fatalf("重跑 --create 要被同名擋下,而且確定是空的才給接回去的命令:%v", err)
 	}
 	mustPull(t, "pl", "link", "夜車", "spotify:new2") // 照著提示接回去
 	if len(fs.written()) != 2 {
 		t.Fatalf("接回去不可再建清單:%+v", fs.written())
+	}
+}
+
+// pl link --new-only(計畫 2026-09-30 §3.5,web 介面發出的 pl link 都帶它):以名稱命中既有正本(不分大小寫)就擋、零寫入——
+// 頁面讀的是這台上次同步的快照,可能不知道別台剛建了同名正本;連上去的話第一次 pull 會照平台順序重排它(決策 38)。
+// 以 pid 指定照常;名字沒人用過照常建。接管的那一道在 TestPlLocalForeignSkippedAndRelinkTakesOver。
+func TestPlLinkNewOnly(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "Road Trip", "t1")
+	fs.set("p2", "road trip", "t2")
+	fs.set("p3", "Chill source", "t3") // 平台上的名字跟正本不同:之後 --create 不會撞到它
+	mustPull(t, "pl", "link", "Road Trip", "spotify:p1")
+	before := driveFiles(t, dc)
+	for _, name := range []string{"Road Trip", "road trip"} { // 只差大小寫也算同名(canonState.find 是 EqualFold)
+		_, _, err := runPull(t, "pl", "link", "--new-only", name, "spotify:p2")
+		if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "已經有叫「Road Trip」的 canonical 清單") || !strings.Contains(err.Error(), "capy migrate") {
+			t.Fatalf("%s:以名稱命中既有正本要擋:%v", name, err)
+		}
+		if !sameFiles(before, driveFiles(t, dc)) {
+			t.Fatalf("%s:擋下來就零寫入", name)
+		}
+	}
+	_, errs := mustPull(t, "pl", "link", "--new-only", "Chill", "spotify:p3") // 沒人用過的名字:照常建一份新的正本
+	if !strings.Contains(errs, "建立 canonical 清單 Chill") {
+		t.Fatalf("新名字要建新的正本:%q", errs)
+	}
+	pid := ""
+	for name, b := range driveFiles(t, dc) {
+		if pl, err := canon.Decode[canon.Playlist](b); strings.HasPrefix(name, "pl__") && err == nil && pl.Name == "Chill" {
+			pid = pl.PID
+		}
+	}
+	mustPull(t, "pl", "unlink", "Chill", "spotify")
+	if out, _ := mustPull(t, "pl", "link", "--new-only", pid, "spotify", "--create"); !strings.Contains(out, "已連結 Chill(") { // 以 pid 指定:明確選了那一份,照常
+		t.Fatalf("以 pid 指定照常建平台清單並連上:%q", out)
 	}
 }
 

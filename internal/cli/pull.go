@@ -460,18 +460,27 @@ func splitProviderRef(arg string) (prov, ref string, err error) {
 // readable:平台清單的內容讀不讀得到 = pl link 的連結條件。讀不到(ErrRestricted:Spotify 編輯清單、他人清單,spec §1.1)
 // 的清單 pull 永遠會跳過,連了只是騙自己。404 算讀得到:Apple 的 library 端點對空清單回 404,「新建空清單 → link → 再放歌」是正常起手式。
 func readable(ctx context.Context, r provider.PlaylistReader, id string) (bool, error) {
-	_, err := r.GetPlaylistItems(ctx, id)
-	if errors.Is(err, provider.ErrRestricted) {
-		return false, nil
+	ok, _, err := readableCount(ctx, r, id)
+	return ok, err
+}
+
+// readableCount:同 readable,另外帶回有幾首。404 讀得到但不知道有幾首(Apple 的空清單也是 404),回 -1:
+// 呼叫端要把「不知道」跟「空的」分開(pl link --create 撞到同名清單時,只有確定是空的才建議連它)。
+func readableCount(ctx context.Context, r provider.PlaylistReader, id string) (ok bool, n int, err error) {
+	items, err := r.GetPlaylistItems(ctx, id)
+	switch {
+	case errors.Is(err, provider.ErrRestricted):
+		return false, 0, nil
+	case errors.Is(err, provider.ErrNotFound):
+		return true, -1, nil
+	case err != nil:
+		return false, 0, err
 	}
-	if err != nil && !errors.Is(err, provider.ErrNotFound) {
-		return false, err
-	}
-	return true, nil
+	return true, len(items), nil
 }
 
 func newPlLinkCmd() *cobra.Command {
-	var createFlag bool
+	var createFlag, newOnly bool
 	cmd := &cobra.Command{
 		Use: i18n.T("cmd.pl.link.use"), Short: i18n.T("cmd.pl.link.short"), Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -559,6 +568,12 @@ func newPlLinkCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// --new-only(web 介面發出的 pl link 都帶它;計畫 2026-09-30 §3.5):頁面讀的是這台上次同步的快照,可能過時,
+				// 會把平台清單連到別台剛建的同名正本(第一次 pull 採平台順序 = 重排它,決策 38)、或接管別台 / 別帳號的連結——
+				// 護欄只能放在這裡。以 pid 指定照常:那是明確選了那一份。
+				if _, byPID := s.playlists[arg]; newOnly && pl != nil && !byPID {
+					return i18n.Errorf("link.err.new_only_name", "name", pl.Name, "pid", pl.PID)
+				}
 				if !create { // 要建的清單還沒有 id,沒人連得到它;空 id 會撞上每個沒連這個平台的清單
 					for _, pid := range slices.Sorted(maps.Keys(s.playlists)) {
 						if other := s.playlists[pid]; other.Links[prov] == id && (pl == nil || other.PID != pl.PID) {
@@ -578,23 +593,28 @@ func newPlLinkCmd() *cobra.Command {
 					if !foreignLink(p, cur) {
 						return i18n.Errorf("link.err.already_linked", "name", pl.Name, "pid", pl.PID, "platform", prov, "id", cur)
 					}
+					if newOnly {
+						return i18n.Errorf("link.err.new_only_linked", "name", pl.Name, "pid", pl.PID, "platform", prov, "owner", linkOwner(p, s, cur))
+					}
 					// 決策 33 / Q30:撞到別台裝置的本機清單 → 接管(重灌後 device_id 變了也靠這條接回來);原裝置下一輪起變 foreign
 					fmt.Fprintln(&done, i18n.T("link.taken_over", "name", pl.Name, "pid", pl.PID, "owner", linkOwner(p, s, cur), "platform", prov))
 					delete(s.mine().Base[pl.PID], prov) // 舊 base 是別台的觀測,對本機的檔沒意義
 				}
 				if create { // 所有會擋的檢查都在這之前:擋下來時平台上不會留下沒人連的空清單。
 					// 安全前提:withCanonical 不重試 fn;哪天它加了樂觀重試,這裡就會建出第二個清單。
-					// 平台上已經有同名而且連得上的清單(先在 app 裡建過、或 COMMIT 失敗後重跑):連它就好(sameNamePlaylists,migrate 也用)。
+					// 平台上已經有同名而且連得上的清單(先在 app 裡建過、或 COMMIT 失敗後重跑)就不建。只有確定是空的(COMMIT 失敗留下的那種)
+					// 才建議連它:有歌(或不知道幾首)的清單連上後,第一次 pull 沒有 base,會照平台的順序重排正本(決策 38;計畫 2026-09-30 §3.5)。
 					dup, err := sameNamePlaylists(ctx, r, refs, pl.Name)
 					if err != nil {
 						return friendlyErr(prov, err)
 					}
-					switch len(dup) {
-					case 0:
-					case 1:
-						return i18n.Errorf("link.err.same_name_one", "platform", prov, "name", pl.Name, "id", dup[0], "quoted", strconv.Quote(pl.Name))
-					default:
-						return i18n.Errorf("link.err.same_name_many", "platform", prov, "count", len(dup), "name", pl.Name, "ids", strings.Join(dup, i18n.T("sep.list")), "quoted", strconv.Quote(pl.Name))
+					switch {
+					case len(dup) == 1 && dup[0].songs == 0:
+						return i18n.Errorf("link.err.same_name_one", "platform", prov, "name", pl.Name, "id", dup[0].id, "quoted", strconv.Quote(pl.Name))
+					case len(dup) == 1:
+						return i18n.Errorf("link.err.same_name_one_songs", "platform", prov, "name", pl.Name, "id", dup[0].id)
+					case len(dup) > 1:
+						return i18n.Errorf("link.err.same_name_many", "platform", prov, "count", len(dup), "name", pl.Name, "ids", strings.Join(sameNameIDs(dup), i18n.T("sep.list")))
 					}
 					made, err := creator.CreatePlaylist(ctx, pl.Name) // 名字跟 canonical 一樣:push 不會再多排一個 rename
 					if err != nil {
@@ -622,6 +642,7 @@ func newPlLinkCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&createFlag, "create", false, i18n.T("cmd.pl.link.flag.create"))
+	cmd.Flags().BoolVar(&newOnly, "new-only", false, i18n.T("cmd.pl.link.flag.new_only"))
 	return cmd
 }
 

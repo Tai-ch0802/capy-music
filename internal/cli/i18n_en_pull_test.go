@@ -85,6 +85,7 @@ func TestEnglishPlLinkRefusals(t *testing.T) {
 	fs.set("p10", "another", "n")
 	fs.set("p5", "run", "r1")
 	fs.set("p6", "run", "r2")
+	fs.set("p7", "empty") // 空的同名清單(上次 --create 建好沒連上的那種):這時才建議連它
 	for _, c := range []struct{ args, want string }{
 		{"pl link hits spotify:ed", "can't read the contents of spotify playlist ed (an app in development mode can't read Spotify's own or other users' playlists), so it can't be linked"},
 		{"pl link other spotify:p1", "spotify:p1 is already linked to master copy commute (" + pid + "); a platform playlist can be linked to only one master copy"},
@@ -92,9 +93,12 @@ func TestEnglishPlLinkRefusals(t *testing.T) {
 		{"pl link commute tidal:p2", `the format is <provider>:<playlist-id-or-name>, where provider is spotify|apple|local|youtube: "tidal:p2"`},
 		{"pl link public spotify:" + pub, "spotify:" + pub + " isn't in your list of playlists (only what capy pl list shows counts): pull treats playlists missing from that list as deleted and unlinks them automatically, so it can't be linked"},
 		{"pl link 01ARZ3NDEKTSV4RRFFQ69G5FAV spotify:p10", "no master copy has pid 01ARZ3NDEKTSV4RRFFQ69G5FAV"},
-		// --create:平台上已有同名(一個 / 多個)、第二個參數給成 provider:ref,都在建清單之前擋下。
-		{"pl link --create winter spotify", `spotify already has a playlist named "winter" (p2): to link it, run capy pl link "winter" spotify:p2; if you really want another one, create it in the app first and link it with spotify:<ID>`},
-		{"pl link --create run spotify", `spotify already has 2 playlists named "run" (p5, p6): pick one and link it with capy pl link "run" spotify:<ID>`},
+		// --create:平台上已有同名(有歌 / 空的 / 多個)、第二個參數給成 provider:ref,都在建清單之前擋下;只有確定是空的才建議連它。
+		{"pl link --create winter spotify", `spotify already has a playlist named "winter" (p2) that isn't empty (or capy can't tell how many tracks it has): linking it would reorder this playlist to the platform's order on the first pull, so capy doesn't suggest it. Rename that playlist on spotify and run this again; to add its tracks to this playlist, use capy migrate`},
+		{"pl link --create empty spotify", `spotify already has an empty playlist named "empty" (p7), probably left by an earlier --create that didn't finish linking: run capy pl link "empty" spotify:p7 to reconnect it`},
+		{"pl link --create run spotify", `spotify already has 2 playlists named "run" (p5, p6): rename them on spotify and run this again`},
+		// --new-only:名稱已經是某份正本就擋
+		{"pl link --new-only commute spotify:p2", `there's already a master copy named "commute" (` + pid + `): --new-only won't link to an existing one; to add a platform playlist's tracks to it, use capy migrate`},
 		{"pl link --create night spotify:p1", `"spotify:p1" isn't a platform: with --create, the second argument is just the platform (spotify|apple|local|youtube), and the new playlist is named after the master copy`},
 	} {
 		if _, _, err := runPull(t, strings.Fields(c.args)...); err == nil || err.Error() != c.want {
