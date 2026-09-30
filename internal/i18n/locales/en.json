@@ -1490,6 +1490,7 @@
   "webui.playlists.platforms.read": "Read each platform's playlists",
   "webui.playlists.platforms.same_name": "There's already a master copy named \"{name}\"; to add this one's songs to it, use Move",
   "webui.playlists.platforms.title": "Playlists on each platform",
+  "webui.playlists.platforms.skipped": "Not read: you stopped it.",
   "webui.playlists.platforms.unknown": "capy hasn't read the master copies on this computer yet, so it can't tell which of these it already keeps. Bring the master copies in first (see above).",
   "webui.playlists.platforms.unlinked": "Not kept by capy yet",
   "webui.playlists.play_on": "Play \"{title}\" on {platform}",

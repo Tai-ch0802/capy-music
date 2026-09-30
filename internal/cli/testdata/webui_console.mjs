@@ -1420,6 +1420,8 @@ await scenario('8r', async () => {
   pl = await open(AUTH, { 'pl list --provider spotify': { events: [exit(130, '', 'cancelled')] }, 'pl list --provider youtube': list([['UCme/PL1', 'Drive', '3', 'me']]) });
   await read(pl);
   check(!calls.includes('pl list --provider youtube') && !pl.textContent.includes('這台電腦沒有登入任何平台'), `中止之後不接著讀下一家:${JSON.stringify(calls)}`);
+  const ytGroup = allByClass(pl, 'pl__plat-group').find((g) => allByClass(g, 'pl__plat-name')[0]?.textContent === 'YouTube Music');
+  check(ytGroup && ytGroup.textContent.includes('你按了中止,沒有讀。') && !ytGroup.textContent.includes('上沒有清單'), `沒讀的那家照列、說沒讀(不是「沒有清單」):${ytGroup && ytGroup.textContent}`);
 
   // 這台還沒讀到正本(export 失敗):只列出來,不標狀態也不給納入;Spotify 的清單連結照給
   pl = await open(AUTH, { export: { events: [exit(1, 'x')] }, 'pl list --provider spotify': list(spRows), 'pl list --provider youtube': list([]) });
@@ -1432,6 +1434,20 @@ await scenario('8r', async () => {
   pl = await open({ google: { state: 'ok' }, spotify: { state: 'missing' }, apple: { state: 'missing' }, youtube: { state: 'ok' } });
   await read(pl);
   check(!calls.some((c) => c.startsWith('pl list')) && pl.textContent.includes('這台電腦的 YouTube Music 登入少了帳號資料') && !pl.textContent.includes('這台電腦沒有登入任何平台'), `YouTube 缺帳號資料:${pl.textContent.slice(-200)}`);
+
+  // 要重新登入的 YouTube 先記下、Spotify 後讀:段落還是照 Spotify → YouTube 的順序
+  pl = await open({ google: { state: 'ok' }, spotify: { state: 'ok' }, apple: { state: 'missing' }, youtube: { state: 'ok' } }, { 'pl list --provider spotify': list(spRows) });
+  await read(pl);
+  const order = allByClass(pl, 'pl__plat-name').map((h) => h.textContent);
+  check(JSON.stringify(order) === JSON.stringify(['Spotify', 'YouTube Music']), `平台段落照固定順序:${JSON.stringify(order)}`);
+
+  // 同名的平台清單確定是空的(曲數 0):照給「開始」,讓 CLI 停在第一步、給接回去的 pl link(唯一的復原路)
+  pl = await open(AUTH, { 'pl list --provider spotify': list([['sp6', 'MIX', '0', 'me']]), 'pl list --provider youtube': list([]) });
+  await read(pl);
+  allByClass(pl, 'pl__item')[1].click(); // mix
+  byText(allByClass(pl, 'pl__link').find((r) => r.dataset.platform === 'spotify'), '在 Spotify 建一份').click();
+  const card0 = allByClass(pl, 'pl__flow-card')[0];
+  check(card0 && byText(card0, '開始') && !card0.textContent.includes('capy 不會再建一份同名的'), `同名的是空清單:照給開始:${card0 && card0.textContent}`);
 
   // 一個平台都沒登入
   pl = await open({ google: { state: 'ok' }, spotify: { state: 'missing' }, apple: { state: 'expired' }, youtube: { state: 'missing' } });

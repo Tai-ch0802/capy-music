@@ -417,8 +417,10 @@ export function initPlaylists(root, api, con, notice, providers) {
     const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
     no.type = 'button';
     no.addEventListener('click', () => flow.replaceChildren());
-    // 「各平台上的清單」讀過、那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,先說清楚
-    const dup = platLists && platLists[p] && platLists[p].rows.some((r) => same(r.name, pl.name));
+    // 「各平台上的清單」讀過、那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,先說清楚。
+    // 同名的那份確定是空的(曲數 0,例如上次建好了但連結沒寫進 Drive)照給「開始」:CLI 會停在第一步、給接回去的 pl link
+    // 命令,那是這種情況唯一的復原路(#125 review 第 3 點)。
+    const dup = platLists && platLists[p] && platLists[p].rows.some((r) => same(r.name, pl.name) && r.tracks !== '0');
     if (dup) {
       card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
       acts.append(moveLink(), no);
@@ -487,7 +489,8 @@ export function initPlaylists(root, api, con, notice, providers) {
         },
         onExit: (code, msg, reason) => {
           got[p] = code === 0 ? { rows } : { rows: [], error: (msg || '').replace(/^Error: /, '') };
-          if (reason === 'cancelled' && code !== 0) todo.length = 0; // 使用者按了中止:後面幾家不讀(同 console.js 的 isCancelled)
+          // 使用者按了中止:後面幾家不讀(同 console.js 的 isCancelled),但照樣列出來、說沒讀——整段不見會看起來像沒有那個平台(#125 review 第 4 點)
+          if (reason === 'cancelled' && code !== 0) for (const q of todo.splice(0)) got[q] = { rows: [], skipped: true };
           next();
         },
       }, { args: ['pl', 'list', '--provider', p], label: t('webui.playlists.list_label', { platform: providerName(p) }) });
@@ -497,7 +500,7 @@ export function initPlaylists(root, api, con, notice, providers) {
 
   function renderPlatforms() {
     if (!platLists) return;
-    const ps = Object.keys(platLists);
+    const ps = COLUMNS.filter((p) => platLists[p]); // 照 COLUMNS 的順序:要重新登入的 YouTube 先塞進去也不會排到最前面(#125 review 第 1 點)
     if (!ps.length) {
       const a = el('a', 'wiz__link', t('webui.playlists.go_account'));
       a.href = '#/account';
@@ -517,6 +520,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       }
       if (error) g.appendChild(el('p', 'page__warn', t('webui.playlists.platforms.error', { platform: providerName(p), error })));
       else if (platLists[p].relogin) { /* 上面說了 */ }
+      else if (platLists[p].skipped) g.appendChild(el('p', 'page__note', t('webui.playlists.platforms.skipped')));
       else if (!rows.length) g.appendChild(el('p', 'page__note', t('webui.playlists.platforms.empty', { platform: providerName(p) })));
       for (const r of rows) g.appendChild(platRow(p, r));
       return g;
