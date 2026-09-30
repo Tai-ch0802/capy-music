@@ -1,6 +1,6 @@
 # web「我的清單」改版:點播、正本與平台清單的關係、就地同步、歌曲 wiki(2026-09-30 計畫)
 
-**狀態:T0(本文),等使用者確認 §6 的 Q 才實作。** 這一版只有文件,沒有改任何程式。
+**狀態:T0(本文),等使用者確認 §6 的 Q1–Q9 才實作。** 這一版只有文件,沒有改任何程式。
 版面示意圖(四個狀態,按鈕與字級照 app.css 的真實尺寸):https://claude.ai/artifact/NzK4uk8ARBiTWEHzLfHfpc
 Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全域的 Q82)。定案後寫成附錄 C 決策 61。
 本文送出前跑過一輪三視角的對抗式審查(硬約束 / 事實與命令 / 需求與易用性),31 則裡 24 則查證成立,都已改進本文;最重要的是 §3.5 的「只建新的」CLI 旗標。
@@ -86,7 +86,7 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 | Spotify | `spotify:local:…` | 「Spotify 本機檔」(muted,`title` 說原因) | 不給 ▶、不給連結(判斷重用 table.js 的 `SPOTIFY_ID`,改成 export) |
 | Apple Music | 全數字(catalog id) | ▶ | `args: ['play','--id',id,'--provider','apple']`;exit 0 但 stdout 不以 ▶ 開頭 = 只在 Music.app 打開,照抄那句給 notice(同 search.js:60-66,決策 52) |
 | Apple Music | `i.` / `a.`(只在資料庫、沒有 catalog 對應) | 「只在資料庫」(muted,`title` 說原因) | 不給 ▶(Q3) |
-| YouTube Music | videoId | 「開啟」 | `youtubeLink` 加一個選填的 label 參數,這一頁傳新的短字 `webui.playlists.open`(報讀名稱「在 YouTube Music 開啟「曲名」」);搜尋頁不傳,照舊。新分頁到 `music.youtube.com/watch?v=`(YouTube Music 沒有播放遙控,決策 60) |
+| YouTube Music | videoId | 「開啟」 | `youtubeLink` 加一個選填的 label 參數,這一頁傳新的短字 `webui.playlists.open`(報讀名稱以看得到的字開頭:「開啟「曲名」(YouTube Music)」);搜尋頁不傳,照舊。新分頁到 `music.youtube.com/watch?v=`(YouTube Music 沒有播放遙控,決策 60) |
 | 任一 | 沒有對應 | 「—」(muted) | `title`:「這首在 X 還沒有對應」;被釘成「沒有」(pinned + 空 id)說「你標過 X 沒有這首」 |
 
 - ▶ 用 `btn()`(加一個圖示尺寸的 class,min-width 32px):序列槽被佔著(wiki、同步在跑)時擋下並說明(common.js:32-42)。報讀名稱「用 Spotify 播放「曲名」」。
@@ -123,7 +123,7 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 
 ### 3.5 就地同步(需求 3)
 
-**T2 的前置:兩個 CLI 改動**(頁面讀的是可能過時的 export,會重排正本或換掉連結的護欄只能放在 CLI;不在頁面判斷、不比對錯誤字串):
+**T2 的前置:兩個 CLI 改動(Q9)**(頁面讀的是可能過時的 export,會重排正本或換掉連結的護欄只能放在 CLI;不在頁面判斷、不比對錯誤字串):
 
 1. **`pl link --strict`**(暫名,兩份語系補說明與 README ×2 的命令表):只做「建新的」——第一個參數**以名稱**命中既有正本(不分大小寫)時不連、回錯、零寫入(以 pid 指定照常);正本在那個平台已經有連結時,**不管是不是別台電腦 / 別的帳號的**都不接管、回錯、零寫入。頁面發出的每個 `pl link` 一律帶它。回歸測試:Drive 上有同名(含只差大小寫)的正本而本機 state.db 沒有、以及 Drive 上有別的 YouTube 帳號的連結而本機沒有,帶旗標都要 exit 1 且 Drive 檔位元組不變、沒有呼叫 `CreatePlaylist`(改之前會 fail:現在會連上 / 接管)。
 2. **`link.err.same_name_one` / `same_name_many` 改說法**:同名的平台清單是空的(例如上次 `--create` 建好但連結沒寫進 Drive,即 `link.recovery` 那種)才建議 `capy pl link … {platform}:{id}`;不是空的(或曲數不明)改說「先在 {platform} 上把它改名再重跑;要把它的歌加進正本,用搬家」。曲數取 `sameNamePlaylists` 讀到的清單總數。CLI 與網頁一次修好;i18n 單元測試釘住兩種說法。
@@ -248,6 +248,7 @@ node 替身沒有排版,寬度與捲動留給 §8 人工驗收。
 | Q6 | 「各平台上的清單」要做到哪 | **A(推薦)讀取 + 標出關係 + 可「納入」**(帶 `--strict`,有同名正本時不給)。/ B 只讀取與標出關係,不給動作(納入請到主控台)。/ C 拿掉這一段 |
 | Q7 | 回到這一頁時自動重讀、清單內篩選 | **A(推薦)兩個都做**:回到頁面就用 `quiet` 重跑 export(別頁寫入後這頁不會過時);超過 20 首時出現「在這份清單裡找歌」。/ B 都不做,只留「重新整理」鈕 |
 | Q8 | 固定視窗的高度 | **A(推薦)沿用 `.tbl-wrap--tall` 的 60vh**(同步頁、搬家預覽同一個)。/ B 另訂(例如 `clamp(22rem, 62vh, 44rem)`) |
+| Q9 | 要不要動 CLI(§3.5 的 T2 前置,審查後加進來的) | **A(推薦)一個 `pl link --strict` 同時管「以名稱不沿用既有正本」與「不接管別台 / 別帳號的連結」,加上 `link.err.same_name_*` 改說法**。頁面讀的 export 可能過時,這兩道護欄只能放在 CLI。/ B 同樣的兩道護欄拆成兩個旗標。/ C 不動 CLI:v1 拿掉「在 X 建一份」與「納入」,只留「同步這份清單」「找對應」「逐首決定」(選 C 時 Q6 自動變成 B) |
 
 ## 7. 明確不做(要就另開)
 
