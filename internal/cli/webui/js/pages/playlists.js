@@ -2,10 +2,10 @@
 // (計畫 docs/superpowers/plans/2026-09-30-my-playlists-redesign.md,決策 61)。順序永遠照清單本來的順序,沒有排序、沒有拖曳
 // (決策 38);篩選只藏列。每首歌每個平台一欄:▶ 用 capy 在那個平台放、「在 Spotify 上聽」/「開啟」開新分頁(計畫 §3.2)。
 // 右欄上面是連結面板(正本連到哪幾份平台清單)與就地的寫入流程(同步、在 X 建一份、找對應;計畫 §3.5):寫入一律走 CLI 自己的
-// 變更表與確認,頁面絕不代加確認或越過的旗標(決策 46)。第二段是平台清單(pl list)。顯示 Spotify 的曲目或清單的地方
-// 都連回 Spotify(計畫 2026-09-24 §1.7 S7)。
-import { el, btn, field, input, select, providerOptions, providerName, emptyState, pageHead } from './common.js';
-import { renderTable, linkColumn, spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
+// 變更表與確認,頁面絕不代加確認或越過的旗標(決策 46)。第二段是「各平台上的清單」:連著哪份正本、還沒納入的可以納入(§3.4 / §3.5)。
+// 顯示 Spotify 的曲目或清單的地方都連回 Spotify(計畫 2026-09-24 §1.7 S7)。
+import { el, btn, input, providerName, emptyState, pageHead } from './common.js';
+import { spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
 import { parseStatus } from './account.js';
 import { changeTable } from './sync.js';
 import { t } from '../i18n.js';
@@ -25,21 +25,17 @@ export function initPlaylists(root, api, con, notice, providers) {
   const right = el('div', 'pl__right');
   cols.append(left, right);
 
-  const platform = el('section', 'pl__platform');
-  const prov = select(providerOptions(providers.list), providers.current);
-  const pbar = el('div', 'form-row');
-  pbar.appendChild(field(t('webui.common.platform'), prov));
-  const pout = el('div', 'page__out');
+  // 各平台上的清單(計畫 §3.4 / §3.5「納入」):按了才讀(會連網),只讀這台有登入的平台。pflow 是納入的就地流程
+  //(提示畫在這裡,在 #page-playlists 裡);重讀清單時不清它。
+  const plats = el('section', 'pl__plats');
+  const platList = el('div', 'pl__plat-list');
+  const pflow = el('div', 'pl__flow');
+  let platLists = null; // { 平台: { rows: [{ id, name, tracks }], error } };null = 還沒讀過
+  let masters = null;   // 目前的正本:比對「連著哪一份」「有沒有同名」;null = 這台還沒讀到正本(export 失敗),分不出來
+  plats.append(el('h3', 'card__sub', t('webui.playlists.platforms.title')), el('p', 'page__note', t('webui.playlists.platforms.lead')),
+    btn(t('webui.playlists.platforms.read'), '', readPlatforms), pflow, platList);
 
-  root.append(about(), btn(t('webui.playlists.refresh'), 'btn--ghost', load), cols, el('h3', 'card__sub', t('webui.playlists.platform_heading')), pbar, pout);
-  pbar.append(
-    btn(t('webui.playlists.list'), '', () => {
-      const p = prov.value; // 按下去那一刻的平台:命令跑的時候選單可能被換掉,表要照送出去的那一家判斷
-      con.run(`pl list --provider ${p}`, {
-        onTable: (h, r) => pout.replaceChildren(wrapTable(h, r, p === 'spotify' && ((row) => ({ kind: 'playlist', id: row[h.indexOf('ID')], title: row[h.indexOf('NAME')] })))),
-      }, { label: t('webui.playlists.list_label', { platform: providerName(p) }) });
-    }),
-  );
+  root.append(about(), btn(t('webui.playlists.refresh'), 'btn--ghost', load), cols, plats);
   con.idle(load); // 同帳號頁:有命令在跑就等它結束,不要撞上它、畫成「沒有清單」
 
   // auth:`auth status --json`(不連網)。▶ 要不要給、連結面板與空白態怎麼說都看它;讀不到 = {} = 不知道,當成有登入、是自己的。
@@ -137,6 +133,8 @@ export function initPlaylists(root, api, con, notice, providers) {
       .sort()
       .map((k) => files[k]);
     devices = ((files['manifest.json'] || {}).devices) || [];
+    masters = pls;
+    renderPlatforms(); // 讀過平台清單的話,「連著哪一份」跟著新的正本更新
     left.replaceChildren();
     if (!pls.length) { right.replaceChildren(); empty(); return; } // 右欄交給 showItems 換:它要先讀舊畫面的篩選字與捲動位置
     const list = el('div', 'pl__list');
@@ -264,17 +262,26 @@ export function initPlaylists(root, api, con, notice, providers) {
 
   // linkState:這份正本在一個平台上的狀態。判斷順序:這台有沒有登入 → 是不是別台電腦 / 別的帳號的 → 才是自己的
   //(auth 讀不到 = 當成有登入、是自己的,同 ▶)。沒連的本機不顯示:本機不能 --create,連既有的 M3U 會碰到順序問題。
+  // loggedOut:這台電腦沒登入那個平台(missing / expired,或 YouTube 要重新登入)。auth 讀不到 = 當成有登入。
+  function loggedOut(p) {
+    const st = auth[p] && auth[p].state;
+    return st === 'missing' || st === 'expired' || relogin(p);
+  }
+  // relogin:YouTube 有登入卻沒有 channel_id(舊版登入):分不出清單是不是這個帳號的(CLI 也會當成別的帳號而跳過),
+  // 請人重新登入一次(#124 review)。
+  function relogin(p) {
+    return p === 'youtube' && auth.youtube?.state === 'ok' && !auth.youtube.channel_id;
+  }
+
   function linkState(p, pl) {
     const id = (pl.links || {})[p];
-    const st = auth[p] && auth[p].state;
-    // YouTube 有登入卻沒有 channel_id(舊版登入):分不出清單是不是這個帳號的(CLI 也會當成別的帳號而跳過),請人重新登入一次(#124 review)
-    const relogin = p === 'youtube' && st === 'ok' && !(auth.youtube && auth.youtube.channel_id);
-    const out = st === 'missing' || st === 'expired' || relogin;
+    const out = loggedOut(p);
+    const re = relogin(p);
     if (typeof id !== 'string' || !id) {
       if (!COLUMNS.includes(p)) return null;
-      return { kind: out ? 'unlinked_out' : 'unlinked', relogin };
+      return { kind: out ? 'unlinked_out' : 'unlinked', relogin: re };
     }
-    if (out) return { kind: 'out', id, relogin };
+    if (out) return { kind: 'out', id, relogin: re };
     const owner = id.split('/')[0]; // local:<device_id>/<檔名>;youtube:<channel_id>/<playlistId>
     const dev = auth.google && auth.google.device_id;
     if (p === 'local' && dev && owner !== dev) {
@@ -343,14 +350,14 @@ export function initPlaylists(root, api, con, notice, providers) {
   }
 
   // ── 就地的寫入流程(計畫 §3.5)──
-  function openFlow(stepTexts) {
+  function openFlow(stepTexts, box = flow) {
     const steps = el('ol', 'wiz__steps');
     for (const s of stepTexts || []) steps.appendChild(el('li', 'wiz__step', s));
     const status = el('p', 'page__note pl__flow-status');
     status.setAttribute('role', 'status');
     const table = el('div', 'pl__flow-table');
     const host = el('div', 'pl__flow-prompts'); // promptHost:在 #page-playlists 裡,reveal() 不會把人丟去主控台
-    flow.replaceChildren(...(stepTexts ? [steps] : []), status, table, host);
+    box.replaceChildren(...(stepTexts ? [steps] : []), status, table, host);
     return { steps, status, table, host };
   }
 
@@ -397,13 +404,22 @@ export function initPlaylists(root, api, con, notice, providers) {
     if (blocked()) return;
     const platform = providerName(p);
     const card = el('div', 'pl__flow-card');
-    card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
-    if (p === 'apple') card.appendChild(el('p', 'page__note', t('webui.playlists.create.apple'))); // 決策 49:可能,不是必然
     const acts = el('div', 'form-row');
     const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
     no.type = 'button';
     no.addEventListener('click', () => flow.replaceChildren());
-    acts.append(btn(t('webui.playlists.create.start'), '', () => create(p, pl)), no);
+    // 「各平台上的清單」讀過、那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,先說清楚。
+    // 同名的那份確定是空的(曲數 0,例如上次建好了但連結沒寫進 Drive)照給「開始」:CLI 會停在第一步、給接回去的 pl link
+    // 命令,那是這種情況唯一的復原路(#125 review 第 3 點)。
+    const dup = platLists && platLists[p] && platLists[p].rows.some((r) => same(r.name, pl.name) && r.tracks !== '0');
+    if (dup) {
+      card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
+      acts.append(moveLink(), no);
+    } else {
+      card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
+      if (p === 'apple') card.appendChild(el('p', 'page__note', t('webui.playlists.create.apple'))); // 決策 49:可能,不是必然
+      acts.append(btn(t('webui.playlists.create.start'), '', () => create(p, pl)), no);
+    }
     card.appendChild(acts);
     flow.replaceChildren(card);
   }
@@ -443,6 +459,114 @@ export function initPlaylists(root, api, con, notice, providers) {
       f.status.appendChild(el('span', null, ' '));
       f.status.appendChild(a);
     }
+  }
+
+  // ── 各平台上的清單(計畫 §3.4)與納入(§3.5)──
+  // readPlatforms:依序讀這台有登入的每個平台,下一家在上一家的 onExit 裡送;某一家讀不到就在那一段說原因,其他家照讀。
+  function readPlatforms() {
+    if (blocked()) return;
+    const todo = COLUMNS.filter((p) => providers.list.includes(p) && !loggedOut(p));
+    const got = {};
+    // YouTube 有登入卻缺帳號資料:照送 pl list 只會被拒,不讀,那一段說要重新登入(不要默默消失、也不要說成沒登入任何平台)
+    for (const p of COLUMNS) if (providers.list.includes(p) && relogin(p)) got[p] = { rows: [], relogin: true };
+    const next = () => {
+      const p = todo.shift();
+      if (!p) { platLists = got; renderPlatforms(); return; }
+      const rows = [];
+      con.run('', {
+        onTable: (h, r) => {
+          const [i, n, c] = ['ID', 'NAME', 'TRACKS'].map((k) => h.indexOf(k)); // 機器欄位,不跟語系(決策 50)
+          for (const x of r) rows.push({ id: x[i], name: x[n], tracks: x[c] });
+        },
+        onExit: (code, msg, reason) => {
+          got[p] = code === 0 ? { rows } : { rows: [], error: (msg || '').replace(/^Error: /, '') };
+          // 使用者按了中止:後面幾家不讀(同 console.js 的 isCancelled),但照樣列出來、說沒讀——整段不見會看起來像沒有那個平台(#125 review 第 4 點)
+          if (reason === 'cancelled' && code !== 0) for (const q of todo.splice(0)) got[q] = { rows: [], skipped: true };
+          next();
+        },
+      }, { args: ['pl', 'list', '--provider', p], label: t('webui.playlists.list_label', { platform: providerName(p) }) });
+    };
+    next();
+  }
+
+  function renderPlatforms() {
+    if (!platLists) return;
+    const ps = COLUMNS.filter((p) => platLists[p]); // 照 COLUMNS 的順序:要重新登入的 YouTube 先塞進去也不會排到最前面(#125 review 第 1 點)
+    if (!ps.length) {
+      const a = el('a', 'wiz__link', t('webui.playlists.go_account'));
+      a.href = '#/account';
+      platList.replaceChildren(emptyState(t('webui.playlists.platforms.none')), a);
+      return;
+    }
+    // 還沒讀到這台的正本:分不出每一份是不是已經交給 capy 了,只列出來、不標狀態也不給納入(左欄說了下一步)
+    const unknown = masters ? [] : [el('p', 'page__note', t('webui.playlists.platforms.unknown'))];
+    platList.replaceChildren(...unknown, ...ps.map((p) => {
+      const { rows, error } = platLists[p];
+      const g = el('div', 'pl__plat-group');
+      g.appendChild(el('h4', 'pl__plat-name', providerName(p)));
+      if (platLists[p].relogin) {
+        const a = el('a', 'wiz__link', t('webui.playlists.go_account'));
+        a.href = '#/account';
+        g.append(el('p', 'page__warn', t('webui.playlists.links.relogin', { platform: providerName(p) })), a);
+      }
+      if (error) g.appendChild(el('p', 'page__warn', t('webui.playlists.platforms.error', { platform: providerName(p), error })));
+      else if (platLists[p].relogin) { /* 上面說了 */ }
+      else if (platLists[p].skipped) g.appendChild(el('p', 'page__note', t('webui.playlists.platforms.skipped')));
+      else if (!rows.length) g.appendChild(el('p', 'page__note', t('webui.playlists.platforms.empty', { platform: providerName(p) })));
+      for (const r of rows) g.appendChild(platRow(p, r));
+      return g;
+    }));
+  }
+
+  // platRow:一份平台清單。連著哪一份正本(links 裡的 id 相同)→ 說出來;有同名的正本(不分大小寫,同 CLI 的 find)→ 不給納入,
+  // 指到搬家(納入會連到那一份、第一次 pull 照平台順序重排它;真正的護欄是 --new-only,這裡只是提示);其餘給「納入」。
+  function platRow(p, r) {
+    const row = el('div', 'pl__plat');
+    row.dataset.platform = p;
+    const main = el('span', 'pl__plat-main');
+    const acts = el('span', 'pl__link-acts');
+    const sp = p === 'spotify' && spotifyLink('playlist', r.id, r.name); // S7:Spotify 的清單都連回去(連結與按鈕是兄弟,不包進按鈕)
+    if (sp) acts.appendChild(sp);
+    const linked = masters && masters.find((m) => (m.links || {})[p] === r.id);
+    const dup = masters && !linked && masters.find((m) => same(m.name, r.name));
+    let state = '';
+    if (!masters) { /* 分不出來:不標、不給納入 */ }
+    else if (linked) state = t('webui.playlists.platforms.linked', { name: linked.name });
+    else if (dup) { state = t('webui.playlists.platforms.same_name', { name: dup.name }); acts.appendChild(moveLink()); }
+    else { state = t('webui.playlists.platforms.unlinked'); acts.appendChild(btn(t('webui.playlists.platforms.adopt'), '', () => adopt(p, r))); }
+    if (masters) row.dataset.state = linked ? 'linked' : dup ? 'same_name' : 'unlinked';
+    const count = /^\d+$/.test(r.tracks || '') ? t('webui.playlists.platforms.count', { count: Number(r.tracks) }) : '';
+    main.append(el('span', 'pl__name', r.name), el('small', null, [count, state].filter(Boolean).join(' · ')));
+    row.append(main, acts);
+    return row;
+  }
+
+  // adopt:納入 = 建一份新的空正本並連上(--new-only:名字已經是某份正本就擋,頁面讀的 export 可能過時)→ 把歌拉進來(第一次 pull
+  // 採平台順序,新正本是空的,所以是對的)。名稱放在 -- 後面:以 - 開頭的清單名不被當成旗標。
+  function adopt(p, r) {
+    if (blocked()) return;
+    const platform = providerName(p);
+    const name = r.name;
+    const f = openFlow([t('webui.playlists.step.adopt'), t('webui.playlists.step.pull')], pflow);
+    pflow.scrollIntoView?.({ block: 'nearest' }); // 流程區在整張平台清單上面:按了下面某一列,變更表與確認要看得到
+    markStep(f, 0);
+    step(f, ['pl', 'link', '--new-only', '--', name, `${p}:${r.id}`], t('webui.playlists.label.adopt', { name, platform }), (c1, o1) => {
+      if (c1 !== 0) { say(f, o1, t('webui.playlists.adopt.stop1')); load(); return; }
+      markStep(f, 1);
+      step(f, ['pl', 'pull', '--', name], t('webui.playlists.label.adopt_pull', { name }), (c2, o2, w2) => {
+        if (c2 === 0) {
+          markStep(f, 2);
+          say(f, { text: w2 ? t('webui.playlists.adopt.done', { name, platform }) : t('webui.playlists.adopt.done_empty', { name, platform }) });
+        } else say(f, o2, t('webui.playlists.adopt.stop2', { name, button: t('webui.playlists.sync') })); // 留下一份連著的空正本:照實說下一步
+        load();
+      });
+    });
+  }
+
+  function moveLink() {
+    const a = el('a', 'btn btn--ghost', t('webui.playlists.platforms.go_move'));
+    a.href = '#/move';
+    return a;
   }
 
   // platformCell:一首歌在一個平台的那一格(計畫 §3.2 的表)。
@@ -496,17 +620,12 @@ export function initPlaylists(root, api, con, notice, providers) {
     return Object.entries(pl.links || {}).filter(([, id]) => typeof id === 'string' && id);
   }
 
-  // wrapTable:pick 見 table.js 的 linkColumn;沒給(或 false)就是一般的表。
-  function wrapTable(h, r, pick) {
-    const w = el('div', 'tbl-wrap');
-    const tbl = renderTable(h, r);
-    w.appendChild(pick ? linkColumn(tbl, r, pick) : tbl);
-    return w;
-  }
-
   // 回到這一頁時重讀(app.js 的 route;別頁寫入之後這一頁不會過時)。有命令在跑就等它結束。
   return { refresh: () => con.idle(load) };
 }
+
+// same:兩個清單名算不算同名(不分大小寫,同 CLI 的 canonState.find 與 sameNamePlaylists 的 EqualFold)。
+const same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
 // mappingOf:一首歌在一個平台上的對應 { id, pinned }(不是字串的壞資料 = 沒有)。格子(§3.2)與連結面板的計數(§3.5)共用。
 const norm = (m) => ({ id: m && typeof m.id === 'string' ? m.id : '', pinned: !!(m && m.pinned) });

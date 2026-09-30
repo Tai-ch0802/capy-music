@@ -321,6 +321,16 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .pl__flow-card { display: grid; gap: .75rem; padding: 1rem 1.25rem; background: var(--surface); border: 1px solid var(--line-hi); border-radius: var(--r-lg); }
 .pl__flow-card p, .pl__flow-status { margin: 0; max-width: 44em; }
 .pl__flow-table:empty, .pl__flow-prompts:empty, .pl__flow-status:empty { display: none; }
+/* 各平台上的清單(計畫 §3.4):每個平台一段,每份清單一列:名稱 + 狀態,右邊是連結與動作 */
+.pl__plats { display: grid; gap: .75rem; margin-top: 1.5rem; justify-items: start; }
+.pl__plats > .page__note, .pl__plats > .card__sub { margin: 0; }
+.pl__plats > .pl__flow, .pl__plat-list { justify-self: stretch; }
+.pl__plat-list { display: grid; gap: 1rem; }
+.pl__plat-name { margin: 0 0 .25rem; font-size: var(--t-14); font-weight: 600; color: var(--text-hi); }
+.pl__plat { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .25rem .75rem; padding: .45rem 0; border-top: 1px solid var(--line); font-size: var(--t-14); }
+.pl__plat-main { display: grid; min-width: 0; }
+.pl__plat-main .pl__name { color: var(--text-hi); overflow-wrap: anywhere; }
+.pl__plat-main small { color: var(--muted); font-size: var(--t-12); }
 @container (max-width: 50rem) {
   .pl__tbl, .pl__tbl tbody, .pl__tbl td { display: block; }
   .pl__tbl thead, .pl__tbl colgroup { display: none; }
