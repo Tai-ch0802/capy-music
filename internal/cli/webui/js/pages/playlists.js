@@ -58,7 +58,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     con.run('export', {
       onStdout: (s) => { text += s; },
       onExit: (code) => {
-        if (code !== 0) { empty(); return; }
+        if (code !== 0) { noLocal(); return; }
         let files;
         try {
           files = JSON.parse(text);
@@ -71,16 +71,22 @@ export function initPlaylists(root, api, con, notice, providers) {
     }, { label: t('webui.playlists.load_label'), quiet: true });
   }
 
-  // empty:沒有任何正本。還沒連 Google Drive(正本就放在那裡)與「連了、只是還沒有清單」是兩件事,下一步不一樣。
+  // 沒有東西可以畫的三種情況,下一步各不一樣:還沒連 Google Drive(正本就放在那裡)→ 帳號頁;連了、但這台電腦還沒讀過 Drive
+  // (export 失敗 = 本機沒有資料,例如第二台電腦;export 沒辦法知道 Drive 上有沒有清單)→ 同步頁把正本拉回來;
+  // 讀過了、真的沒有清單 → 搬家。
+  function noLocal() {
+    if (auth.google && auth.google.state !== 'ok') { hint(t('webui.playlists.empty_no_drive'), t('webui.playlists.go_account'), '#/account'); return; }
+    hint(t('webui.playlists.empty_no_local', { option: t('webui.sync.dry_run'), button: t('webui.sync.pull') }), t('webui.playlists.go_sync'), '#/sync');
+  }
   function empty() {
-    if (auth.google && auth.google.state !== 'ok') {
-      left.appendChild(emptyState(t('webui.playlists.empty_no_drive')));
-      const a = el('a', 'wiz__link', t('webui.playlists.go_account'));
-      a.href = '#/account';
-      left.appendChild(a);
-      return;
-    }
+    if (auth.google && auth.google.state !== 'ok') { noLocal(); return; }
     left.appendChild(emptyState(t('webui.playlists.empty')));
+  }
+  function hint(text, go, href) {
+    left.appendChild(emptyState(text));
+    const a = el('a', 'wiz__link', go);
+    a.href = href;
+    left.appendChild(a);
   }
 
   // canPlay:這台電腦能不能用 capy 在平台上放。沒登入 / 過期就不給 ▶(按了必定失敗);不知道(讀不到 auth)就給。
@@ -234,7 +240,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       td.appendChild(playButton(p, id, title)); // 這一欄只在這台放得了的時候才出現(songTable)
       return td;
     }
-    td.appendChild(youtubeLink(id, title, 'btn btn--ghost', t('webui.playlists.open'), t('webui.playlists.open_label', { title })));
+    if (p === 'youtube') td.appendChild(youtubeLink(id, title, 'btn btn--ghost', t('webui.playlists.open'), t('webui.playlists.open_label', { title })));
     return td;
   }
 

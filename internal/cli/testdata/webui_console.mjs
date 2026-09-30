@@ -654,7 +654,7 @@ await scenario('8k', async () => {
   const zh = await paint();
   want(zh, 'zh-TW', ['我的清單', '每份清單的正本存在你自己的 Google Drive。正本可以連到每個平台(Spotify、Apple Music、YouTube Music)上各一份清單;同步時,兩邊的新增、刪除與順序會互相帶過去。',
     '正本、連結、同步是什麼意思?', '搬家是一次性複製過去。同步是之後兩邊持續跟著彼此改。', '顯示的是這台電腦上次同步後的內容', '歌曲', '時長', '重新整理', '平台上現有的清單', '平台', '本機曲庫', '列出來',
-    'road trip(2 首)', '(本機沒有這首的資料)', '看 Spotify 上的內容', 'capy 還沒有替你保管任何清單。到「搬家」搬一份過來。',
+    'road trip(2 首)', '(本機沒有這首的資料)', '看 Spotify 上的內容', '這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。',
     '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
     '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
@@ -920,12 +920,12 @@ await scenario('8p', async () => {
   const WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
   const ok = { state: 'ok' };
   const tracks = {
-    c1: { title: 'Song A', artists: ['X', 'Y'], album: 'Alb', duration_ms: 257000, mappings: { spotify: { id: T1 }, apple: { id: '1440' }, youtube: { id: 'vid-1' } } },
+    c1: { title: 'Song A', artists: ['X', 'Y'], album: 'Alb', duration_ms: 257000, mappings: { spotify: { id: T1 }, apple: { id: '1440' }, youtube: { id: 'vid-1' }, local: { id: 'Music/a.mp3' } } },
     c2: { title: 'Song B', mappings: { spotify: { id: 'spotify:local:a:b:c:1' }, apple: { id: 'i.LIB' } } },
     c3: { title: 'Song C', mappings: { apple: { id: '', pinned: true } } },
     c4: { title: 'Song D', mappings: { spotify: { id: 'spotify:episode:xyz' } } },
   };
-  const one = { 'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: 'PL', apple: 'p.A' }, items: ['c1', 'c2', 'c1', 'c3', 'c4', 'gone'].map((cid) => ({ cid })) }, 'tracks.json': { tracks } };
+  const one = { 'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: 'PL', apple: 'p.A', local: 'dev/Music/road.m3u8' }, items: ['c1', 'c2', 'c1', 'c3', 'c4', 'gone'].map((cid) => ({ cid })) }, 'tracks.json': { tracks } };
   const providers = { list: ['spotify', 'apple', 'local', 'youtube'], current: 'spotify' };
   const open = async (auth, data) => {
     reset();
@@ -943,7 +943,10 @@ await scenario('8p', async () => {
     // ── macOS、三家都登入:三個平台欄;每一格照計畫 §3.2 的表
     ua(MAC);
     let pl = await open({ spotify: ok, apple: ok, youtube: ok, google: ok }, out(one));
-    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'Apple Music', 'YouTube Music']), `平台欄照 providers 的順序、本機不佔欄:${JSON.stringify(head(pl))}`);
+    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'Apple Music', 'YouTube Music']), `平台欄照 providers 的順序、本機連著也有對應但不佔欄:${JSON.stringify(head(pl))}`);
+    check(!anchors(table(pl)).some((a) => a.href.includes('a.mp3')) && !rows(pl).some((tr) => tr.children.some((td) => td.dataset.platform === '本機曲庫')), '本機沒有播放、沒有網頁:不佔欄、不連');
+    const tall = allByClass(pl, 'tbl-wrap--tall');
+    check(tall.length === 1 && allByClass(tall[0], 'pl__tbl').length === 1, '歌曲表放在固定高度的 .tbl-wrap--tall 裡');
     const rs = rows(pl);
     check(JSON.stringify(rs.map((tr) => tr.dataset.cid)) === JSON.stringify(['c1', 'c2', 'c1', 'c3', 'c4', 'gone']), `列序 = items 的順序,同一首兩次就兩列:${JSON.stringify(rs.map((tr) => tr.dataset.cid))}`);
     check(rs.every((tr) => !tr.children.some((td) => td.textContent === 'c1' || td.textContent === 'gone')), 'CID 不上畫面');
@@ -1016,8 +1019,12 @@ await scenario('8p', async () => {
     pl = await open({ google: { state: 'missing' } }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
     const go = anchors(pl).find((a) => a.href === '#/account');
     check(pl.textContent.includes('先連接 Google Drive') && go && go.textContent === '到「帳號」', `沒連 Google Drive:指到帳號頁:${pl.textContent.slice(0, 200)}`);
+    pl = await open({ google: ok }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
+    const sync = anchors(pl).find((a) => a.href === '#/sync');
+    check(pl.textContent.includes('這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來') && sync && sync.textContent === '到「同步」' && !pl.textContent.includes('capy 還沒有替你保管任何清單'),
+      `連了 Google Drive、這台沒有本機資料(第二台電腦):不說「沒有清單」,指到同步頁:${pl.textContent.slice(0, 200)}`);
     pl = await open({ google: ok }, out({}));
-    check(pl.textContent.includes('capy 還沒有替你保管任何清單') && !anchors(pl).some((a) => a.href === '#/account'), '連了但沒有清單:指到搬家');
+    check(pl.textContent.includes('capy 還沒有替你保管任何清單') && !anchors(pl).some((a) => a.href === '#/account' || a.href === '#/sync'), '讀過了、真的沒有清單:指到搬家');
 
     // ── 英文:整頁、報讀名稱、格子的說明都沒有中文
     i18nFile = './i18n-en.json';
@@ -1123,7 +1130,7 @@ await scenario('8m', async () => {
     reset();
     script = { [`search k --provider ${prov} --limit 10`]: { events: [{ type: 'table', header: ['ID', 'TITLE'], rows }, done] } };
     const r = mk();
-    initSearch(r, api, con, () => {}, { list: ['spotify', 'apple'], current: prov });
+    initSearch(r, api, con, () => {}, { list: ['spotify', 'apple', 'youtube'], current: prov });
     r.querySelector('input').value = 'k';
     r.querySelector('.btn--primary').click();
     await new Promise((res) => con.idle(res));
@@ -1138,6 +1145,9 @@ await scenario('8m', async () => {
   check(sp[1].link === null, 'local file 沒有 Spotify 上的頁面:不給連結');
   const ap = await paint('apple', [['700050031', 'Radioactivity']]);
   check(ap[0].link === null, 'Apple 列沒有 Spotify 連結');
+  const yt = (await paint('youtube', [['vid-9', 'Tune']]))[0].link;
+  check(yt && yt.textContent === '在 YouTube Music 開啟' && yt.getAttribute('aria-label') === '在 YouTube Music 開啟: Tune' && yt.href === 'https://music.youtube.com/watch?v=vid-9' && yt.target === '_blank',
+    `搜尋頁的 YouTube 連結照舊用 youtubeLink 的預設字:${yt && [yt.textContent, yt.getAttribute('aria-label'), yt.href]}`);
 
   // 報讀名稱要以看得到的字開頭(WCAG 2.5.3 Label in Name):用語音控制說「Listen on Spotify」的人才點得到。英文是正式預設。
   i18nFile = './i18n-en.json';

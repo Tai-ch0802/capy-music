@@ -1400,10 +1400,12 @@
   "webui.playlists.col.song": "Song",
   "webui.playlists.empty": "capy isn't keeping any playlists for you yet. Bring one over on the Move page.",
   "webui.playlists.empty_no_drive": "capy keeps the master copies in your Google Drive. Connect Google Drive first.",
+  "webui.playlists.empty_no_local": "This computer hasn't read the master copies in your Google Drive yet. On the Sync page, uncheck \"{option}\" and press \"{button}\" to bring them in. If you don't have any playlists yet, bring one over on the Move page.",
   "webui.playlists.filter_playlists": "Filter playlists",
   "webui.playlists.filter_songs": "Find a song in this playlist",
   "webui.playlists.fresh": "Showing what this computer saw at its last sync",
   "webui.playlists.go_account": "Go to Accounts",
+  "webui.playlists.go_sync": "Go to Sync",
   "webui.playlists.items_title": {
     "one": "{name} ({count} song)",
     "other": "{name} ({count} songs)"

@@ -1322,10 +1322,12 @@
   "webui.playlists.col.song": "歌曲",
   "webui.playlists.empty": "capy 還沒有替你保管任何清單。到「搬家」搬一份過來。",
   "webui.playlists.empty_no_drive": "capy 把清單的正本存在你的 Google Drive。先連接 Google Drive。",
+  "webui.playlists.empty_no_local": "這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「{option}」,按「{button}」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。",
   "webui.playlists.filter_playlists": "篩選清單",
   "webui.playlists.filter_songs": "在這份清單裡找歌",
   "webui.playlists.fresh": "顯示的是這台電腦上次同步後的內容",
   "webui.playlists.go_account": "到「帳號」",
+  "webui.playlists.go_sync": "到「同步」",
   "webui.playlists.items_title": {
     "other": "{name}({count} 首)"
   },
