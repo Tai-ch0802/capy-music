@@ -1332,6 +1332,12 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, ".pl__list > .pl__item:focus-visible { outline-offset: -4px; }") {
 		t.Error("左欄清單是捲動容器:焦點環要畫在項目裡面")
 	}
+	// 清單頁的寫入(同步、在 X 建一份、找對應)一律走 CLI 自己的變更表與確認:頁面絕不代加 --yes / --force(決策 46;計畫 §3.5)。
+	for _, bad := range []string{"'--yes'", "'--force'", " --yes'", " --force'", "' --yes", "' --force"} {
+		if strings.Contains(read("js/pages/playlists.js"), bad) {
+			t.Errorf("清單頁不可以代加確認或越過閾值的旗標:%s", bad)
+		}
+	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".dock__busy-dot") {
 		t.Error("prefers-reduced-motion 要把 ● 脈衝改成靜態")
 	}
