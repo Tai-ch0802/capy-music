@@ -33,7 +33,7 @@
   </header>
   <main id="main" class="doc">
     <h1>capy 隱私權政策</h1>
-    <p class="meta">生效日期:2026 年 9 月 21 日 · <a href="/en/privacy" lang="en" hreflang="en">English version</a></p>
+    <p class="meta">生效日期:2026 年 9 月 30 日 · <a href="/en/privacy" lang="en" hreflang="en">English version</a></p>
     <p>本隱私權政策說明 capy 這個應用程式如何取用、使用、儲存與分享你的資料——包括你登入 Google 並授權之後,capy 能存取的 Google 使用者資料——以及你如何撤銷授權與刪除資料。</p>
     <div class="short">
       <p><strong>一句話版本:</strong>capy 是在你自己電腦上執行的開源程式,沒有後端伺服器。你的資料只存在你的電腦、你自己的 Google 雲端硬碟,以及你所連接的音樂平台;沒有任何使用者資料或憑證會經過我們,我們也無從蒐集。</p>
@@ -74,7 +74,7 @@
     <ul>
       <li>撤銷授權:到 <a href="https://myaccount.google.com/permissions">Google 帳戶 → 第三方應用程式與服務</a>移除 capy 的存取權。</li>
       <li>刪除雲端硬碟上的資料:Google 雲端硬碟 → 設定 → 管理應用程式 → capy →「刪除隱藏的應用程式資料」。</li>
-      <li>刪除電腦上的資料:執行 <code>capy auth logout google</code>(以及 <code>capy auth logout youtube</code>,它會刪掉 YouTube Music 的登入 cookie 與設定檔裡的帳號)清除鑰匙圈裡的權杖,再刪除 capy 的設定資料夾(macOS:<code>~/Library/Application Support/capy-music</code>;Windows:<code>%AppData%\capy-music</code>)。如果你擔心 YouTube Music 的登入 cookie 外洩,到 Google 帳號 → 安全性 → 登出所有裝置,它就立刻失效。</li>
+      <li>刪除電腦上的資料:執行 <code>capy auth logout google</code>(連過其他平台的話,再執行 <code>capy auth logout spotify</code>、<code>capy auth logout apple</code>、<code>capy auth logout youtube</code>;最後一個會刪掉 YouTube Music 的登入 cookie 與設定檔裡的帳號)清除鑰匙圈裡的權杖。如果你替歌曲 wiki 設定過 AI 端點,它的 API key 與自訂標頭也在鑰匙圈裡,而且沒有任何登出命令會刪它們:在「鑰匙圈存取」(macOS)刪掉帳號是 <code>ai.api_key</code> 或 <code>ai.headers</code> 的 <code>capy-music</code> 項目;在「認證管理員」(Windows)的一般認證刪掉 <code>capy-music:ai.api_key</code> 與 <code>capy-music:ai.headers</code>。最後刪除 capy 的設定資料夾(macOS:<code>~/Library/Application Support/capy-music</code>;Windows:<code>%AppData%\capy-music</code>)。如果你擔心 YouTube Music 的登入 cookie 外洩,到 Google 帳號 → 安全性 → 登出所有裝置,它就立刻失效。</li>
     </ul>
 
     <h2 id="security">7. 安全</h2>

@@ -93,6 +93,31 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 	}
 }
 
+// 刪除(§6「要完全移除」):程式寫進鑰匙圈的每一樣都要有刪法——四個平台各自的登出,以及沒有任何登出命令會刪的
+// 歌曲 wiki 金鑰與標頭(ai.KeyAPIKey / ai.KeyHeaders,只能到作業系統的鑰匙圈刪)。v0.4.0 發版前補的:之前只寫了 google 與 youtube。
+func TestPrivacyPolicyDeletionCoversTheKeychain(t *testing.T) {
+	for page, apps := range map[string][]string{
+		"privacy.html":    {"鑰匙圈存取", "認證管理員"},
+		"en/privacy.html": {"Keychain Access", "Credential Manager"},
+	} {
+		html := read(t, page)
+		i, j := strings.Index(html, `id="retention"`), strings.Index(html, `id="security"`)
+		if i < 0 || j < i {
+			t.Fatalf("%s 找不到 #retention 到 #security 這一段", page)
+		}
+		sec := html[i:j]
+		wants := append([]string{"<code>" + ai.KeyAPIKey + "</code>", "<code>" + ai.KeyHeaders + "</code>"}, apps...)
+		for _, p := range []string{"google", "spotify", "apple", "youtube"} {
+			wants = append(wants, "<code>capy auth logout "+p+"</code>")
+		}
+		for _, want := range wants {
+			if !strings.Contains(sec, want) {
+				t.Errorf("%s 的刪除步驟(§6)沒有提到 %s", page, want)
+			}
+		}
+	}
+}
+
 // YouTube Music(決策 60):程式會連到 music.youtube.com(使用者自己複製的登入 cookie),而且 migrate / resolve 會把其他平台清單裡的
 // 歌名與歌手當搜尋字送給 Google——政策要說清楚是什麼、送了什麼;條款與首頁要說這不是官方支援。少一句這裡就紅。
 func TestPrivacyPolicyDisclosesYouTubeMusic(t *testing.T) {
