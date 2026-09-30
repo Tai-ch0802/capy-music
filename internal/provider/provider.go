@@ -55,6 +55,9 @@ var (
 	// ErrVolumeNotAllowed:這個裝置不給遠端調音量(手機、部分喇叭)。是裝置的限制,不是授權問題,
 	// 也不是「平台不支援」——同一個平台換一台裝置就可以。
 	ErrVolumeNotAllowed = i18n.Errorf("provider.err.volume_not_allowed")
+	// ErrPremiumRequired:平台只讓付費帳號遙控播放(Spotify 的 PREMIUM_REQUIRED)。事先查不出帳號是不是付費的
+	// (GET /me 在 2026-02 拿掉了 product),只能在播放命令被拒時認出來;不是授權問題,重新登入沒用。
+	ErrPremiumRequired = i18n.Errorf("provider.err.premium_required")
 	// ErrOpenedNotPlaying:Play 只把曲目在播放器裡打開(標出來),沒有開始播——每次呼叫各自回報的結果,不是失敗,
 	// 所以不是能力位(決策 52:Apple 資料庫裡有的歌會真的播,其他的只能打開)。CLI 看到它就照實說、不印 ▶、exit 0。
 	ErrOpenedNotPlaying = i18n.Errorf("provider.err.opened_not_playing")

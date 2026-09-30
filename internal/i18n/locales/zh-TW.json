@@ -747,6 +747,7 @@
     "other": "清單 {playlist} 寫到一半失敗:平台現在只有前 {count} 首(目標 {want} 首),重跑 push 補回其餘;名字已先改好:{err}"
   },
   "provider.err.player_not_running": "播放器未執行",
+  "provider.err.premium_required": "Spotify 只讓 Premium 帳號從其他 app 遙控播放",
   "provider.err.restricted": "平台不提供此內容",
   "provider.err.volume_not_allowed": "這個裝置不允許遠端調整音量",
   "pull.blocked.drive_incomplete": "Drive appdata 不完整,取不到:{files}。這不會被當成「使用者刪光了」,零寫入;--yes / --force 都不放行。若 Drive 真的被清空或登錯 Google 帳號(目前 {account}),出口是 capy drive init --from-local(只補 Drive 缺的檔;本機 state.db 是唯一剩下的一份,別刪)",
@@ -917,6 +918,7 @@
   "spotify.err.create_no_id": "Spotify 建立清單的回應沒有 id",
   "spotify.err.playlist_not_found": "{err}:清單 {id}",
   "spotify.err.playlist_or_tracks": "PlaylistID 與 TrackIDs 擇一",
+  "spotify.err.premium_required": "{premium}:請直接在 Spotify app 裡播放與操作(capy 事先看不出帳號是不是免費的):{err}",
   "spotify.err.quota_exceeded": "Spotify 回報這個開發者帳號的 API 配額用完了(QUOTA_EXCEEDED;同一個 Spotify 開發者帳號底下的所有 app 共用一份配額),請稍後再試",
   "spotify.err.track_not_found": "{err}:曲目 {id}",
   "spotify.err.unpushable": {

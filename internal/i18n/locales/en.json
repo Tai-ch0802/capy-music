@@ -795,6 +795,7 @@
     "other": "playlist {playlist} was only partly written: the platform now has just the first {count} tracks (of {want}); run push again to add the rest; the new name was already applied: {err}"
   },
   "provider.err.player_not_running": "the player is not running",
+  "provider.err.premium_required": "Spotify only lets Premium accounts control playback from other apps",
   "provider.err.restricted": "the platform doesn't provide this content",
   "provider.err.volume_not_allowed": "this device doesn't allow remote volume control",
   "pull.blocked.drive_incomplete": "the Drive appdata is incomplete; can't get {files}. This is not treated as \"you deleted everything\": nothing was written, and neither --yes nor --force overrides it. If Drive really was wiped, or you're logged in to the wrong Google account (currently {account}), the way out is capy drive init --from-local (it only restores the files missing on Drive; this computer's state.db is the only copy left, so don't delete it)",
@@ -983,6 +984,7 @@
   "spotify.err.create_no_id": "Spotify's response to creating the playlist had no id",
   "spotify.err.playlist_not_found": "{err}: playlist {id}",
   "spotify.err.playlist_or_tracks": "use either PlaylistID or TrackIDs, not both",
+  "spotify.err.premium_required": "{premium}: play and control music in the Spotify app itself (capy can't tell a free account in advance): {err}",
   "spotify.err.quota_exceeded": "Spotify says this developer account has used up its API quota (QUOTA_EXCEEDED; every app under the same Spotify developer account shares one quota) — try again later",
   "spotify.err.track_not_found": "{err}: track {id}",
   "spotify.err.unpushable": {

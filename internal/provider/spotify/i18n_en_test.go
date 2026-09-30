@@ -69,6 +69,10 @@ func TestSpotifyErrorsEnglish(t *testing.T) {
 	if !errors.As(err, &ae) {
 		t.Error("原始的 apiError 要留在鏈上")
 	}
+	pc := statusServer(t, http.StatusForbidden, `{"error":{"status":403,"reason":"PREMIUM_REQUIRED","message":"Player command failed: Premium required"}}`)
+	if err := pc.Pause(ctx); !errors.Is(err, provider.ErrPremiumRequired) || err.Error() != "Spotify only lets Premium accounts control playback from other apps: play and control music in the Spotify app itself (capy can't tell a free account in advance): spotify API 403 PREMIUM_REQUIRED Player command failed: Premium required" {
+		t.Errorf("premium: %v", err)
+	}
 
 	gc := statusServer(t, http.StatusNotFound, `{"error":{"status":404,"message":"Not found."}}`)
 	if _, err := gc.GetTrack(ctx, "t1"); !errors.Is(err, provider.ErrNotFound) || err.Error() != "not found: track t1" {
