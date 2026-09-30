@@ -673,10 +673,14 @@ func TestPlLinkNewOnly(t *testing.T) {
 	fs.set("p2", "road trip", "t2")
 	fs.set("p3", "Chill source", "t3") // 平台上的名字跟正本不同:之後 --create 不會撞到它
 	mustPull(t, "pl", "link", "Road Trip", "spotify:p1")
-	// 計畫 §3.5 的危險情境:正本在 Drive 上、沒連這個平台(連著的話會先被 already_linked 擋下,名稱護欄就沒測到),
+	// 計畫 §3.5 的危險情境:正本在 Drive 上、沒連這個平台(連著的話拿掉名稱護欄也會掉到 already_linked 一樣被擋,只能靠錯誤文字分辨),
 	// 而且這台的 state.db 沒有它(頁面讀的 export 過時)——不帶 --new-only 會真的連上,第一次 pull 就照平台順序重排它。
 	mustPull(t, "pl", "unlink", "Road Trip", "spotify")
-	if p, err := store.Path(); err != nil || os.Remove(p) != nil {
+	p, err := store.Path()
+	if err == nil {
+		err = os.Remove(p)
+	}
+	if err != nil {
 		t.Fatalf("刪掉本機 state.db:%s %v", p, err)
 	}
 	before := driveFiles(t, dc)

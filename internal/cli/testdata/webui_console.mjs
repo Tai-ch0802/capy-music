@@ -1415,6 +1415,7 @@ await scenario('8r', async () => {
   check(JSON.stringify(calls.filter((c) => c.startsWith('pl list'))) === JSON.stringify(['pl list --provider spotify', 'pl list --provider youtube']), `只讀有登入的平台、依序:${JSON.stringify(calls)}`);
   check(pl.textContent.includes('讀不到 YouTube Music 上的清單:讀不到 YouTube'), 'YouTube 讀不到:那一段說原因');
   check(prow(pl, 'road trip').dataset.state === 'linked' && prow(pl, 'road trip').textContent.includes('連著正本「road trip」'), '連著正本的列');
+  check(pl.textContent.includes('本機曲庫不在這裡,M3U 請到主控台用 pl link 連。'), '各平台上的清單的說明:本機曲庫不在這裡、指到主控台的 pl link');
   check(prow(pl, 'MIX').dataset.state === 'same_name' && !byText(prow(pl, 'MIX'), '納入 capy') && anchors(prow(pl, 'MIX')).some((a) => a.href === '#/move'), '只差大小寫也算同名:不給納入、指到搬家');
   check(prow(pl, 'Chill').dataset.state === 'unlinked' && prow(pl, 'Chill').textContent.includes('5 首 · 還沒納入') && byText(prow(pl, 'Chill'), '納入 capy'), '還沒納入:給納入、說有幾首');
   check(anchors(prow(pl, 'Chill')).some((a) => a.href === `https://open.spotify.com/playlist/${SP2}`), 'Spotify 的列連回清單(S7)');

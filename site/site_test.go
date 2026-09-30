@@ -97,12 +97,18 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 		}
 		// 同步、搬移、找對應送到音樂平台的也是同一份 Drive 正本的資料(完整度稽核):§3 要列成一項用途,§5 不可以再說
 		// 「唯一的移轉」是 Wiki 鈕,也不可以把同步送出的說成「不是 Google 使用者資料」。
+		// 清單名稱(建清單、同步改名時)與「我的清單」的 ▶(把正本裡的平台曲目編號送去播)也是(T5 自審)。
 		syncUse, onlyOne, notUserData := "<strong>同步與搬移</strong>", "唯一的移轉", "這些是音樂本身的資料,不是你的 Google 使用者資料"
+		listName, playUse, playShare := "還有清單名稱", "<strong>點播</strong>", "按 ▶ 時送到那個平台播放"
 		if strings.HasPrefix(page, "en/") {
 			syncUse, onlyOne, notUserData = "<strong>Syncing and moving</strong>", "The only transfer", "That is data about the music, not your Google user data"
+			listName, playUse, playShare = "plus the playlist's name", "<strong>Playing from My playlists</strong>", "to play a song when you press ▶ on My playlists"
 		}
 		if !strings.Contains(use, syncUse) || strings.Contains(sharing, onlyOne) || strings.Contains(sharing, notUserData) {
 			t.Errorf("%s:§3 要列出同步與搬移的用途;§5 不可以說只有 Wiki 鈕一種移轉,也不可以說同步送出的不是 Google 使用者資料", page)
+		}
+		if !strings.Contains(use, listName) || !strings.Contains(use, playUse) || !strings.Contains(sharing, playShare) {
+			t.Errorf("%s:§3 要寫到清單名稱與點播、§5 要列出按 ▶ 的移轉", page)
 		}
 		for _, f := range ai.SentFields {
 			word := f
