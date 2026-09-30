@@ -278,6 +278,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .pl__c-spotify { width: 12rem; } /* ▶ + 英文的「Listen on Spotify」(S7 的字不能改短) */
 .pl__c-apple { width: 6.25rem; }
 .pl__c-youtube { width: 7.5rem; } /* 「YouTube Music」不截字 */
+.pl__c-wiki { width: 4.5rem; }
 .pl__tbl td { vertical-align: middle; }
 .pl__tbl th { overflow-wrap: anywhere; } /* 字型比較寬(Windows 的 Segoe UI)時表頭換行,不截成「Le…」 */
 .pl__tbl tr[hidden] { display: none; }
@@ -342,6 +343,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
   .pl__song { flex: 1 1 calc(100% - 4rem); min-width: 0; }
   .pl__cell { display: inline-flex; align-items: center; }
   .pl__cell::before { content: attr(data-platform); color: var(--muted); font-size: var(--t-12); margin-right: .2rem; }
+  .pl__wiki { margin-left: auto; }
 }
 .pl__item { display: flex; gap: .5rem; align-items: center; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: .7rem .9rem; color: var(--text); cursor: pointer; font: 500 var(--t-14) var(--sans); transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease); }
 .pl__item:hover { border-color: var(--line-hi); }
@@ -478,8 +480,16 @@ body[data-busy] [data-run][data-pending] { opacity: 1; }
 body[data-busy] .dock::after { opacity: 1; }
 
 /* ── 鍵位表(原生 dialog:自帶焦點陷阱與 Esc) ── */
-.keys::backdrop { background: rgb(14 21 18 / .72); }
-.keys { background: var(--surface); color: var(--text); border: 1px solid var(--line-hi); border-radius: var(--r-lg); padding: 1.5rem; max-width: 34rem; box-shadow: var(--shadow); }
+.keys::backdrop, .pl__wiki-dlg::backdrop { background: rgb(14 21 18 / .72); }
+.keys, .pl__wiki-dlg { background: var(--surface); color: var(--text); border: 1px solid var(--line-hi); border-radius: var(--r-lg); padding: 1.5rem; max-width: 34rem; box-shadow: var(--shadow); }
+/* 清單頁的歌曲 wiki:比鍵位表寬,長的回答在對話框裡捲;停止鈕在回答上面,串流中一直看得到 */
+.pl__wiki-dlg { width: calc(100% - 2rem); max-width: 44rem; max-height: 85vh; }
+.pl__wiki-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.pl__wiki-title { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 0; overflow-wrap: anywhere; }
+.pl__wiki-by { display: block; color: var(--muted); font-size: var(--t-14); }
+.pl__wiki-foot { margin: .75rem 0 0; }
+.pl__wiki-foot:empty, .pl__wiki-prompts:empty, .pl__wiki-status:empty { display: none; }
+.pl__wiki-dlg .wiki__out { max-width: none; }
 .keys__title { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 0 0 1rem; }
 .keys__list { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; margin: 0 0 1rem; font-size: var(--t-14); }
 .keys__list dt { font-family: var(--mono); color: var(--accent); }

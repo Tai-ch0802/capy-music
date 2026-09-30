@@ -74,7 +74,12 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 	zh := map[string]string{"title": "歌名", "artist": "歌手", "album": "專輯", "release date": "發行日期", "genre": "曲風"}
 	for _, page := range []string{"privacy.html", "en/privacy.html"} {
 		html := read(t, page)
-		for _, want := range []string{"<code>capy wiki setup</code>", "<code>capy wiki</code>", "YouTube"} {
+		// 最後一個是「我的清單」的 Wiki 鈕(計畫 2026-09-30 Q5):歌名與歌手取自 Drive 上的正本,不只是正在播的那首。
+		source := "Google Drive 的清單正本"
+		if strings.HasPrefix(page, "en/") {
+			source = "master copy stored in your Google Drive"
+		}
+		for _, want := range []string{"<code>capy wiki setup</code>", "<code>capy wiki</code>", "YouTube", source} {
 			if !strings.Contains(html, want) {
 				t.Errorf("%s 沒有提到 %s", page, want)
 			}

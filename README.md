@@ -114,7 +114,7 @@ Either way, `--client-id` / `--client-secret` always override the built-in value
 
 ## Song wiki (optional): bring your own AI endpoint
 
-`capy wiki` explains the song that's playing in your native language — the basics, where it came from, what the lyrics say (the meaning, section by section; at most two short lines are quoted, never the full lyrics), what else to listen to — plus a YouTube search link for the MV. The writing is done by an AI endpoint you bring yourself: capy has none of its own, holds no key for you, and sends nothing anywhere until you connect one. In `capy --web` it's the **Song wiki** page: one button for the song that's playing, a box for any other title, and the setup wizard in place.
+`capy wiki` explains the song that's playing in your native language — the basics, where it came from, what the lyrics say (the meaning, section by section; at most two short lines are quoted, never the full lyrics), what else to listen to — plus a YouTube search link for the MV. The writing is done by an AI endpoint you bring yourself: capy has none of its own, holds no key for you, and sends nothing anywhere until you connect one. In `capy --web` it's the **Song wiki** page: one button for the song that's playing, a box for any other title, and the setup wizard in place. On **My playlists**, every song also has a **Wiki** button that asks about that song in a window on the same page; the title and artist it sends come from the playlist's master copy in your Google Drive.
 
 ```bash
 capy wiki                                         # the song that's playing (paused counts too): whichever platform has one, the default first; --provider pins one

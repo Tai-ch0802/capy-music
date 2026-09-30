@@ -168,7 +168,7 @@ const keysDialog = document.getElementById('keys');
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
   // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
-  if (!i18nOK || inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (!i18nOK || inInput() || document.querySelector('dialog[open]') || ev.metaKey || ev.ctrlKey || ev.altKey) return; // 任何對話框開著(鍵位表、清單頁的歌曲 wiki)
   // 按鈕有焦點時空白鍵就是「按下它」、<summary> 上是「展開 / 收起」:在這裡搶走,那些元素都不能用空白鍵操作了(review #62 第 8 點)。
   if (ev.key === ' ' && ['BUTTON', 'SUMMARY'].includes(document.activeElement?.tagName)) return;
   const n = PAGES[Number(ev.key) - 1];
