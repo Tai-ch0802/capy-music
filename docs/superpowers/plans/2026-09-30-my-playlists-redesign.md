@@ -1,8 +1,9 @@
 # web「我的清單」改版:點播、正本與平台清單的關係、就地同步、歌曲 wiki(2026-09-30 計畫)
 
 **狀態:T0(本文),等使用者確認 §6 的 Q 才實作。** 這一版只有文件,沒有改任何程式。
-版面示意圖(三個狀態):https://claude.ai/artifact/NzK4uk8ARBiTWEHzLfHfpc
+版面示意圖(四個狀態,按鈕與字級照 app.css 的真實尺寸):https://claude.ai/artifact/NzK4uk8ARBiTWEHzLfHfpc
 Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全域的 Q82)。定案後寫成附錄 C 決策 61。
+本文送出前跑過一輪三視角的對抗式審查(硬約束 / 事實與命令 / 需求與易用性),31 則裡 24 則查證成立,都已改進本文;最重要的是 §3.5 的「只建新的」CLI 旗標。
 
 ## 0. 需求與現況(2026-09-30 讀碼查證)
 
@@ -16,24 +17,26 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 | 4 | 曲目多時整頁被拉長;欄位多到要左右捲 | 表格用沒有高度上限的 `.tbl-wrap`;CID 欄 `nowrap`(`p:local:` 路徑很長)+ 連結欄 `nowrap` | playlists.js:83、116-121;app.css:205、226-228 |
 | 5 | 每首歌加 wiki 按鈕,開 dialog 或到 wiki 頁 | 沒有;wiki 頁只能查「正在播」或手打歌名 | wiki.js:116-153 |
 
-會影響設計的既有事實(每條都附出處,細節在讀碼紀錄):
+會影響設計的既有事實:
 
-- **資料只有本機的 `capy export`**:它是這台電腦上次成功 COMMIT 時的 Drive 快照,別台之後的改動看不到;沒有「最後同步時間」這種欄位,也沒有 `pl status`(escape.go:26-27;pull.go:159-191、383-392;pl.go:19)。
-- **mapping 全域共用**:`tracks.json` 每首歌一組 `mappings`,不分清單;Spotify 存 22 碼 track id,Apple 有 catalog 對應時存數字 id、沒有時存資料庫列 id(`i.` / 協作清單 `a.`),YouTube 存 videoId,local 存相對路徑(canon.go:133-162;apple/client.go:182-191)。`resolve` 只替「清單已連結的平台」找 mapping(resolve/resolve.go:274-310)。
-- **點播只有 `capy play --id <id> --provider <p>`**:Spotify 走 Connect(沒有作用中的裝置 = 404 → 可行動的訊息、exit 1;要 Premium 但程式偵測不到);Apple 在 macOS 上資料庫裡找到唯一一首才真的播,否則 `open music://…` 在 Music.app 打開並標出來、照實說、exit 0 不印 ▶(決策 52);local 與 YouTube 沒有播放(spotify/client.go:350-364;apple/player_darwin.go:102-142、157-227;player.go:137-156)。Apple 的 `i.` / `a.` id 餵 `--id` 會打 catalog 端點失敗。
-- **Spotify 連回(計畫 2026-09-24 §1.7 S7)**:有 Spotify 對應的每一列都要有看得到的「在 Spotify 上聽」(規範核可的字),只連 22 碼 id(table.js:43-60)。
-- **連結是一對一**:一份正本在每個平台最多連一份,一份平台清單也只連一份正本(canon.go:212;pull.go:562-567)。`pl link` 沒有 `--dry-run` 也沒有確認,不檢查 Unwritable(pull.go:473-626、460-471)。
-- **把「既有、非空」的平台清單連到「已有曲目」的正本,第一次 pull 會採平台的順序**:沒有 base 時規則 6′ 不清 `moved`(derive.go:114-129),跟決策 38 衝。從正本新增一個平台、不會重排的路是 `pl link <pid> <p> --create` → `resolve <pid> --provider <p>` → `pl sync <pid> --provider <p>`(pull.go:585-606;resolve.go:574 寫入前 `confirmWrite`;sync 的 pull 半邊把剛建的空清單記成 base、push 半邊照正本順序推)。
-- **wiki**:沒有 `--cid`;只能 `--title` + `--artist`(單一字串),快取 key 用 `", "` 串起歌手(wiki_run.go:71-74、132),命中不打 AI;沒設定端點 = 第一步 exit 1(wiki_run.go:56-59)。問 AI 期間佔著序列槽 30–60 秒(計畫 2026-09-28 Q71)。
-- **web 的規矩**:所有命令走同一個序列槽(`Console.run`);`promptHost` 讓確認提示畫在頁面裡,沒給就跳到主控台(console.js:145、466-484);`quiet` 不進主控台但 `onStdout` / `onExit` 照常(console.js:161-164、202、339);頁面絕不代加 `--yes` / `--force`(決策 46);webui 不可有中文字面、新 key 兩份語系同補(決策 50);CSP 零 inline。
-- **鍵盤單鍵層只擋鍵位表那一個 dialog**:別的 dialog 開著時按 1–9 會在背後換頁(app.js:165-175)。
-- **node 行為測試綁著現在的清單頁結構**:情境 8k / 8n / 8o 用 children 索引、`cells[0]` 是 CID、晶片字面 `apple ✓`(testdata/webui_console.mjs:584-896)。
+- **資料只有本機的 `capy export`**:它是這台電腦上次成功 COMMIT 時的 Drive 快照,別台之後的改動看不到;沒有「最後同步時間」這種欄位,也沒有 `pl status`(escape.go:26-27;pull.go:159-191、383-392;pl.go:19)。寫入命令(`pl link` 等)則每次都先讀最新的 Drive(pull.go:159-193)——**頁面用 export 做的任何判斷都可能過時,會影響順序或連結的護欄一律放在 CLI**。
+- **mapping 全域共用**:`tracks.json` 每首歌一組 `mappings`,不分清單。Spotify 存 22 碼 track id,Spotify 上的本機檔存 `spotify:local:…` uri(spotify/client.go:178);Apple 有 catalog 對應時存數字 id、沒有時存資料庫列 id(`i.` / 協作清單 `a.`,apple/client.go:371-373、420-432);YouTube 存 videoId;local 存相對路徑。`resolve` 只替「清單已連結的平台」找 mapping(resolve/resolve.go:274-310)。
+- **點播只有 `capy play --id <id> --provider <p>`**:Spotify 走 Connect(沒有作用中的裝置 = 404 → 可行動的訊息、exit 1;要 Premium 但程式偵測不到);Apple 只在 macOS,資料庫裡找到唯一一首才真的播,否則 `open music://…` 在 Music.app 打開並標出來、照實說、exit 0 不印 ▶(決策 52);local 與 YouTube 沒有播放(spotify/client.go:350-364;apple/player_darwin.go:102-142、157-227;player.go:137-156)。`--id` 不檢查形狀:Apple 的 `i.` / `a.` 會打 catalog 端點失敗,`spotify:local:…` 會被組成 `spotify:track:spotify:local:…`(player.go:73;spotify/spotify.go:101)。
+- **Spotify 連回(計畫 2026-09-24 §1.7 S7)**:顯示 Spotify 的曲目或清單,每一列都要有看得到的「在 Spotify 上聽」(規範核可的字),只連 22 碼 id(table.js:43-60)。
+- **連結是一對一**:一份正本在每個平台最多連一份,一份平台清單也只連一份正本(canon.go:212;pull.go:562-567)。`pl link` 沒有 `--dry-run` 也沒有確認、不檢查 Unwritable(pull.go:473-626、460-471);名稱不分大小寫比對(`strings.EqualFold`,pull.go:131-152),找到同名正本就連上去、找不到才建新的;正本在那個平台已經連著**別台電腦或別的 YouTube 帳號**的清單時,`pl link` 直接接管(pull.go:577-584,決策 33、60)。
+- **把「既有、非空」的平台清單連到「已有曲目」的正本,第一次 pull 會採平台的順序**:沒有 base 時規則 6′ 不清 `moved`(derive.go:114-129),跟決策 38 衝(ARCHITECTURE.md:1049 決策 39 的理由)。從正本新增一個平台、不會重排的路是 `pl link <pid> <p> --create` → `resolve <pid> --provider <p>` → `pl sync <pid> --provider <p>`(pull.go:585-606;resolve.go:574 寫入前 `confirmWrite`;sync 的 pull 半邊把剛建的空清單記成 base、push 半邊照正本順序推)。
+- **`pl link --create` 遇到平台上已有同名清單會停下(exit 1,零寫入),但錯誤原文叫人「要連它就 capy pl link …」**——不管那份是不是空的(pull.go:586-598;zh-TW.json:507-508)。這句話正好引導到上一條的重排路徑。
+- **wiki**:沒有 `--cid`;只能 `--title` + `--artist`(單一字串),快取 key 是 `ai.WikiCacheKey`,歌手用 `", "` 串(internal/ai/prompt.go:75-77;wiki_run.go:71-74、96),命中不打 AI;`--title` 是空的就改問正在播的歌(wiki_run.go:69-80);沒設定端點 = 第一步 exit 1(wiki_run.go:56-59),頁面拿不到那句的 key(web.go:250-257)。問 AI 期間佔著序列槽 30–60 秒(計畫 2026-09-28 Q71)。
+- **web 的規矩**:所有命令走同一個序列槽(`Console.run`);`promptHost` 只把提示畫在頁面裡,**表格照樣進主控台的區塊**,頁面要自己掛 `onTable`(console.js:158、341-346、467);沒給 `promptHost` 就跳到主控台(console.js:466-484);`quiet` 不進主控台但 `onStdout` / `onExit` 照常(console.js:161-164、202、339);`onExit` 先於喚醒排隊中的 `con.idle`(console.js:185、202、213-223),**連續的命令要在 `onExit` 裡接下一個**,用 `await` 串會被排隊的讀取插隊;用 `args` 陣列時照樣經 cobra 解析,名稱以 `-` 開頭要放在 `--` 後面(web_run.go:202-207、266-267);頁面絕不代加 `--yes` / `--force`(決策 46);webui 不可有中文字面、新 key 兩份語系同補(決策 50);CSP 零 inline。
+- **確認提示按 ✕ 或逾時是 exit 1 + `user aborted`,按「取消」才是 exit 2**(web_prompt.go:323-329;pull.go:73);搬家精靈用 `onPromptClosed` 分辨(move.js:202、448-457)。`pl sync` 不會因為 push 的前提回 exit 3(非 strict,push.go:171-177);exit 3 是刪除閾值或 Drive 不完整。
+- **鍵盤單鍵層只擋鍵位表那一個 dialog**:別的 dialog 開著時按 1–9 會在背後換頁(app.js:165-175;web_test.go:1351 釘著 `keysDialog.open`)。
+- **node 行為測試綁著現在的清單頁結構**:情境 8k / 8n / 8o 用 children 索引、`cells[0]` 是 CID、晶片字面 `apple ✓`、`pl list` 表的 Spotify 清單連結(testdata/webui_console.mjs:584-896,:759)。
 
 ## 1. 設計讀法
 
 產品介面,不是 landing page。沿用視覺規格 v2(2026-09-18-web-consumer-design.md:單一深色、三種圓角、一個主色),參照「搬家」頁拿捏資訊量:每個狀態只有一個主要動作、說明用白話、細節收進 `<details>`、寫入前一律先讓人看見會發生什麼。
 
-## 2. 版面(示意圖狀態一)
+## 2. 版面
 
 ```
 ┌ 我的清單 ───────────────────────────────────────────────────────────────┐
@@ -44,24 +47,33 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 │ 太好聽    607 │ 太好聽 607 首                          (同步這份清單)   │
 │ [Spotify][Apple Music] │ 顯示的是這台電腦上次同步後的內容               │
 │ 耳妊辰…   222 │ ┌ Google Drive 正本 ┬ Spotify     已連結  全部都有對應  在 Spotify 上聽 │
-│ …             │ │                   ├ Apple Music 已連結  3 首還沒有對應  [找對應]     │
-│ (清單多時可篩選)│ │                   └ YouTube…    沒有連結            [在 YT 建一份]  │
-│               │ [在這份清單裡找歌]  607 首                               │
-│ 各平台上的清單 │ ┌ # │ 歌曲(曲名 / 歌手 · 專輯) │ 時長 │ Spotify │ Apple │ YT │ Wiki ┐ │
-│ (按了才讀)     │ │ 固定高度的視窗,表頭黏住,裡面捲;頁面不跟著曲數變長       │ │
+│ …             │ │                   ├ Apple Music 已連結  3 首還沒有對應  [找對應][逐首決定] │
+│ 各平台上的清單 │ │                   └ YouTube…    沒有連結            [在 YT 建一份]  │
+│ (按了才讀)     │ [在這份清單裡找歌]  607 首                               │
+│               │ ┌ # │ 歌曲(曲名 / 歌手 · 專輯) │ 時長 │ Spotify │ Apple │ YT │ Wiki ┐ │
+│               │ │ 固定高度(60vh)的視窗,表頭黏住,裡面捲;頁面不跟著曲數變長 │ │
 └───────────────┴─────────────────────────────────────────────────────────┘
 ```
 
-窄版(主區 < 64rem):兩欄疊成一欄、連結面板的正本節點移到上面;歌曲表容器 < 44rem 時每列變兩行(第一行 # / 歌曲 / 時長,第二行各平台與 Wiki),400px 寬不橫向捲動。
+**寬度規則**(示意圖用 app.css 的真實按鈕尺寸量過,英文最長字「Listen on Spotify」也量過):
+
+| 條件 | 版型 |
+|---|---|
+| 頁面容器 ≥ 64rem | 左欄 16rem + 右欄並排(1440 寬的畫面) |
+| 頁面容器 < 64rem | 疊成一欄;清單清單在上、限高 15rem 自己捲(1280 以下) |
+| 歌曲表容器 ≥ 50rem | 一首一行,`table-layout: fixed`:# 3rem、時長 3.75rem、Spotify 12rem、Apple Music 6.25rem、YouTube Music 7rem、Wiki 4.75rem,「歌曲」欄吃剩下的(1440 並排時約 220–250px,1280 疊放時約 320px) |
+| 歌曲表容器 < 50rem | 一首拆成多行:第一行 # / 歌曲 / 時長,下面是各平台與 Wiki(放不下就換行),每格前面寫出平台名(沒有表頭可以對;1024 寬與手機) |
+
+量測結果:1440 / 1280 / 1024 寬與 390px 的手機框,頁面與歌曲表都沒有橫向捲動,每一格都沒有溢出。
 
 ## 3. 設計
 
 ### 3.1 歌曲表:固定高度的視窗、少欄位(需求 4)
 
-- **視窗**:沿用現成的 `.tbl-wrap--tall`(`max-height: 60vh` + 黏住的表頭,app.css:220-221),不另訂樣式(Q8)。左欄清單清單同高、自己捲;超過 8 份時出現篩選框(同搬家精靈第二步)。
-- **欄位**:`#`(在清單裡的位置)、**歌曲**(曲名一行;第二行「歌手 · 專輯」,單行省略、完整字放 `title`)、**時長**、**每個平台一欄**(§3.2)、**Wiki**。`table-layout: fixed`,只有「歌曲」欄吃剩下的寬度。示意圖在 1440 與 1024 寬量過:表格寬度等於視窗寬度,沒有橫向捲動。
+- **視窗**:沿用現成的 `.tbl-wrap--tall`(`max-height: 60vh` + 黏住的表頭,app.css:220-221)(Q8)。清單清單超過 8 份時出現篩選框(同搬家精靈第二步)。
+- **欄位**:`#`(在清單裡的位置)、**歌曲**(曲名一行;第二行「歌手 · 專輯」,單行省略、完整字放 `title`)、**時長**、**每個平台一欄**(§3.2)、**Wiki**。寬度照 §2 的表。
 - **CID 不上畫面**:這一頁的表不再是 TSV 的直譯,不用 `renderTable`,改由 playlists.js 自己畫列;每列掛 `data-cid`(給測試與除錯)。CLI、TSV、主控台的表不變(非 TTY 契約不受影響)。要看某首的對應細節,既有的 ISRC 頁照舊。
-- **順序**:照正本 items 的順序(決策 38),同一首出現兩次就兩列;篩選只藏列、不重排(Q7)。敗者 cid 沿 `merged` 找勝者(同現在,playlists.js:56-57)。
+- **順序**:照正本 items 的順序(決策 38),同一首出現兩次就兩列;清單內篩選只藏列、不重排(Q7)。敗者 cid 沿 `merged` 找勝者(同現在,playlists.js:56-57)。
 - **600 首直接畫**,不做虛擬捲動(ponytail:上萬首才需要)。
 
 ### 3.2 點播(需求 1)
@@ -71,28 +83,29 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 | 平台 | 這首的對應 | 格子裡 | 做的事 |
 |---|---|---|---|
 | Spotify | 22 碼 id | ▶ + 「在 Spotify 上聽」 | ▶ = `args: ['play','--id',id,'--provider','spotify']`(Spotify Connect,放在你開著的 Spotify 上);連結 = 既有 `spotifyLink('track', …)`,新分頁(S7:看得到、不收進選單) |
+| Spotify | `spotify:local:…` | 「Spotify 本機檔」(muted,`title` 說原因) | 不給 ▶、不給連結(判斷重用 table.js 的 `SPOTIFY_ID`,改成 export) |
 | Apple Music | 全數字(catalog id) | ▶ | `args: ['play','--id',id,'--provider','apple']`;exit 0 但 stdout 不以 ▶ 開頭 = 只在 Music.app 打開,照抄那句給 notice(同 search.js:60-66,決策 52) |
 | Apple Music | `i.` / `a.`(只在資料庫、沒有 catalog 對應) | 「只在資料庫」(muted,`title` 說原因) | 不給 ▶(Q3) |
-| YouTube Music | videoId | 「開啟」 | 既有 `youtubeLink`,新分頁到 `music.youtube.com/watch?v=`(YouTube Music 沒有播放遙控,決策 60) |
+| YouTube Music | videoId | 「開啟」 | `youtubeLink` 加一個選填的 label 參數,這一頁傳新的短字 `webui.playlists.open`(報讀名稱「在 YouTube Music 開啟「曲名」」);搜尋頁不傳,照舊。新分頁到 `music.youtube.com/watch?v=`(YouTube Music 沒有播放遙控,決策 60) |
 | 任一 | 沒有對應 | 「—」(muted) | `title`:「這首在 X 還沒有對應」;被釘成「沒有」(pinned + 空 id)說「你標過 X 沒有這首」 |
 
-- ▶ 用 `btn()`:序列槽被佔著(wiki、同步在跑)時擋下並說明(common.js:32-42)。▶ 的報讀名稱「用 Spotify 播放「曲名」」。
+- ▶ 用 `btn()`(加一個圖示尺寸的 class,min-width 32px):序列槽被佔著(wiki、同步在跑)時擋下並說明(common.js:32-42)。報讀名稱「用 Spotify 播放「曲名」」。
+- **▶ 只在這台電腦能用時出現**:那個平台在 `auth status --json` 裡不是 ok(沒登入 / 過期)就只留連結、不給 ▶;Apple 的 ▶ 另外只在 macOS 出現——瀏覽器與 capy 一定在同一台電腦(只綁 127.0.0.1,決策 40),看 `navigator.userAgent` 就夠。不然 Windows 上每一列都會有一顆必定失敗的鈕。
 - 播放後底部播放列怎麼跟,照決策 51 / 54,頁面不另外打 `/api/now`。
 - Spotify 失敗:沒有作用中的裝置時 CLI 那句已經可行動(「開一個播放器…」),照顯示;旁邊就是「在 Spotify 上聽」可以退回。非 Premium 的 `PREMIUM_REQUIRED` 原文不在這次處理(Q4)。
-- Apple 在非 macOS:CLI 自己回「只在 macOS 可用」,頁面照顯示(頁面拿不到 OS)。
-- 新寫的命令一律用 `args` 陣列,不再用 `line` + `quote()`(把決策 46 的做法用在這頁的新程式;既有的搜尋頁不在這次改)。
+- 新寫的命令一律用 `args` 陣列,不再用 `line` + `quote()`。
 
 替代方案見 Q1。
 
 ### 3.3 歌曲 wiki(需求 5)
 
 - 每列一顆「Wiki」,打開 `<dialog>`(`showModal()`),dialog 放在 `#page-playlists` 裡面——`promptHost` 的 `reveal()` 才不會把人丟去主控台(console.js:466-484)。
-- 命令:`args: ['wiki','--title',曲名,'--artist',歌手.join(', ')]`。歌手用 `", "` 串,跟「正在播」那條路的快取 key 同一種(wiki_run.go:132),同一首歌字串一樣時兩邊共用快取。不加 `--album`(§7)。
+- 命令:`args: ['wiki','--title',曲名,'--artist',歌手.join(', ')]`,`label` 用既有的 `webui.wiki.label.ask`(執行狀態列才不會顯示命令原文)。曲名取正本 `tracks.json` 的 `title`,**取不到(這台電腦沒有這首的資料)就不給 Wiki 鈕**——空的 `--title` 會變成問正在播的那首(wiki_run.go:69-80)。歌手用 `", "` 串,跟「正在播」那條路算快取 key 的方式一樣,同一首歌字串一樣時兩邊共用快取。
 - 畫法:重用 wiki.js 已經 export 的 `lineSplitter` / `wikiRenderer`;免責行是命令印的最後一行,照畫(決策 59)。
 - **停止**:`showModal()` 會讓 dock 的中止鈕變成 inert,所以 dialog 裡有自己的「停止」(`con.stop()`);問 AI 期間關掉 dialog(✕ / Esc)也算停止(Q2)。成功後有「再問一次」(`--refresh`)。
-- **沒設定 AI 端點**:dialog 顯示 CLI 那句,加一顆「設定 AI 端點」= `args: ['wiki','setup']`,`promptHost` 是 dialog 裡的區塊(表單就地出現,同 wiki 頁)。
-- **鍵盤**:app.js 的單鍵層從 `keysDialog.open` 改成「有任何 `dialog[open]`」,不然 dialog 開著時 1–9 會在背後換頁。
-- **政策**:新入口送出的歌名、歌手來自你 Drive 上的正本(經本機 state.db)。送的欄位沒變(仍是 `ai.SentFields` 的子集),但隱私權政策 §5 那句「是音樂本身的資料,不是你的 Google 使用者資料」與 README 的「正在播的歌」需要改寫(Q5)。
+- **設定 AI 端點**:收尾是 exit ≠ 0、而且不是使用者中止時,dialog 收尾區多一顆「設定 AI 端點」= `args: ['wiki','setup']`,`promptHost` 是 dialog 裡的區塊(表單就地出現,同 wiki 頁)。不比對錯誤字串(頁面拿不到那句的 key;wiki 頁的設定鈕也是常駐、不偵測)。
+- **鍵盤**:app.js 的單鍵層從 `keysDialog.open` 改成「有任何 `dialog[open]`」,不然 dialog 開著時 1–9 會在背後換頁;web_test.go:1351 的斷言跟著改成釘新條件。
+- **政策**:新入口送出的歌名、歌手來自你 Drive 上的正本(經本機 state.db)。送的欄位沒變(仍是 `ai.SentFields` 的子集),現行政策也已經把正本的歌名、歌手當成「音樂本身的資料」(privacy.html:64、68);但 §5 與 README 把 wiki 描述成「正在播的歌」,要補一句來源(Q5)。
 
 ### 3.4 正本與平台清單的關係(需求 2)
 
@@ -100,36 +113,57 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 
 1. **lead 改寫**成一句完整的模型:正本在你的 Drive、每個平台最多連一份、同步時互相帶過去。
 2. **`<details>`「正本、連結、同步是什麼意思?」**:四則短說明(正本 / 連結 / 同步 / 搬家和同步不一樣),預設收起,第一眼只有 lead。
-3. **選中清單的「連結面板」**(§3.5):左邊一個「Google Drive 正本」節點,右邊一個平台一列,把「這份正本連到哪幾份平台清單」畫成看得到的東西。
+3. **選中清單的「連結面板」**(§3.5):「Google Drive 正本」節點 + 一個平台一列,把「這份正本連到哪幾份平台清單」畫成看得到的東西。
 
 另外:
 
 - 左欄晶片改用 `providerName`(Spotify / Apple Music / YouTube Music / 本機),不再顯示原始 id + ✓。
-- **「平台上現有的清單」改成「各平台上的清單」**:一顆「讀取各平台的清單」,按了才依序對每個平台跑 `pl list --provider X`(會連網、每家各佔一次序列槽);每一列標出「連著正本「X」」或「還沒納入」,還沒納入的可以「納入 capy」(§3.5,Q6)。
+- **空白態分兩種**(`auth status --json` 的 Google 狀態):還沒連 Google Drive → 「先到帳號頁連接 Google Drive」連到 `#/account`;連了但沒有任何正本 → 「用『搬家』搬一份過來,或從下面『各平台上的清單』納入一份」。取代現在那句叫人到「同步」連結的錯誤指引(zh-TW.json:1305)。
+- **「平台上現有的清單」改成「各平台上的清單」**:一顆「讀取各平台的清單」,按了才依序對**這台電腦有登入的**每個平台跑 `pl list --provider X`(會連網、每家各佔一次序列槽,在 `onExit` 裡接下一家);每一列標出「連著正本「X」」或「還沒納入」,還沒納入的可以「納入」(§3.5,Q6)。Spotify 的列都放「在 Spotify 上聽」(`spotifyLink('playlist', …)`,是按鈕的兄弟元素、不包進按鈕;S7 原本涵蓋 `pl list` 的表,webui_console.mjs:759)。
 
 ### 3.5 就地同步(需求 3)
+
+**T2 的前置:兩個 CLI 改動**(頁面讀的是可能過時的 export,會重排正本或換掉連結的護欄只能放在 CLI;不在頁面判斷、不比對錯誤字串):
+
+1. **`pl link --strict`**(暫名,兩份語系補說明與 README ×2 的命令表):只做「建新的」——第一個參數**以名稱**命中既有正本(不分大小寫)時不連、回錯、零寫入(以 pid 指定照常);正本在那個平台已經有連結時,**不管是不是別台電腦 / 別的帳號的**都不接管、回錯、零寫入。頁面發出的每個 `pl link` 一律帶它。回歸測試:Drive 上有同名(含只差大小寫)的正本而本機 state.db 沒有、以及 Drive 上有別的 YouTube 帳號的連結而本機沒有,帶旗標都要 exit 1 且 Drive 檔位元組不變、沒有呼叫 `CreatePlaylist`(改之前會 fail:現在會連上 / 接管)。
+2. **`link.err.same_name_one` / `same_name_many` 改說法**:同名的平台清單是空的(例如上次 `--create` 建好但連結沒寫進 Drive,即 `link.recovery` 那種)才建議 `capy pl link … {platform}:{id}`;不是空的(或曲數不明)改說「先在 {platform} 上把它改名再重跑;要把它的歌加進正本,用搬家」。曲數取 `sameNamePlaylists` 讀到的清單總數。CLI 與網頁一次修好;i18n 單元測試釘住兩種說法。
 
 **連結面板**,每個平台一列(本機只在連著時出現):
 
 | 狀態 | 顯示 | 動作 |
 |---|---|---|
-| 連著、是這台電腦 / 這個帳號的 | 已連結;有幾首還沒有這個平台的對應(從 export 的 mappings 數,零網路) | 平台上的清單連結(Spotify:`spotifyLink('playlist')`;YouTube:`music.youtube.com/playlist?list=<清單 id 斜線後那段>`,連結 id 是 `<channel_id>/<playlistId>`;Apple 的資料庫清單沒有公開網址,不給);有缺對應時「找對應」= `args: ['resolve',pid,'--provider',p]`(寫入前 CLI 自己問確認) |
-| 連著、但屬於別台電腦(local)或別的 YouTube 帳號 | muted:「連在另一台電腦「名稱」」/「連在另一個 YouTube Music 帳號」 | 無(同 pull / push 的跳過規則,決策 33、60)。判斷用 `auth status --json` 的 `google.device_id` / `youtube.channel_id`(不連網,進頁時用 `quiet` 跑一次)配 manifest.devices 的名稱 |
-| 沒連,Spotify / Apple Music / YouTube Music | 沒有連結;已經知道幾首在那個平台的對應(mappings 全域共用) | 「在 X 建一份」→ 見下 |
-| 沒連,本機 | 不顯示這一列 | 本機不能 `--create`;連既有的 M3U 會碰到順序問題(Q6) |
+| 連著、這台電腦有登入、是這台 / 這個帳號的 | 已連結;有幾首還沒有這個平台的對應(從 export 的 mappings 數,零網路;判斷規則同 §3.2) | 平台上的清單連結(Spotify:`spotifyLink('playlist')`;YouTube:`music.youtube.com/playlist?list=<連結 id 斜線後那段>`,連結 id 是 `<channel_id>/<playlistId>`;Apple 的資料庫清單沒有公開網址,不給)。有缺對應時兩顆:「找對應」= `args: ['resolve',pid,'--provider',p]`(只寫高信心的自動對應);「逐首決定」= `args: ['resolve',pid,'--provider',p,'--review']`(走既有的 web 逐首裁決橋,web_prompt.go:259、353:接受、略過、手動搜尋,或「這個平台沒有這首」= 之後不再算缺) |
+| 連著、但這台電腦沒登入那個平台 | 「這台電腦沒有登入 X」;YouTube 的 `channel_id` 是空的也算這一格,不算別的帳號 | 連到 `#/account`;平台上的清單連結照給 |
+| 連著、屬於別台電腦(local)或別的 YouTube 帳號 | muted:「連在另一台電腦「名稱」」/「連在另一個 YouTube Music 帳號」 | 無(同 pull / push 的跳過規則,決策 33、60)。判斷用 `auth status --json` 的 `google.device_id` / `youtube.channel_id`(不連網,進頁時用 `quiet` 跑一次)配 manifest.devices 的名稱 |
+| 沒連,Spotify / Apple Music / YouTube Music,這台有登入 | 沒有連結;已經知道幾首在那個平台的對應(mappings 全域共用) | 「在 X 建一份」→ 見下 |
+| 沒連,這台沒登入 | 沒有連結 · 這台電腦沒有登入 X | 連到 `#/account` |
+| 沒連,本機 | 不顯示這一列 | 本機不能 `--create`;連既有的 M3U 會碰到順序問題 |
 
 **「在 X 建一份」**(示意圖狀態三):
 
-1. 先在頁面上說清楚會發生什麼(「會在 X 建一份叫「太好聽」的空清單,替每一首找 X 上的對應,再照正本的順序把找得到的加進去;寫入前會先列出來給你確認」),按「開始」才跑。這是頁面自己的說明,不是替 CLI 回答確認。
-2. 依序跑三個命令,步驟條(搬家精靈同款)顯示進度,任何一步 exit ≠ 0 就停,並說明停在哪、現在的狀態(例如「清單已建立並連上;之後按『同步這份清單』就會補上」):
-   - `args: ['pl','link',pid,p,'--create']`
-   - `args: ['resolve',pid,'--provider',p]`(有新對應時 CLI 問確認)
-   - `args: ['pl','sync',pid,'--provider',p]`(變更表 + 確認)
-3. 三個命令都帶 `promptHost`(連結面板裡的區塊),確認提示就地出現;頁面絕不代加 `--yes` / `--force`、不替人按確認(決策 46)。
+1. 按「開始」前,頁面先說清楚:「按『開始』會先在 X 建一份叫「太好聽」的空清單並連上;接著替每一首找 X 上的對應,再照正本的順序把找得到的加進去——找對應與加歌之前,capy 會先列出來給你確認。X 上如果已經有同名的清單,capy 會停下來、不建。」這是頁面自己的說明,「開始」就是對第一步的同意,不是替 CLI 回答確認(第一步本來就沒有 CLI 確認)。「各平台上的清單」已經讀過、而且那個平台有同名(不分大小寫)清單時,直接不給「開始」,改說同一句同名說明。
+2. 依序跑三個命令,**每一步在上一步的 `onExit` 裡送出**;步驟條(搬家精靈同款)顯示進度:
+   - `args: ['pl','link','--strict',pid,p,'--create']`
+   - `args: ['resolve',pid,'--provider',p]`
+   - `args: ['pl','sync',pid,'--provider',p]`
+3. 每一步帶 `promptHost`(連結面板裡的區塊),**`onTable` 把變更表畫在同一個區塊、確認提示之上**(表在上、提示在下;確認句寫的是「以上 N 筆」)。頁面絕不代加 `--yes` / `--force`、不替人按確認(決策 46)。
+4. 停下時照實說停在哪(照 §3.5 的收尾規則):第一步沒完成 → 「第一步沒有完成,原因見 capy 的說明」(CLI 的同名說法已經在前置 2 改好);停在第二步 → 「已建立並連上;按『找對應』接著做」;停在第三步 → 「對應已寫入;按『同步這份清單』把歌加進去」。停下後連結面板重讀(那一列會變成「已連結、N 首還沒有對應」,動作接得上)。**第一步會留下一份連著的空清單**:capy 不刪 YouTube / Apple 的清單,之後要不要留由你決定。
 
-**「同步這份清單」**(右欄標題旁的主要按鈕):`args: ['pl','sync',pid]`,`promptHost` 同上;變更表沿用同步頁的畫法(把 sync.js 在 `initSync` 裡的 `table()` 搬到 table.js 共用,同步頁行為不變)。收尾:exit 0 沒有變更 =「已經是最新的」;exit 2 = 你按了取消、沒有寫入;exit 3(刪除閾值或前提不成立)= 照印 CLI 原文,再補一句白話:「capy 先停下來了。這一頁不會替你加 --force;確認沒問題的話到主控台照上面的命令執行」。沒有任何連結時按鈕停用,旁邊說「先連一個平台」。
+**「同步這份清單」**(右欄標題旁的主要按鈕):`args: ['pl','sync',pid]`,`promptHost` 與 `onTable` 同上;變更表的畫法把 sync.js 在 `initSync` 裡的 `table()` 搬到 table.js 共用(同步頁行為不變)。沒有任何連結時按鈕停用,旁邊說「先連一個平台」。
 
-**「納入 capy」**(各平台上的清單,Q6):只在「沒有同名正本」時給(同名時 `pl link` 會連到那份既有正本,第一次 pull 會重排它);跑 `args: ['pl','link',<平台清單名>,'<平台>:<id>']` → `args: ['pl','pull',<平台清單名>]`(新正本是空的,第一次 pull 採平台順序是對的;變更表 + 確認就地出現)。有同名正本時那一列說「有同名的正本,要合併請用『搬家』」,連到 `#/move`。
+**寫入命令的收尾規則**(sync、resolve、pull 共用;照 move.js:202、448-457 的做法,用 `onPromptClosed` 記下提示怎麼收的):
+
+| 收尾 | 頁面說 |
+|---|---|
+| exit 0,沒有變更 | 已經是最新的 |
+| exit 0,有寫入 | 完成 + 重讀 |
+| exit 2 | 你按了取消,沒有寫入 |
+| exit 1,提示被關掉 / 逾時 | 你關掉了提示 / 等太久沒回答,沒有寫入(不顯示英文的 `user aborted`) |
+| exit 3 | 照印 CLI 原文 +「capy 先停下來了,這一頁不會替你越過;照上面的說明到主控台處理」(不暗示一定是 `--force`:exit 3 的原文各自帶了出路) |
+| 使用者按了中止 | 已中止 |
+| 其他 exit ≠ 0 | CLI 原文(去掉開頭的 `Error: `)+ 連到主控台 |
+
+**「納入」**(各平台上的清單,Q6):`args: ['pl','link','--strict','--',<平台清單名>,'<平台>:<id>']` → 在它的 `onExit` 裡 `args: ['pl','pull','--',<平台清單名>]`(`--` 讓以 `-` 開頭的清單名不被當成旗標;`--strict` 保證建的是新的空正本,第一次 pull 採平台順序才是對的;變更表 + 確認就地出現)。頁面自己看到同名正本(不分大小寫,同 move.js:194)時不給「納入」,改說「有同名的正本,要把它的歌加進來請用『搬家』」並連到 `#/move`——這只是提示,真正的護欄是 `--strict`。清單名剛好是 `--yes` / `--force` 這類會被 web 擋下的字(web_run.go:166-173)時,那一列照實說「這個名稱要到主控台處理」。
 
 **不引導的路**:把平台上既有、非空的清單連到已有曲目的正本(會採平台順序,derive.go:114-129,決策 38)。要把一份平台清單的歌併進正本,走搬家(加進既有清單 = 只加在尾端)。
 
@@ -137,59 +171,68 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 
 - 標題下一行固定寫「顯示的是這台電腦上次同步後的內容」(export 的本質,不假裝是即時)。
 - 這一頁的任何寫入命令收尾後,用 `quiet` 重跑 `export`(不灌進主控台),選中的清單不變。
-- 從別頁回到這一頁時也重讀(Q7)。
+- 從別頁回到這一頁時也重讀,用 `con.idle` 排隊(Q7)。
 
 ### 3.7 硬約束對照
 
 | 約束 | 這次怎麼守 |
 |---|---|
-| 決策 38 順序 | 表格照 items 順序、不排序不拖曳;篩選只藏列;不引導會重排的連結路徑 |
-| 刪除前 dry-run 與閾值 | 所有寫入走 `pl sync` / `resolve` 自己的變更表與確認;頁面不碰 `--force` |
-| 決策 40–41、46 web | 全部走 `Console.run` 的序列槽;不加直達端點;`promptHost` 在本頁;不代加 `--yes` / `--force` |
+| 決策 38 順序 | 表格照 items 順序、不排序不拖曳;篩選只藏列;頁面發出的 `pl link` 一律 `--strict`(不連到既有正本);CLI 不再建議連非空的同名清單 |
+| 刪除前 dry-run 與閾值 | 所有寫入走 `pl sync` / `resolve` / `pl pull` 自己的變更表與確認;頁面不碰 `--force` |
+| 決策 33 / 60 接管 | 頁面發出的 `pl link` 不接管別台 / 別帳號的連結(`--strict`);接管仍只在主控台明確執行 |
+| 決策 40–41、46 web | 全部走 `Console.run` 的序列槽;不加直達端點;`promptHost` 與變更表在本頁;不代加 `--yes` / `--force`;名稱放 `--` 之後 |
 | 決策 48 | 平台只用文字名稱 |
 | 決策 49 / 60 寫入邊界 | 寫入仍由 CLI 決定:Apple 只寫可編輯的自建清單、YouTube 只寫自建清單;頁面只發命令 |
-| 決策 50 i18n | 新字串 `webui.playlists.*` 兩份語系同補,英文 label 用進行式,webui 無中文字面;拿掉的 key 兩份一起刪 |
+| 決策 50 i18n | 新字串 `webui.playlists.*` 兩份語系同補,英文 label 用進行式,webui 無中文字面;拿掉的 key 兩份一起刪;CLI 新旗標與改過的 `link.err.same_name_*` 兩份同改 |
 | 決策 52 | Apple ▶ 照實說「只打開」 |
-| 決策 59 wiki | 送的欄位不變;免責行照畫;AI 端點仍 BYO;政策與 README 同 PR 改(Q5) |
-| S7 | 每列 Spotify 對應都有看得到的「在 Spotify 上聽」 |
-| 隱私權政策 | 外部服務與存進 Drive 的內容都沒變;只有 wiki 的資料來源描述要改(Q5) |
+| 決策 59 wiki | 送的欄位不變;免責行照畫;AI 端點仍 BYO;政策與 README 同 PR 補來源(Q5) |
+| S7 | 每列 Spotify 對應、以及各平台上的清單裡每一份 Spotify 清單,都有看得到的「在 Spotify 上聽」 |
+| 隱私權政策 | 外部服務與存進 Drive 的內容都沒變;只有 wiki 的資料來源描述要補(Q5) |
+| README ×2 | `pl link --strict` 進兩份命令表 |
 
 ## 4. 測試(每一則都是改之前會 fail 的)
 
 **一定要改的既有測試**(不是「可能要改」):
 
-- node 情境 8k / 8n / 8o(testdata/webui_console.mjs:584-896):children 索引、`cells[0]` 是 CID、晶片字面 `apple ✓`、每列 `[6,6,6,6,6]` 的寬度、「看 Spotify 上的內容」按鈕都會變。改成新結構的等價斷言,不放寬到「會過就好」。
-- `TestWebStaticFrontendContracts` 的字串比對(清單頁的部分)。
+- node 情境 8k / 8n / 8o(testdata/webui_console.mjs:584-896):children 索引、`cells[0]` 是 CID、晶片字面 `apple ✓`、每列 `[6,6,6,6,6]` 的寬度、「看 Spotify 上的內容」按鈕都會變。改成新結構的等價斷言,不放寬到「會過就好」;:759 的 Spotify 清單連結斷言搬到「各平台上的清單」。
+- `TestWebStaticFrontendContracts` 的字串比對(清單頁的部分;web_test.go:1351 的 `keysDialog.open` 改釘 `dialog[open]`)。
 - i18n:`TestNoUnusedKeys` 會抓到被拿掉的 `webui.playlists.list` / `list_label` / `view_on` / `view_label` / `platform_heading` 等,兩份一起刪。
 
-**新增**(node 情境,中英各跑一輪):
+**新增的 Go 測試**:
+
+- `pl link --strict`:以名稱命中 Drive 上既有正本(本機 state.db 沒有、只差大小寫也算)→ exit 1、零寫入;正本在 YouTube 已有別帳號的連結 → exit 1、零寫入、沒有呼叫 `CreatePlaylist`;以 pid 指定、平台沒連 → 照常建立。
+- `link.err.same_name_*`:同名清單是空的 → 建議連它;非空 → 不建議 `pl link`、改說改名或搬家(中英)。
+
+**新增的 node 情境**(中英各跑一輪):
 
 1. 列結構:沒有 CID 文字、`data-cid` 在;列序等於 items 順序(同一首兩次 = 兩列);墓碑顯示勝者的曲名。
 2. 平台欄出現規則:連著或有對應才出現;本機永遠不是一欄。
-3. Spotify 格:▶ 送出 `['play','--id',id,'--provider','spotify']`;「在 Spotify 上聽」看得到、`href` 對;非 22 碼不連。
-4. Apple 格:數字 id 給 ▶ 並送出正確 args;`i.` / `a.` 不給 ▶;exit 0 且不以 ▶ 開頭時 notice 照抄那句。
-5. YouTube 格:「開啟」的 `href` 與新分頁。
-6. Wiki:送出 `['wiki','--title',t,'--artist','A, B']`;dialog 在 `#page-playlists` 裡;「停止」與執行中關掉 dialog 都呼叫 `stop()`;沒設定時「設定 AI 端點」送 `['wiki','setup']`,`promptHost` 在 dialog 裡。
+3. Spotify 格:22 碼 → ▶ 送出 `['play','--id',id,'--provider','spotify']`、「在 Spotify 上聽」看得到且 `href` 對;`spotify:local:…` → 沒有 ▶、沒有連結、有說明(fixture 用既有的 c3)。
+4. Apple 格:數字 id 給 ▶ 並送出正確 args;`i.` / `a.` 不給 ▶;exit 0 且不以 ▶ 開頭時 notice 照抄那句;平台沒登入或非 macOS 時不給 ▶。
+5. YouTube 格:「開啟」的字是新 key、`href` 與新分頁對;搜尋頁的字不變。
+6. Wiki:送出 `['wiki','--title',t,'--artist','A, B']` 且帶 label;沒有曲名的列沒有 Wiki 鈕、不送命令;dialog 在 `#page-playlists` 裡;「停止」與執行中關掉 dialog 都呼叫 `stop()`;失敗收尾有「設定 AI 端點」、送 `['wiki','setup']`、`promptHost` 在 dialog 裡;使用者中止時沒有這顆。
 7. 鍵盤:非鍵位表的 dialog 開著時,數字鍵不換頁。
-8. 在 X 建一份:按「開始」前零命令;之後依序三個命令、都帶 pid、`promptHost` 在本頁;任一步失敗就停;整頁原始碼沒有 `--yes` / `--force`。
-9. 同步這份清單:送出 `['pl','sync',pid]`;沒有連結時停用並說原因;exit 3 顯示 CLI 原文 + 那句白話。
-10. 各平台上的清單:連著的列標出正本名稱;有同名正本時沒有「納入」;納入依序送 link、pull。
-11. 寫入收尾後的重讀用 `quiet`(主控台不多一個區塊)。
-12. 英文那一輪:頁面與 label 沒有 CJK,label 符合 `/^[A-Z][a-z]*ing /`。
+8. 在 X 建一份:按「開始」前零命令;之後依序三個命令、第一個帶 `--strict`、都帶 pid、`promptHost` 在本頁;收到 table 事件時表格出現在 `#page-playlists`、DOM 順序在提示之前;第一步失敗就不送後兩步;已讀到同名平台清單時不給「開始」;**用真的 Console**:第二步進行中先排一個 `con.idle`,第三步照樣送得出去(參照 webui_console.mjs:254-264);整頁原始碼沒有 `--yes` / `--force`。
+9. 同步這份清單:送出 `['pl','sync',pid]`;沒有連結時停用並說原因;收尾規則表的每一列(含「關掉提示 → 沒有寫入、畫面上沒有 `user aborted`」、逾時、exit 3 的白話不提 `--force`)。
+10. 找對應 / 逐首決定:送出的 args;表在提示之前。
+11. 各平台上的清單:只讀有登入的平台;連著的列標出正本名稱;Spotify 列有清單連結;有同名正本(含只差大小寫)時沒有「納入」;納入依序送 `pl link --strict -- <名稱> …`、`pl pull -- <名稱>`,名稱以 `-` 開頭時 `--` 在。
+12. 空白態:沒連 Google Drive / 連了沒有正本,兩句不同、各自連到對的頁。
+13. 寫入收尾後的重讀用 `quiet`(主控台不多一個區塊);連結面板的「沒登入」「別台電腦」「別的帳號」三種狀態各一則(YouTube `channel_id` 空 = 沒登入)。
+14. 英文那一輪:頁面與 label 沒有 CJK,label 符合 `/^[A-Z][a-z]*ing /`。
 
 **Go 靜態**:playlists.js 不含 `--yes` / `--force`;清單頁用 `.tbl-wrap--tall`;app.js 的單鍵層看 `dialog[open]`。
 
 **網站**(Q5 選 A 時):`site/site_test.go` 釘住政策新句子的關鍵詞(中英)。
 
-量不到版面(node 替身沒有排版),寬度與捲動留給 §8 人工驗收。
+node 替身沒有排版,寬度與捲動留給 §8 人工驗收。
 
 ## 5. PR 切法
 
 - **T0**:本文(docs only)。
-- **T1 歌曲表 + 點播**:固定高度的視窗、四欄 + 平台欄、▶ / 連結 / 「只在資料庫」、左欄晶片與篩選、lead 與 `<details>`、清單內篩選(Q7)。需求 1、4,需求 2 的說明部分。
-- **T2 連結面板 + 同步**:連結面板、「同步這份清單」、「在 X 建一份」、「找對應」、各平台上的清單與「納入」、寫入後與回到頁面時重讀。需求 2、3。
+- **T1 歌曲表 + 點播**:固定高度的視窗、欄位與寬度規則、▶ / 連結 / 「只在資料庫」/「Spotify 本機檔」、左欄晶片與篩選、lead 與 `<details>`、空白態、清單內篩選(Q7)、`youtubeLink` 的 label 參數。需求 1、4,需求 2 的說明部分。
+- **T2 CLI 前置 + 連結面板 + 同步**:`pl link --strict` 與 `link.err.same_name_*` 改說法(Go、i18n、README ×2)→ 連結面板、「同步這份清單」、「在 X 建一份」、「找對應」/「逐首決定」、收尾規則、各平台上的清單與「納入」、寫入後與回到頁面時重讀。需求 2、3。
 - **T3 wiki dialog**:dialog、停止、設定入口、鍵盤單鍵層、政策 ×2 / README ×2(Q5)。需求 5。
-- **T4 文件收尾**:指南 ×2(`docs/guide.html`、`docs/guide.en.html`)補「我的清單」一段 → `go test ./site/ -run TestGuideOnSiteIsCurrent -update` → 重發兩個指南 Artifact(英文那份的網址不在 repo,要向維護者拿)→ 合併後去看線上 `/guide`、`/en/guide`;附錄 C 決策 61;順手修 §9 的文件不一致。
+- **T4 文件收尾**:指南 ×2(`docs/guide.html`、`docs/guide.en.html`)補「我的清單」一段 → `go test ./site/ -run TestGuideOnSiteIsCurrent -update` → 重發兩個指南 Artifact(英文那份的網址不在 repo,要向維護者拿)→ 合併後去看線上 `/guide`、`/en/guide`;附錄 C 決策 61;§9 的文件不一致。
 
 每個 PR 都跑 `go test ./...`、`go mod tidy -diff`,node 情境中英兩輪。
 
@@ -197,12 +240,12 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 
 | Q | 問題 | 選項 |
 |---|---|---|
-| Q1 | 每一列的點播怎麼長 | **A(推薦)一個平台一欄**:Spotify = ▶ + 在 Spotify 上聽;Apple = ▶;YouTube = 開啟(示意圖)。一眼看得出每首在哪些平台有,一鍵就放。/ B 一顆 ▶ + 表格上方選「用哪個平台播」,右邊只留連結:列比較乾淨,但要先選平台。/ C 只給連結、不用 capy 遙控:不佔序列槽、不需要 Premium,但 Spotify / Apple 要到了平台還得自己按播放 |
-| Q2 | Wiki 開在哪、關掉時怎麼辦 | **A(推薦)就地 dialog,問 AI 期間關掉 = 停止**(把序列槽還給播放)。/ B dialog,關掉時讓它在背景跑完寫進快取(期間這頁的 ▶ 都會被擋,而且看不到它在跑)。/ C 不開 dialog,跳到 wiki 頁並帶入歌名(離開清單;路由要能帶參數給 wiki 頁) |
+| Q1 | 每一列的點播怎麼長 | **A(推薦)一個平台一欄**:Spotify = ▶ + 在 Spotify 上聽;Apple = ▶;YouTube = 開啟(示意圖)。一眼看得出每首在哪些平台有,一鍵就放;代價是 1440 寬並排時「歌曲」欄約 220–250px,長曲名會省略。/ B 一顆 ▶ + 表格上方選「用哪個平台播」,右邊只留連結:歌曲欄寬一些,但要先選平台。/ C 只給連結、不用 capy 遙控:不佔序列槽、不需要 Premium,但 Spotify / Apple 要到了平台還得自己按播放 |
+| Q2 | Wiki 開在哪、關掉時怎麼辦 | **A(推薦)就地 dialog,問 AI 期間關掉 = 停止**(把序列槽還給播放)。/ B dialog,關掉時讓它在背景跑完寫進快取:期間這頁的 ▶ 都會被擋(點了會說正在問 wiki、可按中止),只有底部的執行狀態列看得到它在跑,答案要重開 dialog 才看得到。/ C 不開 dialog,跳到 wiki 頁並帶入歌名(離開清單;路由要能帶參數給 wiki 頁) |
 | Q3 | Apple 只在資料庫、沒有 catalog 對應的歌(`i.` / `a.`) | **A(推薦)不給 ▶,標「只在資料庫」並說原因**。/ B 加一條「用資料庫列 id 找 persistent ID 再播」的新 Apple 播放路徑(新行為,要先探測,另開計畫) |
 | Q4 | Spotify 非 Premium 的 `PREMIUM_REQUIRED` 原文 | **A(推薦)這次不處理,另開小 PR 補在地化訊息**(影響 CLI 與 web 所有播放入口,不只這頁)。/ B 併進 T1 |
-| Q5 | wiki 的新入口與隱私權政策 | **A(推薦)T3 同一個 PR 改政策 §5(中英)與 README ×2**:說明歌名與歌手也可能來自你存在 Google Drive 的清單正本,只有你按下時才送、只送到你自己設定的端點;site_test 釘住新句子。/ B 不改政策(字面沒限定來源,測試不會紅),只改 README |
-| Q6 | 「各平台上的清單」要做到哪 | **A(推薦)讀取 + 標出關係 + 沒有同名正本時可「納入 capy」**。/ B 只讀取與標出關係,不給動作(納入請到主控台)。/ C 拿掉這一段 |
+| Q5 | wiki 的新入口與隱私權政策 | **A(推薦)T3 同一個 PR 補政策 §5(中英)與 README ×2 的一句**:歌名與歌手也可能來自你存在 Google Drive 的清單正本,只有你按下時才送、只送到你自己設定的端點;site_test 釘住新句子。現行政策對正本歌名的定性(音樂本身的資料)不變。/ B 不改政策(字面沒限定來源,測試不會紅),只改 README |
+| Q6 | 「各平台上的清單」要做到哪 | **A(推薦)讀取 + 標出關係 + 可「納入」**(帶 `--strict`,有同名正本時不給)。/ B 只讀取與標出關係,不給動作(納入請到主控台)。/ C 拿掉這一段 |
 | Q7 | 回到這一頁時自動重讀、清單內篩選 | **A(推薦)兩個都做**:回到頁面就用 `quiet` 重跑 export(別頁寫入後這頁不會過時);超過 20 首時出現「在這份清單裡找歌」。/ B 都不做,只留「重新整理」鈕 |
 | Q8 | 固定視窗的高度 | **A(推薦)沿用 `.tbl-wrap--tall` 的 60vh**(同步頁、搬家預覽同一個)。/ B 另訂(例如 `clamp(22rem, 62vh, 44rem)`) |
 
@@ -213,8 +256,9 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 - 用 dev__ base 顯示平台那一側的名稱與曲數。
 - 點一首接著播完整份清單(`PlayRequest` 沒有 offset;Apple 不支援清單播放)。
 - Apple 的 https 歌曲頁連結(要先讀 storefront;▶ 已經涵蓋「在 Music.app 打開」)。
-- 連結前警告寫不了的清單(`pl list` 的 TSV 沒有 Unwritable 欄)。
+- 連結前警告寫不了的清單(`pl list` 的 TSV 沒有 Unwritable 欄;追蹤的別人清單納入後只會單向拉)。
 - 連到平台上既有、非空的清單(順序會被改;請用搬家)。
+- 在頁面上取消連結(`pl unlink` 在主控台可用)。
 - 新的直達端點(例如唯讀的 `/api/canon`)。
 - `capy wiki --album`。
 - 搜尋頁對本機也放「播放」鈕、按了必定失敗的既有瑕疵(另開)。
@@ -222,18 +266,17 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 
 ## 8. 驗收清單(R-47–R-55;T1–T4 都進 main 後由維護者跑)
 
-- **R-47** 1440 / 1280 / 1024 / 400px:頁面與歌曲表都沒有橫向捲動;607 首的清單頁面高度不跟著曲數變長。
+- **R-47** 1440 / 1280 / 1024 / 400px,中英兩種語言:頁面與歌曲表都沒有橫向捲動;607 首的清單頁面高度不跟著曲數變長;窄版每個平台格前面看得到平台名。
 - **R-48** Spotify ▶(Premium、有開著的 Spotify):開始播、底部播放列跟過去;把 Spotify 關掉再按:訊息看得懂,「在 Spotify 上聽」可以退回。
 - **R-49** Apple ▶(macOS):資料庫裡有的歌真的播;只在目錄裡的歌在 Music.app 打開並標出來,頁面照實說;「只在資料庫」的列沒有 ▶。
 - **R-50** YouTube「開啟」:新分頁到 music.youtube.com 的那一首並開始播。
 - **R-51** Wiki dialog:設定好的端點邊到邊出現;「停止」與關掉都會停、播放鈕恢復;同一首第二次開是快取、立刻出現;沒設定時「設定 AI 端點」表單就地出現。
-- **R-52** 「在 YouTube Music 建一份」(拋棄式正本,真帳號寫入要維護者授權):三步都就地確認;建出來的清單順序與正本一致;取消任一確認時零寫入。
-- **R-53** 「同步這份清單」:有變更時就地出現變更表與確認,取消 = 零寫入;沒有變更時說「已經是最新的」。
-- **R-54** 各平台上的清單:連著的標出正本名稱;「納入 capy」建出新正本並照平台順序拉進來;有同名正本時沒有「納入」。
+- **R-52** 「在 YouTube Music 建一份」(拋棄式正本,真帳號寫入要維護者授權):按「開始」後第一步立刻建一份空清單並連上(這一步沒有確認);找對應與加歌兩步,變更表與確認就地出現、表在提示之上;在這兩步取消時該步零寫入,但已建立的空清單與連結會留著,頁面說明停在哪、下一步按哪顆;全部完成後清單順序與正本一致。capy 不刪 YouTube 清單,驗收留下的拋棄式清單要自己到 YouTube Music 刪。
+- **R-53** 「同步這份清單」:有變更時就地出現變更表與確認,取消、按 ✕、等到逾時都是零寫入且說法各自正確;沒有變更時說「已經是最新的」。
+- **R-54** 各平台上的清單:只讀有登入的平台;連著的標出正本名稱;「納入」建出新正本並照平台順序拉進來;有同名正本時沒有「納入」。
 - **R-55** 語言切到 English 整頁走一遍:沒有中文、字不被截斷、按鈕不換行。
 
 ## 9. 順手修正的文件不一致(T4)
 
-- `webui.playlists.empty`(zh-TW.json:1305 / en.json 同 key)叫人到「同步」連結清單,但同步頁沒有連結;T1 改寫時一併修掉。
 - ARCHITECTURE.md:963-964、1056,計畫 2026-09-18-web-consumer.md:20,web_test.go:1109 的註解仍寫 Apple 不能當目的地(決策 49 之後可以)。
 - 不在這次範圍、另開:README 的 push 前提一寫「這台裝置 pull 過」,程式檢查的是所有裝置合併後的 base(push.go:187-190);project.go:29-30 說 Apple 的 `i.` id 推不出去,但 `Pushable` 收它(apple.go:93-95)。
