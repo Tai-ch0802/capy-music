@@ -162,7 +162,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			return friendlyErr(dst.prov, err)
 		}
 		if len(dup) > 0 {
-			return i18n.Errorf("migrate.err.same_name_exists", "platform", dst.prov, "name", src.name, "ids", strings.Join(dup, i18n.T("sep.list")), "id", dup[0])
+			return i18n.Errorf("migrate.err.same_name_exists", "platform", dst.prov, "name", src.name, "ids", strings.Join(sameNameIDs(dup), i18n.T("sep.list")), "id", dup[0].id)
 		}
 		dst.name = src.name
 	} else {
@@ -513,21 +513,35 @@ func migrateReason(s *canonState, w provider.PlaylistWriter, prov, cid string) (
 	return "", i18n.T("migrate.reason.no_mapping", "platform", prov), "no_mapping", false
 }
 
-// sameNamePlaylists:平台上跟 name 同名(EqualFold,同 resolvePlaylistID)而且連得上的清單 id。pl link --create 與 migrate 建清單前都先擋——
+// sameName:平台上一份同名的清單;songs 是讀到的曲數,-1 = 不知道(404,見 readableCount)。
+type sameName struct {
+	id    string
+	songs int
+}
+
+// sameNamePlaylists:平台上跟 name 同名(EqualFold,同 resolvePlaylistID)而且連得上的清單。pl link --create 與 migrate 建清單前都先擋——
 // 再建一個同名的只會讓 <平台>:<名稱> 變歧義;讀不到的(追蹤的別人的清單)連不了,不算撞名,照常建。
-func sameNamePlaylists(ctx context.Context, r provider.PlaylistReader, refs []provider.PlaylistRef, name string) ([]string, error) {
-	var dup []string
+func sameNamePlaylists(ctx context.Context, r provider.PlaylistReader, refs []provider.PlaylistRef, name string) ([]sameName, error) {
+	var dup []sameName
 	for _, x := range refs {
 		if !strings.EqualFold(x.Name, name) {
 			continue
 		}
-		ok, err := readable(ctx, r, x.ID)
+		ok, n, err := readableCount(ctx, r, x.ID)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			dup = append(dup, x.ID)
+			dup = append(dup, sameName{id: x.ID, songs: n})
 		}
 	}
 	return dup, nil
+}
+
+func sameNameIDs(dup []sameName) []string {
+	ids := make([]string, len(dup))
+	for i, d := range dup {
+		ids[i] = d.id
+	}
+	return ids
 }

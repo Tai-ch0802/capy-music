@@ -175,6 +175,7 @@ capy vol 40             # 音量 0-100
 capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl link 通勤 spotify --create          # 在 Spotify / Apple Music / YouTube Music 建一個跟 canonical 同名的私人空清單再連上(local 不行);複製清單見下方
+capy pl link --new-only …                  # 只建新的:名稱已經是某份 canonical 清單時擋下(不分大小寫),也絕不接管既有的連結(包括別台裝置或別的帳號的);擋下來一律零寫入。web 介面發出的 pl link 都帶它
 capy pl unlink 通勤 spotify
 capy pl show / link / unlink / pull / push / sync / dedup   # 不帶清單名且在終端機裡 = 開挑選器(link 三段,第二段也能選在 Spotify / Apple Music / YouTube Music 建新的空清單;unlink 兩段);pipe / cron 維持原本的參數錯誤
 capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
@@ -334,7 +335,7 @@ capy pl push 公路旅行 --provider spotify              # 7. 真的推
 - **第 3 步不能省。** push 的前提是這台裝置對那個 Spotify 清單 pull 過;第 2 步剛建的清單還沒有 base,直接 push 會以 exit 3 擋下。
 - **不會刪到任何東西。** Spotify 那邊是第一次 pull(沒有 base 不產生 remove),push 全部是新增,刪除閾值不會觸發。
 - **不一定 100% 複製得過去。** YouTube Music 完全沒有 ISRC,而且同一首錄音可能是純音訊也可能是 MV、兩個不同的 id,所以搬進或搬出 YouTube Music 的曲目只靠歌名、歌手與時長比對(85 分以下進 `capy resolve --review`)。 Apple 上有 catalog 對應的曲目帶 ISRC,在 Spotify 精確反查(信心 95、自動寫入);你自己上傳、只在資料庫裡的曲目沒有 ISRC,只能靠標題、藝人、時長模糊比對,分數不到 85 進 review 佇列;Spotify 上根本沒有的歌,在 `--review` 裡釘成不可得。第 6 步表裡的 `skip` 列,就是這次複製不過去的曲目。
-- **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單(例如之前先在 app 裡建好了)時會擋下,並給你連它的命令;追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
+- **`--create` 建的清單跟 canonical 同名**,所以 push 不會多一列 `rename`。Spotify 上已經有你自己的同名清單時會擋下、什麼都不建:那份是空的(例如上次 `--create` 建好但沒連上)就給你連它的命令;讀不出有幾首(Apple 對空清單就是這樣回)就給命令,但請你先確認它是空的;裡面有歌就請你先在平台上改名——連一份已經有歌的清單,第一次 pull 會照平台的順序重排 canonical 清單(要把它的歌接在尾端請用 `capy migrate`);追蹤的別人的清單連不了,不算。在終端機裡也可以直接打 `capy pl link`,第二段選「在 spotify 建一個新的空清單」。
 - **之後兩邊保持連結。** 任一邊有變動時跑 `capy pl sync 公路旅行` 就會帶到另一邊。只要一次性複製的話,完成後 `capy pl unlink 公路旅行 apple`。
 - **反方向(Spotify → Apple)一樣**:`capy migrate 公路旅行 --from spotify --to apple`,或把手動流程裡的兩個平台對調(`capy pl link 公路旅行 apple --create`)。Apple 這一側的加歌走 Apple 文件化的端點,移除與換序走網頁播放器自己用的端點(Apple 沒有正式承諾;細節見 docs/ARCHITECTURE.md §1.2),只寫你自己建的清單,加進清單的曲目會不會同時進資料庫看你的 Apple Music 設定。
 
