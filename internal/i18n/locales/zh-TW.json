@@ -1407,6 +1407,7 @@
   "webui.playlists.platforms.read": "讀取各平台的清單",
   "webui.playlists.platforms.same_name": "有同名的正本「{name}」;要把這份的歌加進去,請用「搬家」",
   "webui.playlists.platforms.title": "各平台上的清單",
+  "webui.playlists.platforms.skipped": "你按了中止,沒有讀。",
   "webui.playlists.platforms.unknown": "這台電腦還沒讀到正本,分不出這些清單是不是已經交給 capy 了。先照上面的說明把正本讀進來。",
   "webui.playlists.platforms.unlinked": "還沒納入",
   "webui.playlists.play_on": "用 {platform} 播放「{title}」",
