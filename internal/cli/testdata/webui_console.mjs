@@ -35,7 +35,7 @@ function mk(tag = 'div') {
     hasAttribute(k) { return k in this.attrs; },
     addEventListener(t, f) { (this.l ||= {})[t] = f; },
     click() { this.l?.click?.(); },
-    scrollIntoView() {},
+    scrollIntoView() { (globalThis.scrolled ||= []).push(this); },
     focus() { globalThis.document.activeElement = this; },
     closest() { return pages; },
     scrollHeight: 0, scrollTop: 0, clientHeight: 0,
@@ -1392,7 +1392,8 @@ await scenario('8r', async () => {
   byText(prow(pl, '-dash-'), '納入 capy').click();
   await idle();
   check(JSON.stringify(bodies.slice(before).filter((b) => b.args && b.args[0] === 'pl').map((b) => b.args)[0]) === JSON.stringify(['pl', 'link', '--new-only', '--', '-dash-', 'spotify:sp5']), '以 - 開頭的名稱放在 -- 後面');
-  check(status(pl) === '已經建立並連上一份空的正本「-dash-」;在左邊選它、按「同步這份清單」把歌拉進來。 你按了取消,沒有寫入。', `停在第二步:${status(pl)}`);
+  check(status(pl) === '已經建立並連上一份空的正本「-dash-」;選它、按「同步這份清單」把歌拉進來。 你按了取消,沒有寫入。', `停在第二步(不說方位:窄版時左欄在上面):${status(pl)}`);
+  check((globalThis.scrolled || []).includes(allByClass(pl, 'pl__plats')[0].children.find((c) => c.classList.contains('pl__flow'))), '按了納入:畫面帶到流程區(它在整張平台清單上面)');
   // 第一步被擋(例如 --new-only 撞到別台剛建的同名正本):第二步不送
   pl = await open(AUTH, { 'pl list --provider spotify': list(spRows), 'pl list --provider youtube': list([]), ['pl link --new-only -- Chill spotify:' + SP2]: { events: [exit(1, 'Error: 已經有叫「Chill」的 canonical 清單')] } });
   await read(pl);
@@ -1412,6 +1413,23 @@ await scenario('8r', async () => {
   pl = await open(AUTH, { 'pl list --provider spotify': { events: [exit(1, 'Error: 讀不到 Spotify')] }, 'pl list --provider youtube': list([['UCme/PL1', 'Drive', '3', 'me']]) });
   await read(pl);
   check(pl.textContent.includes('讀不到 Spotify 上的清單:讀不到 Spotify') && prow(pl, 'Drive')?.dataset.state === 'unlinked', '第一家讀不到,後面的平台照讀照畫');
+
+  // 使用者按了中止:後面幾家不讀
+  pl = await open(AUTH, { 'pl list --provider spotify': { events: [exit(130, '', 'cancelled')] }, 'pl list --provider youtube': list([['UCme/PL1', 'Drive', '3', 'me']]) });
+  await read(pl);
+  check(!calls.includes('pl list --provider youtube') && !pl.textContent.includes('這台電腦沒有登入任何平台'), `中止之後不接著讀下一家:${JSON.stringify(calls)}`);
+
+  // 這台還沒讀到正本(export 失敗):只列出來,不標狀態也不給納入;Spotify 的清單連結照給
+  pl = await open(AUTH, { export: { events: [exit(1, 'x')] }, 'pl list --provider spotify': list(spRows), 'pl list --provider youtube': list([]) });
+  await read(pl);
+  const unk = prow(pl, 'Chill');
+  check(unk && !byText(unk, '納入 capy') && !unk.textContent.includes('還沒納入') && !('state' in unk.dataset) && anchors(unk).some((a) => a.href.includes('/playlist/'))
+    && pl.textContent.includes('這台電腦還沒讀到正本,分不出這些清單是不是已經交給 capy 了'), `沒讀到正本:不標、不給納入:${unk && unk.textContent}`);
+
+  // YouTube 有登入卻缺帳號資料:不讀、那一段說要重新登入;只有它的話也不說「沒有登入任何平台」
+  pl = await open({ google: { state: 'ok' }, spotify: { state: 'missing' }, apple: { state: 'missing' }, youtube: { state: 'ok' } });
+  await read(pl);
+  check(!calls.some((c) => c.startsWith('pl list')) && pl.textContent.includes('這台電腦的 YouTube Music 登入少了帳號資料') && !pl.textContent.includes('這台電腦沒有登入任何平台'), `YouTube 缺帳號資料:${pl.textContent.slice(-200)}`);
 
   // 一個平台都沒登入
   pl = await open({ google: { state: 'ok' }, spotify: { state: 'missing' }, apple: { state: 'expired' }, youtube: { state: 'missing' } });
