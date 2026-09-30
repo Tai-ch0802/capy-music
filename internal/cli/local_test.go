@@ -161,7 +161,16 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	if _, errs, err := runPull(t, "pl", "push", "通勤", "--yes"); err != nil || !strings.Contains(errs, "屬於裝置") {
 		t.Fatalf("沒指定平台的單獨 push:跳過並說明、exit 0(不是 refused):%v %s", err, errs)
 	}
-	// B 接管
+	// --new-only 不接管(web 介面發出的 pl link 都帶它;計畫 2026-09-30 §3.5):以 pid 指定才不會先被名稱那一道攔下,
+	// 真的走到接管那一段;擋下來零寫入。
+	before = driveFiles(t, dc)
+	if _, _, err := runPull(t, "pl", "link", "--new-only", drivePlaylist(t, dc).PID, "local:通勤.m3u8"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "--new-only 不接管") {
+		t.Fatalf("--new-only 撞到別台裝置的連結要擋:%v", err)
+	}
+	if !sameFiles(before, driveFiles(t, dc)) {
+		t.Fatal("--new-only 擋下來就零寫入")
+	}
+	// B 接管(不帶 --new-only:行為不變)
 	out, _ = mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
 	if !strings.Contains(out, "原本連到裝置") || !strings.Contains(out, "已改為這裡") {
 		t.Fatalf("接管要說明:%s", out)
