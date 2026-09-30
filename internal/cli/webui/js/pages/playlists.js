@@ -225,7 +225,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     const texts = [];
     items.forEach((it, i) => {
       const trk = track(it.cid);
-      const title = trk.title || '';
+      const title = (trk.title || '').trim(); // 同 CLI 的 TrimSpace:只有空白的曲名當成沒有(不然 Wiki 會問到正在播的那首)
       const artists = (trk.artists || []).join(', ');
       const tr = el('tr');
       tr.setAttribute('role', 'row');
@@ -620,7 +620,8 @@ export function initPlaylists(root, api, con, notice, providers) {
     wikiSay(t('webui.playlists.wiki_running'));
     const stop = el('button', 'btn', t('webui.console.stop')); // dock 的中止鈕被對話框蓋住了,這裡另給一顆
     stop.type = 'button';
-    stop.addEventListener('click', () => { stop.textContent = t('webui.console.stopping'); con.stop(); });
+    // 連點「查詢 / 再問一次」的第二下會落在同一個位置剛換上的這顆:detail > 1 不算(鍵盤觸發的 click 是 0,照停)
+    stop.addEventListener('click', (ev) => { if (ev.detail > 1) return; stop.textContent = t('webui.console.stopping'); con.stop(); });
     foot(stop);
     const r = wikiRenderer(dOut);
     const split = lineSplitter((l) => r.line(l));
@@ -650,11 +651,18 @@ export function initPlaylists(root, api, con, notice, providers) {
     wikiSay('');
     foot(); // 精靈跑的時候沒有自己的中止:✕ 就是停(表單裡的 Esc 是取消那一題,console.js 已經 preventDefault、不會關掉對話框)
     dlgRunning = true;
+    let closedBy = '';
     con.run('', {
+      onPromptClosed: (ev) => { closedBy = ev.reason; },
       onExit: (code, msg, reason) => {
         dlgRunning = false;
         if (code === 0) { wikiSay(t('webui.playlists.wiki_ready')); foot(btn(t('webui.wiki.ask'), '', () => ask(false))); return; }
-        wikiSay(reason === 'cancelled' ? t('webui.playlists.wiki_stopped') : why(msg), reason !== 'cancelled');
+        // 表單被關掉(✕ / Esc)或等太久:CLI 回的是 huh 的 "user aborted",不給人看原文(決策 50)。也不說「沒有寫入」:
+        // 選模型之前端點、金鑰、母語已經存了。不比對錯誤字串,看機器欄位。
+        const unfinished = code === 1 && (reason === 'timeout' || closedBy === 'dismissed');
+        if (reason === 'cancelled') wikiSay(t('webui.playlists.wiki_stopped'));
+        else if (unfinished) wikiSay(t('webui.playlists.wiki_setup_unfinished'));
+        else wikiSay(why(msg), true);
         foot(btn(t('webui.wiki.setup'), '', setup));
       },
     }, { args: ['wiki', 'setup'], label: t('webui.wiki.label.setup'), promptHost: dPrompts });

@@ -488,7 +488,8 @@ body[data-busy] .dock::after { opacity: 1; }
 .pl__wiki-title { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 0; overflow-wrap: anywhere; }
 .pl__wiki-by { display: block; color: var(--muted); font-size: var(--t-14); }
 .pl__wiki-foot { margin: .75rem 0 0; }
-.pl__wiki-foot:empty, .pl__wiki-prompts:empty, .pl__wiki-status:empty { display: none; }
+.pl__wiki-foot:empty, .pl__wiki-prompts:empty { display: none; }
+.pl__wiki-status:empty { margin: 0; } /* 不用 display:none:role=status 要一直留在無障礙樹上,後來寫進去的那句才會被念 */
 .pl__wiki-dlg .wiki__out { max-width: none; }
 .keys__title { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 0 0 1rem; }
 .keys__list { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1rem; margin: 0 0 1rem; font-size: var(--t-14); }

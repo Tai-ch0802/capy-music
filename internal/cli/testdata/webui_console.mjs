@@ -34,7 +34,7 @@ function mk(tag = 'div') {
     removeAttribute(k) { delete this.attrs[k]; },
     hasAttribute(k) { return k in this.attrs; },
     addEventListener(t, f) { (this.l ||= {})[t] = f; },
-    click() { this.l?.click?.(); },
+    click(detail = 1) { this.l?.click?.({ detail }); }, // detail:連點第幾下(真的 DOM:滑鼠 1、2…,鍵盤 0)
     scrollIntoView() { (globalThis.scrolled ||= []).push(this); },
     showModal() { this.open = true; }, // <dialog>:close() 同真的 DOM,開著才觸發 close 事件
     close() { if (!this.open) return; this.open = false; this.l?.close?.(); },
@@ -1483,8 +1483,8 @@ await scenario('8s', async () => {
   const idle = async () => { for (let i = 0; i < 4; i++) { await new Promise((r) => con.idle(r)); await tick(5); } };
   const out = (o) => ({ events: [{ type: 'stdout', text: JSON.stringify(o) }, done] });
   const exit = (code, message = '', reason = 'done') => ({ type: 'exit', code, message, reason });
-  const tracks = { c1: { title: '--header', artists: ['X', 'Y'] }, c2: { title: 'Solo' } };
-  const data = { 'pl__a.json': { pid: 'a', name: 'road trip', links: {}, items: ['c1', 'c2', 'gone'].map((cid) => ({ cid })) }, 'tracks.json': { tracks } };
+  const tracks = { c1: { title: '--header', artists: ['X', 'Y'] }, c2: { title: 'Solo' }, c3: { title: '  ' } };
+  const data = { 'pl__a.json': { pid: 'a', name: 'road trip', links: {}, items: ['c1', 'c2', 'gone', 'c3'].map((cid) => ({ cid })) }, 'tracks.json': { tracks } };
   reset();
   script = { 'auth status --json': out({ google: { state: 'ok' } }), export: out(data) };
   const pl = mk();
@@ -1492,8 +1492,9 @@ await scenario('8s', async () => {
   await idle();
   const rows = allByClass(pl, 'pl__tbl')[0].querySelectorAll('tbody tr');
   const wiki = (tr) => byText(allByClass(tr, 'pl__wiki')[0], 'Wiki');
-  check(rows.length === 3 && wiki(rows[0]) && wiki(rows[1]) && !wiki(rows[2]) && allByClass(rows[2], 'pl__wiki').length === 1,
+  check(rows.length === 4 && wiki(rows[0]) && wiki(rows[1]) && !wiki(rows[2]) && allByClass(rows[2], 'pl__wiki').length === 1,
     '每首一顆 Wiki;這台沒有資料(沒有曲名)的不給——空的 --title 會變成問正在播的那首——格子照留');
+  check(!wiki(rows[3]) && allByClass(rows[3], 'pl__title')[0].textContent === '(本機沒有這首的資料)', '只有空白的曲名同 CLI 的 TrimSpace:當成沒有');
   check(wiki(rows[0]).getAttribute('aria-label') === '「--header」的歌曲 wiki' && 'run' in wiki(rows[0]).dataset, 'Wiki 鈕的報讀名稱帶曲名、有命令在跑時被擋(btn)');
   const dlg = allByClass(pl, 'pl__wiki-dlg')[0];
   const status = () => allByClass(dlg, 'pl__wiki-status')[0];
@@ -1507,6 +1508,11 @@ await scenario('8s', async () => {
   check(dlg.open && JSON.stringify(bodies.at(-1)) === JSON.stringify({ args: ['wiki', '--title=--header', '--artist=X, Y'] }), `開對話框、送 argv:${JSON.stringify(bodies.at(-1))}`);
   check(allByClass(dlg, 'pl__wiki-title')[0].textContent === '--header' && allByClass(dlg, 'pl__wiki-by')[0].textContent === 'X, Y', '對話框標題是曲名、下面是歌手');
   check(status().textContent.includes('關掉這個視窗都會停') && !status().textContent.includes('狀態列') && byText(dlg, '中止'), `跑的時候:對話框裡的說明與中止(不指 dock):${status().textContent}`);
+  check(globalThis.document.getElementById('busy-cmd').textContent === '正在寫「--header」的歌曲 wiki', `執行狀態列用白話的 label,不是命令原文:${globalThis.document.getElementById('busy-cmd').textContent}`);
+  const c0 = cancels.length;
+  byText(dlg, '中止').click(2); // 連點「查詢」的第二下落在這裡:不算
+  await tick(5);
+  check(cancels.length === c0 && byText(dlg, '中止'), '連點的第二下不會把剛送出的問題停掉');
   release();
   await idle();
   const answer = allByClass(dlg, 'wiki__out')[0];
@@ -1516,6 +1522,19 @@ await scenario('8s', async () => {
   byText(dlg, '再問一次(不用快取的回答)').click();
   await idle();
   check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--title=--header', '--artist=X, Y', '--refresh']), `再問一次帶 --refresh:${JSON.stringify(bodies.at(-1).args)}`);
+
+  // 對話框自己的中止:dock 的中止被 inert 蓋住,這顆要真的停得下來;中止之後不給「設定 AI 端點」(設定救不了)
+  const [gs, rs] = gate();
+  script['wiki --title=Solo'] = { gate: gs, events: [exit(130, '', 'cancelled')] };
+  wiki(rows[1]).click();
+  await tick(5);
+  const c1 = cancels.length;
+  byText(dlg, '中止').click();
+  await tick(5);
+  check(cancels.length === c1 + 1 && byText(dlg, '中止中…'), `對話框的中止會送出中止:${cancels.length - c1}`);
+  rs();
+  await idle();
+  check(status().textContent === '已停止。' && byText(dlg, '查詢') && !byText(dlg, '設定 AI 端點'), `中止之後只給查詢:${dlg.textContent.slice(0, 120)}`);
 
   // 沒有歌手就不帶 --artist;關掉對話框 = 中止,收尾那句寫在對話框裡
   dlg.close();
@@ -1530,7 +1549,7 @@ await scenario('8s', async () => {
   check(cancels.length === before + 1, '關掉對話框 = 中止');
   r2();
   await idle();
-  check(status().textContent === '已停止。' && byText(dlg, '查詢'), `中止之後:${status().textContent}`);
+  check(status().textContent === '已停止。' && byText(dlg, '查詢') && !byText(dlg, '設定 AI 端點'), `中止之後:${status().textContent}`);
 
   // 失敗:原因畫在對話框裡(dock 被遮住),給「設定 AI 端點」;表單就地出現在對話框裡
   script['wiki --title=Solo'] = { events: [exit(1, 'Error: 還沒設定 AI 端點')] };
@@ -1547,9 +1566,22 @@ await scenario('8s', async () => {
   await idle();
   check(status().textContent === 'AI 端點設定好了,可以再問一次。' && byText(dlg, '查詢'), `設定好了:${status().textContent}`);
 
+  // 精靈的表單被關掉(✕ / Esc)或等太久:CLI 回 "user aborted",對話框說語系裡的句子、不用警告色,照給「設定 AI 端點」
+  for (const [how, ev, ex] of [['關掉', { type: 'prompt_closed', id: 8, reason: 'dismissed' }, exit(1, 'Error: user aborted')],
+    ['等太久', { type: 'prompt_closed', id: 8, reason: 'timeout' }, exit(1, 'Error: user aborted', 'timeout')]]) {
+    script['wiki --title=Solo'] = { events: [exit(1, 'Error: x')] }; // 先失敗一次,收尾區才有「設定 AI 端點」
+    wiki(rows[1]).click();
+    await idle();
+    script['wiki setup'] = { events: [{ type: 'prompt', id: 8, kind: 'input', title: 'Base URL' }, ev, ex] };
+    byText(dlg, '設定 AI 端點').click();
+    await idle();
+    check(status().textContent === '設定沒有做完,可以再設定一次。' && !status().classList.contains('page__warn') && byText(dlg, '設定 AI 端點'),
+      `精靈的表單${how}:不給 huh 的英文原文:${status().textContent}`);
+  }
+
   // 被伺服器拒絕(命令沒跑):照說原因,不給設定
   script['wiki --title=Solo'] = { status: 403, error: 'not offered' };
-  byText(dlg, '查詢').click();
+  wiki(rows[1]).click();
   await idle();
   check(status().textContent === 'not offered' && !byText(dlg, '設定 AI 端點') && byText(dlg, '查詢'), `被拒絕:${status().textContent}`);
   dlg.close();

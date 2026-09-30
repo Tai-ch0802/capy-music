@@ -1430,6 +1430,7 @@
   "webui.playlists.wiki_label": "「{title}」的歌曲 wiki",
   "webui.playlists.wiki_ready": "AI 端點設定好了,可以再問一次。",
   "webui.playlists.wiki_running": "正在詢問你設定的 AI 端點…回答會一行一行出現;按「中止」或關掉這個視窗都會停。",
+  "webui.playlists.wiki_setup_unfinished": "設定沒有做完,可以再設定一次。",
   "webui.playlists.wiki_stopped": "已停止。",
   "webui.rail.account": "帳號",
   "webui.rail.console": "主控台",

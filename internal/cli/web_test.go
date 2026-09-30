@@ -1374,6 +1374,11 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "document.querySelector('dialog[open]')") || !strings.Contains(app, "keysDialog.showModal()") || !strings.Contains(app, "seekBy") || !strings.Contains(app, "volBy") {
 		t.Error("? 表列的 ← → 與 + - 要有實作,且任何對話框開著時不換頁")
 	}
+	// 換頁時關掉藏起來的頁面裡還開著的對話框(瀏覽器上一頁):不然它看不見卻還是 modal,整頁 inert(T3 自審)。
+	// node 替身沒有「hidden 就不畫」的語意,只能靜態釘。
+	if !strings.Contains(app, "document.querySelectorAll('.page[hidden] dialog[open]')) d.close()") {
+		t.Error("showPage() 要關掉藏起來的頁面裡還開著的對話框")
+	}
 	// local 的 id 含空白是常態,不 quote 會被 splitArgs 切斷。
 	search := read("js/pages/search.js")
 	if !strings.Contains(search, "quote(id)") {
