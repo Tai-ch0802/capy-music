@@ -1508,6 +1508,7 @@
   "webui.playlists.title": "My playlists",
   "webui.playlists.wiki": "Wiki",
   "webui.playlists.wiki_close": "Close the song wiki",
+  "webui.playlists.wiki_done": "Done.",
   "webui.playlists.wiki_failed": "Couldn't write the song wiki.",
   "webui.playlists.wiki_label": "Song wiki for \"{title}\"",
   "webui.playlists.wiki_ready": "Your AI endpoint is set up; ask again.",

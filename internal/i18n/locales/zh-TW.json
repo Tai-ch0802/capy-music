@@ -1424,6 +1424,7 @@
   "webui.playlists.title": "我的清單",
   "webui.playlists.wiki": "Wiki",
   "webui.playlists.wiki_close": "關閉歌曲 wiki",
+  "webui.playlists.wiki_done": "寫好了。",
   "webui.playlists.wiki_failed": "歌曲 wiki 沒寫成。",
   "webui.playlists.wiki_label": "「{title}」的歌曲 wiki",
   "webui.playlists.wiki_ready": "AI 端點設定好了,可以再問一次。",

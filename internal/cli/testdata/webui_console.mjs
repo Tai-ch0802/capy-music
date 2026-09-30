@@ -20,7 +20,7 @@ function mk(tag = 'div') {
     set innerHTML(_) { this._text = ''; this.children = []; },
     appendChild(c) { if (c.parentNode?.children) c.parentNode.children = c.parentNode.children.filter((x) => x !== c); this.children.push(c); c.parentNode = this; return c; }, // 同真的 DOM:append 已掛著的節點 = 搬家
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
-    replaceChildren(...cs) { this._text = ''; this.children = []; this.append(...cs); }, // 同真的 DOM:先前 textContent 設的字也一起換掉
+    replaceChildren(...cs) { this.children.forEach((c) => { c.parentNode = null; }); this._text = ''; this.children = []; this.append(...cs); }, // 同真的 DOM:先前 textContent 設的字也一起換掉;換掉的節點脫離(contains 才認不到它)
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); },
     insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); c.parentNode = this; return c; },
     get firstChild() { return this.children[0] || null; },
@@ -1495,7 +1495,8 @@ await scenario('8s', async () => {
   await idle();
   const answer = allByClass(dlg, 'wiki__out')[0];
   check(allByClass(answer, 'wiki__h')[0]?.textContent === '背景' && allByClass(answer, 'wiki__p')[0]?.textContent === '內容', `切在行中間的 stdout 湊成整行畫出來:${answer.textContent}`);
-  check(!byText(dlg, '中止') && status().textContent === '', '做完:中止收起來、沒有多的話');
+  check(!byText(dlg, '中止') && status().textContent === '寫好了。', `做完:中止收起來、說一句(dock 的報讀被 inert 蓋住):${status().textContent}`);
+  check(globalThis.document.activeElement === byText(dlg, '再問一次(不用快取的回答)'), '按下的中止被換掉:焦點交給新的第一顆,不掉到 body');
   byText(dlg, '再問一次(不用快取的回答)').click();
   await idle();
   check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--title=--header', '--artist=X, Y', '--refresh']), `再問一次帶 --refresh:${JSON.stringify(bodies.at(-1).args)}`);
@@ -1525,6 +1526,7 @@ await scenario('8s', async () => {
   byText(dlg, '設定 AI 端點').click();
   await tick(5);
   check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', 'setup']) && allByClass(dlg, 'pl__wiki-prompts')[0].children.length > 0, '設定 AI 端點:表單畫在對話框裡');
+  check(dlg.contains(globalThis.document.activeElement), '精靈跑的時候收尾區是空的:焦點留在對話框裡(✕ 或表單)');
   r3();
   await idle();
   check(status().textContent === 'AI 端點設定好了,可以再問一次。' && byText(dlg, '查詢'), `設定好了:${status().textContent}`);
