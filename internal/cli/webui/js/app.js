@@ -115,6 +115,9 @@ let playlistsPage = null;
 function showPage(name) {
   document.body.dataset.page = name; // 命令列只在主控台頁(CSS 看這個屬性)
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
+  // 藏起來的頁面裡還開著的對話框(清單頁的歌曲 wiki)要關掉:不然它看不見卻還是 modal,整頁 inert、單鍵全失效
+  // (瀏覽器上一頁 / 觸控板往回滑就會走到這裡)。關掉會觸發它自己的 close,命令在跑就中止。
+  for (const d of document.querySelectorAll('.page[hidden] dialog[open]')) d.close();
   for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
   // 人在進階頁時那一段一定是打開的(active 項目與焦點不能落在收合區裡;review #66);離開就收起來。
   // 收起來之前,焦點若還在裡面就先搬到新的 active 項目:不然它會掉回 <body>,鍵盤使用者的位置就沒了(review #67)。
@@ -168,7 +171,7 @@ const keysDialog = document.getElementById('keys');
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
   // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
-  if (!i18nOK || inInput() || keysDialog.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (!i18nOK || inInput() || document.querySelector('dialog[open]') || ev.metaKey || ev.ctrlKey || ev.altKey) return; // 任何對話框開著(鍵位表、清單頁的歌曲 wiki)
   // 按鈕有焦點時空白鍵就是「按下它」、<summary> 上是「展開 / 收起」:在這裡搶走,那些元素都不能用空白鍵操作了(review #62 第 8 點)。
   if (ev.key === ' ' && ['BUTTON', 'SUMMARY'].includes(document.activeElement?.tagName)) return;
   const n = PAGES[Number(ev.key) - 1];

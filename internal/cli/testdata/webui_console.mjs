@@ -20,7 +20,7 @@ function mk(tag = 'div') {
     set innerHTML(_) { this._text = ''; this.children = []; },
     appendChild(c) { if (c.parentNode?.children) c.parentNode.children = c.parentNode.children.filter((x) => x !== c); this.children.push(c); c.parentNode = this; return c; }, // 同真的 DOM:append 已掛著的節點 = 搬家
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
-    replaceChildren(...cs) { this._text = ''; this.children = []; this.append(...cs); }, // 同真的 DOM:先前 textContent 設的字也一起換掉
+    replaceChildren(...cs) { this.children.forEach((c) => { c.parentNode = null; }); this._text = ''; this.children = []; this.append(...cs); }, // 同真的 DOM:先前 textContent 設的字也一起換掉;換掉的節點脫離(contains 才認不到它)
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((x) => x !== this); },
     insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, c); c.parentNode = this; return c; },
     get firstChild() { return this.children[0] || null; },
@@ -32,10 +32,12 @@ function mk(tag = 'div') {
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return this.attrs[k] ?? null; },
     removeAttribute(k) { delete this.attrs[k]; },
-    hasAttribute(k) { return k in this.attrs; },
+    hasAttribute(k) { return k in this.attrs || (k.startsWith('data-') && camel(k.slice(5)) in this.dataset); }, // 同真的 DOM:dataset 設的也算(btn() 的序列槽閘看 body 的 data-slot)
     addEventListener(t, f) { (this.l ||= {})[t] = f; },
-    click() { this.l?.click?.(); },
+    click(detail = 1) { this.l?.click?.({ detail }); }, // detail:連點第幾下(真的 DOM:滑鼠 1、2…,鍵盤 0)
     scrollIntoView() { (globalThis.scrolled ||= []).push(this); },
+    showModal() { this.open = true; }, // <dialog>:close() 同真的 DOM,開著才觸發 close 事件
+    close() { if (!this.open) return; this.open = false; this.l?.close?.(); },
     focus() { globalThis.document.activeElement = this; },
     closest() { return pages; },
     scrollHeight: 0, scrollTop: 0, clientHeight: 0,
@@ -734,7 +736,7 @@ await scenario('8n', async () => {
   check(il.length === 1 && il[0].href === track(T1) && il[0].target === '_blank' && il[0].rel === 'noopener noreferrer' && il[0].textContent === '在 Spotify 上聽' && label(il[0]) === '在 Spotify 上聽「Song A」',
     `正本曲目:有 Spotify 對應的才連(空字串、local file、只有 Apple 的不連):${JSON.stringify(il.map((a) => [a.href, label(a)]))}`);
   // 欄:#、歌曲、時長 + 連著的 Spotify 一欄(Apple 的格子只有 ▶,node 不是 macOS,整欄不出現);每一列都有每一格
-  check(JSON.stringify(widths(items)) === JSON.stringify([4, 4, 4, 4, 4]), `正本曲目表的欄、每一列都有那一格:${JSON.stringify(widths(items))}`);
+  check(JSON.stringify(widths(items)) === JSON.stringify([5, 5, 5, 5, 5]), `正本曲目表的欄(最後一欄是 Wiki)、每一列都有那一格:${JSON.stringify(widths(items))}`);
   const spRow = allByClass(right, 'pl__link').find((r) => r.dataset.platform === 'spotify');
   const pa = anchors(spRow).find((a) => a.href.includes('/playlist/'));
   check(pa && pa.href === `https://open.spotify.com/playlist/${PL}` && label(pa) === '在 Spotify 上聽「road trip」',
@@ -743,7 +745,7 @@ await scenario('8n', async () => {
 
   allByClass(left, 'pl__item')[1].click(); // mix:連著 apple;spotify 的值是物件的壞資料,不算連著、不出按鈕
   await idle();
-  check(anchors(right).length === 0 && JSON.stringify(widths(allByClass(right, 'pl__songs')[0])) === JSON.stringify([3, 3]), '沒有 Spotify 對應、清單的 spotify 連結不是字串:沒有連結、不多一欄');
+  check(anchors(right).length === 0 && JSON.stringify(widths(allByClass(right, 'pl__songs')[0])) === JSON.stringify([4, 4]), '沒有 Spotify 對應、清單的 spotify 連結不是字串:沒有連結、不多一欄');
 
   allByClass(pl, 'btn').find((b) => b.textContent === '讀取各平台的清單').click(); // 各平台上的清單:Spotify 的列連到清單,Apple 的不連
   await idle(); await tick(5); await idle();
@@ -928,7 +930,7 @@ await scenario('8p', async () => {
     // ── macOS、三家都登入:三個平台欄;每一格照計畫 §3.2 的表
     ua(MAC);
     let pl = await open({ spotify: ok, apple: ok, youtube: ok, google: ok }, out(one));
-    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'Apple Music', 'YouTube Music']), `平台欄照 providers 的順序、本機連著也有對應但不佔欄:${JSON.stringify(head(pl))}`);
+    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'Apple Music', 'YouTube Music', '']), `平台欄照 providers 的順序、本機連著也有對應但不佔欄:${JSON.stringify(head(pl))}`);
     check(!anchors(table(pl)).some((a) => a.href.includes('a.mp3')) && !rows(pl).some((tr) => tr.children.some((td) => td.dataset.platform === '本機曲庫')), '本機沒有播放、沒有網頁:不佔欄、不連');
     const tall = allByClass(pl, 'tbl-wrap--tall');
     check(tall.length === 1 && allByClass(tall[0], 'pl__tbl').length === 1, '歌曲表放在固定高度的 .tbl-wrap--tall 裡');
@@ -969,7 +971,7 @@ await scenario('8p', async () => {
     // ── Windows、Spotify 沒登入:Spotify 只留連結;Apple 的格子只有 ▶,整欄不出現
     ua(WIN);
     pl = await open({ spotify: { state: 'missing' }, apple: ok, google: ok }, out(one));
-    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'YouTube Music']), `非 macOS 沒有 Apple 欄:${JSON.stringify(head(pl))}`);
+    check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'YouTube Music', '']), `非 macOS 沒有 Apple 欄:${JSON.stringify(head(pl))}`);
     const sp = cellOf(rows(pl)[0], 'Spotify');
     check(buttons(sp).length === 0 && anchors(sp).length === 1, 'Spotify 沒登入:沒有 ▶,連結照給');
     // keychain_error 不是沒登入:▶ 照給、Apple 欄照出現,讓 CLI 把原因說出來;expired 才跟 missing 一樣拿掉(#122 review 第 2 點)
@@ -1034,7 +1036,7 @@ await scenario('8p', async () => {
       walk(pl, (c) => all.push(c._text || '', c.title || '', c.dataset?.platform || '', ...Object.values(c.attrs || {})));
       const bad = all.filter((x) => CJK.test(x) || x.includes('webui.'));
       check(bad.length === 0, `英文目錄下清單頁不該有中文或沒送到的 key:${JSON.stringify([...new Set(bad)])}`);
-      check(JSON.stringify(head(pl)) === JSON.stringify(['#', 'Song', 'Length', 'Spotify', 'Apple Music', 'YouTube Music']), `英文表頭:${JSON.stringify(head(pl))}`);
+      check(JSON.stringify(head(pl)) === JSON.stringify(['#', 'Song', 'Length', 'Spotify', 'Apple Music', 'YouTube Music', '']), `英文表頭:${JSON.stringify(head(pl))}`);
       const e0 = rows(pl)[0];
       check(anchors(cellOf(e0, 'Spotify'))[0]?.textContent === 'Listen on Spotify' && anchors(cellOf(e0, 'YouTube Music'))[0]?.textContent === 'Open', '英文的連結字');
     } finally {
@@ -1469,6 +1471,126 @@ await scenario('8r', async () => {
     i18nFile = './i18n.json';
     await loadI18n(api);
   }
+});
+
+// 8s. 清單頁的歌曲 wiki(計畫 2026-09-30 §3.3):每首一顆 Wiki(沒有曲名的不給);就地開 <dialog>、送 --title= / --artist=;
+//     回答畫在對話框裡。showModal() 會讓 dock 整個 inert,所以中止鈕、失敗 / 被拒 / 中止的那句話、設定 AI 的表單都在對話框裡;
+//     關掉對話框 = 中止。
+await scenario('8s', async () => {
+  const { initPlaylists } = await import('./pages/playlists.mjs');
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const byText = (n, text) => { let b = null; walk(n, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
+  const idle = async () => { for (let i = 0; i < 4; i++) { await new Promise((r) => con.idle(r)); await tick(5); } };
+  const out = (o) => ({ events: [{ type: 'stdout', text: JSON.stringify(o) }, done] });
+  const exit = (code, message = '', reason = 'done') => ({ type: 'exit', code, message, reason });
+  const tracks = { c1: { title: '--header', artists: ['X', 'Y'] }, c2: { title: 'Solo' }, c3: { title: '  ' } };
+  const data = { 'pl__a.json': { pid: 'a', name: 'road trip', links: {}, items: ['c1', 'c2', 'gone', 'c3'].map((cid) => ({ cid })) }, 'tracks.json': { tracks } };
+  reset();
+  script = { 'auth status --json': out({ google: { state: 'ok' } }), export: out(data) };
+  const pl = mk();
+  initPlaylists(pl, api, con, (x) => notices.push(x), { list: ['spotify', 'apple', 'youtube'], current: 'spotify' });
+  await idle();
+  const rows = allByClass(pl, 'pl__tbl')[0].querySelectorAll('tbody tr');
+  const wiki = (tr) => byText(allByClass(tr, 'pl__wiki')[0], 'Wiki');
+  check(rows.length === 4 && wiki(rows[0]) && wiki(rows[1]) && !wiki(rows[2]) && allByClass(rows[2], 'pl__wiki').length === 1,
+    '每首一顆 Wiki;這台沒有資料(沒有曲名)的不給——空的 --title 會變成問正在播的那首——格子照留');
+  check(!wiki(rows[3]) && allByClass(rows[3], 'pl__title')[0].textContent === '(本機沒有這首的資料)', '只有空白的曲名同 CLI 的 TrimSpace:當成沒有');
+  check(wiki(rows[0]).getAttribute('aria-label') === '「--header」的歌曲 wiki' && 'run' in wiki(rows[0]).dataset, 'Wiki 鈕的報讀名稱帶曲名、有命令在跑時被擋(btn)');
+  const dlg = allByClass(pl, 'pl__wiki-dlg')[0];
+  const status = () => allByClass(dlg, 'pl__wiki-status')[0];
+  check(dlg && dlg.tagName === 'DIALOG' && !dlg.open, '對話框在頁面裡、一開始關著');
+
+  // 問:曲名以 - 開頭也用 = 的寫法送;歌手用 ", " 串;回答一行一行畫在對話框裡;跑的時候有自己的中止
+  const [g, release] = gate();
+  script['wiki --title=--header --artist=X, Y'] = { first: [{ type: 'stdout', text: '## 背' }], gate: g, events: [{ type: 'stdout', text: '景\n內容\n' }, done] };
+  wiki(rows[0]).click();
+  await tick(5);
+  check(dlg.open && JSON.stringify(bodies.at(-1)) === JSON.stringify({ args: ['wiki', '--title=--header', '--artist=X, Y'] }), `開對話框、送 argv:${JSON.stringify(bodies.at(-1))}`);
+  check(allByClass(dlg, 'pl__wiki-title')[0].textContent === '--header' && allByClass(dlg, 'pl__wiki-by')[0].textContent === 'X, Y', '對話框標題是曲名、下面是歌手');
+  check(status().textContent.includes('關掉這個視窗都會停') && !status().textContent.includes('狀態列') && byText(dlg, '中止'), `跑的時候:對話框裡的說明與中止(不指 dock):${status().textContent}`);
+  check(globalThis.document.getElementById('busy-cmd').textContent === '正在寫「--header」的歌曲 wiki', `執行狀態列用白話的 label,不是命令原文:${globalThis.document.getElementById('busy-cmd').textContent}`);
+  const c0 = cancels.length;
+  byText(dlg, '中止').click(2); // 連點「查詢」的第二下落在這裡:不算
+  await tick(5);
+  check(cancels.length === c0 && byText(dlg, '中止'), '連點的第二下不會把剛送出的問題停掉');
+  release();
+  await idle();
+  const answer = allByClass(dlg, 'wiki__out')[0];
+  check(allByClass(answer, 'wiki__h')[0]?.textContent === '背景' && allByClass(answer, 'wiki__p')[0]?.textContent === '內容', `切在行中間的 stdout 湊成整行畫出來:${answer.textContent}`);
+  check(!byText(dlg, '中止') && status().textContent === '寫好了。', `做完:中止收起來、說一句(dock 的報讀被 inert 蓋住):${status().textContent}`);
+  check(globalThis.document.activeElement === byText(dlg, '再問一次(不用快取的回答)'), '按下的中止被換掉:焦點交給新的第一顆,不掉到 body');
+  byText(dlg, '再問一次(不用快取的回答)').click();
+  await idle();
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--title=--header', '--artist=X, Y', '--refresh']), `再問一次帶 --refresh:${JSON.stringify(bodies.at(-1).args)}`);
+
+  // 對話框自己的中止:dock 的中止被 inert 蓋住,這顆要真的停得下來;中止之後不給「設定 AI 端點」(設定救不了)
+  const [gs, rs] = gate();
+  script['wiki --title=Solo'] = { gate: gs, events: [exit(130, '', 'cancelled')] };
+  wiki(rows[1]).click();
+  await tick(5);
+  const c1 = cancels.length;
+  byText(dlg, '中止').click();
+  await tick(5);
+  check(cancels.length === c1 + 1 && byText(dlg, '中止中…'), `對話框的中止會送出中止:${cancels.length - c1}`);
+  rs();
+  await idle();
+  check(status().textContent === '已停止。' && byText(dlg, '查詢') && !byText(dlg, '設定 AI 端點'), `中止之後只給查詢:${dlg.textContent.slice(0, 120)}`);
+
+  // 沒有歌手就不帶 --artist;關掉對話框 = 中止,收尾那句寫在對話框裡
+  dlg.close();
+  const [g2, r2] = gate();
+  script['wiki --title=Solo'] = { gate: g2, events: [exit(130, '', 'cancelled')] };
+  const before = cancels.length;
+  wiki(rows[1]).click();
+  await tick(5);
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', '--title=Solo']) && allByClass(dlg, 'wiki__out')[0].children.length === 0, '沒有歌手不帶 --artist;上一首的回答清掉');
+  dlg.close();
+  await tick(5);
+  check(cancels.length === before + 1, '關掉對話框 = 中止');
+  // 中止還沒生效(命令還佔著序列槽)就去按別首的 Wiki:按鈕被擋,不開對話框、不送命令——舊命令剩下的輸出與收尾
+  // 不會畫到另一首的標題底下(#126 review 第 2 點)
+  const sent = calls.length;
+  wiki(rows[0]).click();
+  await tick(5);
+  check(calls.length === sent && !dlg.open && allByClass(dlg, 'pl__wiki-title')[0].textContent === 'Solo', `命令還在跑時別首的 Wiki 被擋:${calls.slice(sent)}`);
+  r2();
+  await idle();
+  check(status().textContent === '已停止。' && byText(dlg, '查詢') && !byText(dlg, '設定 AI 端點'), `中止之後:${status().textContent}`);
+
+  // 失敗:原因畫在對話框裡(dock 被遮住),給「設定 AI 端點」;表單就地出現在對話框裡
+  script['wiki --title=Solo'] = { events: [exit(1, 'Error: 還沒設定 AI 端點')] };
+  wiki(rows[1]).click();
+  await idle();
+  check(status().textContent === '還沒設定 AI 端點' && status().classList.contains('page__warn') && byText(dlg, '設定 AI 端點') && byText(dlg, '查詢'), `失敗:${status().textContent}`);
+  const [g3, r3] = gate();
+  script['wiki setup'] = { first: [{ type: 'prompt', id: 7, kind: 'input', title: 'Base URL' }], gate: g3, events: [{ type: 'prompt_closed', id: 7, reason: 'answered' }, done] };
+  byText(dlg, '設定 AI 端點').click();
+  await tick(5);
+  check(JSON.stringify(bodies.at(-1).args) === JSON.stringify(['wiki', 'setup']) && allByClass(dlg, 'pl__wiki-prompts')[0].children.length > 0, '設定 AI 端點:表單畫在對話框裡');
+  check(dlg.contains(globalThis.document.activeElement), '精靈跑的時候收尾區是空的:焦點留在對話框裡(✕ 或表單)');
+  r3();
+  await idle();
+  check(status().textContent === 'AI 端點設定好了,可以再問一次。' && byText(dlg, '查詢'), `設定好了:${status().textContent}`);
+
+  // 精靈的表單被關掉(✕ / Esc)或等太久:CLI 回 "user aborted",對話框說語系裡的句子、不用警告色,照給「設定 AI 端點」
+  for (const [how, ev, ex] of [['關掉', { type: 'prompt_closed', id: 8, reason: 'dismissed' }, exit(1, 'Error: user aborted')],
+    ['等太久', { type: 'prompt_closed', id: 8, reason: 'timeout' }, exit(1, 'Error: user aborted', 'timeout')]]) {
+    script['wiki --title=Solo'] = { events: [exit(1, 'Error: x')] }; // 先失敗一次,收尾區才有「設定 AI 端點」
+    wiki(rows[1]).click();
+    await idle();
+    script['wiki setup'] = { events: [{ type: 'prompt', id: 8, kind: 'input', title: 'Base URL' }, ev, ex] };
+    byText(dlg, '設定 AI 端點').click();
+    await idle();
+    check(status().textContent === '設定沒有做完,可以再設定一次。' && !status().classList.contains('page__warn') && byText(dlg, '設定 AI 端點'),
+      `精靈的表單${how}:不給 huh 的英文原文:${status().textContent}`);
+  }
+
+  // 被伺服器拒絕(命令沒跑):照說原因,不給設定
+  script['wiki --title=Solo'] = { status: 403, error: 'not offered' };
+  wiki(rows[1]).click();
+  await idle();
+  check(status().textContent === 'not offered' && !byText(dlg, '設定 AI 端點') && byText(dlg, '查詢'), `被拒絕:${status().textContent}`);
+  dlg.close();
 });
 
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,

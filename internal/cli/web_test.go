@@ -1370,8 +1370,14 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("診斷頁要先畫空白態,由使用者按鈕觸發")
 	}
 	// 鍵位表列出來的鍵要真的有實作,且表開著時單鍵不換頁。
-	if !strings.Contains(app, "keysDialog.open") || !strings.Contains(app, "seekBy") || !strings.Contains(app, "volBy") {
-		t.Error("? 表列的 ← → 與 + - 要有實作,且對話框開著時不換頁")
+	// 任何對話框開著時單鍵都不作用(鍵位表、清單頁的歌曲 wiki:不然 1–9 會在背後換頁;計畫 2026-09-30 §3.3)。
+	if !strings.Contains(app, "document.querySelector('dialog[open]')") || !strings.Contains(app, "keysDialog.showModal()") || !strings.Contains(app, "seekBy") || !strings.Contains(app, "volBy") {
+		t.Error("? 表列的 ← → 與 + - 要有實作,且任何對話框開著時不換頁")
+	}
+	// 換頁時關掉藏起來的頁面裡還開著的對話框(瀏覽器上一頁):不然它看不見卻還是 modal,整頁 inert(T3 自審)。
+	// node 替身沒有「hidden 就不畫」的語意,只能靜態釘。
+	if !strings.Contains(app, "document.querySelectorAll('.page[hidden] dialog[open]')) d.close()") {
+		t.Error("showPage() 要關掉藏起來的頁面裡還開著的對話框")
 	}
 	// local 的 id 含空白是常態,不 quote 會被 splitArgs 切斷。
 	search := read("js/pages/search.js")

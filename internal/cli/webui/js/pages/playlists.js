@@ -8,6 +8,7 @@ import { el, btn, input, providerName, emptyState, pageHead } from './common.js'
 import { spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
 import { parseStatus } from './account.js';
 import { changeTable } from './sync.js';
+import { lineSplitter, wikiRenderer } from './wiki.js';
 import { t } from '../i18n.js';
 
 const COLUMNS = ['spotify', 'apple', 'youtube']; // 會佔一欄的平台:本機沒有播放、也沒有網頁,不佔欄;也是找得到對應、建得出清單的平台
@@ -209,11 +210,11 @@ export function initPlaylists(root, api, con, notice, providers) {
     const tbl = el('table', 'tbl pl__tbl');
     tbl.setAttribute('role', 'table');
     const cg = el('colgroup');
-    cg.append(el('col', 'pl__c-pos'), el('col', 'pl__c-song'), el('col', 'pl__c-dur'), ...cols.map((p) => el('col', `pl__c-${p}`)));
+    cg.append(el('col', 'pl__c-pos'), el('col', 'pl__c-song'), el('col', 'pl__c-dur'), ...cols.map((p) => el('col', `pl__c-${p}`)), el('col', 'pl__c-wiki'));
     const thead = el('thead');
     const hr = el('tr');
     hr.setAttribute('role', 'row');
-    for (const text of ['#', t('webui.playlists.col.song'), t('webui.playlists.col.duration'), ...cols.map(providerName)]) {
+    for (const text of ['#', t('webui.playlists.col.song'), t('webui.playlists.col.duration'), ...cols.map(providerName), '']) {
       const th = el('th', null, text);
       th.setAttribute('role', 'columnheader');
       hr.appendChild(th);
@@ -224,7 +225,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     const texts = [];
     items.forEach((it, i) => {
       const trk = track(it.cid);
-      const title = trk.title || '';
+      const title = (trk.title || '').trim(); // 同 CLI 的 TrimSpace:只有空白的曲名當成沒有(不然 Wiki 會問到正在播的那首)
       const artists = (trk.artists || []).join(', ');
       const tr = el('tr');
       tr.setAttribute('role', 'row');
@@ -236,6 +237,14 @@ export function initPlaylists(root, api, con, notice, providers) {
       song.title = sub ? `${title}\n${sub}` : title; // 省略掉的字,滑過去看得到全文
       tr.append(cell('pl__pos num', String(i + 1)), song, cell('pl__dur num', trk.duration_ms > 0 ? mmss(trk.duration_ms) : ''));
       for (const p of cols) tr.appendChild(platformCell(p, (trk.mappings || {})[p], title || it.cid));
+      // Wiki(計畫 §3.3):曲名取正本的 title,沒有(這台沒有這首的資料)就不給——空的 --title 會變成問正在播的那首
+      const wk = cell('row-actions pl__wiki');
+      if (title) {
+        const b = btn(t('webui.playlists.wiki'), 'btn--ghost', () => openWiki(title, artists));
+        b.setAttribute('aria-label', t('webui.playlists.wiki_label', { title }));
+        wk.appendChild(b);
+      }
+      tr.appendChild(wk);
       tbody.appendChild(tr);
       rows.push(tr);
       texts.push(`${title}\n${artists}\n${trk.album || ''}`.toLowerCase());
@@ -561,6 +570,115 @@ export function initPlaylists(root, api, con, notice, providers) {
         load();
       });
     });
+  }
+
+  // ── 歌曲 wiki 對話框(計畫 §3.3,Q2 A):就地開,在 #page-playlists 裡(setup 的表單用它當 promptHost,reveal() 才不會切到主控台)。
+  // showModal() 會讓 dock 整個 inert——中止鈕與 #notice 都看不到、按不到——所以停止、收尾那句、失敗的原因都畫在對話框裡。
+  // 關掉對話框(✕ / Esc)= 停止:把序列槽還給播放。wiki 不寫入,con.stop() 一次就停(不用第二次確認)。
+  let dlg, dX, dTitle, dBy, dStatus, dOut, dPrompts, dFoot;
+  let wikiSong = null;   // { title, artists }
+  let dlgRunning = false; // 對話框發出的命令(wiki / wiki setup)在跑
+  root.appendChild(wikiDialog()); // 在上面這幾個 let 之後才建(建在頁首那一行會碰到 TDZ)
+  function wikiDialog() {
+    dlg = el('dialog', 'pl__wiki-dlg');
+    const top = el('div', 'pl__wiki-top');
+    const head = el('div');
+    dTitle = el('h3', 'pl__wiki-title');
+    dBy = el('span', 'pl__wiki-by');
+    head.append(dTitle, dBy);
+    dX = el('button', 'btn btn--ghost btn--icon', '✕'); // 純 UI 控制:命令在跑時也要按得到,不標 data-run
+    dX.type = 'button';
+    dX.setAttribute('aria-label', t('webui.playlists.wiki_close'));
+    dX.addEventListener('click', () => dlg.close());
+    top.append(head, dX);
+    dStatus = el('p', 'page__note pl__wiki-status');
+    dStatus.setAttribute('role', 'status');
+    dOut = el('div', 'wiki__out');
+    dPrompts = el('div', 'pl__wiki-prompts');
+    dFoot = el('div', 'form-row pl__wiki-foot');
+    dlg.append(top, dStatus, dFoot, dPrompts, dOut); // 按鈕在回答上面:串流中長出來的字不會把「中止」推出畫面
+    dlg.addEventListener('close', () => { if (dlgRunning) con.stop(); });
+    return dlg;
+  }
+
+  function openWiki(title, artists) {
+    wikiSong = { title, artists };
+    dTitle.textContent = title;
+    dBy.textContent = artists;
+    dlg.setAttribute('aria-label', t('webui.playlists.wiki_label', { title }));
+    if (!dlg.open) dlg.showModal();
+    ask(false);
+  }
+
+  // ask:capy wiki --title=<曲名> [--artist=<歌手>]。用 = 的寫法:web 的擋字檢查對每個參數做 strings.Cut(a, "="),
+  // 歌名剛好是 --header 這類字、或以 - 開頭時分開寫會被擋或被當成旗標(#121 review 第 4 點)。歌手用 ", " 串,
+  // 跟「正在播」那條路算快取 key 的方式一樣(ai.WikiCacheKey)。
+  function ask(refresh) {
+    const { title, artists } = wikiSong;
+    dOut.replaceChildren();
+    dPrompts.replaceChildren();
+    wikiSay(t('webui.playlists.wiki_running'));
+    const stop = el('button', 'btn', t('webui.console.stop')); // dock 的中止鈕被對話框蓋住了,這裡另給一顆
+    stop.type = 'button';
+    // 連點「查詢 / 再問一次」的第二下會落在同一個位置剛換上的這顆:detail > 1 不算(鍵盤觸發的 click 是 0,照停)
+    stop.addEventListener('click', (ev) => { if (ev.detail > 1) return; stop.textContent = t('webui.console.stopping'); con.stop(); });
+    foot(stop);
+    const r = wikiRenderer(dOut);
+    const split = lineSplitter((l) => r.line(l));
+    dlgRunning = true;
+    con.run('', {
+      onStdout: (s) => split.push(s),
+      onExit: (code, msg, reason) => {
+        dlgRunning = false;
+        split.end();
+        // 做完也說一句:dock 的報讀(barSR)被對話框的 inert 蓋住,不說的話螢幕閱讀器聽不到結束
+        if (code === 0) { wikiSay(t('webui.playlists.wiki_done')); foot(btn(t('webui.wiki.refresh'), 'btn--ghost', () => ask(true))); return; }
+        const again = btn(t('webui.wiki.ask'), code > 0 ? 'btn--ghost' : '', () => ask(false));
+        if (reason === 'cancelled') { wikiSay(t('webui.playlists.wiki_stopped')); foot(again); return; }
+        // 失敗的原因(沒設定 AI 端點、端點連不上、伺服器拒絕、序列槽被佔著…)畫在這裡:dock 的 notice 被對話框遮住了。
+        wikiSay(why(msg), true);
+        // 命令真的跑了而失敗(code > 0)才給「設定 AI」:不看錯誤字串決定(頁面拿不到那句的 key),同 wiki 頁的設定鈕;
+        // 被拒絕(-1:refused / busy)命令根本沒跑,設定也救不了。
+        foot(...(code > 0 ? [btn(t('webui.wiki.setup'), '', setup)] : []), again);
+      },
+    }, { args: ['wiki', `--title=${title}`, ...(artists ? [`--artist=${artists}`] : []), ...(refresh ? ['--refresh'] : [])], label: t('webui.wiki.label.ask', { song: title }) });
+  }
+
+  // setup:capy wiki setup,表單就地出現在對話框裡(promptHost);設定好了就可以再問一次。
+  function setup() {
+    dOut.replaceChildren();
+    dPrompts.replaceChildren();
+    wikiSay('');
+    foot(); // 精靈跑的時候沒有自己的中止:✕ 就是停(表單裡的 Esc 是取消那一題,console.js 已經 preventDefault、不會關掉對話框)
+    dlgRunning = true;
+    let closedBy = '';
+    con.run('', {
+      onPromptClosed: (ev) => { closedBy = ev.reason; },
+      onExit: (code, msg, reason) => {
+        dlgRunning = false;
+        if (code === 0) { wikiSay(t('webui.playlists.wiki_ready')); foot(btn(t('webui.wiki.ask'), '', () => ask(false))); return; }
+        // 表單被關掉(✕ / Esc)或等太久:CLI 回的是 huh 的 "user aborted",不給人看原文(決策 50)。也不說「沒有寫入」:
+        // 選模型之前端點、金鑰、母語已經存了。不比對錯誤字串,看機器欄位。
+        const unfinished = code === 1 && (reason === 'timeout' || closedBy === 'dismissed');
+        if (reason === 'cancelled') wikiSay(t('webui.playlists.wiki_stopped'));
+        else if (unfinished) wikiSay(t('webui.playlists.wiki_setup_unfinished'));
+        else wikiSay(why(msg), true);
+        foot(btn(t('webui.wiki.setup'), '', setup));
+      },
+    }, { args: ['wiki', 'setup'], label: t('webui.wiki.label.setup'), promptHost: dPrompts });
+  }
+
+  // foot:換掉收尾區的按鈕。按下的那顆被換掉時焦點會掉到 body、鍵盤使用者就失去位置(同 console.js 的中止鈕不用 disabled 的理由):
+  // 焦點不在對話框裡了就交給新的第一顆,沒有按鈕就交給 ✕。
+  function foot(...bs) {
+    dFoot.replaceChildren(...bs);
+    if (dlg.open && !dlg.contains(document.activeElement)) (bs[0] || dX).focus();
+  }
+
+  const why = (msg) => (msg || '').replace(/^Error: /, '') || t('webui.playlists.wiki_failed');
+  function wikiSay(text, warn) {
+    dStatus.className = warn ? 'page__warn pl__wiki-status' : 'page__note pl__wiki-status';
+    dStatus.textContent = text;
   }
 
   function moveLink() {
