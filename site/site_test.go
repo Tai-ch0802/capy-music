@@ -110,6 +110,15 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 		if !strings.Contains(use, listName) || !strings.Contains(use, playUse) || !strings.Contains(sharing, playShare) {
 			t.Errorf("%s:§3 要寫到清單名稱與點播、§5 要列出按 ▶ 的移轉", page)
 		}
+		// 政策逐句對照程式(2026-10-01):本機的絕對路徑照原樣進 Drive、在電腦上顯示 / 匯出也是一項用途、
+		// 網頁上的連結由瀏覽器帶著編號開到平台、本機快取不只是 Drive 的鏡像(搜尋與播放紀錄可以清)。
+		absPath, showUse, linkShare, history := "絕對路徑", "<strong>在你的電腦上給你看</strong>", "你在網頁上點連結", "<code>capy history clear</code>"
+		if strings.HasPrefix(page, "en/") {
+			absPath, showUse, linkShare = "absolute path", "<strong>Showing it to you on your computer</strong>", "when you click a link on the web UI"
+		}
+		if !strings.Contains(use, absPath) || !strings.Contains(use, showUse) || !strings.Contains(sharing, linkShare) || !strings.Contains(html, history) {
+			t.Errorf("%s:§3 要寫本機的絕對路徑與「在電腦上給你看」、§5 要寫點連結、§4 要寫本機快取有搜尋紀錄(capy history clear)", page)
+		}
 		for _, f := range ai.SentFields {
 			word := f
 			if !strings.HasPrefix(page, "en/") {
