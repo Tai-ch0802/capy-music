@@ -1106,7 +1106,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if strings.Contains(common, "page__cli") || strings.Contains(common, "empty__cmd") {
 		t.Error("pageHead / emptyState 不該再把命令字串放到頁面上")
 	}
-	// 搬家頁:頁面絕不代加 --yes / --force(決策 46);Apple 當目的地要留在選單裡、不可選、說原因。
+	// 搬家頁:頁面絕不代加 --yes / --force(決策 46);只讀平台當目的地要留在選單裡、不可選、說原因(Apple 自決策 49 起可以當目的地)。
 	move := read("js/pages/move.js")
 	if strings.Contains(move, "--yes") && !strings.Contains(move, "絕不代加 --yes") || strings.Contains(move, "' --yes") || strings.Contains(move, "' --force") {
 		t.Error("搬家頁組出來的命令不可以帶 --yes / --force")
