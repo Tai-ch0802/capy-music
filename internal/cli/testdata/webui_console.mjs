@@ -32,7 +32,7 @@ function mk(tag = 'div') {
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return this.attrs[k] ?? null; },
     removeAttribute(k) { delete this.attrs[k]; },
-    hasAttribute(k) { return k in this.attrs; },
+    hasAttribute(k) { return k in this.attrs || (k.startsWith('data-') && camel(k.slice(5)) in this.dataset); }, // 同真的 DOM:dataset 設的也算(btn() 的序列槽閘看 body 的 data-slot)
     addEventListener(t, f) { (this.l ||= {})[t] = f; },
     click(detail = 1) { this.l?.click?.({ detail }); }, // detail:連點第幾下(真的 DOM:滑鼠 1、2…,鍵盤 0)
     scrollIntoView() { (globalThis.scrolled ||= []).push(this); },
@@ -1547,6 +1547,12 @@ await scenario('8s', async () => {
   dlg.close();
   await tick(5);
   check(cancels.length === before + 1, '關掉對話框 = 中止');
+  // 中止還沒生效(命令還佔著序列槽)就去按別首的 Wiki:按鈕被擋,不開對話框、不送命令——舊命令剩下的輸出與收尾
+  // 不會畫到另一首的標題底下(#126 review 第 2 點)
+  const sent = calls.length;
+  wiki(rows[0]).click();
+  await tick(5);
+  check(calls.length === sent && !dlg.open && allByClass(dlg, 'pl__wiki-title')[0].textContent === 'Solo', `命令還在跑時別首的 Wiki 被擋:${calls.slice(sent)}`);
   r2();
   await idle();
   check(status().textContent === '已停止。' && byText(dlg, '查詢') && !byText(dlg, '設定 AI 端點'), `中止之後:${status().textContent}`);

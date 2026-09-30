@@ -84,6 +84,17 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 				t.Errorf("%s 沒有提到 %s", page, want)
 			}
 		}
+		// Wiki 鈕送的是 Drive 裡的資料 = Google 使用者資料(#126 review):§3 要把它列成一項用途(那一節說「不做本節以外的
+		// 任何用途」),§5 要明說它屬於 Google 使用者資料——不可以再跟「不是 Google 使用者資料」「從未離開」放在同一個論證裡。
+		use := section(t, html, "use", "storage")
+		sharing := section(t, html, "sharing", "retention")
+		button, isUserData := "Wiki 鈕", "屬於 Google 使用者資料"
+		if strings.HasPrefix(page, "en/") {
+			button, isUserData = "Wiki button", "so they are Google user data"
+		}
+		if !strings.Contains(use, button) || !strings.Contains(sharing, isUserData) {
+			t.Errorf("%s:§3 要列出 Wiki 鈕的用途、§5 要說它送的歌名與歌手屬於 Google 使用者資料", page)
+		}
 		for _, f := range ai.SentFields {
 			word := f
 			if !strings.HasPrefix(page, "en/") {
@@ -96,6 +107,16 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 			}
 		}
 	}
+}
+
+// section:政策裡 id=from 那一節到 id=to 那一節之間的原始 HTML。
+func section(t *testing.T, html, from, to string) string {
+	t.Helper()
+	i, j := strings.Index(html, `id="`+from+`"`), strings.Index(html, `id="`+to+`"`)
+	if i < 0 || j < i {
+		t.Fatalf("找不到 #%s … #%s", from, to)
+	}
+	return html[i:j]
 }
 
 // 刪除(§6「要完全移除」):程式寫進鑰匙圈的每一樣都要有刪法——四個平台各自的登出,以及沒有任何登出命令會刪的
