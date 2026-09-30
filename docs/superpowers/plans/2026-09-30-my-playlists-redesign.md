@@ -11,7 +11,10 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 - 進頁先用 `quiet` 跑 `auth status --json`,在它的 `onExit` 裡再用 `quiet` 跑 `export`(不只重讀時才 quiet:整份 JSON 不灌進主控台)。
 - 「看 X 上的內容」按鈕、下方「平台上現有的清單」照舊保留到 T2(由連結面板與「各平台上的清單」取代)。T1 的空白態只指到搬家,「納入」的說法等 T2。
 - 窄版的位置欄釘在左邊(`position: absolute`),換行後的每一行都從同一條線開始;表格元素改 `display` 之後補上 `role="table" / row / cell / columnheader`,報讀還是表格。
-- 表頭「時長」的英文是 Length。
+- 表頭「時長」的英文是 Length;T1 自審量到英文的「Length」與「YouTube Music」在原本的欄寬會被截成「Le…」「YouTube M…」,時長欄改 4.5rem、YouTube Music 欄改 7.5rem,表頭改成可以換行。
+- 空白態從兩種變三種(見 §3.4):「連了 Google Drive、這台沒有本機資料」不可以說成「沒有清單」。
+- 單鍵層放過 `<summary>` 上的空白鍵(app.js;根因修一處,清單頁的說明、側欄的「更多」、搬家精靈的完整表格一起好)。
+- 左欄清單是捲動容器,焦點環改畫在項目裡面(`outline-offset: -4px`)。
 
 本文送出前跑過一輪三視角的對抗式審查(硬約束 / 事實與命令 / 需求與易用性),31 則裡 24 則查證成立,都已改進本文;最重要的是 §3.5 的「只建新的」CLI 旗標。
 
@@ -71,7 +74,7 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 |---|---|
 | 頁面容器 ≥ 64rem | 左欄 16rem + 右欄並排(1440 寬的畫面) |
 | 頁面容器 < 64rem | 疊成一欄;清單清單在上、限高 15rem 自己捲(1280 以下) |
-| 歌曲表容器 ≥ 50rem | 一首一行,`table-layout: fixed`:# 3rem、時長 3.75rem、Spotify 12rem、Apple Music 6.25rem、YouTube Music 7rem、Wiki 4.75rem,「歌曲」欄吃剩下的(1440 並排時約 220–250px,1280 疊放時約 320px) |
+| 歌曲表容器 ≥ 50rem | 一首一行,`table-layout: fixed`:# 3rem、時長 4.5rem、Spotify 12rem、Apple Music 6.25rem、YouTube Music 7.5rem、Wiki 4.75rem(表頭可以換行、不截字),「歌曲」欄吃剩下的(1440 並排時約 220–250px,1280 疊放時約 320px) |
 | 歌曲表容器 < 50rem | 一首拆成多行:第一行 # / 歌曲 / 時長,下面是各平台與 Wiki(放不下就換行),每格前面寫出平台名(沒有表頭可以對;1024 寬與手機) |
 
 量測結果:1440 / 1280 / 1024 寬與 390px 的手機框,頁面與歌曲表都沒有橫向捲動,每一格都沒有溢出。
@@ -128,7 +131,7 @@ Q 用計畫內編號 Q1…(同 2026-09-29-youtube-music.md 的寫法,不接全�
 另外:
 
 - 左欄晶片改用 `providerName`(Spotify / Apple Music / YouTube Music / 本機),不再顯示原始 id + ✓。
-- **空白態分兩種**(`auth status --json` 的 Google 狀態):還沒連 Google Drive → 「先到帳號頁連接 Google Drive」連到 `#/account`;連了但沒有任何正本 → 「用『搬家』搬一份過來,或從下面『各平台上的清單』納入一份」。取代現在那句叫人到「同步」連結的錯誤指引(zh-TW.json:1305)。
+- **空白態分三種**:還沒連 Google Drive(`auth status --json` 的 Google 狀態)→ 連到 `#/account`;連了、但這台電腦還沒有本機資料(`export` 失敗,例如第二台電腦——export 沒辦法知道 Drive 上有沒有清單)→ 連到 `#/sync`,說明取消勾選「只看變更」、按「從平台更新」把正本讀進來(同 CLI 的 `escape.err.nothing_to_export` 叫人先 `pl pull`);讀過了、真的沒有正本 → 「用『搬家』搬一份過來」(T2 再加「或從下面『各平台上的清單』納入一份」)。取代現在那句叫人到「同步」連結的錯誤指引(zh-TW.json:1305)。
 - **「平台上現有的清單」改成「各平台上的清單」**:一顆「讀取各平台的清單」,按了才依序對**這台電腦有登入的**每個平台跑 `pl list --provider X`(會連網、每家各佔一次序列槽,在 `onExit` 裡接下一家);每一列標出「連著正本「X」」或「還沒納入」,還沒納入的可以「納入」(§3.5,Q6)。Spotify 的列都放「在 Spotify 上聽」(`spotifyLink('playlist', …)`,是按鈕的兄弟元素、不包進按鈕;S7 原本涵蓋 `pl list` 的表,webui_console.mjs:759)。
 
 ### 3.5 就地同步(需求 3)
