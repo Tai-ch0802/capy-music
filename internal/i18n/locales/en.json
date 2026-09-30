@@ -1402,6 +1402,7 @@
   "webui.playlists.create.cancel": "Cancel",
   "webui.playlists.create.done": "Done: \"{name}\" on {platform} now has the songs, in the master copy's order.",
   "webui.playlists.create.explain": "Pressing \"{start}\" first creates an empty playlist called \"{name}\" on {platform} and links it. Then capy looks up each song on {platform} and adds the ones it finds, in the master copy's order; before saving matches and before adding songs, capy lists the changes for you to confirm. If {platform} already has a playlist with that name, capy stops without creating anything. capy never deletes playlists on {platform}.",
+  "webui.playlists.create.none": "\"{name}\" was created on {platform} and linked, but no songs were added this time (none are matched yet). Press \"{button}\" to continue.",
   "webui.playlists.create.start": "Start",
   "webui.playlists.create.stop1": "The first step didn't finish.",
   "webui.playlists.create.stop2": "\"{name}\" was created on {platform} and linked; press \"{button}\" to continue matching.",
@@ -1416,6 +1417,10 @@
   "webui.playlists.flow.cancelled": "You cancelled, so nothing was written.",
   "webui.playlists.flow.dismissed": "You closed the question, so nothing was written.",
   "webui.playlists.flow.done": "Done.",
+  "webui.playlists.flow.review_left": {
+    "one": "Nothing was matched automatically; {count} song needs your decision. Press \"{button}\".",
+    "other": "Nothing was matched automatically; {count} songs need your decision. Press \"{button}\"."
+  },
   "webui.playlists.flow.stopped": "Stopped. Anything already written stays; running it again continues from where things are now.",
   "webui.playlists.flow.timeout": "No answer came in time, so nothing was written.",
   "webui.playlists.flow.up_to_date": "Already up to date; nothing to change.",
@@ -1525,6 +1530,10 @@
   "webui.sync.pull_label": "Pulling changes from the platform",
   "webui.sync.push": "Push to platform",
   "webui.sync.push_label": "Pushing capy's playlists to the platform",
+  "webui.sync.resolve_changes": {
+    "one": "{count} match will be saved (the rest wait for you to review them one by one)",
+    "other": "{count} matches will be saved (the rest wait for you to review them one by one)"
+  },
   "webui.sync.sync": "Two-way sync",
   "webui.sync.sync_label": "Syncing both ways",
   "webui.sync.title": "Sync",

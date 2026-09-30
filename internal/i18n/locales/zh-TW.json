@@ -1324,6 +1324,7 @@
   "webui.playlists.create.cancel": "取消",
   "webui.playlists.create.done": "完成:{platform} 上的「{name}」已經照正本的順序加好歌。",
   "webui.playlists.create.explain": "按「{start}」會先在 {platform} 建一份叫「{name}」的空清單並連上;接著替每一首找 {platform} 上的對應,再照正本的順序把找得到的加進去。寫入對應與加歌之前,capy 會先列出來給你確認。{platform} 上如果已經有同名的清單,capy 會停下來、什麼都不建。capy 不會刪除 {platform} 上的清單。",
+  "webui.playlists.create.none": "已經在 {platform} 建立並連上「{name}」,但這次沒有加任何歌(還沒有找到對應)。按「{button}」接著處理。",
   "webui.playlists.create.start": "開始",
   "webui.playlists.create.stop1": "第一步沒有完成。",
   "webui.playlists.create.stop2": "已經在 {platform} 建立並連上「{name}」;按「{button}」接著找對應。",
@@ -1338,6 +1339,9 @@
   "webui.playlists.flow.cancelled": "你按了取消,沒有寫入。",
   "webui.playlists.flow.dismissed": "你關掉了提示,沒有寫入。",
   "webui.playlists.flow.done": "完成。",
+  "webui.playlists.flow.review_left": {
+    "other": "沒有自動對上的;有 {count} 首要你決定。按「{button}」。"
+  },
   "webui.playlists.flow.stopped": "已中止。中止前已經寫入的不會撤回;再按一次會從現在的狀態接著做。",
   "webui.playlists.flow.timeout": "等太久沒有回答,沒有寫入。",
   "webui.playlists.flow.up_to_date": "已經是最新的,沒有要改的東西。",
@@ -1442,6 +1446,9 @@
   "webui.sync.pull_label": "把平台上的變更拉回來",
   "webui.sync.push": "推到平台",
   "webui.sync.push_label": "把 capy 保管的清單推到平台",
+  "webui.sync.resolve_changes": {
+    "other": "{count} 筆會寫入的對應(其餘等你逐首決定)"
+  },
   "webui.sync.sync": "雙向同步",
   "webui.sync.sync_label": "雙向同步",
   "webui.sync.title": "同步",

@@ -306,10 +306,14 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
   .pl__links { grid-template-columns: 11rem minmax(0, 1fr); }
   .pl__hub { display: grid; align-content: center; border-bottom: 0; border-right: 1px solid var(--line); }
 }
-@container (max-width: 40rem) {
+.pl__link-rows { container: linkrows / inline-size; } /* 列看自己的寬度:並排時右欄比頁面窄很多 */
+@container linkrows (max-width: 52rem) {
+  .pl__link { grid-template-columns: 8.5rem 6rem minmax(0, 1fr); }
+  .pl__link-acts { grid-column: 1 / -1; justify-content: flex-start; }
+}
+@container linkrows (max-width: 30rem) {
   .pl__link { grid-template-columns: minmax(0, 1fr) auto; }
-  .pl__link-info, .pl__link-acts { grid-column: 1 / -1; }
-  .pl__link-acts { justify-content: flex-start; }
+  .pl__link-info { grid-column: 1 / -1; }
 }
 /* 就地的寫入流程:步驟條(同搬家精靈)、收尾那一句、變更表、提示——表在上、提示在下 */
 .pl__flow { display: grid; gap: .75rem; margin: 0 0 1rem; }

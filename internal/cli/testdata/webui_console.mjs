@@ -1152,6 +1152,8 @@ await scenario('8q', async () => {
     check(got.includes(want) && not.every((x) => !got.includes(x)), `收尾:要有「${want}」:${got}`);
   };
   await closing({ events: [done] }, '已經是最新的,沒有要改的東西。');
+  const skipOnly = { type: 'table', header: SH, rows: [['push', 'skip', 'spotify', 'road trip', '1', 'c2', '', 'Song B', '', 'r', 'no_mapping']] };
+  await closing({ events: [skipOnly, done] }, '已經是最新的,沒有要改的東西。', ['完成']); // 有表、沒有答過確認 = 沒有寫入
   await closing({ events: [tbl, exit(2, 'Error: 待套用')] }, '你按了取消,沒有寫入。', ['待套用']);
   await closing({ first: [tbl, { type: 'prompt', id: 2, kind: 'confirm', title: '?' }], events: [{ type: 'prompt_closed', id: 2, reason: 'dismissed' }, exit(1, 'Error: user aborted')] },
     '你關掉了提示,沒有寫入。', ['user aborted']);
@@ -1160,6 +1162,14 @@ await scenario('8q', async () => {
   await closing({ events: [tbl, exit(3, 'Error: 這次會刪掉 12 首,超過閾值')] }, '這次會刪掉 12 首,超過閾值 capy 先停下來了,這一頁不會替你越過', ['Error:', '--force']);
   await closing({ events: [exit(1, 'Error: 讀不到 Drive')] }, '讀不到 Drive');
   check(anchors(flowOf(pl)).some((a) => a.href === '#/console'), '其他失敗:連到主控台');
+  // resolve 沒有自動對上、只剩等人決定的列:指到頁面上的「逐首決定」;表的註記只算會寫入的(review / conflict 不算)
+  const RH = ['ACTION', 'CID', 'PROVIDER', 'PROVIDER_ID', 'CONFIDENCE', 'SOURCE', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+  pl = await open({ spotify: PL }, AUTH, { 'resolve a --provider spotify': { events: [{ type: 'table', header: RH, rows: [['review', 'c2', 'spotify', T1, '70', 'fuzzy', 'Song B', '', 'r', 'low_score'], ['conflict', 'c3', 'spotify', '', '', '', 'Song C', '', 'r', 'conflict']] }, done] } });
+  byText(row(pl, 'spotify'), '找對應').click();
+  await idle(); await tick(5); await idle();
+  check(status(pl) === '沒有自動對上的;有 2 首要你決定。按「逐首決定」。', `resolve 只剩待決定的:${status(pl)}`);
+  const note = allByClass(allByClass(pl, 'pl__flow-table')[0], 'page__note')[0]?.textContent;
+  check(note === '0 筆會寫入的對應(其餘等你逐首決定)', `resolve 表的註記不算 review / conflict:${note}`);
 
   // 重讀保留選中的那份
   allByClass(pl, 'pl__item')[1].click();
@@ -1173,7 +1183,7 @@ await scenario('8q', async () => {
     'pl link --new-only a youtube --create': { events: [{ type: 'stdout', text: '已連結\n' }, done] },
     'resolve a --provider youtube': { first: [tbl, { type: 'prompt', id: 5, kind: 'confirm', title: '寫入以上 1 筆 mapping 到 Drive?' }], gate: g2,
       events: [{ type: 'prompt_closed', id: 5, reason: 'answered' }, done] },
-    'pl sync a --provider youtube': { events: [tbl, done] },
+    'pl sync a --provider youtube': { events: [tbl, { type: 'prompt', id: 6, kind: 'confirm', title: '?' }, { type: 'prompt_closed', id: 6, reason: 'answered' }, done] }, // 真的寫入前一定會問
     onAnswer: release2,
   });
   const before = bodies.length;
@@ -1212,6 +1222,74 @@ await scenario('8q', async () => {
   await idle(); await tick(5); await idle(); await tick(5); await idle();
   check(!bodies.slice(b2).some((b) => b.args && b.args[0] === 'pl' && b.args[1] === 'sync') && status(pl) === '已經在 YouTube Music 建立並連上「road trip」;按「找對應」接著找對應。 你按了取消,沒有寫入。',
     `第二步取消:第三步不送、說停在哪:${status(pl)}`);
+  pl = await open({ spotify: PL }, AUTH, {
+    'pl link --new-only a youtube --create': { events: [done] },
+    'resolve a --provider youtube': { events: [done] },            // 沒有新對應:沒有寫入
+    'pl sync a --provider youtube': { events: [skipOnly, done] },  // 全部 skip:一首都沒加
+  });
+  byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
+  await idle(); await tick(5); await idle(); await tick(5); await idle(); await tick(5); await idle();
+  check(status(pl) === '已經在 YouTube Music 建立並連上「road trip」,但這次沒有加任何歌(還沒有找到對應)。按「逐首決定」接著處理。', `一首都沒加:照實說:${status(pl)}`);
+  pl = await open({ spotify: PL }, AUTH, {
+    'pl link --new-only a youtube --create': { events: [done] },
+    'resolve a --provider youtube': { events: [done] },
+    'pl sync a --provider youtube': { events: [exit(1, 'Error: 讀不到 youtube')] },
+  });
+  byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
+  await idle(); await tick(5); await idle(); await tick(5); await idle(); await tick(5); await idle();
+  check(status(pl).startsWith('已經在 YouTube Music 建立並連上「road trip」;按「找對應」') && !status(pl).includes('對應已經寫入'), `第二步沒寫入時第三步失敗:不說「對應已經寫入」:${status(pl)}`);
+  // 第二步被拒、之後的重讀也被拒:畫面與「停在哪一步」那句都留著
+  pl = await open({ spotify: PL }, AUTH, {
+    'pl link --new-only a youtube --create': { events: [done] },
+    'resolve a --provider youtube': { status: 409, error: 'another tab' },
+  });
+  byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  script['auth status --json'] = { status: 409, error: 'another tab' };
+  script.export = { status: 409, error: 'another tab' };
+  byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
+  await idle(); await tick(5); await idle(); await tick(5); await idle();
+  check(status(pl).startsWith('已經在 YouTube Music 建立並連上「road trip」;按「找對應」接著找對應。') && allByClass(pl, 'pl__item').length === 2 && allByClass(allByClass(pl, 'pl__right')[0], 'pl__flow').length === 1,
+    `重讀失敗:不清畫面、說明留著:${status(pl)}`);
+
+  // ── 流程在跑時(提示開著),換一份清單與「在 X 建一份」擋下:提示還在頁面裡,答了照常收尾(提示畫在流程區裡,清掉就卡住)
+  const [g3, release3] = gate();
+  pl = await open({ spotify: PL }, AUTH, {
+    'pl sync a': { first: [tbl, { type: 'prompt', id: 9, kind: 'confirm', title: '套用以上 1 筆變更?', affirmative: '套用', negative: '取消', default: false }], gate: g3,
+      events: [{ type: 'prompt_closed', id: 9, reason: 'answered' }, { type: 'prompt', id: 10, kind: 'confirm', title: 'x' }, { type: 'prompt_closed', id: 10, reason: 'answered' }, done] },
+    onAnswer: release3,
+  });
+  byText(pl, '同步這份清單').click();
+  await tick(20);
+  const evBefore = (globalThis.document.events || []).length;
+  allByClass(pl, 'pl__item')[1].click();
+  byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  const open9 = () => allByClass(pl, 'prompt').filter((b) => !b.classList.contains('is-closed'));
+  check(allByClass(pl, 'pl__item')[0].classList.contains('is-active') && open9().length === 1 && allByClass(pl, 'pl__flow-card').length === 0
+    && (globalThis.document.events || []).slice(evBefore).filter((e) => e === 'capy:busy').length === 2, '流程在跑:換清單與建一份都擋下、說明,提示還在');
+  byText(open9()[0], '套用').click();
+  await idle(); await tick(5); await idle();
+  check(status(pl) === '完成。', `擋下之後照常收尾:${status(pl)}`);
+  // 建一份的第一步進行中換清單:擋下;第二步的提示畫在頁面裡的流程區(不是脫離頁面的容器)
+  const [g4, release4] = gate();
+  const [g5, release5] = gate();
+  pl = await open({ spotify: PL }, AUTH, {
+    'pl link --new-only a youtube --create': { gate: g4, events: [done] },
+    'resolve a --provider youtube': { first: [tbl, { type: 'prompt', id: 11, kind: 'confirm', title: '?' }], gate: g5,
+      events: [{ type: 'prompt_closed', id: 11, reason: 'cancelled' }, exit(1, '', 'cancelled')] },
+  });
+  byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
+  await tick(10);
+  allByClass(pl, 'pl__item')[1].click();
+  release4();
+  await tick(30);
+  check(allByClass(pl, 'pl__item')[0].classList.contains('is-active') && allByClass(pl, 'pl__flow-prompts').includes(con.promptHost) && open9().length === 1,
+    '第一步進行中換清單被擋;第二步的提示在頁面裡');
+  release5();
+  await idle(); await tick(5); await idle();
+
   // Apple 的揭露只在 Apple;取消說明零命令
   pl = await open({ spotify: PL });
   const b3 = bodies.length;

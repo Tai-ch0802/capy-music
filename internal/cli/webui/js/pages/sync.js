@@ -73,7 +73,9 @@ export function changeTable(header, rows, spotifyReport) {
     }
   }
   wrap.appendChild(tbl);
-  const n = rows.filter((r) => ai < 0 || r[ai] !== 'skip').length;
-  wrap.appendChild(el('p', 'page__note', t('webui.sync.changes', { count: n })));
+  // skip(pull / push)與 review / conflict(resolve:等人決定、這次不寫)都不算變更;resolve 的表另一句,數字要跟確認句的筆數一樣
+  const idle = new Set(['skip', 'review', 'conflict']);
+  const n = rows.filter((r) => ai < 0 || !idle.has(r[ai])).length;
+  wrap.appendChild(el('p', 'page__note', header.includes('CONFIDENCE') ? t('webui.sync.resolve_changes', { count: n }) : t('webui.sync.changes', { count: n })));
   return wrap;
 }

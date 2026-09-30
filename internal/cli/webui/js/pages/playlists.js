@@ -49,13 +49,17 @@ export function initPlaylists(root, api, con, notice, providers) {
   // flow:寫入命令的就地區塊(步驟條、狀態句、變更表、提示;表在上、提示在下——CLI 先印表再問確認)。
   // 只在切到別份清單時清空;重讀後搬進新畫的右欄,收尾那句不會因為重讀而消失。
   const flow = el('div', 'pl__flow');
+  // flowBusy:流程區裡有寫入命令在跑(提示畫在它裡面)。這時換一份清單或按「在 X 建一份」會清掉流程區、把提示一起拿掉,
+  // 命令就卡在序列槽裡等一個看不到的提示:擋下並說明(同 btn() 被擋時的 capy:busy)。▶ 與自動重讀不算,照常可以換清單。
+  let flowBusy = false;
+  const blocked = () => { if (flowBusy) document.dispatchEvent(new Event('capy:busy')); return flowBusy; };
   // 兩個命令都 quiet:export 的整份 JSON 不灌進主控台。第二個在第一個的 onExit 裡送——用 await 串的話,
   // 排隊中的 con.idle 會先被叫醒而插隊(console.js:onExit 先於 wake())。畫面等資料到了才換,重讀時不閃。
   function load() {
     let status = '';
     con.run('', {
       onStdout: (s) => { status += s; },
-      onExit: () => { auth = parseStatus(status); readExport(); },
+      onExit: (code) => { if (code === 0) auth = parseStatus(status); readExport(); }, // 讀不到就沿用上一次讀到的
     }, { args: ['auth', 'status', '--json'], label: t('webui.move.label.status'), quiet: true });
   }
 
@@ -65,6 +69,8 @@ export function initPlaylists(root, api, con, notice, providers) {
       onStdout: (s) => { text += s; },
       onExit: (code, msg, reason) => {
         if (code !== 0) {
+          // 已經畫過清單(寫入後、回到這一頁時的重讀):保留畫面與流程區裡「停在哪一步」那句,原因 Console 已經放進 notice
+          if (selected) return;
           left.replaceChildren();
           right.replaceChildren();
           // 只有命令真的跑完、以非 0 結束才算「這台沒有本機資料」;斷線、被別的分頁佔著、中止、逾時都不是,照說原因
@@ -144,6 +150,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       for (const [linked] of links(pl)) chips.appendChild(el('span', 'chip', providerName(linked)));
       row.appendChild(chips);
       row.addEventListener('click', () => {
+        if (pl.pid !== flow.dataset.pid && blocked()) return;
         for (const other of rows) other.classList.remove('is-active');
         row.classList.add('is-active');
         showItems(pl, track);
@@ -349,16 +356,28 @@ export function initPlaylists(root, api, con, notice, providers) {
     });
   }
 
-  // step:跑一個會寫入的命令;done(code, outcome) 在 onExit 裡叫——下一步要在那裡送(見 load 的註解)。
+  // step:跑一個會寫入的命令;done(code, outcome, wrote) 在 onExit 裡叫——下一步要在那裡送(見 load 的註解)。
   // 表在上、提示在下:table 事件一定先到(CLI 先印表再 confirmWrite),畫進表格區就自然在提示上面。
+  // wrote:這個頁面從不代加 --yes,sync / resolve / pull 的每一次寫入都要先有人答應確認(或逐首裁決)——
+  // exit 0 而且答過提示才算有寫入;只收到表(只有 skip 列、只有待決定的列)不算。
   function step(f, args, label, done) {
     let closedBy = '';
-    let tabled = false;
+    let answered = false;
+    let pending = 0; // resolve 表裡等人逐首決定的列(review / conflict)
     f.table.replaceChildren();
+    flowBusy = true;
     con.run('', {
-      onTable: (h, r) => { tabled = true; f.table.replaceChildren(changeTable(h, r)); },
-      onPromptClosed: (ev) => { closedBy = ev.reason; },
-      onExit: (code, msg, reason) => done(code, outcome(code, msg, reason, closedBy, tabled)),
+      onTable: (h, r) => {
+        const a = h.indexOf('ACTION');
+        pending = h.includes('CONFIDENCE') ? r.filter((x) => x[a] === 'review' || x[a] === 'conflict').length : 0;
+        f.table.replaceChildren(changeTable(h, r));
+      },
+      onPromptClosed: (ev) => { closedBy = ev.reason; if (ev.reason === 'answered') answered = true; },
+      onExit: (code, msg, reason) => {
+        flowBusy = false;
+        const wrote = code === 0 && answered;
+        done(code, outcome(code, msg, reason, closedBy, wrote, pending), wrote);
+      },
     }, { args, label, promptHost: f.host });
   }
 
@@ -370,6 +389,7 @@ export function initPlaylists(root, api, con, notice, providers) {
 
   // 在 X 建一份:先說清楚會發生什麼,按「開始」才依序跑三個命令;第一步(建立並連上)沒有 CLI 的確認,「開始」就是同意。
   function askCreate(p, pl) {
+    if (blocked()) return;
     const platform = providerName(p);
     const card = el('div', 'pl__flow-card');
     card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
@@ -389,15 +409,17 @@ export function initPlaylists(root, api, con, notice, providers) {
     const f = openFlow([t('webui.playlists.step.create'), t('webui.playlists.step.resolve'), t('webui.playlists.step.push')]);
     markStep(f, 0);
     // --new-only:頁面讀的 export 可能過時;平台那邊別台 / 別帳號剛連上的,CLI 會擋下來而不是接管(計畫 §3.5 前置 1)。
+    const stop2 = t('webui.playlists.create.stop2', { platform, name, button: t('webui.playlists.links.resolve') });
     step(f, ['pl', 'link', '--new-only', pl.pid, p, '--create'], t('webui.playlists.label.create', { name, platform }), (c1, o1) => {
       if (c1 !== 0) { say(f, o1, t('webui.playlists.create.stop1')); load(); return; }
       markStep(f, 1);
-      step(f, ['resolve', pl.pid, '--provider', p], t('webui.playlists.label.resolve', { name, platform }), (c2, o2) => {
-        if (c2 !== 0) { say(f, o2, t('webui.playlists.create.stop2', { platform, name, button: t('webui.playlists.links.resolve') })); load(); return; }
+      step(f, ['resolve', pl.pid, '--provider', p], t('webui.playlists.label.resolve', { name, platform }), (c2, o2, w2) => {
+        if (c2 !== 0) { say(f, o2, stop2); load(); return; }
         markStep(f, 2);
-        step(f, ['pl', 'sync', pl.pid, '--provider', p], t('webui.playlists.label.push', { name, platform }), (c3, o3) => {
-          if (c3 === 0) { markStep(f, 3); say(f, { text: t('webui.playlists.create.done', { platform, name }) }); }
-          else say(f, o3, t('webui.playlists.create.stop3', { platform, button: t('webui.playlists.sync') }));
+        step(f, ['pl', 'sync', pl.pid, '--provider', p], t('webui.playlists.label.push', { name, platform }), (c3, o3, w3) => {
+          if (c3 === 0 && w3) { markStep(f, 3); say(f, { text: t('webui.playlists.create.done', { platform, name }) }); }
+          else if (c3 === 0) say(f, { text: t('webui.playlists.create.none', { platform, name, button: t('webui.playlists.links.review') }) }); // 一首都沒加:照實說
+          else say(f, o3, w2 ? t('webui.playlists.create.stop3', { platform, button: t('webui.playlists.sync') }) : stop2);
           load();
         });
       });
@@ -489,12 +511,14 @@ const missingOn = (trk, p) => {
   return !m.id && !m.pinned;
 };
 
-// outcome:寫入命令的收尾(計畫 §3.5 的表;照 move.js 的做法用 onPromptClosed 分辨關掉 / 逾時)。tabled:這次有沒有收到變更表——
-// exit 0 沒有表 = 沒有要改的東西。
-function outcome(code, msg, reason, closedBy, tabled) {
+// outcome:寫入命令的收尾(計畫 §3.5 的表;照 move.js 的做法用 onPromptClosed 分辨關掉 / 逾時)。wrote 見 step();
+// pending:resolve 沒有自動寫入、只剩等人決定的列時,指到頁面上的「逐首決定」(CLI 那句叫人去終端機,這裡看不到)。
+function outcome(code, msg, reason, closedBy, wrote, pending) {
   const why = (msg || '').replace(/^Error: /, '');
   if (reason === 'cancelled' && code !== 0) return { text: t('webui.playlists.flow.stopped') };
-  if (code === 0) return { text: tabled ? t('webui.playlists.flow.done') : t('webui.playlists.flow.up_to_date') };
+  if (code === 0 && wrote) return { text: t('webui.playlists.flow.done') };
+  if (code === 0 && pending) return { text: t('webui.playlists.flow.review_left', { count: pending, button: t('webui.playlists.links.review') }) };
+  if (code === 0) return { text: t('webui.playlists.flow.up_to_date') };
   if (code === 2) return { text: t('webui.playlists.flow.cancelled') };
   if (code === 1 && closedBy === 'dismissed') return { text: t('webui.playlists.flow.dismissed') };
   if (code === 1 && closedBy === 'timeout') return { text: t('webui.playlists.flow.timeout') };
