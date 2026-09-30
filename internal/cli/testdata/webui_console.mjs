@@ -987,6 +987,12 @@ await scenario('8p', async () => {
     check(JSON.stringify(head(pl)) === JSON.stringify(['#', '歌曲', '時長', 'Spotify', 'YouTube Music']), `非 macOS 沒有 Apple 欄:${JSON.stringify(head(pl))}`);
     const sp = cellOf(rows(pl)[0], 'Spotify');
     check(buttons(sp).length === 0 && anchors(sp).length === 1, 'Spotify 沒登入:沒有 ▶,連結照給');
+    // keychain_error 不是沒登入:▶ 照給、Apple 欄照出現,讓 CLI 把原因說出來;expired 才跟 missing 一樣拿掉(#122 review 第 2 點)
+    ua(MAC);
+    pl = await open({ spotify: { state: 'keychain_error' }, apple: { state: 'keychain_error' }, google: ok }, out(one));
+    check(head(pl).includes('Apple Music') && buttons(cellOf(rows(pl)[0], 'Spotify')).length === 1, `keychain_error:▶ 照給、Apple 欄照出現:${JSON.stringify(head(pl))}`);
+    pl = await open({ spotify: ok, apple: { state: 'expired' }, google: ok }, out(one));
+    check(!head(pl).includes('Apple Music'), 'Apple 過期:整欄不出現');
     // 讀不到 auth(命令失敗):不知道 = 照給 ▶,讓 CLI 說原因
     ua(MAC);
     reset();
@@ -1026,6 +1032,13 @@ await scenario('8p', async () => {
     pl = await open({ google: ok }, out({}));
     check(pl.textContent.includes('capy 還沒有替你保管任何清單') && !anchors(pl).some((a) => a.href === '#/account' || a.href === '#/sync'), '讀過了、真的沒有清單:指到搬家');
 
+    // Google 的 keychain_error 不是「沒連」:說讀不到登入資料、指到帳號頁(#122 review 第 2 點)
+    pl = await open({ google: { state: 'keychain_error' } }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
+    check(pl.textContent.includes('讀不到你的 Google Drive 登入資料(鑰匙圈出錯)') && !pl.textContent.includes('先連接') && anchors(pl).some((a) => a.href === '#/account'), `Google 鑰匙圈出錯:${pl.textContent.slice(0, 160)}`);
+    // export 根本沒跑完(被別的分頁佔著 = refused)不是「這台沒有本機資料」:照說原因,不叫人去同步頁(#122 review 第 1 點)
+    pl = await open({ google: ok }, { status: 409, error: 'another tab is running a command' });
+    check(pl.textContent.includes('another tab is running a command') && !pl.textContent.includes('這台電腦還沒讀過') && !anchors(pl).some((a) => a.href === '#/sync'),
+      `export 被拒:照說原因:${pl.textContent.slice(0, 160)}`);
     // ── 英文:整頁、報讀名稱、格子的說明都沒有中文
     i18nFile = './i18n-en.json';
     try {

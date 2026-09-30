@@ -57,8 +57,14 @@ export function initPlaylists(root, api, con, notice, providers) {
     let text = '';
     con.run('export', {
       onStdout: (s) => { text += s; },
-      onExit: (code) => {
-        if (code !== 0) { noLocal(); return; }
+      onExit: (code, msg, reason) => {
+        if (code !== 0) {
+          // 只有命令真的跑完、以非 0 結束才算「這台沒有本機資料」;斷線、被別的分頁佔著、中止、逾時都不是,照說原因
+          //(#122 review 第 1 點;原因的句子 Console 也會放進 notice)。
+          if (reason === 'done') noLocal();
+          else left.appendChild(emptyState(msg || t('webui.playlists.not_loaded', { button: t('webui.playlists.refresh') })));
+          return;
+        }
         let files;
         try {
           files = JSON.parse(text);
@@ -75,12 +81,18 @@ export function initPlaylists(root, api, con, notice, providers) {
   // (export 失敗 = 本機沒有資料,例如第二台電腦;export 沒辦法知道 Drive 上有沒有清單)→ 同步頁把正本拉回來;
   // 讀過了、真的沒有清單 → 搬家。
   function noLocal() {
-    if (auth.google && auth.google.state !== 'ok') { hint(t('webui.playlists.empty_no_drive'), t('webui.playlists.go_account'), '#/account'); return; }
-    hint(t('webui.playlists.empty_no_local', { option: t('webui.sync.dry_run'), button: t('webui.sync.pull') }), t('webui.playlists.go_sync'), '#/sync');
+    if (!drive()) hint(t('webui.playlists.empty_no_local', { option: t('webui.sync.dry_run'), button: t('webui.sync.pull') }), t('webui.playlists.go_sync'), '#/sync');
   }
   function empty() {
-    if (auth.google && auth.google.state !== 'ok') { noLocal(); return; }
-    left.appendChild(emptyState(t('webui.playlists.empty')));
+    if (!drive()) left.appendChild(emptyState(t('webui.playlists.empty')));
+  }
+  // drive:Google Drive 本身有問題就先說它(畫了回 true)。auth status 的 google.state 是 ok | missing | keychain_error;
+  // keychain_error 不是「沒連」,是要到帳號頁處理的錯誤(同帳號頁,review #62;#122 review 第 2 點)。
+  function drive() {
+    const st = auth.google && auth.google.state;
+    if (!st || st === 'ok') return false;
+    hint(st === 'missing' ? t('webui.playlists.empty_no_drive') : t('webui.playlists.empty_drive_error'), t('webui.playlists.go_account'), '#/account');
+    return true;
   }
   function hint(text, go, href) {
     left.appendChild(emptyState(text));
@@ -89,11 +101,12 @@ export function initPlaylists(root, api, con, notice, providers) {
     left.appendChild(a);
   }
 
-  // canPlay:這台電腦能不能用 capy 在平台上放。沒登入 / 過期就不給 ▶(按了必定失敗);不知道(讀不到 auth)就給。
+  // canPlay:這台電腦能不能用 capy 在平台上放。沒登入(missing)/ 過期(expired)就不給 ▶(按了必定失敗);keychain_error
+  // 是要處理的錯誤、不是沒登入,照給,讓 CLI 把原因說出來(#122 review 第 2 點);不知道(讀不到 auth)也照給。
   function canPlay(p) {
     if (p === 'apple' && !isMac()) return false;
-    const st = auth[p];
-    return !st || st.state === 'ok';
+    const st = auth[p] && auth[p].state;
+    return st !== 'missing' && st !== 'expired';
   }
 
   function render(files) {
