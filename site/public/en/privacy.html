@@ -33,7 +33,7 @@
   </header>
   <main id="main" class="doc">
     <h1>capy Privacy Policy</h1>
-    <p class="meta">Effective date: 21 September 2026 · <a href="/privacy" lang="zh-Hant" hreflang="zh-Hant">中文版</a></p>
+    <p class="meta">Effective date: 30 September 2026 · <a href="/privacy" lang="zh-Hant" hreflang="zh-Hant">中文版</a></p>
     <p>This Privacy Policy explains how the capy application accesses, uses, stores and shares your data, including the Google user data capy can access after you sign in with Google and grant consent, and how you can revoke access and delete your data.</p>
     <div class="short">
       <p><strong>The short version:</strong> capy is an open-source program that runs on your own computer. It has no backend server. Your data stays on your computer, in your own Google Drive, and on the music services you connect. No user data or credentials ever pass through us, and we have no means to collect them.</p>
@@ -74,7 +74,7 @@
     <ul>
       <li>Revoke access: remove capy under <a href="https://myaccount.google.com/permissions">Google Account → Third-party apps and services</a>.</li>
       <li>Delete the data in Drive: Google Drive → Settings → Manage apps → capy → "Delete hidden app data".</li>
-      <li>Delete the data on your computer: run <code>capy auth logout google</code> (and <code>capy auth logout youtube</code>, which deletes the YouTube Music login cookie and the account recorded in the settings file) to clear the tokens from the keychain, then delete capy's settings folder (macOS: <code>~/Library/Application Support/capy-music</code>; Windows: <code>%AppData%\capy-music</code>). If you are worried that the YouTube Music login cookie has leaked, sign out of all devices in your Google Account → Security and it stops working immediately.</li>
+      <li>Delete the data on your computer: run <code>capy auth logout google</code> (and, for the other platforms you connected, <code>capy auth logout spotify</code>, <code>capy auth logout apple</code> and <code>capy auth logout youtube</code>; the last one deletes the YouTube Music login cookie and the account recorded in the settings file) to clear the tokens from the keychain. If you set up an AI endpoint for the song wiki, its API key and custom headers are in the keychain too, and no logout command removes them: in Keychain Access (macOS), delete the <code>capy-music</code> items whose account is <code>ai.api_key</code> or <code>ai.headers</code>; in Credential Manager (Windows), delete the generic credentials <code>capy-music:ai.api_key</code> and <code>capy-music:ai.headers</code>. Then delete capy's settings folder (macOS: <code>~/Library/Application Support/capy-music</code>; Windows: <code>%AppData%\capy-music</code>). If you are worried that the YouTube Music login cookie has leaked, sign out of all devices in your Google Account → Security and it stops working immediately.</li>
     </ul>
 
     <h2 id="security">7. Security</h2>
