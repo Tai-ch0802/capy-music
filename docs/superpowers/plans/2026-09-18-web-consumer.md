@@ -17,7 +17,7 @@
 - 資料來源都現成,全部走 `Console.run`(單一序列槽):連線狀態 = `auth status`(`account.js` 的 `parseStatus` / `stateOf`)、來源清單 = `pl list --provider X` 的 table 事件(ID / 名稱 / 曲數)、預覽與報告 = `migrate` 的 table 事件(`dir action provider playlist pos cid provider_id title artists reason`)。
 - **沒有的**:每一首的進度。`planResolve` 逐首反查(最久的一段)與 `applyPlans` 都不印逐筆輸出,SSE 也沒有進度事件(#65 的結論:不編百分比)。
 - 提示目前畫在主控台的區塊裡,從別頁發起時自動切到主控台(#64)。對精靈來說,這等於做到一半把人丟進終端機。
-- 平台現實(不會因為換皮而改變,精靈必須照實說):三個平台、其中 Apple 只讀(不能當目的地,gate R-8 未過);只有 Spotify 能新建清單,本機曲庫只能加進既有的 M3U;憑證全面 BYO(Spotify 要自建 app、Apple 要自己從網頁播放器複製 token 且揭露不可跳過、Google 登入才有 Drive 正本)。**「連接帳號」不可能像參考站那樣一鍵 OAuth,精靈要引導,不能假裝。**
+- 平台現實(不會因為換皮而改變,精靈必須照實說):三個平台、其中 Apple 只讀(不能當目的地,gate R-8 未過;2026-09-22 決策 49 之後 Apple 可以當目的地、也能建新清單,2026-09-29 決策 60 多了同樣可寫的 YouTube Music);只有 Spotify 能新建清單,本機曲庫只能加進既有的 M3U;憑證全面 BYO(Spotify 要自建 app、Apple 要自己從網頁播放器複製 token 且揭露不可跳過、Google 登入才有 Drive 正本)。**「連接帳號」不可能像參考站那樣一鍵 OAuth,精靈要引導,不能假裝。**
 
 ## §1 本次拍板的決策(附錄 C 決策 45–48)
 
@@ -36,7 +36,7 @@
 - **步驟 ③ 實際會到達的提示序列**(web 底下 `migrateIsTTY` 恆真;`migrate.go:293-378`):① `planResolve`(逐首反查,最久)→ ② 有沒對到的歌時,**先問「N 首 … 沒有自動對應到,現在逐筆裁決?」**(是 = 逐筆 select;否 = 先搬對得上的,不是取消;關掉或等到逾時 = 整輪不寫入,但那是 `huh.ErrUserAborted` → **exit 1 + 英文的 `user aborted`**,不是「取消 = exit 2」那一格——精靈要靠 `prompt_closed` 的 `reason`(`dismissed` / `timeout`)把它說成人話)→ ③ table 事件(預覽)→ ④ 最終確認(「在 spotify 建立清單 … 推過去?」= 開始搬家)。沒對到的歌是跨平台的常態,所以 ② 是主線不是邊角。
 - ② 那句原文帶著一條 CLI 命令(`capy resolve … --review`)。處置:**原文照留(規格 §9:伺服器問的話不改寫),精靈在它旁邊補一句白話**(「有幾首歌在目的地找不到完全一樣的。選『是』一首一首挑;選『否』就先搬找得到的,其餘之後可以在主控台處理。」)。不改 CLI 的措辭(會動到終端機契約與既有測試)。精靈靠原文裡的「現在逐筆裁決?」認出這一則;這個字面由 Go 測試兩邊一起釘(同 `TestWebAccountPageKeysOnAuthStatusWording` 的手法),CLI 改字測試就紅。pre-flight #1 的「第一眼沒有命令字串」指的是頁面自己的文案,伺服器的原文是明列的例外。
 - 提示(確認、逐筆裁決、登入精靈、Apple 揭露、授權連結)在精靈裡就地渲染:`Console.run` 多一個選項把提示畫進呼叫端給的容器,不切到主控台。Apple 揭露照舊不可收合、不可跳過。
-- 照實呈現限制:Apple 當目的地是灰的並寫明「目前只能從 Apple Music 搬出來」;本機曲庫當目的地只列既有的 M3U。目的地已有同名清單時 CLI 會擋(`migrate.go:170`,是 error 不是 prompt):**精靈不解析那句錯誤字串**——步驟 ② 本來就抓了目的地的 `pl list`,送出前自己比對同名,直接給「加進它 / 改用別的清單」;CLI 那句話只當 fallback 原文顯示(review #66 第 6 點)。
+- 照實呈現限制:Apple 當目的地是灰的並寫明「目前只能從 Apple Music 搬出來」(2026-09-22 決策 49 之後取消,灰的只剩只讀平台);本機曲庫當目的地只列既有的 M3U。目的地已有同名清單時 CLI 會擋(`migrate.go:170`,是 error 不是 prompt):**精靈不解析那句錯誤字串**——步驟 ② 本來就抓了目的地的 `pl list`,送出前自己比對同名,直接給「加進它 / 改用別的清單」;CLI 那句話只當 fallback 原文顯示(review #66 第 6 點)。
 - 完成報告:搬了幾首、沒搬到的歌逐首列出、下一步(想持續同步 → 同步頁)。**資料來源要吃兩種 DIR**(review #66 第三輪):「加進既有清單」那條路接進去的每一首都是 `migrate` 列、`ACTION` 永遠是 `add`,推不出去只寫在 `REASON`;「新建清單」那條路,正本既有的曲目是 `push` 列(`add` / `skip`),正本已連著來源(follow)時甚至一列 `migrate` 都沒有。所以:沒搬到的歌 = `ACTION == "skip"` 或 `REASON` 不以「推到 」開頭的列;搬了幾首 = `migrate` 與 `push` 兩種列以 `CID` 去重後扣掉沒搬到的。
 - 一次搬一個清單。多選排隊是 Q39。
 
