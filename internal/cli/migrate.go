@@ -162,6 +162,17 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 			return friendlyErr(dst.prov, err)
 		}
 		if len(dup) > 0 {
+			// 指路 --to 那份之前,先照 migrateCanonical 試走一次(不寫入):會因為沒有 base 被擋,就直接給改名指引,不指路一條注定被擋的命令(#134 review)
+			alt := migrateEnd{prov: dst.prov, id: dup[0].id, name: src.name}
+			if err := withCanonical(ctx, stderr, func(s *canonState) error {
+				var nb *noBaseError
+				if _, err := migrateCanonical(s, src, alt, io.Discard); errors.As(err, &nb) {
+					return i18n.Errorf("migrate.err.same_name_no_base", "platform", dst.prov, "name", src.name, "ids", strings.Join(sameNameIDs(dup), i18n.T("sep.list")), "canon", nb.pl.Name, "pid", nb.pl.PID, "id", alt.id)
+				}
+				return errSkipCommit
+			}); err != nil {
+				return err
+			}
 			return i18n.Errorf("migrate.err.same_name_exists", "platform", dst.prov, "name", src.name, "ids", strings.Join(sameNameIDs(dup), i18n.T("sep.list")), "id", dup[0].id)
 		}
 		dst.name = src.name
@@ -214,7 +225,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		}
 		// 正本已連著來源(README 手動流程做到一半、或本來就在同步):來源那半也 pull 進 C,新歌落在它在來源的真實位置——
 		// 尾端追加會讓正本與來源的順序分岔,結尾建議的 pl sync 就會把使用者的來源清單重排(review #55,踩到決策 38)
-		if pl.Links[src.prov] != "" {
+		if pl.Links[src.prov] == src.id { // 連著的是來源平台的另一份清單(或目標就在同一平台)不算:同 follow
 			if err := observe(src.prov, pf); err != nil {
 				return err
 			}
@@ -413,7 +424,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		if unmapped > 0 {
 			summary += i18n.T("migrate.summary.unmapped", "count", unmapped, "platform", dst.prov, "name_arg", nameArg) + "\n"
 		}
-		if link := pl.Links[src.prov]; link != "" { // 兩句都要看 links 講:來源連著時「一次性複製」是假話、再叫人 pl link 是多餘的(review #55)
+		if link := pl.Links[src.prov]; link == src.id { // 兩句都要看 links 講:來源連著時「一次性複製」是假話、再叫人 pl link 是多餘的(review #55)
 			summary += i18n.T("migrate.summary.source_linked", "platform", src.prov, "id", link, "name_arg", nameArg) + "\n"
 		} else {
 			summary += i18n.T("migrate.summary.source_unlinked", "platform", src.prov, "name_arg", nameArg, "id", src.id) + "\n"
@@ -474,11 +485,21 @@ func migrateCanonical(s *canonState, src, dst migrateEnd, stderr io.Writer) (*ca
 		fmt.Fprintln(stderr, i18n.T("migrate.canon.reuse", "name", pl.Name, "pid", pl.PID, "links", linkSummary(pl)))
 	}
 	if dst.id != "" && pl.Links[dst.prov] != dst.id {
+		// 有歌的正本、目標在它上面沒有 base(條件同 observeAndDerive 採用 base 的那條):吸進目標會照目標的順序重排正本(決策 38),擋下
+		if b, ok := mergedBase(s)[pl.PID][dst.prov]; len(pl.Items) > 0 && (!ok || b.Snapshot.ID != dst.id) {
+			return nil, &noBaseError{i18n.Errorf("migrate.err.canon_same_name_no_base", "name", pl.Name, "pid", pl.PID, "platform", dst.prov, "id", dst.id), pl}
+		}
 		pl.Links[dst.prov] = dst.id
 		pl.UpdatedAt = canon.Now().Unix()
 		fmt.Fprintln(stderr, i18n.T("migrate.canon.linked", "name", pl.Name, "pid", pl.PID, "end", dst))
 	}
 	return pl, nil
+}
+
+// noBaseError:migrateCanonical 不沿用「有歌、目標在它上面沒有 base」的正本;撞同名的分支靠它認出改用 --to 也會被擋(#134 review)。
+type noBaseError struct {
+	error
+	pl *canon.Playlist
 }
 
 // migratePlanPush:push 半邊(strict,同 pl push),再加 migrate 自己的規矩——只做新增:B 有待同步的移除 / 換序 / 改名就擋下,先 pl sync。

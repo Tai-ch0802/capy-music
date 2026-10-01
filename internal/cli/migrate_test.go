@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"strings"
@@ -248,6 +249,106 @@ func TestMigrateRefusesCanonicalLinkedToOtherSourcePlaylist(t *testing.T) {
 	_, _, err := runPull(t, "migrate", "公路旅行", "--from", "apple", "--to", "spotify", "--yes")
 	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "連著 apple:q7,不是來源 apple:q1") || fs1.createdCount() != 0 {
 		t.Fatalf("要擋:%v", err)
+	}
+}
+
+// 同步頁計畫(2026-10-01)Q2:目標既有、沒連,跟一份有歌的正本同名——沿用它就要在沒有 base 的情況下吸進目標,照目標的順序重排正本
+// (決策 38)。擋下:exit 1、Drive / SQLite / 平台零寫入、指路先改名。修之前正本被重排成 [b a c]、exit 0。
+// 正本沒歌、或目標在正本上有 base(連過、unlink 後還在)時照舊。
+func TestMigrateRefusesSameNameCanonicalWithoutTargetBase(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	catalogISRC(fs2, "c")
+	fs1.set("p1", "公路旅行", "a", "b")
+	fs1.set("p9", "新歌", "c")
+	fs2.set("q2", "公路旅行", "b", "a")
+	mustPull(t, "pl", "link", "公路旅行", "spotify:p1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	files, db := driveFiles(t, dc), dumpBytes(t)
+	_, errs, err := runPull(t, "migrate", "新歌", "--from", "spotify", "--to", "apple:q2", "--yes")
+	if got := cidsOf(drivePlaylistNamed(t, dc, "公路旅行")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b")}) {
+		t.Fatalf("正本被重排成 %v(exit %d):\n%s", got, exitOf(t, err), errs)
+	}
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "先在 apple 上把那份清單改名") {
+		t.Fatalf("要 exit 1、指路改名:%v", err)
+	}
+	if !sameFiles(files, driveFiles(t, dc)) || !bytes.Equal(db, dumpBytes(t)) || len(fs1.written()) != 0 || len(fs2.written()) != 0 || fs2.createdCount() != 0 {
+		t.Fatal("擋下要零寫入:Drive、SQLite、平台都不動")
+	}
+	// 目標在正本上有 base:照舊加進去,正本順序不動
+	fs2.set("q2", "公路旅行", "a", "b")
+	mustPull(t, "pl", "link", "公路旅行", "apple:q2")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	mustPull(t, "pl", "unlink", "公路旅行", "apple")
+	mustPull(t, "migrate", "新歌", "--from", "spotify", "--to", "apple:q2", "--yes")
+	if got := cidsOf(drivePlaylistNamed(t, dc, "公路旅行")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b"), fakeCID("c")}) || !slices.Equal(fs2.tracksOf("q2"), []string{"a", "b", "c"}) {
+		t.Fatalf("有 base 照舊:%v %v", got, fs2.tracksOf("q2"))
+	}
+	// 同名正本沒歌:照舊,目標的順序就是正本的順序
+	fs1.set("p5", "空的")
+	fs2.set("q5", "空的", "b", "a")
+	mustPull(t, "pl", "link", "空的", "spotify:p5")
+	mustPull(t, "pl", "pull", "空的", "--yes")
+	mustPull(t, "migrate", "新歌", "--from", "spotify", "--to", "apple:q5", "--yes")
+	if got := cidsOf(drivePlaylistNamed(t, dc, "空的")); !slices.Equal(got, []string{fakeCID("b"), fakeCID("a"), fakeCID("c")}) {
+		t.Fatalf("正本沒歌照舊:%v", got)
+	}
+}
+
+// 正本在 apple 上的 base 是另一份清單 q1 留下的(link q1 → pull → unlink):對 q2 不算數(同 observeAndDerive),照樣擋下。
+// 守門只看「有沒有 base」時這則會 fail(#134 review)。
+func TestMigrateRefusesWhenTargetBaseIsFromOtherPlaylist(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	catalogISRC(fs2, "c")
+	fs1.set("p1", "公路旅行", "a", "b")
+	fs1.set("p9", "新歌", "c")
+	fs2.set("q1", "舊的", "a", "b")
+	fs2.set("q2", "公路旅行", "b", "a")
+	mustPull(t, "pl", "link", "公路旅行", "spotify:p1")
+	mustPull(t, "pl", "link", "公路旅行", "apple:q1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	mustPull(t, "pl", "unlink", "公路旅行", "apple")
+	files := driveFiles(t, dc)
+	_, errs, err := runPull(t, "migrate", "新歌", "--from", "spotify", "--to", "apple:q2", "--yes")
+	if got := cidsOf(drivePlaylistNamed(t, dc, "公路旅行")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b")}) || exitOf(t, err) != 1 || !sameFiles(files, driveFiles(t, dc)) || len(fs2.written()) != 0 {
+		t.Fatalf("q1 的 base 不算數,要擋下、零寫入:%v(exit %d)\n%s", got, exitOf(t, err), errs)
+	}
+}
+
+// 兩步驟:新建目標撞到同名清單時,不再指路 --to <那份>(下一步會被沒有 base 擋下),第一步就給改名指引;兩步都零寫入(#134 review)。
+// 修之前第一步說「要加進它就 --to apple:q2」,照做就被擋、要人改名。
+func TestMigrateSameNameTargetGivesRenameHintFirst(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	fs1.set("p1", "公路旅行", "a", "b")
+	fs2.set("q2", "公路旅行", "b", "a")
+	mustPull(t, "pl", "link", "公路旅行", "spotify:p1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	files, db := driveFiles(t, dc), dumpBytes(t)
+	_, _, err := runPull(t, "migrate", "公路旅行", "--from", "spotify", "--to", "apple", "--yes")
+	if exitOf(t, err) != 1 || strings.Contains(err.Error(), "--to apple:q2") || !strings.Contains(err.Error(), "先在 apple 上把那份清單改名") {
+		t.Fatalf("第一步就給改名指引、不指路 --to:%v", err)
+	}
+	_, _, err = runPull(t, "migrate", "公路旅行", "--from", "spotify", "--to", "apple:q2", "--yes")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "先在 apple 上把那份清單改名") {
+		t.Fatalf("第二步一樣要改名:%v", err)
+	}
+	if !sameFiles(files, driveFiles(t, dc)) || !bytes.Equal(db, dumpBytes(t)) || len(fs1.written()) != 0 || len(fs2.written()) != 0 || fs2.createdCount() != 0 {
+		t.Fatal("兩步都零寫入")
+	}
+}
+
+// 正本連著來源平台的另一份清單(不是來源本身):不 pull 那份、結尾也不說來源連著——同 follow,只有 Links[來源平台] == 來源 id 才算。
+// 修之前只看 Links[來源平台] 非空:多 pull 了 spotify:p1 剛加的 e、結尾說「來源 spotify:p1 也連著這個正本」。
+func TestMigrateSourceIsOtherPlaylistOnLinkedPlatform(t *testing.T) {
+	fs1, fs2, _, _ := syncWorld(t)
+	catalogISRC(fs2, "d")
+	fs1.set("p9", "新歌", "d")
+	fs1.set("p1", "通勤", "a", "b", "c", "e") // spotify:p1 多了 e,留給 pl sync
+	out, errs := mustPull(t, "migrate", "新歌", "--from", "spotify", "--to", "apple:q1", "--yes")
+	if !slices.Equal(dirActions(out), []string{"migrate add spotify", "push add apple"}) || !slices.Equal(fs2.tracksOf("q1"), []string{"a", "b", "c", "d"}) {
+		t.Fatalf("不 pull spotify:p1:%v\n%s%s", fs2.tracksOf("q1"), out, errs)
+	}
+	if strings.Contains(errs, "也連著這個正本") || !strings.Contains(errs, "來源沒有連結") {
+		t.Fatalf("結尾不說來源連著:%s", errs)
 	}
 }
 
