@@ -460,6 +460,10 @@ export function initSync(root, api, con, notice, providers, arg) {
       return card;
     }
     if (ls.kind === 'unlinked') {
+      // 預覽讀不到歌(Spotify 上追蹤的別人的清單、權限不夠…):納入時 pl link 也會以 unreadable 擋下,不給按。
+      // Apple 例外:它對空清單也回「找不到」,空清單照樣可以納入。
+      const v = previews[`${p}\n${r.id}`];
+      if (v && v.error && p !== 'apple') { card.appendChild(el('p', null, t('webui.sync.adopt.unreadable'))); return card; }
       card.append(steps(0), el('p', null, t('webui.sync.adopt.explain', { button: t('webui.playlists.platforms.adopt'), name: r.name, platform })));
       acts.append(btn(t('webui.sync.dup_check'), 'btn--ghost', () => dupCheck(p, r)),
         btn(t('webui.playlists.platforms.adopt'), 'btn--primary', () => lf.adopt(p, r, rightFlow, t('webui.sync.adopt.next'))));

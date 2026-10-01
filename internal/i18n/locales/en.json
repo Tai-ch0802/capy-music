@@ -1572,6 +1572,7 @@
   "webui.spotify.listen_label": "Listen on Spotify: \"{title}\"",
   "webui.sync.adopt.explain": "\"{button}\" creates a master copy named \"{name}\" in your Google Drive and links this playlist (that happens as soon as you press it), then brings its songs into the master copy in their current order; capy lists them for you to confirm first. Duplicate songs in this playlist go into the master copy as they are. This {platform} playlist itself isn't changed.",
   "webui.sync.adopt.next": "Next: create a copy on another service below, then press Sync and changes carry over both ways.",
+  "webui.sync.adopt.unreadable": "capy can't read the songs in this playlist (see below), so it can't be added.",
   "webui.sync.adv.dedup_note": "Removes duplicate songs in the master copy (keeping the first), then pushes to the linked services",
   "webui.sync.adv.lead": "These buttons map directly to capy's pl pull / pl push / pl sync / pl dedup, for when you already know what you want.",
   "webui.sync.adv.no_dups": "No duplicate songs.",

@@ -1935,6 +1935,17 @@ await scenario('8u', async () => {
   await pickList(sy, 'Workout');
   check(sent().filter((c) => c === `pl show ${SP2} --provider spotify`).length === 1, '讀過的清單不重讀');
 
+  // 預覽讀不到歌(Spotify 上追蹤的別人的清單):pl link 也會擋下,不給納入;Apple 的「找不到」可能只是空清單,照給
+  const sy2 = await open({ [`pl show ${SP2} --provider spotify`]: { events: [exit(1, 'Error: 無法讀取這個清單的內容')] }, 'pl list --provider apple': table(LH, [['p.X', 'Gym', '-', '']]),
+    'pl show p.X --provider apple': { events: [exit(1, 'Error: 找不到')] } });
+  await pickPlat(sy2, 'spotify');
+  await pickList(sy2, 'Workout');
+  const c2 = allByClass(sec(sy2, 1), 'pl__flow-card')[0];
+  check(!byText(c2, '納入 capy') && c2.textContent.includes('讀不到這份清單的歌') && sec(sy2, 1).textContent.includes('無法讀取這個清單的內容'), `Spotify 預覽讀不到:不給納入、說原因:${c2.textContent}`);
+  await pickPlat(sy2, 'apple');
+  await pickList(sy2, 'Gym');
+  check(byText(allByClass(sec(sy2, 1), 'pl__flow-card')[0], '納入 capy') && sec(sy2, 1).textContent.includes('Apple Music 對空清單也會回「找不到」'), 'Apple 預覽找不到:可能是空的,照給納入');
+
   // ── 看看有沒有重複:pl dedup <平台>:<清單>,不帶任何旗標;有表時接下一步、沒有時一句
   script[`pl dedup spotify:${SP2}`] = table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['2', SP1, 'Song A', 'a', 'r', 'dup_id']]);
   byText(sec(sy, 1), '看看這份有沒有重複').click();

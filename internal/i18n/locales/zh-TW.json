@@ -1488,6 +1488,7 @@
   "webui.spotify.listen_label": "在 Spotify 上聽「{title}」",
   "webui.sync.adopt.explain": "按「{button}」會在你的 Google Drive 建一份叫「{name}」的正本並連上這份清單(這一步按下去就做),再照原本的順序把歌拉進正本;拉進去之前會先列出來給你確認。清單裡重複的歌也會照原樣進正本。這份 {platform} 清單本身不會被改。",
   "webui.sync.adopt.next": "下一步:從下面挑一個平台「建一份」,之後按「同步」兩邊互相帶過去。",
+  "webui.sync.adopt.unreadable": "讀不到這份清單的歌(原因見下面),所以不能納入。",
   "webui.sync.adv.dedup_note": "整理正本裡重複的歌(只留第一份),再推到連著的平台",
   "webui.sync.adv.lead": "這裡的按鈕直接對應 capy 的 pl pull / pl push / pl sync / pl dedup,適合已經知道要做什麼的時候。",
   "webui.sync.adv.no_dups": "沒有重複的歌。",

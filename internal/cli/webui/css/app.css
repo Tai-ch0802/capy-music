@@ -100,6 +100,9 @@ body[data-busy] .route__note, body[data-busy] .capy-svg__eye, body[data-busy] .c
 .pick__legend { padding: 0; margin-bottom: .5rem; font-size: var(--t-14); color: var(--muted); }
 .pcard { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; flex-wrap: wrap; padding: .9rem 1.1rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-lg); cursor: pointer; transition: border-color var(--dur-2) var(--ease), background-color var(--dur-2) var(--ease), transform var(--dur-1) var(--ease); }
 .pcard:hover { border-color: var(--line-hi); }
+/* 單選卡裡的 radio 是 .sr-only(position: absolute):卡片沒有定位的話,它會以整頁為準定位在卡片原本的位置,
+   卡片在第一屏以下時就把整份文件撐高、殼底下露出空白(同步頁的平台卡;搬家精靈的卡片剛好都在第一屏才沒露餡) */
+.pcard, label.pl__item { position: relative; }
 .pcard:active { transform: scale(.99); }
 .pcard:has(input:checked) { border-color: var(--accent); background: rgb(var(--accent-rgb) / .12); box-shadow: var(--shadow); }
 .pcard:has(input:disabled) { cursor: default; opacity: .6; }
@@ -329,6 +332,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .pl__about-list span { color: var(--muted); }
 /* 同步頁(計畫 2026-10-01-sync-page-redesign.md §2):頁首的小示意圖、在同步的清單、平台清單的列、進階。顏色與元件沿用既有的 */
 .sync__intro { display: grid; gap: .75rem; margin: 1rem 0 0; }
+.sync__intro .pl__about-list li { align-content: start; gap: .25rem; } /* 三張卡一樣高時,字從上面排,不把標題和內文拉開 */
 .sync__diagram { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: var(--t-14); }
 .sync__box { border: 1px solid var(--line-hi); border-radius: var(--r); padding: .2rem .7rem; background: var(--surface); }
 .sync__box--hub { border-color: var(--accent); color: var(--text-hi); background: rgb(var(--accent-rgb) / .1); }
@@ -349,13 +353,16 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .sync__count { color: var(--muted); font-size: var(--t-12); }
 .sync__to, .sync__why { color: var(--muted); font-size: var(--t-12); overflow-wrap: anywhere; }
 @container (max-width: 40rem) {
-  .sync__row { grid-template-columns: minmax(0, 1fr) auto; }
-  .sync__to, .sync__why { grid-column: 1 / -1; }
+  .sync__row { grid-template-columns: minmax(0, 1fr) auto; } /* 名稱 + 首數一行;連到 + 同步一行(計畫 §2.9) */
+  .sync__to, .sync__why { grid-column: 1; }
 }
+.sync__row > .btn { justify-self: end; }
 .sync__item { display: grid; gap: .15rem; flex: none; }
 .sync__item[hidden] { display: none; }
 .sync__item .pl__item small { grid-column: 1 / -1; color: var(--muted); font-size: var(--t-12); }
 .sync__item > .wiz__link { justify-self: start; margin-left: .9rem; font-size: var(--t-12); }
+.sync__plats { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .5rem; } /* 左欄 16rem 時一列一張;疊成一欄時排成多欄 */
+.sync__plats > .page__note { grid-column: 1 / -1; margin: 0; }
 .sync__lists { display: grid; gap: .5rem; margin-top: 1rem; }
 .sync__lists > .btn { justify-self: start; }
 .sync__start { margin: 0; padding-left: 1.2rem; display: grid; gap: .35rem; font-size: var(--t-14); }
