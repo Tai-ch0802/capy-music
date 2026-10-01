@@ -995,6 +995,7 @@
   "spotify.err.write_forbidden": "Spotify refused to write to playlist {id} (only your own playlists and collaborative playlists can be written to): {err}",
   "spotify.err.write_not_found": "Spotify can't find playlist {id} (or the write endpoint isn't /items; see spec §1.1): {err}",
   "spotify.unpushable_item": "track {n} {id}",
+  "spotify.unwritable.not_owned": "{owner}'s playlist, not collaborative; Spotify only lets the owner and collaborators change it",
   "store.err.create_schema": "creating the schema: {err}",
   "store.err.no_db": "there is no state.db on this computer",
   "store.err.open": "opening {path}: {err}",

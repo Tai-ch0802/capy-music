@@ -928,6 +928,7 @@
   "spotify.err.write_forbidden": "Spotify 拒絕寫入清單 {id}(只有自己的或協作的清單可以寫):{err}",
   "spotify.err.write_not_found": "Spotify 找不到清單 {id}(或寫入端點不是 /items,見 spec §1.1):{err}",
   "spotify.unpushable_item": "第 {n} 首 {id}",
+  "spotify.unwritable.not_owned": "{owner} 的清單、沒開放協作;Spotify 只讓擁有者與協作者修改",
   "store.err.create_schema": "建 schema:{err}",
   "store.err.no_db": "本機沒有 state.db",
   "store.err.open": "開啟 {path}:{err}",
