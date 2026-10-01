@@ -359,6 +359,10 @@ func mapPlayerErr(err error) error {
 			// 訊息講錯會讓人白跑一次 auth login。包成 sentinel 讓呼叫端能 errors.Is,原始的
 			// *apiError 也留在鏈上(debug 要看 status / reason 時還在)。
 			return i18n.Errorf("spotify.err.volume_not_allowed", "not_allowed", provider.ErrVolumeNotAllowed, "err", err)
+		case ae.Status == http.StatusForbidden && ae.Reason == "PREMIUM_REQUIRED":
+			// 免費帳號:player 端點一律 403(計畫 2026-09-30 Q4)。在 provider 這層就換成可行動的說法,CLI、TUI、
+			// now --watch、網頁每個播放入口才都拿得到(同音量那一條,原始的 *apiError 也留在鏈上)。
+			return i18n.Errorf("spotify.err.premium_required", "premium", provider.ErrPremiumRequired, "err", err)
 		}
 	}
 	return err

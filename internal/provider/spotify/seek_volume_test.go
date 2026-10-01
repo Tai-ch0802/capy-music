@@ -52,7 +52,7 @@ func TestVolumeControlDisallowedMessage(t *testing.T) {
 	if !strings.Contains(err.Error(), "403") { // 原始的 apiError 留在鏈上,debug 看得到 status
 		t.Errorf("原始錯誤要留在鏈上:%v", err)
 	}
-	// 其他 403 沒有特別說法,原樣往上(不冒充成音量問題)
+	// 別的 403 不冒充成音量問題
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error":{"status":403,"reason":"PREMIUM_REQUIRED","message":"x"}}`))
@@ -60,6 +60,41 @@ func TestVolumeControlDisallowedMessage(t *testing.T) {
 	defer srv2.Close()
 	if err := NewClient(srv2.Client(), srv2.URL).SetVolume(context.Background(), 40); err == nil || errors.Is(err, provider.ErrVolumeNotAllowed) {
 		t.Fatalf("其他 403 不該套音量的說法:%v", err)
+	}
+}
+
+// 免費帳號(計畫 2026-09-30 Q4):每個 player 端點的 403 PREMIUM_REQUIRED 都映射成 ErrPremiumRequired,原始錯誤留在鏈上;
+// 不是授權過期(重新登入沒用),也不是音量問題。沒有 reason 的 403 照舊原樣往上。
+func TestPremiumRequiredOnEveryPlayerCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"status":403,"reason":"PREMIUM_REQUIRED","message":"Player command failed: Premium required"}}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.Client(), srv.URL)
+	ctx := context.Background()
+	for name, call := range map[string]func() error{
+		"play":    func() error { return c.Play(ctx, []string{"spotify:track:4uLU6hMCjMI75M1A2tKUQC"}, "") },
+		"context": func() error { return c.PlayContext(ctx, "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", "") },
+		"pause":   func() error { return c.Pause(ctx) },
+		"next":    func() error { return c.Next(ctx) },
+		"prev":    func() error { return c.Prev(ctx) },
+		"seek":    func() error { return c.Seek(ctx, 1000) },
+		"volume":  func() error { return c.SetVolume(ctx, 40) },
+	} {
+		err := call()
+		var ae *apiError
+		if !errors.Is(err, provider.ErrPremiumRequired) || errors.Is(err, provider.ErrAuthExpired) || errors.Is(err, provider.ErrVolumeNotAllowed) || !errors.As(err, &ae) {
+			t.Errorf("%s:403 PREMIUM_REQUIRED 要是 ErrPremiumRequired、原始錯誤留在鏈上:%v", name, err)
+		}
+	}
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"status":403,"message":"x"}}`))
+	}))
+	defer plain.Close()
+	if err := NewClient(plain.Client(), plain.URL).Pause(ctx); err == nil || errors.Is(err, provider.ErrPremiumRequired) {
+		t.Fatalf("沒有 reason 的 403 不該冒充成 Premium 問題:%v", err)
 	}
 }
 

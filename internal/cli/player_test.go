@@ -150,6 +150,18 @@ func TestPauseNoActiveDeviceFriendly(t *testing.T) {
 	}
 }
 
+// 免費帳號(計畫 2026-09-30 Q4):播放命令被拒時說人話——是 Spotify 的規定、請改用 Spotify app,不叫人重新登入。
+func TestPauseFreeAccountSaysPremium(t *testing.T) {
+	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"status":403,"reason":"PREMIUM_REQUIRED","message":"Player command failed: Premium required"}}`))
+	})
+	_, err := runCLI(t, "pause")
+	if err == nil || !strings.Contains(err.Error(), "Spotify 只讓 Premium 帳號從其他 app 遙控播放") || !strings.Contains(err.Error(), "Spotify app") || strings.Contains(err.Error(), "auth login") {
+		t.Fatalf("免費帳號要說是 Premium 的限制、指到 Spotify app:%v", err)
+	}
+}
+
 func TestNowNothingPlaying(t *testing.T) {
 	swapProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
