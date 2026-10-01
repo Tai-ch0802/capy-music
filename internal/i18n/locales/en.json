@@ -605,6 +605,7 @@
   "migrate.err.canon_linked_elsewhere": "the master copy with the same name, {name} ({pid}), is linked to {platform}:{linked}, not {id}: first run capy pl unlink {name_arg} {platform}",
   "migrate.err.canon_linked_other_source": "the master copy with the same name, {name} ({pid}), is linked to {platform}:{linked}, not the source {src}: if that's the one you want to move, use it; otherwise first run capy pl unlink {name_arg} {platform}",
   "migrate.err.canon_linked_to_target": "a master copy named \"{name}\" ({pid}) is already linked to {platform}:{id}: to add to that playlist, use --to {platform}:{id}",
+  "migrate.err.canon_same_name_no_base": "the master copy with the same name, {name} ({pid}), already has tracks, but {platform}:{id} hasn't been pulled for it yet (no base): adding to it would reorder this master copy to the order on {platform}, so capy won't. Rename that playlist on {platform} first and run this again, so capy creates a new master copy; the existing master copy won't be synced with it",
   "migrate.err.created_not_listed": "the playlist {id} that was just created doesn't show up in the {platform} playlist list; the link was removed",
   "migrate.err.need_from_to": "--from and --to are required (there is no picker outside a terminal): capy migrate <playlist> --from apple --to spotify[:<existing-playlist>]",
   "migrate.err.pending_non_add": "{name} has an unsynced {kind} on {platform} (migrate only adds): run capy pl sync {name_arg} --provider {platform} first, then migrate",

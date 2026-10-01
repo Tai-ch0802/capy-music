@@ -569,6 +569,7 @@
   "migrate.err.canon_linked_elsewhere": "同名的 canonical 清單 {name}({pid})已連結 {platform}:{linked},不是 {id}:先 capy pl unlink {name_arg} {platform}",
   "migrate.err.canon_linked_other_source": "同名的 canonical 清單 {name}({pid})連著 {platform}:{linked},不是來源 {src}:要搬的是那一份就用它,不然先 capy pl unlink {name_arg} {platform}",
   "migrate.err.canon_linked_to_target": "已經有叫「{name}」的 canonical 清單({pid})連著 {platform}:{id}:要加進那個清單就 --to {platform}:{id}",
+  "migrate.err.canon_same_name_no_base": "同名的正本 {name}({pid})已經有歌,但這份正本的 {platform}:{id} 還沒 pull 過(沒有 base):加進去會照 {platform} 上的順序重排這份正本,所以 capy 不做。先在 {platform} 上把那份清單改名再重跑,capy 才會建一份新的正本;原本那份正本不會跟它同步",
   "migrate.err.created_not_listed": "{platform} 端的清單列表看不到剛建的清單 {id},已取消連結",
   "migrate.err.need_from_to": "--from 與 --to 必填(非終端機沒有挑選器):capy migrate <清單> --from apple --to spotify[:<既有清單>]",
   "migrate.err.pending_non_add": "{name} 在 {platform} 有還沒同步的 {kind}(migrate 只做新增):先 capy pl sync {name_arg} --provider {platform},再 migrate",

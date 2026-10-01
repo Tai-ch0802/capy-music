@@ -214,7 +214,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		}
 		// 正本已連著來源(README 手動流程做到一半、或本來就在同步):來源那半也 pull 進 C,新歌落在它在來源的真實位置——
 		// 尾端追加會讓正本與來源的順序分岔,結尾建議的 pl sync 就會把使用者的來源清單重排(review #55,踩到決策 38)
-		if pl.Links[src.prov] != "" {
+		if pl.Links[src.prov] == src.id { // 連著的是來源平台的另一份清單(或目標就在同一平台)不算:同 follow
 			if err := observe(src.prov, pf); err != nil {
 				return err
 			}
@@ -413,7 +413,7 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		if unmapped > 0 {
 			summary += i18n.T("migrate.summary.unmapped", "count", unmapped, "platform", dst.prov, "name_arg", nameArg) + "\n"
 		}
-		if link := pl.Links[src.prov]; link != "" { // 兩句都要看 links 講:來源連著時「一次性複製」是假話、再叫人 pl link 是多餘的(review #55)
+		if link := pl.Links[src.prov]; link == src.id { // 兩句都要看 links 講:來源連著時「一次性複製」是假話、再叫人 pl link 是多餘的(review #55)
 			summary += i18n.T("migrate.summary.source_linked", "platform", src.prov, "id", link, "name_arg", nameArg) + "\n"
 		} else {
 			summary += i18n.T("migrate.summary.source_unlinked", "platform", src.prov, "name_arg", nameArg, "id", src.id) + "\n"
@@ -474,6 +474,10 @@ func migrateCanonical(s *canonState, src, dst migrateEnd, stderr io.Writer) (*ca
 		fmt.Fprintln(stderr, i18n.T("migrate.canon.reuse", "name", pl.Name, "pid", pl.PID, "links", linkSummary(pl)))
 	}
 	if dst.id != "" && pl.Links[dst.prov] != dst.id {
+		// 有歌的正本、目標在它上面沒有 base(條件同 observeAndDerive 採用 base 的那條):吸進目標會照目標的順序重排正本(決策 38),擋下
+		if b, ok := mergedBase(s)[pl.PID][dst.prov]; len(pl.Items) > 0 && (!ok || b.Snapshot.ID != dst.id) {
+			return nil, i18n.Errorf("migrate.err.canon_same_name_no_base", "name", pl.Name, "pid", pl.PID, "platform", dst.prov, "id", dst.id)
+		}
 		pl.Links[dst.prov] = dst.id
 		pl.UpdatedAt = canon.Now().Unix()
 		fmt.Fprintln(stderr, i18n.T("migrate.canon.linked", "name", pl.Name, "pid", pl.PID, "end", dst))
