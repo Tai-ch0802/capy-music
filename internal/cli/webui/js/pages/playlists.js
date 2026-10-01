@@ -7,7 +7,7 @@
 import { el, btn, providerName, emptyState, pageHead } from './common.js';
 import { spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
 import { parseStatus } from './account.js';
-import { COLUMNS, norm, mappingOf, links, driveState, loggedOut, relogin, listState, cell, filterBox, makeFlow, readLists, moveLink, linkFlows } from './plflow.js';
+import { COLUMNS, norm, mappingOf, links, driveState, loggedOut, relogin, listState, cell, filterBox, makeFlow, readLists, linkFlows } from './plflow.js';
 import { lineSplitter, wikiRenderer } from './wiki.js';
 import { t } from '../i18n.js';
 
@@ -18,7 +18,7 @@ const FILTER_SONGS = 20;                         // 一份清單超過這麼多�
 // 寫成函式:測試要換 navigator。
 const isMac = () => /Mac/.test(globalThis.navigator?.userAgent || '');
 
-export function initPlaylists(root, api, con, notice, providers) {
+export function initPlaylists(root, api, con, notice, providers, arg) {
   pageHead(root, t('webui.playlists.title'), t('webui.playlists.lead'));
   const cols = el('div', 'pl__cols');
   const left = el('div', 'pl__left');
@@ -42,7 +42,7 @@ export function initPlaylists(root, api, con, notice, providers) {
   // st.platLists:{ 平台: { rows: [{ id, name, tracks }], error } };null = 還沒讀過。
   // 放在一個物件裡交給共用的連結面板(plflow.js):它每次用到時才讀,重讀後拿到的是新的值。
   const st = { auth: {}, devices: [], platLists: null };
-  let selected = ''; // 選中的那份(pid):寫入後、回到這一頁時重讀,畫回同一份
+  let selected = arg || ''; // 選中的那份(pid):寫入後、回到這一頁時重讀,畫回同一份;#/playlists/<pid> 直接打開那一份
   // flow:寫入命令的就地區塊(步驟條、狀態句、變更表、提示;表在上、提示在下——CLI 先印表再問確認)。
   // 只在切到別份清單時清空;重讀後搬進新畫的右欄,收尾那句不會因為重讀而消失。
   const flow = el('div', 'pl__flow');
@@ -93,7 +93,7 @@ export function initPlaylists(root, api, con, notice, providers) {
   // (export 失敗 = 本機沒有資料,例如第二台電腦;export 沒辦法知道 Drive 上有沒有清單)→ 同步頁把正本拉回來;
   // 讀過了、真的沒有清單 → 搬家。
   function noLocal() {
-    if (!drive()) hint(t('webui.playlists.empty_no_local', { option: t('webui.sync.dry_run'), button: t('webui.sync.pull') }), t('webui.playlists.go_sync'), '#/sync');
+    if (!drive()) hint(t('webui.playlists.empty_no_local', { button: t('webui.sync.readback') }), t('webui.playlists.go_sync'), '#/sync');
   }
   function empty() {
     if (!drive()) left.appendChild(emptyState(t('webui.playlists.empty')));
@@ -304,7 +304,7 @@ export function initPlaylists(root, api, con, notice, providers) {
   }
 
   // platRow:一份平台清單。連著哪一份正本(links 裡的 id 相同)→ 說出來;有同名的正本(不分大小寫,同 CLI 的 find)→ 不給納入,
-  // 指到搬家(納入會連到那一份、第一次 pull 照平台順序重排它;真正的護欄是 --new-only,這裡只是提示);其餘給「納入」。
+  // 說要先在平台上改名(納入會連到那一份、第一次 pull 照平台順序重排它;真正的護欄是 --new-only,這裡只是提示);其餘給「納入」。
   function platRow(p, r) {
     const row = el('div', 'pl__plat');
     row.dataset.platform = p;
@@ -317,7 +317,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     let state = '';
     if (ls.kind === 'unknown') { /* 分不出來:不標、不給納入 */ }
     else if (ls.kind === 'linked') state = t('webui.playlists.platforms.linked', { name: ls.master.name });
-    else if (dup) { state = t('webui.playlists.platforms.same_name', { name: ls.master.name }); acts.appendChild(moveLink()); }
+    else if (dup) state = t('webui.playlists.platforms.same_name', { name: ls.master.name, platform: providerName(p) }); // 不給納入、不指去搬家:出路是先在平台上改名
     else { state = t('webui.playlists.platforms.unlinked'); acts.appendChild(btn(t('webui.playlists.platforms.adopt'), '', () => lf.adopt(p, r, pflow))); }
     if (ls.kind !== 'unknown') row.dataset.state = dup ? 'same_name' : ls.kind;
     const count = /^\d+$/.test(r.tracks || '') ? t('webui.playlists.platforms.count', { count: Number(r.tracks) }) : '';
@@ -482,7 +482,7 @@ export function initPlaylists(root, api, con, notice, providers) {
   }
 
   // 回到這一頁時重讀(app.js 的 route;別頁寫入之後這一頁不會過時)。有命令在跑就等它結束。
-  return { refresh: () => con.idle(load) };
+  return { refresh: (pid) => { if (pid) selected = pid; con.idle(load); } };
 }
 
 // about:正本、連結、同步是什麼(計畫 §3.4 的第二層);預設收起,第一眼只有 lead。

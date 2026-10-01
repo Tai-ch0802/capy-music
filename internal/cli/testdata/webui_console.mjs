@@ -654,13 +654,13 @@ await scenario('8k', async () => {
   const zh = await paint();
   want(zh, 'zh-TW', ['我的清單', '每份清單的正本存在你自己的 Google Drive。正本可以連到每個平台(Spotify、Apple Music、YouTube Music)上各一份清單;同步時,兩邊的新增、刪除與順序會互相帶過去。',
     '正本、連結、同步是什麼意思?', '搬家是一次性複製過去。同步是之後兩邊持續跟著彼此改。', '顯示的是這台電腦上次同步後的內容', '歌曲', '時長', '重新整理', '各平台上的清單', '讀取各平台的清單', 'Spotify 上沒有清單。',
-    'road trip(2 首)', '(本機沒有這首的資料)', '同步這份清單', 'Google Drive 正本', '連到這些平台上的清單', '已連結', '這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。',
+    'road trip(2 首)', '(本機沒有這首的資料)', '同步這份清單', 'Google Drive 正本', '連到這些平台上的清單', '已連結', '這台電腦還沒讀過你 Google Drive 上的正本。到「同步」按「讀回正本(會順便讀已登入的平台)」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。',
     '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
     '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
     '從平台更新', '推到平台', '雙向同步', '去除重複',
     '「去除重複」整理的是 capy 保管的那一份(不分平台);上面選的平台只決定這次去檢查哪個平台上的重複——沒選到的平台這次不會檢查。清單留空時會讓你挑一個。要把清單搬到另一個平台,請到「搬家」。',
-    '選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。', '兩邊已經一致,沒有要改的東西。', '1 筆變更(skip 不算變更)',
+    '選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。', '兩邊已經一致,沒有要改的東西。', '1 筆變更(跳過的不算)',
     '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。']);
   check([...zh.seen].some((s) => s.startsWith('export 的輸出不是 JSON:') && s.length > 'export 的輸出不是 JSON:'.length), 'zh-TW:export 不是 JSON 要說出來並附上原因');
   const st = t('webui.move.label.status');
@@ -678,7 +678,7 @@ await scenario('8k', async () => {
     const CJK = /[　-〿㐀-鿿＀-￯]/;
     for (const s of [...en.seen, ...en.labels]) check(!CJK.test(s), `en:頁面或 label 還有中文:「${s}」`);
     for (const s of en.labels) check(/^[A-Z][a-z]*ing /.test(s), `en:執行狀態列的 label 要是進行式:「${s}」`);
-    want(en, 'en', ['My playlists', 'What are master copies, links and syncing?', 'Song', 'Length', 'Playlists on each platform', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
+    want(en, 'en', ['My playlists', 'What are master copies, links and syncing?', 'Song', 'Length', 'Playlists on each platform', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skipped rows don\'t count)', 'All platforms']);
     check([...en.seen].some((s) => s.includes('Uncheck "Preview only, don\'t write yet"')), 'en:只看變更的收尾要指名那個勾選框');
     check(en.labels.includes('Reading playlists on Spotify') && en.labels.includes('Playing "Song One"') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
     check(JSON.stringify(en.rowsDrawn) === JSON.stringify([['sp1', 'Song One', 'Play']]), `en 的搜尋結果表:${JSON.stringify(en.rowsDrawn)}`);
@@ -753,8 +753,8 @@ await scenario('8n', async () => {
   const listed = anchors(platRows('spotify')[0]);
   check(listed.length === 1 && listed[0].href === `https://open.spotify.com/playlist/${PL}` && label(listed[0]) === '在 Spotify 上聽「road trip」', `各平台上的清單(Spotify)連到清單:${JSON.stringify(listed.map((a) => a.href))}`);
   const ap = platRows('apple');
-  check(ap.length === 1 && !anchors(ap[0]).some((a) => a.href.includes('spotify.com')) && ap[0].dataset.state === 'same_name' && anchors(ap[0]).some((a) => a.href === '#/move'),
-    '各平台上的清單(Apple):不連 Spotify;跟正本「mix」只差大小寫 = 同名,不給納入、指到搬家');
+  check(ap.length === 1 && !anchors(ap[0]).some((a) => a.href.includes('spotify.com')) && ap[0].dataset.state === 'same_name' && !anchors(ap[0]).some((a) => a.href === '#/move') && ap[0].textContent.includes('先在 Apple Music 上把它改名'),
+    '各平台上的清單(Apple):不連 Spotify;跟正本「mix」只差大小寫 = 同名,不給納入、不指去搬家(會重排正本),說先在平台上改名');
 
   // ── 同步頁與主控台的變更表:PROVIDER / PROVIDER_ID 的位置在 pull 與 sync 的表不一樣,照表頭找
   const PH = ['ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
@@ -1028,7 +1028,7 @@ await scenario('8p', async () => {
     check(pl.textContent.includes('先連接 Google Drive') && go && go.textContent === '到「帳號」', `沒連 Google Drive:指到帳號頁:${pl.textContent.slice(0, 200)}`);
     pl = await open({ google: ok }, { events: [{ type: 'exit', code: 1, message: 'x', reason: 'done' }] });
     const sync = anchors(pl).find((a) => a.href === '#/sync');
-    check(pl.textContent.includes('這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來') && sync && sync.textContent === '到「同步」' && !pl.textContent.includes('capy 還沒有替你保管任何清單'),
+    check(pl.textContent.includes('這台電腦還沒讀過你 Google Drive 上的正本。到「同步」按「讀回正本(會順便讀已登入的平台)」就會讀進來') && sync && sync.textContent === '到「同步」' && !pl.textContent.includes('capy 還沒有替你保管任何清單'),
       `連了 Google Drive、這台沒有本機資料(第二台電腦):不說「沒有清單」,指到同步頁:${pl.textContent.slice(0, 200)}`);
     pl = await open({ google: ok }, out({}));
     check(pl.textContent.includes('capy 還沒有替你保管任何清單') && !anchors(pl).some((a) => a.href === '#/account' || a.href === '#/sync'), '讀過了、真的沒有清單:指到搬家');
@@ -1421,7 +1421,7 @@ await scenario('8r', async () => {
   check(pl.textContent.includes('讀不到 YouTube Music 上的清單:讀不到 YouTube'), 'YouTube 讀不到:那一段說原因');
   check(prow(pl, 'road trip').dataset.state === 'linked' && prow(pl, 'road trip').textContent.includes('連著正本「road trip」'), '連著正本的列');
   check(pl.textContent.includes('本機曲庫不在這裡,M3U 請到主控台用 pl link 連。'), '各平台上的清單的說明:本機曲庫不在這裡、指到主控台的 pl link');
-  check(prow(pl, 'MIX').dataset.state === 'same_name' && !byText(prow(pl, 'MIX'), '納入 capy') && anchors(prow(pl, 'MIX')).some((a) => a.href === '#/move'), '只差大小寫也算同名:不給納入、指到搬家');
+  check(prow(pl, 'MIX').dataset.state === 'same_name' && !byText(prow(pl, 'MIX'), '納入 capy') && !anchors(prow(pl, 'MIX')).some((a) => a.href === '#/move') && prow(pl, 'MIX').textContent.includes('先在 Spotify 上把它改名'), '只差大小寫也算同名:不給納入、不指去搬家、說先改名');
   check(prow(pl, 'Chill').dataset.state === 'unlinked' && prow(pl, 'Chill').textContent.includes('5 首 · 還沒納入') && byText(prow(pl, 'Chill'), '納入 capy'), '還沒納入:給納入、說有幾首');
   check(anchors(prow(pl, 'Chill')).some((a) => a.href === `https://open.spotify.com/playlist/${SP2}`), 'Spotify 的列連回清單(S7)');
 
@@ -1462,7 +1462,7 @@ await scenario('8r', async () => {
   const sp = allByClass(pl, 'pl__link').find((r) => r.dataset.platform === 'spotify');
   byText(sp, '在 Spotify 建一份').click();
   const card = allByClass(pl, 'pl__flow-card')[0];
-  check(card && card.textContent.includes('Spotify 上已經有叫「mix」的清單,capy 不會再建一份同名的') && !byText(card, '開始') && anchors(card).some((a) => a.href === '#/move'), `撞同名不給開始:${card && card.textContent}`);
+  check(card && card.textContent.includes('Spotify 上已經有叫「mix」的清單,capy 不會再建一份同名的') && !byText(card, '開始') && !anchors(card).some((a) => a.href === '#/move') && card.textContent.includes('先在 Spotify 上把那份改名'), `撞同名不給開始、不指去搬家:${card && card.textContent}`);
 
   // 第一家讀不到:其他家照讀、照畫
   pl = await open(AUTH, { 'pl list --provider spotify': { events: [exit(1, 'Error: 讀不到 Spotify')] }, 'pl list --provider youtube': list([['UCme/PL1', 'Drive', '3', 'me']]) });
@@ -1780,7 +1780,7 @@ await scenario('8t', async () => {
     const res = changeTable(RH, [['map', 'c1', 'spotify', T1, '95', 'isrc', 'Song A', 'a', 'r', 'isrc']]);
     check(allByClass(res, 'tbl').length === 1 && heads(res)[0] === 'ACTION' && allByClass(res, 'chg__full').length === 0, 'resolve 的表照舊畫原表');
   };
-  round({ heads: ['動作', '歌曲', '說明', ''], heads2: '清單', full: '看完整表格', note: '5 筆變更(skip 不算變更)',
+  round({ heads: ['動作', '歌曲', '說明', ''], heads2: '清單', full: '看完整表格', note: '5 筆變更(跳過的不算)',
     acts: ['加進正本(從 Spotify)', '從 Apple Music 拿掉', '在 Apple Music 換位置', 'Apple Music 上的清單改名', '從正本拿掉(重複)', '跳過'],
     each: { 'pull add': '加進正本(從 Apple Music)', 'pull remove': '從正本拿掉', 'pull move': '正本換位置', 'pull rename': '正本改名', 'pull unlink': '取消連結 Apple Music 上的清單',
       'push add': '加到 Apple Music', 'push remove': '從 Apple Music 拿掉', 'push move': '在 Apple Music 換位置', 'push rename': 'Apple Music 上的清單改名',
@@ -1788,7 +1788,7 @@ await scenario('8t', async () => {
   i18nFile = './i18n-en.json';
   try {
     await loadI18n(api);
-    round({ heads: ['Change', 'Song', 'Why', ''], heads2: 'Playlist', full: 'See the full table', note: '5 changes (skip rows don\'t count)',
+    round({ heads: ['Change', 'Song', 'Why', ''], heads2: 'Playlist', full: 'See the full table', note: '5 changes (skipped rows don\'t count)',
       acts: ['Add to the master copy (from Spotify)', 'Remove from Apple Music', 'Move on Apple Music', 'Rename the playlist on Apple Music', 'Remove from the master copy (duplicate)', 'Skip'],
       each: { 'pull add': 'Add to the master copy (from Apple Music)', 'pull remove': 'Remove from the master copy', 'pull move': 'Move in the master copy', 'pull rename': 'Rename the master copy',
         'pull unlink': 'Unlink the playlist on Apple Music', 'push add': 'Add on Apple Music', 'push remove': 'Remove from Apple Music', 'push move': 'Move on Apple Music',
@@ -1813,6 +1813,19 @@ await scenario('8t', async () => {
   page.refresh();
   await idle(); await tick(5); await idle();
   check(spotifyRow()?.dataset.state === 'out', `重讀後 Spotify 沒登入:那一列跟著變成 out:${spotifyRow()?.dataset.state}`);
+
+  // #/playlists/<pid>:初始化與回到這一頁(refresh)都打開那一份(計畫 2026-10-01 §3.6)
+  const two = { ...data, 'pl__b.json': { pid: 'b', name: 'mix', links: {}, items: [] } };
+  reset();
+  script = { 'auth status --json': out({ google: { state: 'ok' } }), export: out(two) };
+  const deep = mk();
+  const dp = initPlaylists(deep, api, con, () => {}, { list: ['spotify'], current: 'spotify' }, 'b');
+  await idle();
+  const active = () => allByClass(deep, 'pl__item').find((x) => x.classList.contains('is-active'))?.textContent || '';
+  check(active().startsWith('mix'), `#/playlists/b 打開 mix:${active()}`);
+  dp.refresh('a');
+  await idle(); await tick(5); await idle();
+  check(active().startsWith('road trip'), `回到這一頁帶 a:換成 road trip:${active()}`);
 });
 
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,

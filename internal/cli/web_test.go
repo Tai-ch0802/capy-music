@@ -1340,7 +1340,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 		t.Error("左欄清單是捲動容器:焦點環要畫在項目裡面")
 	}
 	// 回到清單頁要重讀(計畫 2026-09-30 §3.6 / Q7):別頁寫入之後這一頁不可以停在過時的畫面。
-	if !strings.Contains(app, "playlistsPage = initPlaylists(") || !strings.Contains(app, "playlistsPage?.refresh()") {
+	if !strings.Contains(app, "playlistsPage = initPlaylists(") || !strings.Contains(app, "playlistsPage?.refresh(arg)") {
 		t.Error("route 要留住 initPlaylists 的回傳值,並在已初始化的 playlists 分支呼叫 refresh()")
 	}
 	// 寫入(同步、在 X 建一份、找對應、納入、搬家)一律走 CLI 自己的變更表與確認:頁面絕不代加 --yes / -y / --force

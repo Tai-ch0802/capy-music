@@ -1245,7 +1245,6 @@
   "webui.move.how.read.text": "從來源平台把清單讀出來:歌名、歌手、專輯,還有每首歌的國際編號(ISRC)。來源的清單只讀不改。",
   "webui.move.how.read.title": "讀出清單裡的每一首",
   "webui.move.how.title": "它怎麼搬的",
-  "webui.move.keep_synced": "讓兩邊之後保持同步 →",
   "webui.move.label.connect": "連接 {provider}",
   "webui.move.label.lists": "讀取 {provider} 上的清單",
   "webui.move.label.migrate": "把「{name}」搬到 {provider}",
@@ -1355,7 +1354,7 @@
   "webui.playlists.create.done": "完成:{platform} 上的「{name}」已經照正本的順序加好歌。",
   "webui.playlists.create.explain": "按「{start}」會先在 {platform} 建一份叫「{name}」的空清單並連上;接著替每一首找 {platform} 上的對應,再照正本的順序把找得到的加進去。寫入對應與加歌之前,capy 會先列出來給你確認。{platform} 上如果已經有同名的清單,capy 會停下來、什麼都不建。capy 不會刪除 {platform} 上的清單。",
   "webui.playlists.create.none": "已經在 {platform} 建立並連上「{name}」,但這次沒有加任何歌(還沒有找到對應)。按「{button}」接著處理。",
-  "webui.playlists.create.same_name": "{platform} 上已經有叫「{name}」的清單,capy 不會再建一份同名的。要把那份的歌加進這份正本,請用「搬家」;或先在 {platform} 上把它改名。",
+  "webui.playlists.create.same_name": "{platform} 上已經有叫「{name}」的清單,capy 不會再建一份同名的。先在 {platform} 上把那份改名,capy 才會建新的;原本那份不會被同步。",
   "webui.playlists.create.start": "開始",
   "webui.playlists.create.stop1": "第一步沒有完成。",
   "webui.playlists.create.stop2": "已經在 {platform} 建立並連上「{name}」;按「{button}」接著找對應。",
@@ -1364,7 +1363,7 @@
   "webui.playlists.empty": "capy 還沒有替你保管任何清單。到「搬家」搬一份過來,或從下面「各平台上的清單」納入一份。",
   "webui.playlists.empty_drive_error": "讀不到你的 Google Drive 登入資料(鑰匙圈出錯)。到「帳號」看看。",
   "webui.playlists.empty_no_drive": "capy 把清單的正本存在你的 Google Drive。先連接 Google Drive。",
-  "webui.playlists.empty_no_local": "這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「{option}」,按「{button}」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。",
+  "webui.playlists.empty_no_local": "這台電腦還沒讀過你 Google Drive 上的正本。到「同步」按「{button}」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。",
   "webui.playlists.filter_playlists": "篩選清單",
   "webui.playlists.filter_songs": "在這份清單裡找歌",
   "webui.playlists.flow.blocked": "capy 先停下來了,這一頁不會替你越過;照上面的說明到主控台處理。",
@@ -1421,12 +1420,11 @@
   },
   "webui.playlists.platforms.empty": "{platform} 上沒有清單。",
   "webui.playlists.platforms.error": "讀不到 {platform} 上的清單:{error}",
-  "webui.playlists.platforms.go_move": "到「搬家」",
   "webui.playlists.platforms.lead": "平台上還沒交給 capy 保管的清單,可以從這裡納入。按了才去讀(會連到各平台),只讀你在這台電腦登入的平台;本機曲庫不在這裡,M3U 請到主控台用 pl link 連。",
   "webui.playlists.platforms.linked": "連著正本「{name}」",
   "webui.playlists.platforms.none": "這台電腦沒有登入任何平台。到「帳號」連接一個。",
   "webui.playlists.platforms.read": "讀取各平台的清單",
-  "webui.playlists.platforms.same_name": "有同名的正本「{name}」;要把這份的歌加進去,請用「搬家」",
+  "webui.playlists.platforms.same_name": "有同名的正本「{name}」。要納入這份,先在 {platform} 上把它改名,capy 才會建一份新的正本;原本那份正本不會跟它同步。",
   "webui.playlists.platforms.title": "各平台上的清單",
   "webui.playlists.platforms.skipped": "你按了中止,沒有讀。",
   "webui.playlists.platforms.unknown": "這台電腦還沒讀到正本,分不出這些清單是不是已經交給 capy 了。先照上面的說明把正本讀進來。",
@@ -1490,7 +1488,7 @@
   "webui.spotify.listen_label": "在 Spotify 上聽「{title}」",
   "webui.sync.all_platforms": "全部平台",
   "webui.sync.changes": {
-    "other": "{count} 筆變更(skip 不算變更)"
+    "other": "{count} 筆變更(跳過的不算)"
   },
   "webui.sync.dedup": "去除重複",
   "webui.sync.dedup_label": "去除重複的歌",
@@ -1506,6 +1504,7 @@
   "webui.sync.pull_label": "把平台上的變更拉回來",
   "webui.sync.push": "推到平台",
   "webui.sync.push_label": "把 capy 保管的清單推到平台",
+  "webui.sync.readback": "讀回正本(會順便讀已登入的平台)",
   "webui.sync.resolve_changes": {
     "other": "{count} 筆會寫入的對應(其餘等你逐首決定)"
   },
