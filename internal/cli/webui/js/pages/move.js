@@ -2,7 +2,7 @@
 // 頁面只組一條 `capy migrate <來源清單 ID> --from X --to Y[:<目標 ID>]`(走 args 陣列,不經 splitArgs),
 // 預覽表、逐筆裁決、最終確認都是 CLI 自己送來的:**絕不代加 --yes / --force,也不自動回答確認**(決策 46)。
 // 提示畫在精靈裡(promptHost),不把人丟進主控台。上面的路線示意是裝飾,不是進度(決策 47)。
-import { el, btn, providerName, emptyState } from './common.js';
+import { el, btn, providerName, emptyState, radioCard } from './common.js';
 import { parseStatus, stateOf } from './account.js';
 import { renderTable, linkColumn, byProvider, spotifyLink } from '../table.js';
 import { stages } from '../console.js';
@@ -269,16 +269,6 @@ export function initMove(root, api, con, notice, providers) {
     body.replaceChildren(...[step1, step2, step3][state.step - 1]());
     // 點了卡片 / 清單列會整段重畫:把焦點還給同一組單選裡選中的那一顆,不然它會掉回 <body>
     if (group) body.querySelector(`input[name="${group}"]:checked`)?.focus();
-  }
-
-  // 單選卡:真的 radio(方向鍵、表單語意都是原生的),藏起來,樣子由 label 扛(CSS 的 :has())。
-  function radioCard(cls, name, checked, disabled, onPick, ...children) {
-    const lab = el('label', cls);
-    const r = el('input', 'sr-only');
-    r.type = 'radio'; r.name = name; r.checked = checked; r.disabled = disabled;
-    r.addEventListener('change', onPick);
-    lab.append(r, ...children);
-    return lab;
   }
 
   function pcard(id, role, disabledWhy) {

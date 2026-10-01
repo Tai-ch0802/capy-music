@@ -1343,10 +1343,13 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "playlistsPage = initPlaylists(") || !strings.Contains(app, "playlistsPage?.refresh()") {
 		t.Error("route 要留住 initPlaylists 的回傳值,並在已初始化的 playlists 分支呼叫 refresh()")
 	}
-	// 清單頁的寫入(同步、在 X 建一份、找對應)一律走 CLI 自己的變更表與確認:頁面絕不代加 --yes / --force(決策 46;計畫 §3.5)。
-	for _, bad := range []string{"'--yes'", "'--force'", " --yes'", " --force'", "' --yes", "' --force"} {
-		if strings.Contains(read("js/pages/playlists.js"), bad) {
-			t.Errorf("清單頁不可以代加確認或越過閾值的旗標:%s", bad)
+	// 寫入(同步、在 X 建一份、找對應、納入、搬家)一律走 CLI 自己的變更表與確認:頁面絕不代加 --yes / -y / --force
+	// (決策 46;計畫 2026-09-30 §3.5、2026-10-01 §3.8)。寫入流程搬到 plflow.js 之後,每個會送寫入命令的頁面都要看。
+	for _, f := range []string{"js/pages/playlists.js", "js/pages/plflow.js", "js/pages/sync.js", "js/pages/move.js"} {
+		for _, bad := range []string{"'--yes'", "'--force'", "'-y'", " --yes'", " --force'", "' --yes", "' --force", " -y'"} {
+			if strings.Contains(read(f), bad) {
+				t.Errorf("%s 不可以代加確認或越過閾值的旗標:%s", f, bad)
+			}
 		}
 	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".dock__busy-dot") {
