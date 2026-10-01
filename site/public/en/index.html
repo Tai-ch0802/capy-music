@@ -108,7 +108,7 @@
           <tbody>
             <tr><th>openid</th><td>Confirms which Google account signed in.</td><td>Cannot read your profile, contacts or any content.</td></tr>
             <tr><th>userinfo.email</th><td>Shows the signed-in email address in <code>capy auth status</code> so you can notice a wrong account. The address is written only to a settings file on your computer.</td><td>capy never emails you, cannot read your Gmail, and never sends the address to anyone.</td></tr>
-            <tr><th>drive.appdata</th><td>Reads and writes a few JSON files that capy itself creates in your Drive's application data folder (playlists, track mappings, device list; if you connect a music folder on your computer, also the relative paths of those music files and the playlist file names).</td><td>Cannot see or change any other file in your Drive: no documents, no photos, no shared folders.</td></tr>
+            <tr><th>drive.appdata</th><td>Reads and writes a few JSON files that capy itself creates in your Drive's application data folder (playlists, track mappings, device list; if you connect a music folder on your computer, also the paths of those music files (usually relative; absolute paths written in a playlist file are kept as written) and the playlist file names).</td><td>Cannot see or change any other file in your Drive: no documents, no photos, no shared folders.</td></tr>
           </tbody>
         </table>
       </div>

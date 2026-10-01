@@ -113,6 +113,25 @@ func TestPlLinkCreateYouTube(t *testing.T) {
 	}
 }
 
+// pl link --new-only 不接管別的 YouTube 帳號的連結(計畫 2026-09-30 §3.5 / §4):走 --create、以 pid 指定,才會真的走到
+// 接管那一道;平台清單的名字刻意跟正本不同——同名的話 sameNamePlaylists 會先擋,這條就擋不住 newOnly 的檢查被拿掉。
+func TestPlLinkNewOnlyRefusesForeignYouTubeAccount(t *testing.T) {
+	_, dc, _ := pullWorld(t)
+	yt := youtubetest.New(t)
+	yt.AddPlaylist("PLa", "A 帳號的通勤")
+	swapYouTube(t, yt)
+	mustPull(t, "pl", "link", "通勤", "youtube:PLa")
+	pid := drivePlaylistNamed(t, dc, "通勤").PID
+	yt.Account.ChannelID = "UCotherperson00000000000" // 換帳號登入:Drive 上的連結變成別帳號的
+	before := driveFiles(t, dc)
+	if _, _, err := runPull(t, "pl", "link", "--new-only", pid, "youtube", "--create"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "--new-only 不接管") {
+		t.Fatalf("別帳號的連結要擋:%v", err)
+	}
+	if !sameFiles(before, driveFiles(t, dc)) || len(yt.Created()) != 0 {
+		t.Fatalf("擋下來就零寫入、沒有呼叫 CreatePlaylist:%v", yt.Created())
+	}
+}
+
 // 別人的清單(從別的頻道存進資料庫的):列表就標 Unwritable,sync 只跳過 push 半邊並講明、零寫入;明說要推是 exit 3。
 func TestPlSyncSkipsForeignOwnedYouTubePlaylist(t *testing.T) {
 	fs, _, _ := pullWorld(t)

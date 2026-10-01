@@ -95,6 +95,30 @@ func TestPrivacyPolicyDisclosesTheAIEndpoint(t *testing.T) {
 		if !strings.Contains(use, button) || !strings.Contains(sharing, isUserData) {
 			t.Errorf("%s:§3 要列出 Wiki 鈕的用途、§5 要說它送的歌名與歌手屬於 Google 使用者資料", page)
 		}
+		// 同步、搬移、找對應送到音樂平台的也是同一份 Drive 正本的資料(完整度稽核):§3 要列成一項用途,§5 不可以再說
+		// 「唯一的移轉」是 Wiki 鈕,也不可以把同步送出的說成「不是 Google 使用者資料」。
+		// 清單名稱(建清單、同步改名時)與「我的清單」的 ▶(把正本裡的平台曲目編號送去播)也是(T5 自審)。
+		syncUse, onlyOne, notUserData := "<strong>同步與搬移</strong>", "唯一的移轉", "這些是音樂本身的資料,不是你的 Google 使用者資料"
+		listName, playUse, playShare := "還有清單名稱", "<strong>點播</strong>", "按 ▶ 時送到那個平台播放"
+		if strings.HasPrefix(page, "en/") {
+			syncUse, onlyOne, notUserData = "<strong>Syncing and moving</strong>", "The only transfer", "That is data about the music, not your Google user data"
+			listName, playUse, playShare = "plus the playlist's name", "<strong>Playing from My playlists</strong>", "to play a song when you press ▶ on My playlists"
+		}
+		if !strings.Contains(use, syncUse) || strings.Contains(sharing, onlyOne) || strings.Contains(sharing, notUserData) {
+			t.Errorf("%s:§3 要列出同步與搬移的用途;§5 不可以說只有 Wiki 鈕一種移轉,也不可以說同步送出的不是 Google 使用者資料", page)
+		}
+		if !strings.Contains(use, listName) || !strings.Contains(use, playUse) || !strings.Contains(sharing, playShare) {
+			t.Errorf("%s:§3 要寫到清單名稱與點播、§5 要列出按 ▶ 的移轉", page)
+		}
+		// 政策逐句對照程式(2026-10-01):本機的絕對路徑照原樣進 Drive、在電腦上顯示 / 匯出也是一項用途、
+		// 網頁上的連結由瀏覽器帶著編號開到平台、本機快取不只是 Drive 的鏡像(搜尋與播放紀錄可以清)。
+		absPath, showUse, linkShare, history := "絕對路徑", "<strong>在你的電腦上給你看</strong>", "你在網頁上點連結", "<code>capy history clear</code>"
+		if strings.HasPrefix(page, "en/") {
+			absPath, showUse, linkShare = "absolute path", "<strong>Showing it to you on your computer</strong>", "when you click a link on the web UI"
+		}
+		if !strings.Contains(use, absPath) || !strings.Contains(use, showUse) || !strings.Contains(sharing, linkShare) || !strings.Contains(html, history) {
+			t.Errorf("%s:§3 要寫本機的絕對路徑與「在電腦上給你看」、§5 要寫點連結、§4 要寫本機快取有搜尋紀錄(capy history clear)", page)
+		}
 		for _, f := range ai.SentFields {
 			word := f
 			if !strings.HasPrefix(page, "en/") {
