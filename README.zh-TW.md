@@ -272,8 +272,8 @@ capy update [--dev]                      # 見上方「更新」
 | `pl link --merge` 的 `dir=resolve` 列 | `map` | `isrc` | 要連上的那份清單裡的歌,用 ISRC 認成正本的這一首;確認後才寫入對應 |
 | | `map` | `fuzzy` | 用歌名、歌手、長度認成同一首(≥85);確認後才寫入 |
 | `pl link --merge` 的 `dir=pull` 列 | `add` | `added_on_platform` | 那份清單有、正本沒有,接在正本最後面 |
-| | `skip` | `dup_id` | 那份清單裡多出來的同一首(同平台 id),不接進正本(`pos` 是它在那份清單裡的位置;`dir=push` 的列會把它拿掉) |
-| | `skip` | `dup_isrc` | 那份清單裡多出來的同一首(同 ISRC),不接進正本 |
+| | `skip` | `dup_id` | 那份清單裡多出來的同一首(同平台 id),不接進正本(`pos` 是它在那份清單裡的位置;正本的份數比較少時,`dir=push` 會多一列 remove,拿掉哪一份看那一列) |
+| | `skip` | `dup_isrc` | 那份清單裡多出來的同一首(同 ISRC),不接進正本;平台上留下的可能是同一首的另一個版本 |
 | `resolve` | `map` | `isrc` | ISRC 反查到,自動寫入 |
 | | `map` | `fuzzy` | 模糊比對 ≥85,自動寫入 |
 | | `review` | `no_candidate` | 找不到候選 |

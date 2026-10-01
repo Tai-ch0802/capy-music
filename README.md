@@ -271,8 +271,8 @@ The last column of the TSV from `pl pull` / `push` / `sync` / `migrate` / `dedup
 | `pl link --merge`'s `dir=resolve` rows | `map` | `isrc` | A song in the playlist being joined is recognized as this master-copy song by ISRC; the mapping is written once you confirm |
 | | `map` | `fuzzy` | Recognized as the same song by title, artist and duration (≥85); written once you confirm |
 | `pl link --merge`'s `dir=pull` rows | `add` | `added_on_platform` | In the playlist being joined but not in the master copy; appended to the end of the master copy |
-| | `skip` | `dup_id` | An extra copy in that playlist (same platform id); not added to the master copy (`pos` is its position in that playlist; the `dir=push` rows remove it) |
-| | `skip` | `dup_isrc` | An extra copy in that playlist (same ISRC); not added to the master copy |
+| | `skip` | `dup_id` | An extra copy in that playlist (same platform id); not added to the master copy (`pos` is its position in that playlist; when the master copy has fewer copies, the `dir=push` rows include a remove, and that row says which copy goes) |
+| | `skip` | `dup_isrc` | An extra copy in that playlist (same ISRC); not added to the master copy. The copy left on the platform may be another version of the same song |
 | `resolve` | `map` | `isrc` | Found by ISRC lookup; written automatically |
 | | `map` | `fuzzy` | Fuzzy match ≥85; written automatically |
 | | `review` | `no_candidate` | No candidate found |

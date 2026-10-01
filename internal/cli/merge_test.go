@@ -547,3 +547,21 @@ func TestLinkMergeReviewAcceptsTrackInPlaylist(t *testing.T) {
 		t.Fatalf("提示順序:%v", *keys)
 	}
 }
+
+// 自審第 1、5、7 則:正本自己有重複時,清單裡的第二份對到正本的第二份——表上照樣列 pull skip(dup_id),但 push 不拿掉它。
+// README 的代碼表因此不說「push 會拿掉它」(只有正本份數比較少時才會多一列 remove)。
+func TestLinkMergeMasterDuplicateKeepsPlaylistCopy(t *testing.T) {
+	fs1, fs2, _, _ := twoPlatforms(t)
+	fs1.set("p1", "通勤", "a", "a", "b")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	catalogISRC(fs2, "b")
+	fs2.set("q1", "上班聽", "a", "a")
+	out, _ := mustPull(t, "pl", "link", "--merge", "通勤", "apple:q1", "--yes")
+	if !strings.Contains(out, "pull\tskip\tapple\t通勤\t1\t"+fakeCID("a")+"\ta\t") || !strings.Contains(out, "\tdup_id\n") || strings.Contains(out, "push\tremove\t") {
+		t.Fatalf("有 pull skip(dup_id)、沒有 push remove:\n%s", out)
+	}
+	if got := fs2.tracksOf("q1"); !slices.Equal(got, []string{"a", "a", "b"}) {
+		t.Fatalf("份數跟正本一樣:%v", got)
+	}
+}

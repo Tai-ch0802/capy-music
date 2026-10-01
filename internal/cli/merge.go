@@ -172,7 +172,7 @@ func runLinkMerge(cmd *cobra.Command, args []string, dryRun, yes, force bool) er
 				i18n.T("canon.reason.added_on_platform"), "added_on_platform"})
 		}
 		first := map[string]int{}
-		for i, cid := range lcid { // L 自己多出來的同一首:不接進正本(push 半邊會把它從 L 拿掉);pos 是它在 L 裡的位置
+		for i, cid := range lcid { // L 自己多出來的同一首:不接進正本;pos 是它在 L 裡的位置。正本的份數比較少時 push 半邊才會多一列 remove,拿掉哪一份由 push 的配對決定
 			j, dup := first[cid]
 			if !dup {
 				first[cid] = i
