@@ -346,7 +346,13 @@ export function playlistLink(p, id, name) {
 // 連到 X 上已經有的清單)。flow 是 makeFlow 的實例;state 是頁面的 { auth, devices, platLists, masters }(用到時才讀);
 // reload 是寫入收尾後的重讀;
 // 每個流程畫在呼叫端給的 box 裡(那一頁的流程區,提示也畫在那裡)。
-export function linkFlows({ flow, state, providers, reload }) {
+export function linkFlows({ flow, state, providers, reload: pageReload }) {
+  // reload:寫入流程的收尾。這裡自己讀的平台清單與首數一起作廢(剛建的、剛改的清單下一張卡要看得到,#138 review 第 1 點)。
+  function reload() {
+    for (const k of Object.keys(own)) delete own[k];
+    for (const k of Object.keys(counts)) delete counts[k];
+    pageReload();
+  }
   // runOne:單一命令(同步這份清單、找對應、逐首決定);收尾後重讀。
   function runOne(args, label, box) {
     const f = flow.openFlow(null, box);

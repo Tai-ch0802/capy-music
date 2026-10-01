@@ -2372,6 +2372,20 @@ await scenario('8v', async () => {
   await settle();
   check(!mergeCard(sy) && !sec(sy, 1).textContent.includes('正在讀 Apple Music 上的清單'), `讀的時候換了清單:不畫在新的區塊:${sec(sy, 1).textContent.slice(0, 120)}`);
 
+  // ── 寫入流程收尾後,這裡自己讀的平台清單作廢:下一張卡重讀(剛合併、剛建的那份要看得到,#138 review 第 1 點)
+  sy = await open({ export: out({ ...data, 'pl__z.json': { pid: 'z', name: 'zzz', links: { spotify: SP1 }, items: [{ cid: 'c1' }] } }),
+    'pl list --provider spotify': table(LH, [[SP3, 'road trip', '3', 'me'], [SP1, 'zzz', '1', 'me']]),
+    'pl link --merge a apple:p.W': { events: [...answered(1), done] }, 'resolve a': { events: [done] }, 'pl sync a': { events: [done] } });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  byText(sec(sy, 1), '開始合併').click();
+  await settle();
+  radios(sy, 'sync-list')[1].l.change(); // zzz:連著另一份正本
+  await settle();
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  check(calls.filter((c) => c === 'pl list --provider apple').length === 2 && mergeCard(sy), `合併之後再開確認卡:重讀 Apple 的清單:${JSON.stringify(calls.filter((c) => c.startsWith('pl list')))}`);
+
   // ── 在 X 建一份:那個平台有同名、有歌的清單(只差大小寫也算)→ 不給「開始」,給「連到那一份」並預選它;不送 pl link --new-only
   sy = await open({ 'pl list --provider apple': table(LH, [['p.W', '上班聽', '-', ''], ['p.R', 'Road Trip', '-', '']]) });
   byText(appleRow(sy), '在 Apple Music 建一份').click();
@@ -2408,8 +2422,13 @@ await scenario('8v', async () => {
   // 同名、有歌的正本:不預選「加進它」,下拉停在「請選一份」、下一步不能按;人挑了才走得下去
   const dsel = mv.querySelector('select');
   check(dsel && dsel.value === '' && dsel.children[0].textContent === '請選一份' && byText(mv, t('webui.move.next.confirm')).disabled, `精靈:同名有歌的正本不預選目的地:${dsel && dsel.value}`);
-  dsel.value = 'q1';
-  dsel.l.change();
+  // 先點「建新的」再點回「加進既有的」:一樣停在「請選一份」,不替人選到會被擋下的那份(#138 review 第 2 點)
+  radios(mv, 'wiz-dst')[0].l.change();
+  radios(mv, 'wiz-dst')[1].l.change();
+  check(mv.querySelector('select')?.value === '' && byText(mv, t('webui.move.next.confirm')).disabled, `精靈:切回加進既有的仍停在請選一份:${mv.querySelector('select')?.value}`);
+  const dsel2 = mv.querySelector('select');
+  dsel2.value = 'q1';
+  dsel2.l.change();
   byText(mv, t('webui.move.next.confirm')).click();
   byText(mv, t('webui.move.start')).click();
   mig?.onTable(['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['migrate', 'add', 'spotify', 'Road trip', '0', 'a', SP1, 'Song A', 'a', 'r', 'push']]);

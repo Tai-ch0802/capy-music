@@ -395,7 +395,9 @@ export function initMove(root, api, con, notice, providers) {
         const lab = el('label', 'wiz__opt');
         const r = el('input');
         r.type = 'radio'; r.name = 'wiz-dst'; r.checked = state.dst.mode === mode; r.disabled = !enabled;
-        r.addEventListener('change', () => { state.dstTouched = true; state.dst = { mode, id: mode === 'existing' ? (state.dstLists[0] || {}).id || '' : '' }; render(); });
+        // 切回「加進既有的」:mergeCase 時一樣停在「請選一份」,不替人選到會被擋下的那份(#138 review 第 2 點)
+        const first = () => (mergeCase(dup) ? '' : (state.dstLists[0] || {}).id || '');
+        r.addEventListener('change', () => { state.dstTouched = true; state.dst = { mode, id: mode === 'existing' ? first() : '' }; render(); });
         lab.append(r, el('span', null, text));
         return lab;
       };
