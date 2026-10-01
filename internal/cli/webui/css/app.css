@@ -367,6 +367,8 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .sync__lists > .btn { justify-self: start; }
 .sync__start { margin: 0; padding-left: 1.2rem; display: grid; gap: .35rem; font-size: var(--t-14); }
 .sync__guide { display: grid; gap: .75rem; margin-bottom: .75rem; }
+.pl__flow-card .wiz__steps { margin-bottom: 0; padding-bottom: .75rem; } /* 卡片裡的步驟條:卡片自己有間距,不要精靈那一大段下邊距 */
+.sync__merge-facts { margin: 0; padding-left: 1.2rem; display: grid; gap: .3rem; font-size: var(--t-14); }
 .pl__right > .pl__flow-card { margin-bottom: .75rem; }
 .sync__preview { margin-top: .5rem; }
 .sync__adv { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: var(--t-14); }
