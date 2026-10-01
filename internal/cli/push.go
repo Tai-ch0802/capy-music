@@ -136,7 +136,11 @@ type pushPlan struct {
 // 同理 refused(前提、local file、清單消失)在 strict 時擋整輪(exit 3),不 strict 時只跳過那一格的 push 半邊(PR #36 review:
 // cron 的 sync --all 不能被一個含 local file 的清單永久綁死;pull 半邊照常落地)。
 func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]*canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
-	merged := mergedBase(s)
+	return planPushWith(ctx, s, mergedBase(s), targets, only, stderr, pf, lives, strict)
+}
+
+// planPushWith:planPush 本體,base 由呼叫端給(pl link --merge 要把剛讀到的那份清單放進去當暫時 base,計畫 2026-10-01 §3.4 第 3 步)。
+func planPushWith(ctx context.Context, s *canonState, merged map[string]map[string]canon.Base, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]*canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
 			if only != "" && prov != only {
