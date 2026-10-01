@@ -39,7 +39,7 @@
 | `GET /search` limit | 最大 **10**(預設 5),原本 50 | 搜尋必須分頁 |
 | 批次端點 | `GET /tracks`、`/albums`、`/artists` 等**全部移除** | 同步時只能逐首查 → rate limit 是主要瓶頸 |
 | `external_ids`(含 ISRC) | 2026-02 移除,**2026-03 已回復** | ISRC 仍可用 ✅ 但列為需監控項 |
-| `GET /playlists/{id}/items` | 只回傳**使用者擁有或協作**的清單內容;他人清單只有 metadata | **無法同步「追蹤的別人的清單」** |
+| `GET /playlists/{id}/items` | 只回傳**使用者擁有或協作**的清單內容;他人清單只有 metadata | **無法同步「追蹤的別人的清單」**;寫入同樣只限擁有或協作:清單列表把 `owner.id` ≠ `GET /me` 的 id 且 `collaborative:false` 的清單標 `PlaylistRef.Unwritable`,push 在 plan 階段列 refused、sync 只跳過那一格(同 Apple / YouTube;2026-10-01;欄位照文件,真帳號未驗證) |
 | 播放清單端點改名 | `/tracks` → `/items`,欄位 `tracks` → `items` | 直接用新名 |
 | 建立播放清單 | `POST /me/playlists`(2026-02 起;`POST /users/{id}/playlists` 已移除);body `name` 必填、`public` 預設 **true**(來源:[February 2026 changes](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)、[Create Playlist](https://developer.spotify.com/documentation/web-api/reference/create-playlist)) | `capy pl link <名> spotify --create`(2026-09-14)明講 `public:false`,名字跟 canonical 一樣(push 不會多排 rename);**真帳號尚未驗證**,與 `/items` 寫入同一批(P5 計畫 R-1) |
 | `GET /me` | 移除 `country`、`email`、`product` | **無法從 API 判斷是否 Premium 或所在市場** |

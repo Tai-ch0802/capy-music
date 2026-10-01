@@ -194,7 +194,7 @@ func TestEnglishPushStaleBetweenPlanAndApply(t *testing.T) {
 	editCanonical(t, dc, drivePlaylist(t, dc), []string{"a", "b"}, nil, "")
 	reads := 0
 	fs.setHook(func() {
-		if reads++; reads == 3 { // 1 = /me/playlists、2 = 計畫的 GET items、3 = 套用前的重讀
+		if reads++; reads == 4 { // 1 = /me、2 = /me/playlists、3 = 計畫的 GET items、4 = 套用前的重讀
 			fs.items["p1"] = []string{"a", "b", "c", "z"}
 		}
 	})

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -46,6 +47,7 @@ type fakeSpotify struct {
 	isrcAlias    map[string]string  // id → 借用這個 id 的 ISRC(同 ISRC 不同 id:單曲版 / 專輯版;pl dedup 用)
 	snapshots    bool               // /me/playlists 附 snapshot_id(名稱或曲目一變就換;決策 57 的快取才會用上)
 	snapFixed    map[string]string  // 這些清單的 snapshot_id 釘死(模擬「版本沒換、內容卻變了」)
+	owners       map[string]string  // 清單 id → 擁有者 id;沒列的 = 登入的使用者 tai(GET /me 回的 id)
 }
 
 // snapshotOf:清單版本——名稱或曲目任何變動就換(同 Spotify)。呼叫端持鎖。
@@ -185,6 +187,8 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 		switch {
 		case r.URL.Path == "/me/playlists" && r.Method == http.MethodPost: // pl link --create
 			f.create(t, w, r)
+		case r.URL.Path == "/me":
+			w.Write([]byte(`{"id":"tai","display_name":"tai"}`))
 		case r.URL.Path == "/me/playlists":
 			f.listReads++
 			var items []string
@@ -193,7 +197,8 @@ func (f *fakeSpotify) handler(t *testing.T) http.HandlerFunc {
 				if f.snapshots {
 					snap = fmt.Sprintf(`,"snapshot_id":%q`, f.snapshotOf(l.ID))
 				}
-				items = append(items, fmt.Sprintf(`{"id":%q,"name":%q,"owner":{"display_name":"tai"},"items":{"total":%d}%s}`, l.ID, l.Name, len(f.items[l.ID]), snap))
+				owner := cmp.Or(f.owners[l.ID], "tai")
+				items = append(items, fmt.Sprintf(`{"id":%q,"name":%q,"collaborative":false,"owner":{"id":%q,"display_name":%q},"items":{"total":%d}%s}`, l.ID, l.Name, owner, owner, len(f.items[l.ID]), snap))
 			}
 			fmt.Fprintf(w, `{"items":[%s],"total":%d}`, strings.Join(items, ","), len(items))
 		case strings.HasPrefix(r.URL.Path, "/playlists/") && strings.HasSuffix(r.URL.Path, "/items"):

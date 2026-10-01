@@ -4,6 +4,7 @@ package spotify
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -461,10 +462,12 @@ func (c *Client) SetVolume(ctx context.Context, pct int) error {
 const playlistPageSize = 50
 
 type playlistJSON struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	SnapshotID string `json:"snapshot_id"` // 清單版本:任何變動都會換(決策 57)
-	Owner      struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	SnapshotID    string `json:"snapshot_id"` // 清單版本:任何變動都會換(決策 57)
+	Collaborative bool   `json:"collaborative"`
+	Owner         struct {
+		ID          string `json:"id"`
 		DisplayName string `json:"display_name"`
 	} `json:"owner"`
 	Items *struct {
@@ -486,7 +489,16 @@ func (p *playlistJSON) toRef() provider.PlaylistRef {
 	return provider.PlaylistRef{ID: p.ID, Name: p.Name, Owner: p.Owner.DisplayName, Total: total, Version: p.SnapshotID}
 }
 
+// MyPlaylists:別人的、沒開放協作的清單標 Unwritable(Spotify 只讓擁有者與協作者寫):push 在 plan 階段就列 refused,
+// 不必等寫入吃 403(同 Apple 的 canEdit:false、YouTube 別人的清單)。目前使用者 id 要另打一次 GET /me(列表本身不帶),
+// 一次列表只打一次;owner.id 空(平台沒給)就不猜,留給寫入的 403。
 func (c *Client) MyPlaylists(ctx context.Context) ([]provider.PlaylistRef, error) {
+	var me struct {
+		ID string `json:"id"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/me", nil, nil, &me); err != nil {
+		return nil, err
+	}
 	var out []provider.PlaylistRef
 	for offset := 0; ; {
 		q := url.Values{"limit": {strconv.Itoa(playlistPageSize)}, "offset": {strconv.Itoa(offset)}}
@@ -498,7 +510,12 @@ func (c *Client) MyPlaylists(ctx context.Context) ([]provider.PlaylistRef, error
 			return nil, err
 		}
 		for i := range resp.Items {
-			out = append(out, resp.Items[i].toRef())
+			p := &resp.Items[i]
+			ref := p.toRef()
+			if !p.Collaborative && p.Owner.ID != "" && p.Owner.ID != me.ID {
+				ref.Unwritable = i18n.T("spotify.unwritable.not_owned", "owner", cmp.Or(p.Owner.DisplayName, p.Owner.ID))
+			}
+			out = append(out, ref)
 		}
 		offset += len(resp.Items)
 		if len(resp.Items) < playlistPageSize || offset >= resp.Total {
