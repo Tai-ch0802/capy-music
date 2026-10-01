@@ -566,7 +566,7 @@ await scenario('8j', async () => {
     look(r);
     check(r.textContent.includes('Done: 2 songs are now in "road trip" on Spotify.'), `完成要是英文、複數:${r.textContent.slice(-300)}`);
     const moving = 'Moving "Road trip" to Spotify';
-    check(JSON.stringify(labels) === JSON.stringify(['Checking account connections', 'Connecting Spotify', 'Reading playlists on Apple Music', 'Reading playlists on Spotify', moving, moving, moving]),
+    check(JSON.stringify(labels) === JSON.stringify(['Checking account connections', 'Connecting Spotify', 'Reading playlists on Apple Music', 'Reading playlists on Spotify', 'Reading your playlists', moving, moving, moving]),
       `執行狀態列的 label 在英文一律是進行式:${JSON.stringify(labels)}`);
     const bad = [...seen, ...labels].filter((s) => CJK.test(s) || s.includes('webui.'));
     check(bad.length === 0, `英文目錄下搬家頁不該有中文或沒送到的 key:${JSON.stringify([...new Set(bad)])}`);
@@ -660,7 +660,7 @@ await scenario('8k', async () => {
     '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
     '同步', '讓同一份清單在幾個平台上保持一樣:改了任何一邊,按「同步」,其他地方跟著改。加歌、拿掉、換位置、改名之前,capy 一定先列出要改什麼,你確認了才寫;建一份新的正本或平台清單並連上,按下去就會做。',
-    '正本在你的 Google Drive', '從哪一份開始都可以', '同步後用正本的名字', '在同步的清單', '全部同步', '同步', '讓一份清單開始同步', '從哪個平台開始', '從左邊挑一份清單',
+    '正本在你的 Google Drive', '從哪一份開始都可以', '名字只在連的那一刻能不同', '在同步的清單', '全部同步', '同步', '讓一份清單開始同步', '從哪個平台開始', '從左邊挑一份清單',
     '正本名稱或 pid(留空 = 全部)', '全部平台', '正本', '只看變更,先不寫入', '從平台更新', '推到平台', '雙向同步', '去除重複',
     '「去除重複」整理的是正本裡重複的歌(只留第一份),再推到連著的平台;上面選的平台只決定這次去檢查哪個平台上的重複,沒選到的平台這次不會檢查。正本留空時會讓你挑一份;填「平台:清單」(例如 spotify:清單 ID)只檢查那份平台清單,不改任何東西。',
     '1 筆變更(跳過的不算)',
@@ -757,8 +757,9 @@ await scenario('8n', async () => {
   const listed = anchors(platRows('spotify')[0]);
   check(listed.length === 1 && listed[0].href === `https://open.spotify.com/playlist/${PL}` && label(listed[0]) === '在 Spotify 上聽「road trip」', `各平台上的清單(Spotify)連到清單:${JSON.stringify(listed.map((a) => a.href))}`);
   const ap = platRows('apple');
-  check(ap.length === 1 && !anchors(ap[0]).some((a) => a.href.includes('spotify.com')) && ap[0].dataset.state === 'same_name' && !anchors(ap[0]).some((a) => a.href === '#/move') && ap[0].textContent.includes('先在 Apple Music 上把它改名'),
-    '各平台上的清單(Apple):不連 Spotify;跟正本「mix」只差大小寫 = 同名,不給納入、不指去搬家(會重排正本),說先在平台上改名');
+  check(ap.length === 1 && !anchors(ap[0]).some((a) => a.href.includes('spotify.com')) && ap[0].dataset.state === 'same_name' && !anchors(ap[0]).some((a) => a.href === '#/move') && ap[0].textContent.includes('它在 Apple Music 上已經連著另一份清單')
+    && !allByClass(ap[0], 'btn').some((b) => ['連到正本「mix」', '納入 capy'].includes(b.textContent)),
+    '各平台上的清單(Apple):跟正本「mix」只差大小寫 = 同名,但那份正本已連著 Apple 的另一份:不給納入、不給合併、不指去搬家,說只能先改名');
 
   // ── 同步頁與主控台的變更表:PROVIDER / PROVIDER_ID 的位置在 pull 與 sync 的表不一樣,照表頭找
   const PH = ['ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
@@ -1232,13 +1233,16 @@ await scenario('8q', async () => {
     'resolve a --provider youtube': { first: [tbl, { type: 'prompt', id: 5, kind: 'confirm', title: '寫入以上 1 筆 mapping 到 Drive?' }], gate: g2,
       events: [{ type: 'prompt_closed', id: 5, reason: 'answered' }, done] },
     'pl sync a --provider youtube': { events: [tbl, { type: 'prompt', id: 6, kind: 'confirm', title: '?' }, { type: 'prompt_closed', id: 6, reason: 'answered' }, done] }, // 真的寫入前一定會問
+    'pl list --provider youtube': { events: [{ type: 'table', header: ['ID', 'NAME', 'TRACKS', 'OWNER'], rows: [['PLx', 'other', '3', '']] }, done] },
     onAnswer: release2,
   });
   const before = bodies.length;
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(唯讀):看得到同名、有歌的才能改給「連到那一份」
   const card = allByClass(pl, 'pl__flow-card')[0];
-  check(card && card.textContent.includes('會先在 YouTube Music 建一份叫「road trip」的空清單並連上') && !card.textContent.includes('Apple Music 資料庫') && bodies.length === before,
-    `按「開始」前:只有說明、零命令:${card && card.textContent}`);
+  check(card && card.textContent.includes('會先在 YouTube Music 建一份叫「road trip」的空清單並連上') && !card.textContent.includes('Apple Music 資料庫')
+    && JSON.stringify(bodies.slice(before).map((b) => (b.args || [b.line]).join(' '))) === JSON.stringify(['pl list --provider youtube']),
+    `按「開始」前:只有說明、只讀了那個平台的清單、沒有寫入命令:${card && card.textContent}`);
   byText(card, '開始').click();
   await tick(20);
   let waited = false;
@@ -1246,7 +1250,7 @@ await scenario('8q', async () => {
   const box5 = allByClass(allByClass(pl, 'pl__flow-prompts')[0], 'prompt')[0];
   byText(box5, '確定') ? byText(box5, '確定').click() : box5.querySelector('.prompt__row').children[0].click();
   await idle(); await tick(10); await idle(); await tick(10); await idle();
-  const sent = bodies.slice(before).map((b) => (b.args || [b.line]).join(' '));
+  const sent = bodies.slice(before).map((b) => (b.args || [b.line]).join(' ')).filter((c) => c !== 'pl list --provider youtube');
   check(JSON.stringify(sent.slice(0, 3)) === JSON.stringify(['pl link --new-only a youtube --create', 'resolve a --provider youtube', 'pl sync a --provider youtube']),
     `三步依序、第一步帶 --new-only、排隊的讀取插不了隊:${JSON.stringify(sent)}`);
   check(waited, '排隊的讀取在流程之後照樣會跑');
@@ -1257,15 +1261,17 @@ await scenario('8q', async () => {
   pl = await open({ spotify: PL }, AUTH, { 'pl link --new-only a youtube --create': { events: [exit(1, 'Error: youtube 上已經有叫「road trip」的清單(PL1),而且不是空的')] } });
   const b1 = bodies.length;
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(看同名)才畫說明卡
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
   await idle(); await tick(5); await idle();
-  check(bodies.slice(b1).filter((b) => b.args && b.args[0] !== 'auth').length === 1 && status(pl).startsWith('第一步沒有完成。 youtube 上已經有叫「road trip」的清單'), `第一步失敗:${status(pl)}`);
+  check(bodies.slice(b1).filter((b) => b.args && b.args[0] !== 'auth' && b.args.join(' ') !== 'pl list --provider youtube').length === 1 && status(pl).startsWith('第一步沒有完成。 youtube 上已經有叫「road trip」的清單'), `第一步失敗:${status(pl)}`);
   pl = await open({ spotify: PL }, AUTH, {
     'pl link --new-only a youtube --create': { events: [done] },
     'resolve a --provider youtube': { events: [tbl, exit(2, 'Error: 待套用')] },
   });
   const b2 = bodies.length;
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(看同名)才畫說明卡
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
   await idle(); await tick(5); await idle(); await tick(5); await idle();
   check(!bodies.slice(b2).some((b) => b.args && b.args[0] === 'pl' && b.args[1] === 'sync') && status(pl) === '已經在 YouTube Music 建立並連上「road trip」;按「找對應」接著找對應。 你按了取消,沒有寫入。',
@@ -1276,6 +1282,7 @@ await scenario('8q', async () => {
     'pl sync a --provider youtube': { events: [skipOnly, done] },  // 全部 skip:一首都沒加
   });
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(看同名)才畫說明卡
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
   await idle(); await tick(5); await idle(); await tick(5); await idle(); await tick(5); await idle();
   check(status(pl) === '已經在 YouTube Music 建立並連上「road trip」,但這次沒有加任何歌(還沒有找到對應)。按「逐首決定」接著處理。', `一首都沒加:照實說:${status(pl)}`);
@@ -1285,6 +1292,7 @@ await scenario('8q', async () => {
     'pl sync a --provider youtube': { events: [exit(1, 'Error: 讀不到 youtube')] },
   });
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(看同名)才畫說明卡
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
   await idle(); await tick(5); await idle(); await tick(5); await idle(); await tick(5); await idle();
   check(status(pl).startsWith('已經在 YouTube Music 建立並連上「road trip」;按「同步這份清單」把歌加進去。') && !status(pl).includes('對應已經寫入') && !status(pl).includes('找對應'),
@@ -1295,6 +1303,7 @@ await scenario('8q', async () => {
     'resolve a --provider youtube': { status: 409, error: 'another tab' },
   });
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(看同名)才畫說明卡
   script['auth status --json'] = { status: 409, error: 'another tab' };
   script.export = { status: 409, error: 'another tab' };
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
@@ -1329,6 +1338,7 @@ await scenario('8q', async () => {
       events: [{ type: 'prompt_closed', id: 11, reason: 'cancelled' }, exit(1, '', 'cancelled')] },
   });
   byText(row(pl, 'youtube'), '在 YouTube Music 建一份').click();
+  await idle(); await tick(5); await idle(); // 先讀 YouTube 上的清單(看同名)才畫說明卡
   byText(allByClass(pl, 'pl__flow-card')[0], '開始').click();
   await tick(10);
   allByClass(pl, 'pl__item')[1].click();
@@ -1341,8 +1351,9 @@ await scenario('8q', async () => {
 
   // Apple 的揭露只在 Apple;取消說明零命令
   pl = await open({ spotify: PL });
-  const b3 = bodies.length;
   byText(row(pl, 'apple'), '在 Apple Music 建一份').click();
+  await idle(); await tick(5); await idle();
+  const b3 = bodies.length;
   check(allByClass(pl, 'pl__flow-card')[0].textContent.includes('加進清單的歌可能也會進你的 Apple Music 資料庫(看你的 Apple Music 設定)。'), 'Apple 的揭露(決策 49:可能,不是必然)');
   byText(allByClass(pl, 'pl__flow-card')[0], '取消').click();
   check(allByClass(pl, 'pl__flow-card').length === 0 && bodies.length === b3, '取消說明:零命令');
@@ -1354,6 +1365,7 @@ await scenario('8q', async () => {
     await loadI18n(api);
     pl = await open({ spotify: PL, local: 'devB/x.m3u8' }, { ...AUTH, youtube: { state: 'missing' } });
     byText(row(pl, 'apple'), 'Create one on Apple Music').click();
+    await idle(); await tick(5); await idle();
     const CJK = /[　-〿㐀-鿿＀-￯]/;
     const all = [];
     walk(pl, (c) => all.push(c._text || '', ...Object.values(c.attrs || {})));
@@ -1370,7 +1382,7 @@ await scenario('8q', async () => {
       byText(pl, 'Sync this playlist').click(); await settle();
       byText(row(pl, 'spotify'), 'Find matches').click(); await settle();
       byText(row(pl, 'spotify'), 'Review one by one').click(); await settle();
-      byText(row(pl, 'youtube'), 'Create one on YouTube Music').click();
+      byText(row(pl, 'youtube'), 'Create one on YouTube Music').click(); await settle();
       byText(allByClass(pl, 'pl__flow-card')[0], 'Start').click(); await settle(); await settle();
       const flowText = [];
       walk(flowOf(pl), (c) => flowText.push(c._text || '', ...Object.values(c.attrs || {})));
@@ -1426,7 +1438,7 @@ await scenario('8r', async () => {
   check(pl.textContent.includes('讀不到 YouTube Music 上的清單:讀不到 YouTube'), 'YouTube 讀不到:那一段說原因');
   check(prow(pl, 'road trip').dataset.state === 'linked' && prow(pl, 'road trip').textContent.includes('連著正本「road trip」'), '連著正本的列');
   check(pl.textContent.includes('本機曲庫不在這裡,M3U 請到主控台用 pl link 連。'), '各平台上的清單的說明:本機曲庫不在這裡、指到主控台的 pl link');
-  check(prow(pl, 'MIX').dataset.state === 'same_name' && !byText(prow(pl, 'MIX'), '納入 capy') && !anchors(prow(pl, 'MIX')).some((a) => a.href === '#/move') && prow(pl, 'MIX').textContent.includes('先在 Spotify 上把它改名'), '只差大小寫也算同名:不給納入、不指去搬家、說先改名');
+  check(prow(pl, 'MIX').dataset.state === 'same_name' && !byText(prow(pl, 'MIX'), '納入 capy') && !anchors(prow(pl, 'MIX')).some((a) => a.href === '#/move') && prow(pl, 'MIX').textContent.includes('先在 Spotify 上把這份改名') && byText(prow(pl, 'MIX'), '連到正本「mix」'), '只差大小寫也算同名:不給納入、不指去搬家、給連到正本或先改名');
   check(prow(pl, 'Chill').dataset.state === 'unlinked' && prow(pl, 'Chill').textContent.includes('5 首 · 還沒納入') && byText(prow(pl, 'Chill'), '納入 capy'), '還沒納入:給納入、說有幾首');
   check(anchors(prow(pl, 'Chill')).some((a) => a.href === `https://open.spotify.com/playlist/${SP2}`), 'Spotify 的列連回清單(S7)');
 
@@ -2167,6 +2179,306 @@ await scenario('8u', async () => {
     for (const x of [...texts, ...labels]) check(!CJK.test(x), `en:同步頁還有中文:「${x}」`);
     for (const x of labels) check(/^[A-Z][a-z]*ing /.test(x), `en:label 要是進行式:「${x}」`);
     check(labels.length >= 5 && texts.some((x) => x.includes('Start syncing a playlist')), `en:流程真的跑過:${labels.length}`);
+  } finally {
+    delete con.run;
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
+});
+
+// 8v. 合併連結(計畫 2026-10-01 §2.5、§4 情境 11,T4):連結面板的「連到 X 上已經有的清單」與同步頁的同名卡打開確認卡;
+//     卡上每一句的出現條件(改名只在名字不同且不是本機、Apple 揭露在目標是 Apple 或正本連著 Apple 時);下拉裡連著別的正本的列
+//     不能選;三個命令(pl link --merge → resolve → pl sync,有連著的平台沒登入時一家一家同步);第一步停下說沒合併沒連上、
+//     第三步停下說已經合併並連上;搬家完成頁的「保持同步」帶目的平台、精靈遇到同名有歌的正本時指向同步頁。
+await scenario('8v', async () => {
+  const { initSync } = await import('./pages/sync.mjs');
+  const SP1 = '4uLU6hMCjMI75M1A2tKUQC', SP2 = '7qiZfU4dY1lWllzX7mPBI3', SP3 = '37i9dQZF1DXcBWIGoYBM5M';
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const byText = (n, text) => { let b = null; if (n) walk(n, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
+  const idle = () => new Promise((r) => con.idle(r));
+  const settle = async () => { for (let k = 0; k < 4; k++) { await idle(); await tick(5); } };
+  const out = (o) => ({ events: [{ type: 'stdout', text: JSON.stringify(o) }, done] });
+  const table = (header, rows, end = done) => ({ events: [{ type: 'table', header, rows }, end] });
+  const exit = (code, message = '', reason = 'done') => ({ type: 'exit', code, message, reason });
+  const answered = (id) => [{ type: 'prompt', id, kind: 'confirm', title: '?' }, { type: 'prompt_closed', id, reason: 'answered' }];
+  const LH = ['ID', 'NAME', 'TRACKS', 'OWNER'];
+  const AUTH = { google: { state: 'ok', device_id: 'devA' }, spotify: { state: 'ok' }, apple: { state: 'ok' }, youtube: { state: 'ok', channel_id: 'UCme' } };
+  const data = { 'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: SP3 }, items: [{ cid: 'c1' }, { cid: 'c1' }, { cid: 'c2' }] },
+    'pl__x.json': { pid: 'x', name: 'other', links: { apple: 'p.T' }, items: [{ cid: 'c1' }] },
+    'tracks.json': { tracks: { c1: { title: 'Song A' }, c2: { title: 'Song B' } } } };
+  const providers = { list: ['spotify', 'apple', 'local', 'youtube'], current: 'spotify' };
+  const radios = (r, name) => { const o = []; walk(r, (c) => { if (c.tagName === 'INPUT' && c.type === 'radio' && c.name === name) o.push(c); }); return o; };
+  const sec = (sy, i) => allByClass(sy, 'sync__sec')[i];
+  const status = (box) => allByClass(box, 'pl__flow-status').map((x) => x.textContent).join(' | ');
+  const sent = () => bodies.filter((b) => b.args).map((b) => b.args.join(' '));
+  const open = async (more = {}, auth = AUTH) => {
+    reset();
+    script = { 'auth status --json': out(auth), export: out(data), 'pl list --provider spotify': table(LH, [[SP3, 'road trip', '3', 'me']]),
+      'pl list --provider apple': table(LH, [['p.W', '上班聽', '-', ''], ['p.T', 'taken', '-', '']]), ...more };
+    const sy = mk();
+    initSync(sy, api, con, () => {}, providers, 'spotify');
+    await settle();
+    radios(sy, 'sync-list')[0].l.change();
+    await settle();
+    return sy;
+  };
+  const appleRow = (sy) => allByClass(sec(sy, 1), 'pl__link').find((r) => r.dataset.platform === 'apple');
+
+  // ── 從連結面板打開確認卡:讀 Apple 的清單、連著別的正本的列不能選、卡上照實說
+  let sy = await open();
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  const card = allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.textContent.includes('把正本「road trip」連到 Apple Music 上已經有的清單'));
+  const opts = card ? card.querySelector('select').children : [];
+  check(card && sent().includes('pl list --provider apple') && opts.length === 2 && opts[1].disabled && opts[1].textContent.includes('連著正本「other」') && !opts[0].disabled,
+    `確認卡:讀 Apple 的清單、連著別的正本的不能選:${card && card.textContent.slice(0, 60)}`);
+  const facts = card ? allByClass(card, 'sync__merge-facts')[0].textContent : '';
+  check(facts.includes('「上班聽」也會改名為「road trip」') && facts.includes('正本原本的 3 首一首都不動') && facts.includes('可能也會進你的 Apple Music 資料庫'), `卡上的事:改名(名字不同)、正本首數、Apple 揭露:${facts}`);
+  check(!sent().some((c) => c.startsWith('pl link')), '只打開卡,還沒送命令');
+
+  // ── 三個命令,提示畫在同步頁;做完說完成並提醒去除重複
+  script['pl link --merge a apple:p.W'] = { events: [...answered(1), done] };
+  script['resolve a'] = { events: [done] };
+  script['pl sync a'] = { events: [...answered(2), done] };
+  byText(card, '開始合併').click();
+  await settle();
+  check(calls.slice(calls.lastIndexOf('pl sync a')).includes('export'), `合併完成後重讀本機資料:${JSON.stringify(calls.slice(-4))}`);
+  check(JSON.stringify(sent().filter((c) => /^(pl link|resolve|pl sync)/.test(c))) === JSON.stringify(['pl link --merge a apple:p.W', 'resolve a', 'pl sync a']), `合併的三個命令:${JSON.stringify(sent())}`);
+  check(status(sec(sy, 1)).includes('完成:「上班聽」已經併進「road trip」並連上') && status(sec(sy, 1)).includes('去除重複') && globalThis.location.hash === '', `合併完成:${status(sec(sy, 1))}`);
+
+  // ── 第一步停下(取消 / 上限):沒合併、沒連上;第三步停下:已經合併並連上、下一步是同步這份清單
+  for (const [spec, want] of [[{ events: [exit(2, 'Error: 待套用')] }, '沒有合併、也沒有連上。'], [{ events: [exit(3, 'Error: 這次會刪掉 12 首,超過閾值')] }, '沒有合併、也沒有連上。']]) {
+    sy = await open({ 'pl link --merge a apple:p.W': spec });
+    byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+    await settle();
+    byText(sec(sy, 1), '開始合併').click();
+    await settle();
+    check(status(sec(sy, 1)).includes(want) && !sent().includes('resolve a'), `第一步停下:${status(sec(sy, 1))}`);
+  }
+  sy = await open({ 'pl link --merge a apple:p.W': { events: [...answered(1), done] }, 'resolve a': { events: [done] }, 'pl sync a': { events: [exit(2, 'Error: 待套用')] } });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  byText(sec(sy, 1), '開始合併').click();
+  await settle();
+  check(status(sec(sy, 1)).includes('已經把「上班聽」合併並連上「road trip」') && status(sec(sy, 1)).includes('capy pl unlink'), `第三步停下:照實說已經合併並連上:${status(sec(sy, 1))}`);
+  // 前置檢查(寫不進去):照貼原因,不再給「開始合併」
+  sy = await open({ 'pl link --merge a apple:p.W': { events: [exit(1, 'Error: apple:p.W 寫不進去(協作清單),不能合併')] } });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  byText(sec(sy, 1), '開始合併').click();
+  await settle();
+  check(status(sec(sy, 1)).includes('寫不進去') && !status(sec(sy, 1)).includes('Error:') && !byText(sec(sy, 1), '開始合併'), `前置檢查擋下:照貼原因、不再給開始:${status(sec(sy, 1))}`);
+
+  // ── 第三步:有連著的平台這台沒登入時一家一家同步(正本連著 Spotify、這台的 Spotify 過期;從 Apple 上同名的清單進合併)
+  reset();
+  script = { 'auth status --json': out({ ...AUTH, spotify: { state: 'expired' } }), export: out(data), 'pl list --provider apple': table(LH, [['p.W', 'road trip', '-', '']]),
+    'pl show p.W --provider apple': table(['ID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], []),
+    'pl link --merge a apple:p.W': { events: [...answered(1), done] }, 'resolve a': { events: [done] }, 'pl sync a --provider apple': { events: [done] } };
+  sy = mk();
+  initSync(sy, api, con, () => {}, providers, 'apple');
+  await settle();
+  radios(sy, 'sync-list')[0].l.change();
+  await settle();
+  byText(sec(sy, 1), '連到正本「road trip」').click();
+  await settle();
+  check(sec(sy, 1).textContent.includes('「road trip」0 首(剛從 Apple Music 讀的)。'), `Apple 的曲數是 -:確認卡讀 pl show 補上首數:${sec(sy, 1).textContent.slice(0, 160)}`);
+  byText(sec(sy, 1), '開始合併').click();
+  await settle();
+  check(status(sec(sy, 1)).includes('這台有登入的平台也同步了') && status(sec(sy, 1)).includes('沒有同步的平台:Spotify。'), `只同步了一部分:照實說、列出沒同步的平台:${status(sec(sy, 1))}`);
+  check(sent().includes('pl sync a --provider apple') && !sent().includes('pl sync a') && !sent().includes('pl sync a --provider spotify'), `第三步:Spotify 過期,只同步 Apple:${JSON.stringify(sent())}`);
+
+  // ── 同步頁的同名卡:連到正本(預選那一份)
+  const d2 = { ...data, 'pl__w.json': { pid: 'w', name: '上班聽', links: { spotify: SP1 }, items: [{ cid: 'c1' }] } };
+  reset();
+  script = { 'auth status --json': out(AUTH), export: out(d2), 'pl list --provider apple': table(LH, [['p.Z', 'zzz', '1', ''], ['p.W', '上班聽', '-', '']]), 'pl show p.W --provider apple': table(['ID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], []) };
+  sy = mk();
+  initSync(sy, api, con, () => {}, providers, 'apple');
+  await settle();
+  radios(sy, 'sync-list')[1].l.change();
+  await settle();
+  const sameCard = allByClass(sec(sy, 1), 'pl__flow-card')[0];
+  check(sameCard.dataset.state === 'same_name' && sameCard.textContent.includes('要讓兩份一起同步') && byText(sameCard, '連到正本「上班聽」'), `同名卡:給連到正本:${sameCard.textContent.slice(0, 80)}`);
+  byText(sameCard, '連到正本「上班聽」').click();
+  await settle();
+  const mc = allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.querySelector('select'));
+  check(mc && mc.querySelector('select').value === 'p.W' && !allByClass(mc, 'sync__merge-facts')[0].textContent.includes('也會改名'), '同名卡打開的確認卡預選那一份、名字一樣就不說改名');
+
+  // ── 確認卡的首數:TRACKS 是數字就直接用、不讀 pl show;改名照精確比較(只差大小寫也會改);目標不是 Apple 但正本連著 Apple 也揭露
+  const openApple = async (more = {}) => {
+    reset();
+    script = { 'auth status --json': out(AUTH), export: out(data), 'pl list --provider apple': table(LH, [['p.W', '上班聽', '-', ''], ['p.T', 'taken', '-', '']]),
+      'pl list --provider spotify': table(LH, [[SP3, 'road trip', '3', 'me'], [SP2, 'Other', '7', 'me']]), ...more };
+    const s = mk();
+    initSync(s, api, con, () => {}, providers, 'apple');
+    await settle();
+    radios(s, 'sync-list')[1].l.change(); // taken:連著正本「other」
+    await settle();
+    return s;
+  };
+  const mergeCard = (s) => allByClass(sec(s, 1), 'pl__flow-card').find((c) => c.querySelector('select'));
+  const factsOf = (c) => (c ? allByClass(c, 'sync__merge-facts')[0].textContent : '');
+  const linkRow = (s, p) => allByClass(sec(s, 1), 'pl__link').find((r) => r.dataset.platform === p);
+  sy = await openApple();
+  byText(linkRow(sy, 'spotify'), '連到 Spotify 上已經有的清單').click();
+  await settle();
+  let mcx = mergeCard(sy);
+  check(mcx && mcx.querySelector('select').value === SP2 && mcx.textContent.includes('「Other」7 首(剛從 Spotify 讀的)。') && !sent().some((c) => c.startsWith('pl show ' + SP2)),
+    `TRACKS 是數字:直接用、不讀 pl show:${mcx && mcx.textContent.slice(0, 160)}`);
+  check(factsOf(mcx).includes('「Other」也會改名為「other」') && factsOf(mcx).includes('可能也會進你的 Apple Music 資料庫'), `只差大小寫也改名、正本連著 Apple 就揭露:${factsOf(mcx)}`);
+  sy = await open({ 'pl list --provider youtube': table(LH, [['UCme/PLy', 'road trip', '2', 'me']]) });
+  byText(linkRow(sy, 'youtube'), '連到 YouTube Music 上已經有的清單').click();
+  await settle();
+  mcx = mergeCard(sy);
+  check(mcx && !factsOf(mcx).includes('Apple Music') && !factsOf(mcx).includes('也會改名'), `目標 YouTube、正本沒連 Apple:不揭露、同名不改名:${factsOf(mcx)}`);
+
+  // ── 平台上沒有清單:說「沒有清單」,不說「每一份都連著別的正本」
+  sy = await open({ 'pl list --provider apple': table(LH, []) });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  check(sec(sy, 1).textContent.includes('Apple Music 上沒有清單。') && !sec(sy, 1).textContent.includes('每一份都已經連著'), `平台上沒有清單:${sec(sy, 1).textContent.slice(0, 120)}`);
+
+  // ── 第一步被中止:可能停在寫入途中,不說「沒有合併、也沒有連上」
+  sy = await open({ 'pl link --merge a apple:p.W': { events: [exit(130, '', 'cancelled')] } });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  byText(sec(sy, 1), '開始合併').click();
+  await settle();
+  check(status(sec(sy, 1)).includes('已中止') && !status(sec(sy, 1)).includes('沒有合併'), `第一步中止:不斷定沒寫:${status(sec(sy, 1))}`);
+
+  // ── 讀清單排隊:預覽(pl show)還在跑時按「連到…」,排到才讀,不被序列槽擋成「讀不到」
+  const [gq, relq] = gate();
+  reset();
+  script = { 'auth status --json': out(AUTH), export: out(data), 'pl list --provider spotify': table(LH, [[SP3, 'road trip', '3', 'me']]),
+    'pl list --provider apple': table(LH, [['p.W', '上班聽', '-', '']]), ['pl show ' + SP3 + ' --provider spotify']: { gate: gq, events: [done] } };
+  sy = mk();
+  initSync(sy, api, con, () => {}, providers, 'spotify');
+  await settle();
+  radios(sy, 'sync-list')[0].l.change();
+  await tick(20);
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await tick(20);
+  check(!calls.includes('pl list --provider apple') && sec(sy, 1).textContent.includes('正在讀 Apple Music 上的清單'), `預覽還在跑:先排隊、說在讀:${JSON.stringify(calls)}`);
+  relq();
+  await settle();
+  check(calls.includes('pl list --provider apple') && mergeCard(sy) && !sec(sy, 1).textContent.includes('讀不到'), `排到之後照讀、畫確認卡:${sec(sy, 1).textContent.slice(0, 120)}`);
+  // 讀的時候換了清單:讀完不畫在新清單的區塊裡
+  const [gl, rell] = gate();
+  sy = await open({ 'pl list --provider spotify': table(LH, [[SP3, 'road trip', '3', 'me'], [SP1, 'zzz', '1', 'me']]),
+    'pl list --provider apple': { gate: gl, events: [{ type: 'table', header: LH, rows: [['p.W', '上班聽', '-', '']] }, done] } });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await tick(20);
+  radios(sy, 'sync-list')[1].l.change();
+  rell();
+  await settle();
+  check(!mergeCard(sy) && !sec(sy, 1).textContent.includes('正在讀 Apple Music 上的清單'), `讀的時候換了清單:不畫在新的區塊:${sec(sy, 1).textContent.slice(0, 120)}`);
+
+  // ── 寫入流程收尾後,這裡自己讀的平台清單作廢:下一張卡重讀(剛合併、剛建的那份要看得到,#138 review 第 1 點)
+  sy = await open({ export: out({ ...data, 'pl__z.json': { pid: 'z', name: 'zzz', links: { spotify: SP1 }, items: [{ cid: 'c1' }] } }),
+    'pl list --provider spotify': table(LH, [[SP3, 'road trip', '3', 'me'], [SP1, 'zzz', '1', 'me']]),
+    'pl link --merge a apple:p.W': { events: [...answered(1), done] }, 'resolve a': { events: [done] }, 'pl sync a': { events: [done] } });
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  byText(sec(sy, 1), '開始合併').click();
+  await settle();
+  radios(sy, 'sync-list')[1].l.change(); // zzz:連著另一份正本
+  await settle();
+  byText(appleRow(sy), '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  check(calls.filter((c) => c === 'pl list --provider apple').length === 2 && mergeCard(sy), `合併之後再開確認卡:重讀 Apple 的清單:${JSON.stringify(calls.filter((c) => c.startsWith('pl list')))}`);
+
+  // ── 在 X 建一份:那個平台有同名、有歌的清單(只差大小寫也算)→ 不給「開始」,給「連到那一份」並預選它;不送 pl link --new-only
+  sy = await open({ 'pl list --provider apple': table(LH, [['p.W', '上班聽', '-', ''], ['p.R', 'Road Trip', '-', '']]) });
+  byText(appleRow(sy), '在 Apple Music 建一份').click();
+  await settle();
+  const dupCard = allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.textContent.includes('capy 不會再建一份同名的'));
+  check(dupCard && dupCard.textContent.includes('Apple Music 上已經有叫「road trip」的清單') && !byText(dupCard, '開始') && byText(dupCard, '連到 Apple Music 上已經有的清單'),
+    `建一份撞同名:改給連到那一份:${dupCard && dupCard.textContent.slice(0, 120)}`);
+  byText(dupCard, '連到 Apple Music 上已經有的清單').click();
+  await settle();
+  mcx = mergeCard(sy);
+  check(mcx && mcx.querySelector('select').value === 'p.R' && factsOf(mcx).includes('「Road Trip」也會改名為「road trip」') && !sent().some((c) => c.startsWith('pl link')),
+    `撞同名打開的確認卡預選那一份、還沒送命令:${JSON.stringify(sent())}`);
+
+  // ── 搬家:完成頁的「保持同步」帶目的平台;同名、有歌的正本 → 指向同步頁
+  const { initMove } = await import('./pages/move.mjs');
+  globalThis.document.createElementNS ||= (_, tag) => mk(tag);
+  const lists = (rows) => (h) => { h.onTable(LH, rows); h.onExit(0, '', 'done'); };
+  let mig = null;
+  const plan = {
+    'auth status --json': (h) => { h.onStdout(JSON.stringify({ spotify: { state: 'ok', client_id: 'set' }, google: { state: 'ok', client: 'builtin' }, apple: { state: 'ok', developer_token: 'ok', user_token: 'ok' } })); h.onExit(0, '', 'done'); },
+    'pl list --provider spotify': lists([['p1', 'Road trip', '2', 'me']]),
+    'pl list --provider apple': lists([['q1', 'road trip', '5', '']]),
+    export: (h) => { h.onStdout(JSON.stringify({ 'pl__r.json': { pid: 'r', name: 'Road Trip', links: { spotify: 'p1' }, items: [{ cid: 'c1' }] } })); h.onExit(0, '', 'done'); },
+    'migrate p1 --from spotify --to apple:q1': (h) => { mig = h; },
+  };
+  const fcon = { idle: (fn) => fn(), run(_line, hooks, o) { plan[(o.args || []).join(' ')]?.(hooks); return Promise.resolve(); } };
+  const mv = mk();
+  initMove(mv, api, fcon, () => {}, { list: ['spotify', 'apple'] });
+  radios(mv, 'wiz-to')[1].l.change();
+  radios(mv, 'wiz-from')[0].l.change();
+  byText(mv, t('webui.move.next.playlist')).click();
+  radios(mv, 'wiz-src')[0].l.change();
+  check(mv.textContent.includes('搬家加進它會被擋下') && (() => { let ok = false; walk(mv, (c) => { if (c.tagName === 'A' && c.href === '#/sync/apple') ok = true; }); return ok; })(), `精靈:同名、有歌的正本 → 指向同步頁:${mv.textContent.slice(0, 40)}`);
+  // 同名、有歌的正本:不預選「加進它」,下拉停在「請選一份」、下一步不能按;人挑了才走得下去
+  const dsel = mv.querySelector('select');
+  check(dsel && dsel.value === '' && dsel.children[0].textContent === '請選一份' && byText(mv, t('webui.move.next.confirm')).disabled, `精靈:同名有歌的正本不預選目的地:${dsel && dsel.value}`);
+  // 先點「建新的」再點回「加進既有的」:一樣停在「請選一份」,不替人選到會被擋下的那份(#138 review 第 2 點)
+  radios(mv, 'wiz-dst')[0].l.change();
+  radios(mv, 'wiz-dst')[1].l.change();
+  check(mv.querySelector('select')?.value === '' && byText(mv, t('webui.move.next.confirm')).disabled, `精靈:切回加進既有的仍停在請選一份:${mv.querySelector('select')?.value}`);
+  const dsel2 = mv.querySelector('select');
+  dsel2.value = 'q1';
+  dsel2.l.change();
+  byText(mv, t('webui.move.next.confirm')).click();
+  byText(mv, t('webui.move.start')).click();
+  mig?.onTable(['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['migrate', 'add', 'spotify', 'Road trip', '0', 'a', SP1, 'Song A', 'a', 'r', 'push']]);
+  mig?.onExit(0, '', 'done');
+  let keep = null;
+  walk(mv, (c) => { if (c.tagName === 'A' && c.textContent === '讓兩邊之後保持同步 →') keep = c; });
+  check(keep && keep.href === '#/sync/apple', `搬家完成:保持同步帶目的平台:${keep && keep.href}`);
+  // 正本已經連著那一份(migrate 會沿用)、或連著目的平台的另一份(同步頁也接不起來):不算,照常預選同名的那一份
+  for (const [links, why] of [[{ spotify: 'p1', apple: 'q1' }, '已經連著那一份'], [{ spotify: 'p1', apple: 'q9' }, '連著目的平台的另一份']]) {
+    plan.export = (h) => { h.onStdout(JSON.stringify({ 'pl__r.json': { pid: 'r', name: 'Road Trip', links, items: [{ cid: 'c1' }] } })); h.onExit(0, '', 'done'); };
+    const m = mk();
+    initMove(m, api, fcon, () => {}, { list: ['spotify', 'apple'] });
+    radios(m, 'wiz-to')[1].l.change();
+    radios(m, 'wiz-from')[0].l.change();
+    byText(m, t('webui.move.next.playlist')).click();
+    radios(m, 'wiz-src')[0].l.change();
+    check(m.querySelector('select')?.value === 'q1' && !m.textContent.includes('搬家加進它會被擋下') && m.textContent.includes('所以預設加進它'), `精靈:正本${why}:照常預選、不指向同步頁`);
+  }
+  // 精靈讀 export 是背景判斷:讀不到(第一次同步前的常態)不出提示,目的地照同名預選
+  reset();
+  script = { 'auth status --json': out(AUTH), export: { events: [exit(1, 'Error: 還沒有本機資料')] },
+    'pl list --provider spotify': table(LH, [['p1', 'Road trip', '2', 'me']]), 'pl list --provider apple': table(LH, [['q1', 'road trip', '5', '']]) };
+  const mv2 = mk();
+  initMove(mv2, api, con, () => {}, { list: ['spotify', 'apple'] });
+  await settle();
+  radios(mv2, 'wiz-to')[1].l.change();
+  radios(mv2, 'wiz-from')[0].l.change();
+  byText(mv2, t('webui.move.next.playlist')).click();
+  await settle();
+  radios(mv2, 'wiz-src')[0].l.change();
+  await settle();
+  check(calls.includes('export') && !notices.some((n) => n.includes('還沒有本機資料')) && mv2.querySelector('select')?.value === 'q1', `精靈讀不到 export:不出提示、照同名預選:${JSON.stringify(notices)}`);
+
+  // ── 英文:合併的 label 是進行式、卡上沒有中文
+  i18nFile = './i18n-en.json';
+  const labels = [];
+  try {
+    await loadI18n(api);
+    con.run = (line, hooks, opts = {}) => { labels.push(opts.label); return Console.prototype.run.call(con, line, hooks, opts); };
+    sy = await open({ 'pl link --merge a apple:p.W': { events: [...answered(1), done] }, 'resolve a': { events: [done] }, 'pl sync a': { events: [done] } });
+    byText(appleRow(sy), 'Link to an existing playlist on Apple Music').click();
+    await settle();
+    byText(sec(sy, 1), 'Start merging').click();
+    await settle();
+    const texts = [];
+    walk(sec(sy, 1), (c) => { if (c._text) texts.push(c._text); });
+    const CJK = /[　-〿㐀-鿿＀-￯]/;
+    for (const x of [...texts.filter((x) => !x.includes('上班聽')), ...labels.filter((x) => !x.includes('上班聽'))]) check(!CJK.test(x), `en:合併流程還有中文:「${x}」`);
+    for (const x of labels) check(/^[A-Z][a-z]*ing /.test(x), `en:label 要是進行式:「${x}」`);
+    check(labels.some((x) => x.startsWith('Merging ')) && labels.some((x) => x.startsWith('Matching ')), `en:合併與找對應的 label:${JSON.stringify(labels)}`);
   } finally {
     delete con.run;
     i18nFile = './i18n.json';

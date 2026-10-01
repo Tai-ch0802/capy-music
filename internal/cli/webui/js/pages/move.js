@@ -3,6 +3,7 @@
 // 預覽表、逐筆裁決、最終確認都是 CLI 自己送來的:**絕不代加 --yes / --force,也不自動回答確認**(決策 46)。
 // 提示畫在精靈裡(promptHost),不把人丟進主控台。上面的路線示意是裝飾,不是進度(決策 47)。
 import { el, btn, providerName, emptyState, radioCard } from './common.js';
+import { indexExport, listState } from './plflow.js';
 import { parseStatus, stateOf } from './account.js';
 import { renderTable, linkColumn, byProvider, spotifyLink } from '../table.js';
 import { stages } from '../console.js';
@@ -77,6 +78,7 @@ export function initMove(root, api, con, notice, providers) {
     status: null,               // auth status 解析後的三段;null = 還沒讀到
     src: null, srcLists: null,  // 選中的來源清單 { id, name, count } / 來源平台的清單
     dst: { mode: 'new', id: '' }, dstLists: null,
+    masters: null,              // 這台的正本(export;只用來判斷 mergeCase);null = 不知道
     listError: '', filter: '',  // filter:步驟二的過濾字串(放在 state 才活得過 render)
     closedBy: '',                  // 這一次最後一則提示是怎麼收的(prompt_closed 的 reason)
     running: false, preview: null, // 搬家那一次命令在跑 / 它送來的預覽表 { h, rows }
@@ -168,7 +170,7 @@ export function initMove(root, api, con, notice, providers) {
   }
 
   function enterStep2() {
-    state.step = 2; state.src = null; state.srcLists = null; state.dstLists = null; state.listError = ''; state.filter = '';
+    state.step = 2; state.src = null; state.srcLists = null; state.dstLists = null; state.listError = ''; state.filter = ''; state.dstTouched = false;
     state.dst = { mode: CAN_CREATE.includes(state.to) ? 'new' : 'existing', id: '' };
     render();
     loadLists(state.from, (src, msg) => {
@@ -177,16 +179,44 @@ export function initMove(root, api, con, notice, providers) {
       loadLists(state.to, (dst, msg2) => {
         if (!dst) { state.listError = msg2 || t('webui.move.err.lists', { provider: providerName(state.to) }); render(); return; }
         state.dstLists = dst; defaultDst(); render();
+        readMasters(); // 在這個 onExit 裡接著送(不插隊)
       });
     });
   }
+
+  // readMasters:安靜讀一次 export,只為了知道有沒有同名、而且有歌的正本(下面 mergeCase)。讀不到就當不知道。
+  function readMasters() {
+    let text = '';
+    con.run('', {
+      onStdout: (s) => { text += s; },
+      onExit: (code) => {
+        if (code !== 0) return;
+        try { state.masters = indexExport(JSON.parse(text)).masters; } catch (_) { return; } // 不知道
+        if (!state.dstTouched) defaultDst(); // 正本晚到:使用者還沒自己挑目的地就照新資料再套一次預設
+        render();
+      },
+    }, { args: ['export'], label: t('webui.playlists.load_label'), quiet: true, silent: true }); // 還沒有本機資料是第一次同步前的常態:讀不到不出提示
+  }
+
+  // mergeCase:目的地有同名清單,而 capy 已經保管一份同名、有歌、還沒連那份清單的正本。這時「建新的」撞名、「加進它」
+  // 也會被 migrate 擋下(沒有 base 時會重排正本,#134):兩份要一起同步,出路是同步頁的「連到 X 上已經有的清單」(合併)。
+  // 判斷跟同步頁一樣用 listState:只有「同名、那份正本在目的平台還沒連」(same_name)而且有歌才算;已經連著那一份(linked)
+  // 時 migrate 會沿用、不會擋;那份正本連著目的平台的另一份(same_name_taken)時同步頁也接不起來,不指過去。
+  const mergeCase = (dup) => {
+    if (!dup) return null;
+    const ls = listState(state.masters, state.to, dup);
+    return ls.kind === 'same_name' && (ls.master.items || []).length ? ls.master : null;
+  };
 
   // 目的地已經有同名清單時 CLI 會擋(migrate.go):送出前自己比對,直接給「加進它」,不去解析那句錯誤字串。
   // 目的地的預設:同名就「加進它」,否則能建就建新的。只在「剛挑了來源清單 / 目的地清單剛讀到」時套一次,
   // 之後使用者要換隨他——不可以每次重畫都改回來、也不可以因為同名就把「建新的」停用:CLI 的撞名判定比這裡嚴
   // (sameNamePlaylists 只算讀得到的;你追蹤的別人的同名清單不算),精靈比它嚴會把人關在沒有出路的分支裡(review #68)。
+  // mergeCase(同名、有歌的正本):「加進它」會被擋下,不預選它;選單留在「請選一份」,要加進哪一份由人挑(「建新的」不停用,
+  // CLI 的撞名只算讀得到的清單,review #68)。
   const defaultDst = () => {
     const dup = sameName();
+    if (dup && mergeCase(dup)) { state.dst = { mode: 'existing', id: '' }; return; }
     state.dst = dup ? { mode: 'existing', id: dup.id } : { mode: CAN_CREATE.includes(state.to) ? 'new' : 'existing', id: '' };
   };
 
@@ -341,7 +371,7 @@ export function initMove(root, api, con, notice, providers) {
       list.replaceChildren(list.firstChild);
       for (const p of state.srcLists.filter((x) => !filter || x.name.toLowerCase().includes(filter))) {
         list.appendChild(radioCard('pl__item', 'wiz-src', !!state.src && state.src.id === p.id, false,
-          () => { state.src = p; defaultDst(); render(); },
+          () => { state.src = p; state.dstTouched = false; defaultDst(); render(); },
           el('span', 'pl__name', p.name), el('span', 'pl__count', p.count && p.count !== '-' ? t('webui.move.track_count', { count: p.count }) : '')));
       }
     };
@@ -365,7 +395,9 @@ export function initMove(root, api, con, notice, providers) {
         const lab = el('label', 'wiz__opt');
         const r = el('input');
         r.type = 'radio'; r.name = 'wiz-dst'; r.checked = state.dst.mode === mode; r.disabled = !enabled;
-        r.addEventListener('change', () => { state.dst = { mode, id: mode === 'existing' ? (state.dstLists[0] || {}).id || '' : '' }; render(); });
+        // 切回「加進既有的」:mergeCase 時一樣停在「請選一份」,不替人選到會被擋下的那份(#138 review 第 2 點)
+        const first = () => (mergeCase(dup) ? '' : (state.dstLists[0] || {}).id || '');
+        r.addEventListener('change', () => { state.dstTouched = true; state.dst = { mode, id: mode === 'existing' ? first() : '' }; render(); });
         lab.append(r, el('span', null, text));
         return lab;
       };
@@ -382,13 +414,25 @@ export function initMove(root, api, con, notice, providers) {
           o.value = p.id;
           sel.appendChild(o);
         }
-        sel.value = state.dst.id || (state.dstLists[0] || {}).id || '';
-        state.dst.id = sel.value;
-        sel.addEventListener('change', () => { state.dst.id = sel.value; });
+        if (!state.dst.id && mergeCase(dup)) { // 不預選:先放一個「請選一份」,下一步要等人挑了才能按
+          const o = el('option', null, t('webui.move.where.pick'));
+          o.value = '';
+          sel.insertBefore(o, sel.firstChild);
+          sel.value = '';
+        } else {
+          sel.value = state.dst.id || (state.dstLists[0] || {}).id || '';
+          state.dst.id = sel.value;
+        }
+        sel.addEventListener('change', () => { state.dstTouched = true; state.dst.id = sel.value; render(); });
         where.appendChild(sel);
       }
       out.push(where);
-      if (dup) out.push(el('p', 'page__note', t('webui.move.where.dup', { provider: providerName(state.to), name: dup.name })));
+      const mc = mergeCase(dup);
+      if (mc) {
+        const a = el('a', 'wiz__link', t('webui.move.where.merge_go'));
+        a.href = `#/sync/${state.to}`;
+        out.push(el('p', 'page__warn', t('webui.move.where.merge', { provider: providerName(state.to), name: dup.name, master: mc.name })), a);
+      } else if (dup) out.push(el('p', 'page__note', t('webui.move.where.dup', { provider: providerName(state.to), name: dup.name })));
       // 兩條路都走不通(不能新建、也沒有既有的):說原因,不要只留兩個灰掉的選項(review #68)。
       if (!canNew && !state.dstLists.length) {
         const provider = providerName(state.to);
@@ -430,8 +474,11 @@ export function initMove(root, api, con, notice, providers) {
         live.appendChild(el('p', 'page__note', t('webui.move.missed', { count: r.missed.length, provider: providerName(state.to) })));
         live.appendChild(missedList(r.missed));
       }
-      // 「讓兩邊之後保持同步」先拿掉:讓來源也持續同步要把正本連到一份已經有歌的清單,那要等 pl link --merge(計畫 2026-10-01 §5 T4)
       acts.append(btn(t('webui.move.again'), 'btn--primary', () => { state.result = null; enterStep2(); }));
+      // 讓來源也持續同步:到同步頁(預選目的平台),在連結面板把正本連到來源那份(合併,計畫 2026-10-01 §5 T4)
+      const sync = el('a', 'wiz__link', t('webui.move.keep_synced'));
+      sync.href = `#/sync/${state.to}`;
+      acts.appendChild(sync);
     } else {
       // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
       // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。

@@ -90,6 +90,7 @@ export function initSync(root, api, con, notice, providers, arg) {
         }
         try {
           ({ masters, track, devices: st.devices } = indexExport(JSON.parse(text)));
+          st.masters = masters;
           exportFail = '';
         } catch (e) {
           exportFail = 'error';
@@ -307,7 +308,7 @@ export function initSync(root, api, con, notice, providers, arg) {
           onStdout: (s) => { text += s; },
           onExit: (c, msg, reason) => {
             if (c !== 0) { if (reason === 'done') { exportFail = 'no_copy'; masters = null; } }
-            else { try { ({ masters, track, devices: st.devices } = indexExport(JSON.parse(text))); exportFail = ''; } catch (_) { exportFail = 'error'; } }
+            else { try { ({ masters, track, devices: st.devices } = indexExport(JSON.parse(text))); st.masters = masters; exportFail = ''; } catch (_) { exportFail = 'error'; } }
             render();
             fn();
           },
@@ -504,7 +505,13 @@ export function initSync(root, api, con, notice, providers, arg) {
       card.appendChild(acts);
       return card;
     }
-    if (ls.kind === 'same_name') { card.appendChild(el('p', null, t('webui.sync.same_name', { name: ls.master.name, platform }))); return card; }
+    if (ls.kind === 'same_name') {
+      // 要一起同步:把這份連到那份正本(合併,決策 62;確認卡照實說會發生什麼);要分開:先在平台上改名再納入
+      card.appendChild(el('p', null, t('webui.sync.same_name', { name: ls.master.name, platform })));
+      acts.appendChild(btn(t('webui.sync.same_name_go', { name: ls.master.name }), 'btn--primary', () => lf.askMerge(p, ls.master, rightFlow, r.id)));
+      card.appendChild(acts);
+      return card;
+    }
     if (ls.kind === 'same_name_taken') { card.appendChild(el('p', null, t('webui.sync.same_name_taken', { name: ls.master.name, platform }))); return card; }
     return linkedGuide(ls.master);
   }
@@ -549,7 +556,6 @@ export function initSync(root, api, con, notice, providers, arg) {
       card.appendChild(acts);
     }
     box.append(card, lf.panel(pl, pl.items || [], track, rightFlow));
-    if (kinds.some(([q, s]) => s.kind === 'unlinked' && COLUMNS.includes(q))) box.appendChild(el('p', 'page__note', t('webui.sync.no_merge_yet')));
     // 名字附註:連著的平台清單現在的名字跟正本不同時才說(只比對這一頁讀過清單的平台;本機曲庫不改檔名)
     for (const [q, s] of kinds) {
       if (s.kind !== 'linked' || q === 'local') continue;
