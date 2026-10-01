@@ -230,6 +230,25 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .row-actions .btn { min-height: 32px; vertical-align: middle; } /* 按鈕(inline-block)與連結(a.btn,inline-flex)並排時基線對齊方式不同,置中才不會差 1px(#101 review) */
 .tbl td[data-action="add"] { color: var(--accent); }
 .tbl td[data-action="remove"] { color: var(--danger); }
+/* 精簡變更表(計畫 2026-10-01 §3.7):動作 / 歌曲 / 說明;完整原表收在 details 裡。表自己是容器:窄於 40rem 時每列拆兩行 */
+.chg { display: grid; gap: .5rem; min-width: 0; container-type: inline-size; }
+.chg__tbl { table-layout: fixed; }
+.chg__c-pos { width: 3rem; } .chg__c-pl { width: 9rem; } .chg__c-act { width: 13rem; } .chg__c-why { width: 16rem; } .chg__c-sp { width: 11rem; }
+.chg__pl { overflow-wrap: anywhere; }
+.chg__song { min-width: 0; }
+.chg__why { color: var(--muted); font-size: var(--t-12); overflow-wrap: anywhere; }
+.chg__full summary { color: var(--accent); cursor: pointer; width: max-content; max-width: 100%; font-size: var(--t-14); }
+.chg__full[open] summary { margin-bottom: .5rem; }
+@container (max-width: 40rem) {
+  .chg__tbl, .chg__tbl tbody, .chg__tbl td { display: block; }
+  .chg__tbl thead, .chg__tbl colgroup { display: none; }
+  .chg__tbl tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .5rem .9rem; border-bottom: 1px solid var(--line); }
+  .chg__tbl tbody tr:last-child { border-bottom: 0; }
+  .chg__tbl td { padding: 0; border: 0; }
+  .chg__song { flex: 1 1 100%; order: 2; }
+  .chg__why { flex: 1 1 100%; order: 3; }
+  .chg__tbl td.row-actions { order: 4; }
+}
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 

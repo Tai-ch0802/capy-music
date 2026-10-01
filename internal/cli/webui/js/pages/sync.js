@@ -36,7 +36,7 @@ export function initSync(root, api, con, notice, providers) {
     const report = verb === 'dedup' && name.value.trim().startsWith('spotify:');
     out.replaceChildren();
     con.run(`pl ${verb}${target(verb)}${flags()}`, {
-      onTable: (h, r) => out.replaceChildren(changeTable(h, r, report)),
+      onTable: (h, r) => out.replaceChildren(changeTable(h, r, { spotifyReport: report, dir: verb === 'pull' || verb === 'push' ? verb : '' })),
       onExit: (code, msg) => {
         // 只看變更 + 有變更 = exit 2,這是最常見的一次操作,是正常結果不是警告;CLI 的原文會叫人「加 --yes」,
         // 而那正是這一頁永遠不會做的事(決策 46)——說這一頁上的下一步(review #67 第二輪)。

@@ -112,12 +112,40 @@ export function filterBox(label, onFilter, extra, initial) {
   return bar;
 }
 
-// changeTable:同步表(最後一欄是 REASON_CODE;清單頁的同步、找對應也用它):自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
-// Spotify 的那幾列在最後補一欄連回 Spotify(table.js 的 byProvider;spotifyReport = Spotify 清單的去重報告,整張都是 Spotify 的)。
-export function changeTable(header, rows, spotifyReport) {
+// changeTable:變更表(計畫 2026-10-01 §3.7)。CLI 的表一欄一欄都是機器欄位(英文的 action / dir、cid、reason_code),
+// 這裡先畫一張給人看的精簡表:「動作 / 歌曲 / 說明」(表裡不只一份清單時前面多一欄「清單」),動作依 DIR + ACTION 翻成白話,
+// 說明是 CLI 已經照語系翻好的 REASON;完整的原表收在「看完整表格」裡,打開才畫(合併時一張表可能上千列)。
+// 列與動作那一格保留機器值(data-action / data-dir):上色看它,拿掉那一列另外有「拿掉」兩個字,不靠顏色單獨表意。
+// 去重報告(pl dedup <平台>:<清單>,沒有 ACTION)畫成「# / 歌曲 / 說明」,# 照 CLI 的 POS(說明裡的 pos 也是同一個數)。
+// resolve 的表(有 CONFIDENCE)照舊畫原表。opts.dir:沒有 DIR 欄的表(pl pull / pl push)由呼叫端說是哪個方向;
+// opts.spotifyReport:Spotify 清單的去重報告,沒有 PROVIDER 欄、整張都是 Spotify 的。
+export function changeTable(header, rows, opts = {}) {
+  const ai = header.indexOf('ACTION');
+  const report = ai < 0 && header.includes('POS') && header.includes('REASON');
+  const pick = byProvider(header) || (opts.spotifyReport && ((r) => ({ kind: 'track', id: r[header.indexOf('ID')], title: r[header.indexOf('TITLE')] })));
+  // skip(pull / push)與 review / conflict(resolve:等人決定、這次不寫)都不算變更;resolve 的表另一句,數字要跟確認句的筆數一樣
+  const idle = new Set(['skip', 'review', 'conflict']);
+  const n = rows.filter((r) => ai < 0 || !idle.has(r[ai])).length;
+  const note = el('p', 'page__note', header.includes('CONFIDENCE') ? t('webui.sync.resolve_changes', { count: n }) : t('webui.sync.changes', { count: n }));
+  if (header.includes('CONFIDENCE') || (ai < 0 && !report)) {
+    const wrap = fullTable(header, rows, pick);
+    wrap.appendChild(note);
+    return wrap;
+  }
+  const box = el('div', 'chg');
+  const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
+  wrap.appendChild(compactTable(header, rows, report, opts.dir || '', pick));
+  const full = el('details', 'chg__full');
+  full.appendChild(el('summary', null, t('webui.changes.full')));
+  full.addEventListener('toggle', () => { if (full.open && !full.querySelector('.tbl')) full.appendChild(fullTable(header, rows, pick)); });
+  box.append(wrap, note, full);
+  return box;
+}
+
+// fullTable:CLI 的原表(renderTable)+ Spotify 連結欄;ACTION 那一格標上機器值。
+function fullTable(header, rows, pick) {
   const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
   const tbl = renderTable(header, rows);
-  const pick = byProvider(header) || (spotifyReport && ((r) => ({ kind: 'track', id: r[header.indexOf('ID')], title: r[header.indexOf('TITLE')] })));
   if (pick) linkColumn(tbl, rows, pick);
   const ai = header.indexOf('ACTION');
   if (ai >= 0) {
@@ -127,11 +155,74 @@ export function changeTable(header, rows, spotifyReport) {
     }
   }
   wrap.appendChild(tbl);
-  // skip(pull / push)與 review / conflict(resolve:等人決定、這次不寫)都不算變更;resolve 的表另一句,數字要跟確認句的筆數一樣
-  const idle = new Set(['skip', 'review', 'conflict']);
-  const n = rows.filter((r) => ai < 0 || !idle.has(r[ai])).length;
-  wrap.appendChild(el('p', 'page__note', header.includes('CONFIDENCE') ? t('webui.sync.resolve_changes', { count: n }) : t('webui.sync.changes', { count: n })));
   return wrap;
+}
+
+// ACTS:DIR + ACTION → 白話的動作。key 要寫字串字面(i18n 的靜態檢查),所以每一種一個函式;沒列到的組合照原字顯示、不藏列。
+const ACTS = {
+  'pull add': (p) => t('webui.changes.pull.add', { platform: p }),
+  'pull remove': () => t('webui.changes.pull.remove'),
+  'pull move': () => t('webui.changes.pull.move'),
+  'pull rename': () => t('webui.changes.pull.rename'),
+  'pull unlink': (p) => t('webui.changes.pull.unlink', { platform: p }),
+  'push add': (p) => t('webui.changes.push.add', { platform: p }),
+  'push remove': (p) => t('webui.changes.push.remove', { platform: p }),
+  'push move': (p) => t('webui.changes.push.move', { platform: p }),
+  'push rename': (p) => t('webui.changes.push.rename', { platform: p }),
+  'dedup remove': () => t('webui.changes.dedup.remove'),
+};
+
+function compactTable(header, rows, report, dir, pick) {
+  const col = (k) => header.indexOf(k);
+  const [di, ai, pi, li, ti, ri, ari, posi] = ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'TITLE', 'REASON', 'ARTISTS', 'POS'].map(col);
+  const many = li >= 0 && new Set(rows.map((r) => r[li])).size > 1;
+  const links = pick ? rows.map((r, i) => { const x = pick(r, i); return x && spotifyLink(x.kind, x.id, x.title); }) : [];
+  const withLinks = links.some(Boolean);
+  const tbl = el('table', 'tbl chg__tbl');
+  const cg = el('colgroup');
+  const heads = [];
+  const add = (cls, text) => { cg.appendChild(el('col', cls)); heads.push(text); };
+  if (report) add('chg__c-pos', '#');
+  if (many) add('chg__c-pl', t('webui.changes.col.playlist'));
+  if (!report) add('chg__c-act', t('webui.changes.col.action'));
+  add('chg__c-song', t('webui.changes.col.song'));
+  add('chg__c-why', t('webui.changes.col.reason'));
+  if (withLinks) add('chg__c-sp', '');
+  const thead = el('thead');
+  const hr = el('tr');
+  for (const h of heads) hr.appendChild(el('th', null, h));
+  thead.appendChild(hr);
+  const tbody = el('tbody');
+  rows.forEach((r, i) => {
+    const tr = el('tr');
+    if (report) tr.appendChild(el('td', 'num chg__pos', r[posi] || ''));
+    if (many) tr.appendChild(el('td', 'chg__pl', r[li] || ''));
+    if (!report) {
+      const d = (di >= 0 ? r[di] : dir) || '';
+      const a = r[ai] || '';
+      const f = a === 'skip' ? () => t('webui.changes.skip') : ACTS[`${d} ${a}`];
+      const td = el('td', 'chg__act', f ? f(providerName(pi >= 0 ? r[pi] : '')) : a);
+      td.dataset.action = a; // 上色看機器值(app.css 的 td[data-action])
+      tr.dataset.action = a;
+      if (d) tr.dataset.dir = d;
+      tr.appendChild(td);
+    }
+    const song = el('td', 'chg__song');
+    const title = ti >= 0 ? r[ti] || '' : '';
+    const sub = ari >= 0 ? r[ari] || '' : '';
+    song.appendChild(el('span', 'pl__title', title));
+    if (sub) song.appendChild(el('span', 'pl__sub', sub));
+    song.title = sub ? `${title}\n${sub}` : title; // 省略掉的字,滑過去看得到全文
+    tr.append(song, el('td', 'chg__why', ri >= 0 ? r[ri] || '' : ''));
+    if (withLinks) {
+      const td = el('td', 'row-actions');
+      if (links[i]) td.appendChild(links[i]);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+  tbl.append(cg, thead, tbody);
+  return tbl;
 }
 
 // ── 就地的寫入流程(計畫 §3.5)──
@@ -186,7 +277,7 @@ export function makeFlow(con) {
       onTable: (h, r) => {
         const a = h.indexOf('ACTION');
         pending = h.includes('CONFIDENCE') ? r.filter((x) => x[a] === 'review' || x[a] === 'conflict').length : 0;
-        f.table.replaceChildren(changeTable(h, r));
+        f.table.replaceChildren(changeTable(h, r, { dir: args[0] === 'pl' && (args[1] === 'pull' || args[1] === 'push') ? args[1] : '' }));
       },
       onPromptClosed: (ev) => { closedBy = ev.reason; if (ev.reason === 'answered') answered = true; },
       onExit: (code, msg, reason) => {

@@ -1703,6 +1703,94 @@ await scenario('8s', async () => {
   check(labels.length >= 4 && labels.every((l) => !CJK.test(l) && /^[A-Z][a-z]*ing /.test(l)) && labels.some((l) => l === 'Setting up the AI endpoint'), `英文的 wiki label:${JSON.stringify(labels)}`);
 });
 
+// 8t. 精簡變更表(同步頁改版計畫 2026-10-01 §3.7,T1):CLI 的表先畫成「動作 / 歌曲 / 說明」,動作依 DIR + ACTION 翻成白話,
+//     列與動作那一格保留機器值;表裡不只一份清單才多「清單」欄;去重報告是「# / 歌曲 / 說明」、# 照 POS;resolve 照舊畫原表;
+//     完整原表收在「看完整表格」裡、打開才畫(只畫一次)。英文輪不出現中文。另外釘住共用的連結面板讀的是「現在」的 auth:
+//     同一頁重讀後 Spotify 改成沒登入,那一列跟著變成 out(狀態放在 state 物件裡,不是建立時抓的一份)。
+await scenario('8t', async () => {
+  const { changeTable } = await import('./pages/plflow.mjs');
+  const { initPlaylists } = await import('./pages/playlists.mjs');
+  const T1 = '4uLU6hMCjMI75M1A2tKUQC';
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
+  const SH = ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+  const PH = SH.slice(1);
+  const rows = [
+    ['pull', 'add', 'spotify', 'road trip', '0', 'c1', T1, 'Song A', 'Artist A', 'r1', 'added_on_platform'],
+    ['push', 'remove', 'apple', 'road trip', '1', 'c2', 'i.B', 'Song B', 'Artist B', 'r2', 'removed_in_master'],
+    ['push', 'move', 'apple', 'road trip', '2', 'c3', 'i.C', 'Song C', '', 'r3', 'moved_in_master'],
+    ['push', 'rename', 'apple', 'road trip', '', '', '', 'New Name', '', 'r4', 'renamed_in_master'],
+    ['dedup', 'remove', '', 'road trip', '3', 'c4', '', 'Song D', '', 'r5', 'duplicate'],
+    ['push', 'skip', 'apple', 'road trip', '4', 'c5', '', 'Song E', '', 'r6', 'no_mapping'],
+  ];
+  const heads = (box) => box.querySelector('thead tr').children.map((th) => th.textContent);
+  const body = (box) => box.querySelector('tbody').children;
+  const acts = (box) => body(box).map((tr) => allByClass(tr, 'chg__act')[0]?.textContent);
+  const round = (want) => {
+    const box = changeTable(SH, rows);
+    check(JSON.stringify(heads(box)) === JSON.stringify(want.heads), `精簡表的表頭:${JSON.stringify(heads(box))}`);
+    check(JSON.stringify(acts(box)) === JSON.stringify(want.acts), `動作翻成白話:${JSON.stringify(acts(box))}`);
+    const trs = body(box);
+    check(trs.map((tr) => `${tr.dataset.dir}/${tr.dataset.action}`).join() === 'pull/add,push/remove,push/move,push/rename,dedup/remove,push/skip', '列保留機器值 data-dir / data-action');
+    check(allByClass(trs[1], 'chg__act')[0].dataset.action === 'remove', '動作那一格也標機器值(上色看它)');
+    check(allByClass(trs[0], 'pl__sub')[0]?.textContent === 'Artist A' && allByClass(trs[3], 'pl__title')[0].textContent === 'New Name', '歌曲欄 = 曲名 + 歌手;改名列是清單名');
+    check(allByClass(trs[0], 'chg__why')[0].textContent === 'r1', '說明 = CLI 的 REASON 原樣');
+    const links = anchors(box.querySelector('.tbl-wrap'));
+    check(links.length === 1 && links[0].href === `https://open.spotify.com/track/${T1}`, `精簡表裡 Spotify 的列連回去:${links.map((a) => a.href)}`);
+    check(allByClass(box, 'page__note')[0].textContent === want.note, `筆數那句不變:${allByClass(box, 'page__note')[0].textContent}`);
+    // 完整原表:打開才畫、只畫一次
+    const full = allByClass(box, 'chg__full')[0];
+    check(allByClass(box, 'tbl').length === 1 && full.querySelector('summary').textContent === want.full, '完整原表一開始不畫');
+    full.open = true;
+    full.l.toggle();
+    full.l.toggle();
+    const tbls = allByClass(box, 'tbl');
+    check(tbls.length === 2 && heads(full).includes('REASON_CODE') && anchors(full).length === 1, `打開「看完整表格」畫出原表(含 Spotify 連結),而且只畫一次:${tbls.length}`);
+    // 不只一份清單:多「清單」欄
+    const two = changeTable(SH, [rows[0], ['push', 'add', 'apple', 'mix', '0', 'c9', 'i.Z', 'Song Z', '', 'r', 'push']]);
+    check(heads(two)[0] === want.heads2 && body(two)[1].children[0].textContent === 'mix', `兩份清單:第一欄是清單:${JSON.stringify(heads(two))}`);
+    // 沒有 DIR 欄的表:呼叫端給方向;沒給就照原字
+    const pulled = changeTable(PH, [PH.map((_, i) => rows[0][i + 1])], { dir: 'pull' });
+    check(acts(pulled)[0] === want.acts[0], `pl pull 的表(沒有 DIR):照呼叫端給的方向:${acts(pulled)}`);
+    check(acts(changeTable(PH, [PH.map((_, i) => rows[0][i + 1])]))[0] === 'add', '不知道方向:照原字顯示,不藏列');
+    // 去重報告:# 照 POS(說明裡的 pos 是同一個數)
+    const rep = changeTable(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['1', T1, 'Song A', 'a', 'same as pos 0', 'dup_id']], { spotifyReport: true });
+    check(JSON.stringify(heads(rep)) === JSON.stringify(['#', want.heads[1], want.heads[2], '']) && body(rep)[0].children[0].textContent === '1' && anchors(rep.querySelector('.tbl-wrap')).length === 1,
+      `去重報告:# / 歌曲 / 說明 + Spotify 連結:${JSON.stringify(heads(rep))}`);
+    // resolve:照舊畫原表
+    const RH = ['ACTION', 'CID', 'PROVIDER', 'PROVIDER_ID', 'CONFIDENCE', 'SOURCE', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+    const res = changeTable(RH, [['map', 'c1', 'spotify', T1, '95', 'isrc', 'Song A', 'a', 'r', 'isrc']]);
+    check(allByClass(res, 'tbl').length === 1 && heads(res)[0] === 'ACTION' && allByClass(res, 'chg__full').length === 0, 'resolve 的表照舊畫原表');
+  };
+  round({ heads: ['動作', '歌曲', '說明', ''], heads2: '清單', full: '看完整表格', note: '5 筆變更(skip 不算變更)',
+    acts: ['加進正本(從 Spotify)', '從 Apple Music 拿掉', '在 Apple Music 換位置', 'Apple Music 上的清單改名', '從正本拿掉(重複)', '跳過'] });
+  i18nFile = './i18n-en.json';
+  try {
+    await loadI18n(api);
+    round({ heads: ['Change', 'Song', 'Why', ''], heads2: 'Playlist', full: 'See the full table', note: '5 changes (skip rows don\'t count)',
+      acts: ['Add to the master copy (from Spotify)', 'Remove from Apple Music', 'Move on Apple Music', 'Rename the playlist on Apple Music', 'Remove from the master copy (duplicate)', 'Skip'] });
+  } finally {
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
+
+  // 共用的連結面板讀「現在」的 auth:同一頁重讀後 Spotify 改成沒登入,那一列跟著變
+  const idle = () => new Promise((r) => con.idle(r));
+  const out = (o) => ({ events: [{ type: 'stdout', text: JSON.stringify(o) }, done] });
+  const data = { 'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: '37i9dQZF1DXcBWIGoYBM5M' }, items: [{ cid: 'c1' }] }, 'tracks.json': { tracks: { c1: { title: 'Song A', mappings: { spotify: { id: T1 } } } } } };
+  reset();
+  script = { 'auth status --json': out({ google: { state: 'ok' }, spotify: { state: 'ok' } }), export: out(data) };
+  const pl = mk();
+  const page = initPlaylists(pl, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
+  await idle();
+  const spotifyRow = () => allByClass(pl, 'pl__link').find((r) => r.dataset.platform === 'spotify');
+  check(spotifyRow()?.dataset.state === 'linked', `一開始 Spotify 是 linked:${spotifyRow()?.dataset.state}`);
+  script['auth status --json'] = out({ google: { state: 'ok' }, spotify: { state: 'missing' } });
+  page.refresh();
+  await idle(); await tick(5); await idle();
+  check(spotifyRow()?.dataset.state === 'out', `重讀後 Spotify 沒登入:那一列跟著變成 out:${spotifyRow()?.dataset.state}`);
+});
+
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,
 //     那句話原樣進底部的 notice——不然它只進看不到的主控台頁;真的播了(▶,播放列會換成 Apple)或失敗(Console.report 會說)都不多說。
 await scenario('8l', async () => {

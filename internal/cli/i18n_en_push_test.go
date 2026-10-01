@@ -79,6 +79,28 @@ func TestPushSyncPickerTitles(t *testing.T) {
 	}
 }
 
+// 繁中的推送說明說「正本」,不說英文的 canonical(同步頁改版計畫 2026-10-01 §3.7:精簡變更表的「說明」欄照 REASON 原樣顯示)。
+func TestChinesePushReasonsSayMasterCopy(t *testing.T) {
+	_, dc := enPushWorld(t, "a", "b", "c")
+	withLanguage(t, "zh-TW")
+	editCanonical(t, dc, drivePlaylist(t, dc), []string{"c", "a", "d"}, nil, "Commute2")
+	out, _ := mustPull(t, "pl", "push", "Commute2", "--yes")
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.Split(line, "\t")
+		got = append(got, f[0]+"|"+f[8]+"|"+f[9])
+	}
+	want := []string{
+		"remove|正本已移除|removed_in_master",
+		"move|正本換序|moved_in_master",
+		"add|推到平台|push",
+		"rename|正本改名:Commute → Commute2|renamed_in_master",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("列:%q", got)
+	}
+}
+
 // 主流程:四種列的 REASON 英文(REASON_CODE 不變)、推送與無變更的收尾句。
 func TestEnglishPushFlowReasonsAndCounts(t *testing.T) {
 	fs, dc := enPushWorld(t, "a", "b", "c")
