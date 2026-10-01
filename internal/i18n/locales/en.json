@@ -1308,7 +1308,7 @@
   "webui.keys.volume": "Volume up / down by 5",
   "webui.lang.label": "Language",
   "webui.lang.switching": "Switching the interface language",
-  "webui.merge.done": "Done: \"{target}\" has been merged into \"{name}\" and linked, and the other services are synced. If you later merge songs with \"Decide one by one\", press \"{button}\" before syncing.",
+  "webui.merge.done": "Done: \"{target}\" has been merged into \"{name}\" and linked, and the other services are synced. If you later merge songs with \"Review one by one\", press \"{button}\" before syncing.",
   "webui.merge.fact.confirm": "In the first step these changes are listed in one table and written together only after you confirm; if you cancel, nothing is written and nothing is linked.",
   "webui.merge.fact.limit": "If more songs would be removed at once than the safety limit allows, capy stops before linking; this page won't override that.",
   "webui.merge.fact.match": {
@@ -1316,7 +1316,7 @@
     "other": "capy first compares the master copy's songs with the songs in \"{target}\"; matches count as the same song. Songs in \"{target}\" that the master copy doesn't have are added to the end of the master copy in their current order; none of the master copy's {count} songs move."
   },
   "webui.merge.fact.rename": "\"{target}\" is also renamed to \"{name}\".",
-  "webui.merge.fact.same_song": "capy treats two songs as the same only by a matched platform id or ISRC; title, artist and length are used only for comparing. Songs it isn't sure about are offered to you to decide one by one first (as in Move); the ones you don't decide are added as different songs. If you later merge them with \"Decide one by one\", the master copy has two copies, so remove duplicates before syncing.",
+  "webui.merge.fact.same_song": "capy treats two songs as the same only by a matched platform id or ISRC; title, artist and length are used only for comparing. Songs it isn't sure about are offered to you to decide one by one first (as in Move); the ones you don't decide are added as different songs. If you later merge them with \"Review one by one\", the master copy has two copies, so remove duplicates before syncing.",
   "webui.merge.fact.shape": "After the merge, \"{target}\" matches the master copy: songs the master copy has and it doesn't are added, it's put in the master copy's order, and each song has as many copies as in the master copy (one copy in the master copy means one copy is kept). Master copy songs with no match on {platform} aren't added this time; the table lists them as skipped.",
   "webui.merge.fact.unique": "Songs only in \"{target}\" aren't removed (its own duplicates keep one copy); they're added to the master copy. Other linked services get the ones matched in step two, \"Find matches\"; the rest are listed as skipped in step three.",
   "webui.merge.happens": "What happens:",
@@ -1682,7 +1682,7 @@
   "webui.sync.linked.title": "Playlists being synced",
   "webui.sync.more.copy.text": "\"Playlists being synced\" and the state shown for each playlist come from this computer's copy after its last sync; changes made on another computer show up after you sync once.",
   "webui.sync.more.copy.title": "This page shows this computer's copy",
-  "webui.sync.more.dup.text": "The same song can appear twice in a playlist; each service keeps the same number of copies. capy treats two songs as the same only by a matched platform id or ISRC; title, artist and length are used only to find a song on another service, never to decide what's a duplicate. YouTube Music has no ISRC, so a song that hasn't been matched yet counts as a different song from the same one in the master copy (an audio version and a music video are two songs too). \"Remove duplicates\" only catches copies with the same platform id or the same ISRC; merge those songs first with \"Decide one by one\", then remove duplicates.",
+  "webui.sync.more.dup.text": "The same song can appear twice in a playlist; each service keeps the same number of copies. capy treats two songs as the same only by a matched platform id or ISRC; title, artist and length are used only to find a song on another service, never to decide what's a duplicate. YouTube Music has no ISRC, so a song that hasn't been matched yet counts as a different song from the same one in the master copy (an audio version and a music video are two songs too). \"Remove duplicates\" only catches copies with the same platform id or the same ISRC; merge those songs first with \"Review one by one\", then remove duplicates.",
   "webui.sync.more.dup.title": "Syncing doesn't remove duplicates for you",
   "webui.sync.more.limit.text": "When one playlist would lose more than 10 songs, or more than 30% and more than 3 songs, capy stops first. This page won't override that; handle it on the Console page.",
   "webui.sync.more.limit.title": "How many songs can be removed at once",
