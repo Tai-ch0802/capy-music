@@ -857,11 +857,11 @@ func observeAndDerive(ctx context.Context, s *canonState, targets []*canon.Playl
 			if only != "" && prov != only {
 				continue
 			}
-			p, err := pf.provider(prov)
+			link := pl.Links[prov]
+			p, err := pf.linkProvider(prov, link)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			link := pl.Links[prov]
 			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單——不是 gone、不動 base、不 unlink
 				fmt.Fprintln(stderr, i18n.T("pull.skip.foreign", "name", pl.Name, "platform", prov, "id", link, "owner", linkOwner(p, s, link)))
 				continue
