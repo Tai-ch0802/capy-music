@@ -1234,14 +1234,18 @@
   "webui.keys.volume": "音量升降五格",
   "webui.lang.label": "語言",
   "webui.lang.switching": "切換介面語言",
-  "webui.merge.done": "完成:「{target}」已經併進「{name}」並連上,其他平台也同步了。之後在「逐首決定」把當成不同歌接進來的併成同一首時,同步前先按「{button}」。",
+  "webui.merge.count": {
+    "other": "「{target}」{count} 首(剛從 {platform} 讀的)。"
+  },
+  "webui.merge.done": "完成:「{target}」已經併進「{name}」並連上,其他平台也同步了。之後在「逐首決定」把當成不同歌接進來的併成同一首時,同步前先到「同步」頁選這份清單按「{button}」。",
+  "webui.merge.done_partial": "完成:「{target}」已經併進「{name}」並連上,這台有登入的平台也同步了。之後在「逐首決定」把當成不同歌接進來的併成同一首時,同步前先到「同步」頁選這份清單按「{button}」。",
   "webui.merge.fact.confirm": "這些改動在第一步列成一張表,你確認了才一起寫;取消就什麼都不寫、也不連上。",
   "webui.merge.fact.limit": "一次要拿掉的歌超過安全上限時,capy 會先停下來、不連上;這一頁不會替你越過。",
   "webui.merge.fact.match": {
     "other": "capy 先拿正本的歌跟「{target}」裡的歌比對,對上的算同一首。「{target}」裡正本還沒有的歌,照它原本的順序接在正本最後面;正本原本的 {count} 首一首都不動。"
   },
   "webui.merge.fact.rename": "「{target}」也會改名為「{name}」。",
-  "webui.merge.fact.same_song": "capy 只認對應過的平台 id 和 ISRC 是不是同一首;歌名、歌手、時長只在比對時用。沒把握的會先問你要不要逐首決定(跟搬家一樣);沒決定的當成不同的歌接進來,之後在「逐首決定」併成同一首時,正本會有兩份,要先「去除重複」再同步。",
+  "webui.merge.fact.same_song": "capy 只認對應過的平台 id 和 ISRC 是不是同一首;歌名、歌手、時長只在比對時用。沒把握的會先問你要不要逐首決定(跟搬家一樣);沒決定的當成不同的歌接進來,之後在「逐首決定」併成同一首時,正本會有兩份,要先到「同步」頁「去除重複」再同步。",
   "webui.merge.fact.shape": "合併之後「{target}」會跟正本一樣:正本有、它沒有的歌都會加進去,排成正本的順序,每一首的份數跟正本一樣(正本只有一份就只留一份)。正本的歌在 {platform} 找不到對應的,這次不加,表裡列成「跳過」。",
   "webui.merge.fact.unique": "「{target}」獨有的歌不會被刪(自己重複的只留一份),會加進正本;其他連著的平台在第二步「找對應」對上的會加過去,對不上的會在第三步列成「跳過」。",
   "webui.merge.happens": "會發生的事:",
@@ -1365,6 +1369,7 @@
   "webui.move.where.new_unsupported": "建一個新清單({provider} 做不到,只能加進既有的)",
   "webui.move.where.none": "{provider} 上還沒有可以加進去的清單,而它不能新建,或回上一步改搬到別的平台。",
   "webui.move.where.none_local": "{provider} 上還沒有可以加進去的清單,而它不能新建(本機曲庫只能加進既有的 M3U 檔):先建一個檔案,或回上一步改搬到別的平台。",
+  "webui.move.where.pick": "請選一份",
   "webui.move.where.title": "放到 {provider} 的哪裡?",
   "webui.player.age": {
     "other": "{count} 秒前"

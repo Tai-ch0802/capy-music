@@ -1308,7 +1308,12 @@
   "webui.keys.volume": "Volume up / down by 5",
   "webui.lang.label": "Language",
   "webui.lang.switching": "Switching the interface language",
-  "webui.merge.done": "Done: \"{target}\" has been merged into \"{name}\" and linked, and the other services are synced. If you later merge songs with \"Review one by one\", press \"{button}\" before syncing.",
+  "webui.merge.count": {
+    "one": "\"{target}\" has {count} song (just read from {platform}).",
+    "other": "\"{target}\" has {count} songs (just read from {platform})."
+  },
+  "webui.merge.done": "Done: \"{target}\" has been merged into \"{name}\" and linked, and the other services are synced. If you later merge songs with \"Review one by one\", go to the Sync page, pick this playlist and press \"{button}\" before syncing.",
+  "webui.merge.done_partial": "Done: \"{target}\" has been merged into \"{name}\" and linked, and the services signed in on this computer are synced. If you later merge songs with \"Review one by one\", go to the Sync page, pick this playlist and press \"{button}\" before syncing.",
   "webui.merge.fact.confirm": "In the first step these changes are listed in one table and written together only after you confirm; if you cancel, nothing is written and nothing is linked.",
   "webui.merge.fact.limit": "If more songs would be removed at once than the safety limit allows, capy stops before linking; this page won't override that.",
   "webui.merge.fact.match": {
@@ -1316,7 +1321,7 @@
     "other": "capy first compares the master copy's songs with the songs in \"{target}\"; matches count as the same song. Songs in \"{target}\" that the master copy doesn't have are added to the end of the master copy in their current order; none of the master copy's {count} songs move."
   },
   "webui.merge.fact.rename": "\"{target}\" is also renamed to \"{name}\".",
-  "webui.merge.fact.same_song": "capy treats two songs as the same only by a matched platform id or ISRC; title, artist and length are used only for comparing. Songs it isn't sure about are offered to you to decide one by one first (as in Move); the ones you don't decide are added as different songs. If you later merge them with \"Review one by one\", the master copy has two copies, so remove duplicates before syncing.",
+  "webui.merge.fact.same_song": "capy treats two songs as the same only by a matched platform id or ISRC; title, artist and length are used only for comparing. Songs it isn't sure about are offered to you to review one by one first (as in Move); the ones you don't decide are added as different songs. If you later merge them with \"Review one by one\", the master copy has two copies, so remove duplicates on the Sync page before syncing.",
   "webui.merge.fact.shape": "After the merge, \"{target}\" matches the master copy: songs the master copy has and it doesn't are added, it's put in the master copy's order, and each song has as many copies as in the master copy (one copy in the master copy means one copy is kept). Master copy songs with no match on {platform} aren't added this time; the table lists them as skipped.",
   "webui.merge.fact.unique": "Songs only in \"{target}\" aren't removed (its own duplicates keep one copy); they're added to the master copy. Other linked services get the ones matched in step two, \"Find matches\"; the rest are listed as skipped in step three.",
   "webui.merge.happens": "What happens:",
@@ -1445,6 +1450,7 @@
   "webui.move.where.new_unsupported": "Create a new playlist ({provider} can't; you can only add to an existing one)",
   "webui.move.where.none": "{provider} has no playlist to add to yet, and it can't create one: go back and choose a different platform.",
   "webui.move.where.none_local": "{provider} has no playlist to add to yet, and it can't create one (the local library can only add to existing M3U files): create a file first, or go back and choose a different platform.",
+  "webui.move.where.pick": "Choose a playlist",
   "webui.move.where.title": "Where on {provider}?",
   "webui.player.age": {
     "one": "{count} second ago",

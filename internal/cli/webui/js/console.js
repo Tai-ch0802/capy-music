@@ -142,7 +142,8 @@ export class Console {
   //   含 " 就組不出來。有給 args 時 line 只拿來顯示(沒給就用 args 接起來),伺服器端的拒絕清單本來就是對 argv 做的。
   // promptHost:提示與授權連結畫進這個容器,不畫進主控台的區塊(精靈做到一半不把人丟進終端機);hooks.onPrompt 讓
   //   頁面在提示旁補一句白話。容器所在的頁面若是 hidden,照樣會切過去(同 #64:看不到的提示等於沒有)。
-  async run(line, hooks = {}, { quiet = false, label = '', args = null, promptHost = null } = {}) {
+  // silent:連失敗的 notice 也不出(只給「讀不到就當不知道」的背景讀取,例如搬家精靈判斷同名正本時讀的 export)。
+  async run(line, hooks = {}, { quiet = false, silent = false, label = '', args = null, promptHost = null } = {}) {
     // 一次一個(決策 40 的序列槽)。進行中再叫就地擋下:不送出、不碰進行中那一次的 job / hooks。
     // 以前是照送、吃 409,而被擋的那一次收尾時會把進行中那次的 job 與 hooks 清掉——中止、提示回答、
     // 頁面結果全跟著失效;連點兩下、或跑 sync 時第一次切到帳號頁就會撞到。
@@ -202,7 +203,7 @@ export class Console {
     try { hooks.onExit?.(...ex); } finally { this.wake(); this.lastDone = ''; }
     // args 的那一次不預填命令列:接起來的那一行走 splitArgs 會被切碎(含空白的 local ID),正是 args 要避開的事;
     // 發起它的頁面有自己的「再試一次」。
-    this.report(args ? '' : line, shown, ex, quiet);
+    if (!silent) this.report(args ? '' : line, shown, ex, quiet);
     return ex;
   }
 

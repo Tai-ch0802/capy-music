@@ -96,7 +96,7 @@ export function listState(masters, p, r) {
 // pending:resolve 沒有自動寫入、只剩等人決定的列時,指到頁面上的「逐首決定」(CLI 那句叫人去終端機,這裡看不到)。
 export function outcome(code, msg, reason, closedBy, wrote, pending) {
   const why = (msg || '').replace(/^Error: /, '');
-  if (reason === 'cancelled' && code !== 0) return { text: t('webui.playlists.flow.stopped') };
+  if (reason === 'cancelled' && code !== 0) return { text: t('webui.playlists.flow.stopped'), stopped: true }; // 不斷定有沒有寫:可能停在寫入途中
   if (code === 0 && wrote) return { text: t('webui.playlists.flow.done') };
   if (code === 0 && pending) return { text: t('webui.playlists.flow.review_left', { count: pending, button: t('webui.playlists.links.review') }) };
   if (code === 0) return { text: t('webui.playlists.flow.up_to_date') };
@@ -416,25 +416,45 @@ export function linkFlows({ flow, state, providers, reload }) {
     return row;
   }
 
+  // lists:那個平台的清單。頁面讀好的(不在讀取中、沒有中止或失敗)優先,不然用這裡自己讀的 own[p];都沒有就回 null。
+  const own = {}; // 頁面沒讀過的平台,這裡自己讀的清單(不塞進頁面的 state.platLists:清單頁的「各平台上的清單」只畫按了讀取的)
+  function lists(p) {
+    const S = state.platLists?.[p];
+    if (S?.rows && !S.loading && !S.skipped && !S.error) return S;
+    return own[p] && !own[p].error ? own[p] : null;
+  }
+  // readThen:先讀那個平台的清單(排隊再送:序列槽被佔著時不會被擋成「讀不到」),讀完再叫 then。
+  // 讀的時候這個流程區被換掉了(換了清單、開了別的卡)就不畫,讀到的照樣留著。
+  function readThen(p, box, then) {
+    const platform = providerName(p);
+    const f = flow.openFlow(null, box);
+    say(f, { text: t('webui.merge.reading', { platform }) });
+    flow.con.idle(() => readLists(flow.con, p, t('webui.playlists.list_label', { platform }), (res, reason, code) => {
+      own[p] = reason === 'cancelled' && code !== 0 ? { rows: [], error: t('webui.playlists.platforms.skipped') } : res;
+      if (!box.contains(f.status)) return;
+      if (own[p].error) say(f, { text: t('webui.playlists.platforms.error', { platform, error: own[p].error }), warn: true });
+      else then();
+    }));
+  }
+
   // 在 X 建一份:先說清楚會發生什麼,按「開始」才依序跑三個命令;第一步(建立並連上)沒有 CLI 的確認,「開始」就是同意。
+  // 那個平台的清單還沒讀過就先讀:有同名、有歌的清單時 CLI 不會建(撞名),要先給「連到那一份」(合併)。
   function askCreate(p, pl, box) {
     if (flow.blocked()) return;
+    if (!lists(p)) { readThen(p, box, () => askCreate(p, pl, box)); return; }
     const platform = providerName(p);
     const card = el('div', 'pl__flow-card');
     const acts = el('div', 'form-row');
     const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
     no.type = 'button';
     no.addEventListener('click', () => box.replaceChildren());
-    // 「各平台上的清單」讀過、那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,先說清楚。
-    // 不指去搬家:搬家加進同名的既有清單會擋下或重排正本(計畫 2026-10-01 §0.3、Q2),出路是先在平台上改名。
+    // 那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,改給「連到那一份」(合併,決策 62)。
     // 同名的那份確定是空的(曲數 0,例如上次建好了但連結沒寫進 Drive)照給「開始」:CLI 會停在第一步、給接回去的 pl link
     // 命令,那是這種情況唯一的復原路(#125 review 第 3 點)。
-    const lists = state.platLists;
-    const dup = lists?.[p]?.rows?.some((r) => same(r.name, pl.name) && r.tracks !== '0'); // 讀取中分不出來:照沒讀過處理,同名由 CLI 擋
+    const dup = lists(p).rows.find((r) => same(r.name, pl.name) && r.tracks !== '0');
     if (dup) {
       card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
-      const it = lists[p].rows.find((r) => same(r.name, pl.name) && r.tracks !== '0');
-      acts.append(btn(t('webui.merge.open', { platform }), '', () => askMerge(p, pl, box, it.id)), no);
+      acts.append(btn(t('webui.merge.open', { platform }), '', () => askMerge(p, pl, box, dup.id)), no);
     } else {
       card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
       if (p === 'apple') card.appendChild(el('p', 'page__note', t('webui.playlists.create.apple'))); // 決策 49:可能,不是必然
@@ -472,21 +492,12 @@ export function linkFlows({ flow, state, providers, reload }) {
   // ── 連到 X 上已經有的清單 = 合併(計畫 2026-10-01 §2.5、§3.4,決策 62)──
   // askMerge:先畫確認卡(卡上每一句都照實,按「開始合併」才送命令)。那個平台的清單沒讀過就先讀(會連網);
   // 已經連著別的正本的清單在下拉裡不能選(一份平台清單只連一份正本)。preset:同名卡、撞同名時預選那一份。
-  const own = {}; // 頁面沒讀過的平台,這裡自己讀的清單(不塞進頁面的 state.platLists:清單頁的「各平台上的清單」只畫按了讀取的)
+  const counts = {}; // `${平台}\n${清單 id}` → { n } / { error } / {}(讀取中):確認卡上那份清單的首數
   function askMerge(p, pl, box, preset) {
     if (flow.blocked()) return;
     const platform = providerName(p);
-    const L = state.platLists?.[p]?.rows && !state.platLists[p].loading ? state.platLists[p] : own[p];
-    if (!L || L.error) {
-      const f = flow.openFlow(null, box);
-      say(f, { text: t('webui.merge.reading', { platform }) });
-      readLists(flow.con, p, t('webui.playlists.list_label', { platform }), (res) => {
-        own[p] = res;
-        if (res.error) say(f, { text: t('webui.playlists.platforms.error', { platform, error: res.error }), warn: true });
-        else askMerge(p, pl, box, preset);
-      });
-      return;
-    }
+    const L = lists(p);
+    if (!L) { readThen(p, box, () => askMerge(p, pl, box, preset)); return; }
     const card = el('div', 'pl__flow-card');
     card.appendChild(el('h4', 'pl__plat-name', t('webui.merge.title', { name: pl.name, platform })));
     const pick = el('select', 'in');
@@ -500,7 +511,8 @@ export function linkFlows({ flow, state, providers, reload }) {
     }
     const free = rows.filter((r) => listState(state.masters, p, r).kind !== 'linked');
     if (!free.length) {
-      card.appendChild(el('p', null, t('webui.merge.none', { platform })));
+      // 平台上本來就沒有清單,跟「每一份都連著別的正本」是兩回事
+      card.appendChild(el('p', null, rows.length ? t('webui.merge.none', { platform }) : t('webui.playlists.platforms.empty', { platform })));
       const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
       no.type = 'button';
       no.addEventListener('click', () => box.replaceChildren());
@@ -514,8 +526,31 @@ export function linkFlows({ flow, state, providers, reload }) {
     const steps = el('ol', 'wiz__steps');
     for (const sx of [t('webui.merge.step.merge'), t('webui.playlists.step.resolve'), t('webui.merge.step.sync')]) steps.appendChild(el('li', 'wiz__step', sx));
     const facts = el('ul', 'sync__merge-facts');
+    const countLine = el('p', 'page__note');
+    const showCount = (r) => {
+      const v = counts[`${p}\n${r.id}`];
+      if (/^\d+$/.test(r.tracks || '')) countLine.textContent = t('webui.merge.count', { target: r.name, count: Number(r.tracks), platform });
+      else if (v && v.n !== undefined) countLine.textContent = t('webui.merge.count', { target: r.name, count: v.n, platform });
+      else if (v && v.error) countLine.textContent = [t('webui.sync.preview.error', { error: v.error }), p === 'apple' ? t('webui.sync.preview.apple_empty') : ''].filter(Boolean).join(' ');
+      else {
+        countLine.textContent = '';
+        if (v) return; // 已經在讀
+        counts[`${p}\n${r.id}`] = {};
+        flow.con.idle(() => {
+          let n = 0;
+          flow.con.run('', {
+            onTable: (_h, rs) => { n += rs.length; },
+            onExit: (code, msg) => {
+              counts[`${p}\n${r.id}`] = code === 0 ? { n } : { error: (msg || '').replace(/^Error: /, '') || t('webui.move.failed') };
+              if (box.contains(countLine) && pick.value === r.id) showCount(r);
+            },
+          }, { args: ['pl', 'show', r.id, '--provider', p], label: t('webui.sync.label.show', { name: r.name }) });
+        });
+      }
+    };
     const draw = () => {
       const r = rows.find((x) => x.id === pick.value);
+      showCount(r);
       const n = (pl.items || []).length;
       const items = [
         t('webui.merge.fact.match', { target: r.name, count: n }),
@@ -525,7 +560,8 @@ export function linkFlows({ flow, state, providers, reload }) {
         t('webui.merge.fact.same_song'),
         t('webui.merge.fact.limit'),
       ];
-      if (p !== 'local' && !same(r.name, pl.name)) items.splice(2, 0, t('webui.merge.fact.rename', { target: r.name, name: pl.name })); // 本機曲庫不改檔名
+      // 改名照 canon.PushPlan 的精確比較(只差大小寫也會改);同名判斷才用不分大小寫的 same()。本機曲庫不改檔名
+      if (p !== 'local' && r.name !== pl.name) items.splice(2, 0, t('webui.merge.fact.rename', { target: r.name, name: pl.name }));
       if (p === 'apple' || (pl.links || {}).apple) items.push(t('webui.playlists.create.apple')); // 決策 49:可能,不是必然
       facts.replaceChildren(...items.map((x) => el('li', null, x)));
     };
@@ -536,7 +572,7 @@ export function linkFlows({ flow, state, providers, reload }) {
     no.type = 'button';
     no.addEventListener('click', () => box.replaceChildren());
     acts.append(btn(t('webui.merge.start'), 'btn--primary', () => merge(p, pl, rows.find((x) => x.id === pick.value), box)), no);
-    card.append(label, steps, el('p', 'page__note', t('webui.merge.happens')), facts, acts);
+    card.append(label, countLine, steps, el('p', 'page__note', t('webui.merge.happens')), facts, acts);
     box.replaceChildren(card);
   }
 
@@ -549,8 +585,9 @@ export function linkFlows({ flow, state, providers, reload }) {
     const stop23 = t('webui.merge.stop23', { target: r.name, name, button: t('webui.playlists.sync') });
     markStep(f, 0);
     flow.step(f, ['pl', 'link', '--merge', pl.pid, `${p}:${r.id}`], t('webui.merge.label', { target: r.name, name }), (c1, o1) => {
-      // exit 1 的原因 CLI 照實說(寫到一半時連結可能已經記下,那句會說);其他停下的情況都是零寫入、沒連上
-      if (c1 !== 0) { say(f, o1, c1 === 1 && o1.console ? '' : t('webui.merge.stop1')); reload(); return; }
+      // 「沒合併、沒連上」只在一定還沒寫的情況說:取消(2)、上限或確認期間有變動(3)、關掉提示 / 逾時(1)。
+      // exit 1 的其他原因 CLI 照實說(寫到一半時連結可能已經記下,那句會說);中止可能停在寫入途中,照 outcome 不斷定
+      if (c1 !== 0) { say(f, o1, o1.stopped || (c1 === 1 && o1.console) ? '' : t('webui.merge.stop1')); reload(); return; }
       markStep(f, 1);
       flow.step(f, ['resolve', pl.pid], t('webui.merge.label_resolve', { name }), (c2, o2) => {
         if (c2 !== 0) { say(f, o2, stop23); reload(); return; }
@@ -569,7 +606,9 @@ export function linkFlows({ flow, state, providers, reload }) {
             if (c3 !== 0) { say(f, o3, stop23); reload(); return; }
             if (i + 1 < qs.length) { next(i + 1); return; }
             markStep(f, 3);
-            say(f, { text: t('webui.merge.done', { target: r.name, name, button: t('webui.sync.dedup') }) });
+            say(f, out.length
+              ? { text: [t('webui.merge.done_partial', { target: r.name, name, button: t('webui.sync.dedup') }), t('webui.sync.chain_left', { platforms: out.map(providerName).join(t('webui.sync.sep')) })].join(' ') }
+              : { text: t('webui.merge.done', { target: r.name, name, button: t('webui.sync.dedup') }) });
             reload();
           });
         };
