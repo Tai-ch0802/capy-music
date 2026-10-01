@@ -766,17 +766,22 @@ await scenario('8n', async () => {
       ['rename', 'spotify', 'road trip', '', '', '', 'New Name', '', 'r', 'renamed_on_platform'], // 改名那一列的 TITLE 是清單名、沒有曲目 id
       ['add', 'apple', 'road trip', '1', 'c9', T2, 'Song Z', 'a', 'r', 'added_on_platform']], exit2),
     'pl sync --all --dry-run': table(SH, [['push', 'add', 'spotify', 'road trip', '1', 'c2', T2, 'Song B', 'b', 'r', 'push']], exit2),
+    'pl push --all --dry-run': table(PH, [['add', 'apple', 'road trip', '1', 'c2', 'i.B', 'Song B', 'b', 'r', 'push']], exit2),
   };
   const sy = mk();
   initSync(sy, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
-  const [pullBtn, , syncBtn] = sy.children[2].children;
+  const [pullBtn, pushBtn, syncBtn] = sy.children[2].children;
   pullBtn.click();
   await idle();
+  check(allByClass(sy, 'chg__act')[0]?.textContent === '加進正本(從 Spotify)', `同步頁 pl pull 的表:依按下的那一顆給方向:${allByClass(sy, 'chg__act')[0]?.textContent}`);
   const pulled = anchors(sy.querySelector('.tbl-wrap'));
   check(pulled.length === 1 && pulled[0].href === track(T1) && label(pulled[0]) === '在 Spotify 上聽「Song A」', `pull 的表:只有 Spotify 的曲目列連(改名列、Apple 列不連):${JSON.stringify(pulled.map((a) => a.href))}`);
   const tables = allByClass(root, 'tbl');
   const inConsole = anchors(tables[tables.length - 1]);
   check(inConsole.length === 1 && inConsole[0].href === track(T1), `主控台裡同一張表也連:${JSON.stringify(inConsole.map((a) => a.href))}`);
+  pushBtn.click();
+  await idle();
+  check(allByClass(sy, 'chg__act')[0]?.textContent === '加到 Apple Music', `同步頁 pl push 的表:方向是 push:${allByClass(sy, 'chg__act')[0]?.textContent}`);
   syncBtn.click();
   await idle();
   const synced = anchors(sy.querySelector('.tbl-wrap'));
@@ -1430,6 +1435,8 @@ await scenario('8r', async () => {
   const sent = bodies.slice(before).filter((b) => b.args && b.args[0] === 'pl').map((b) => b.args);
   check(JSON.stringify(sent) === JSON.stringify([['pl', 'link', '--new-only', '--', 'Chill', 'spotify:' + SP2], ['pl', 'pull', '--', 'Chill']]), `納入的兩個命令:${JSON.stringify(sent)}`);
   check(status(pl) === '完成:「Chill」已經交給 capy 保管,正本照 Spotify 上的順序。', `納入完成:${status(pl)}`);
+  const pulledAct = allByClass(allByClass(pl, 'pl__plats')[0], 'chg__act')[0];
+  check(pulledAct?.textContent === '加進正本(從 Spotify)' && pulledAct.parentNode.dataset.dir === 'pull', `pl pull 的表沒有 DIR:從命令推出是 pull:${pulledAct && pulledAct.textContent}`);
   check(allByClass(pl, 'pl__plats')[0].contains(allByClass(pl, 'pl__flow-prompts')[0]), '納入的提示在頁面裡(各平台上的清單那一段)');
   check(prow(pl, 'Chill').dataset.state === 'linked' && prow(pl, 'Chill').textContent.includes('連著正本「Chill」') && allByClass(pl, 'pl__item').length === 3,
     '納入之後重讀:那一列變成連著正本、左欄多一份');
@@ -1735,6 +1742,17 @@ await scenario('8t', async () => {
     check(allByClass(trs[1], 'chg__act')[0].dataset.action === 'remove', '動作那一格也標機器值(上色看它)');
     check(allByClass(trs[0], 'pl__sub')[0]?.textContent === 'Artist A' && allByClass(trs[3], 'pl__title')[0].textContent === 'New Name', '歌曲欄 = 曲名 + 歌手;改名列是清單名');
     check(allByClass(trs[0], 'chg__why')[0].textContent === 'r1', '說明 = CLI 的 REASON 原樣');
+    // 每一種 DIR + ACTION 各畫一張一列的表,比對白話(ACTS 的鍵或語系字串接錯就紅)
+    for (const [k, w] of Object.entries(want.each)) {
+      const [d, a] = k.split(' ');
+      const got = acts(changeTable(SH, [[d, a, 'apple', 'road trip', '0', 'c', 'i.X', 'S', '', 'r', 'x']]))[0];
+      check(got === w, `「${k}」的白話:${got}`);
+    }
+    // 窄版拆行後報讀還是表格(同 songTable):table / row / columnheader / cell
+    const tb = box.querySelector('.chg__tbl');
+    check(tb.getAttribute('role') === 'table' && box.querySelector('thead tr').children.every((th) => th.getAttribute('role') === 'columnheader')
+      && trs.every((tr) => tr.getAttribute('role') === 'row' && tr.children.every((td) => td.getAttribute('role') === 'cell')), '精簡表的每個元素都標了表格的 role');
+    check(box.classList.contains('chg--sp') && !box.classList.contains('chg--pl'), '有 Spotify 連結欄、只有一份清單:標 chg--sp(拆行斷點跟著欄位走)');
     const links = anchors(box.querySelector('.tbl-wrap'));
     check(links.length === 1 && links[0].href === `https://open.spotify.com/track/${T1}`, `精簡表裡 Spotify 的列連回去:${links.map((a) => a.href)}`);
     check(allByClass(box, 'page__note')[0].textContent === want.note, `筆數那句不變:${allByClass(box, 'page__note')[0].textContent}`);
@@ -1748,7 +1766,7 @@ await scenario('8t', async () => {
     check(tbls.length === 2 && heads(full).includes('REASON_CODE') && anchors(full).length === 1, `打開「看完整表格」畫出原表(含 Spotify 連結),而且只畫一次:${tbls.length}`);
     // 不只一份清單:多「清單」欄
     const two = changeTable(SH, [rows[0], ['push', 'add', 'apple', 'mix', '0', 'c9', 'i.Z', 'Song Z', '', 'r', 'push']]);
-    check(heads(two)[0] === want.heads2 && body(two)[1].children[0].textContent === 'mix', `兩份清單:第一欄是清單:${JSON.stringify(heads(two))}`);
+    check(heads(two)[0] === want.heads2 && body(two)[1].children[0].textContent === 'mix' && two.classList.contains('chg--pl'), `兩份清單:第一欄是清單、標 chg--pl:${JSON.stringify(heads(two))}`);
     // 沒有 DIR 欄的表:呼叫端給方向;沒給就照原字
     const pulled = changeTable(PH, [PH.map((_, i) => rows[0][i + 1])], { dir: 'pull' });
     check(acts(pulled)[0] === want.acts[0], `pl pull 的表(沒有 DIR):照呼叫端給的方向:${acts(pulled)}`);
@@ -1763,12 +1781,18 @@ await scenario('8t', async () => {
     check(allByClass(res, 'tbl').length === 1 && heads(res)[0] === 'ACTION' && allByClass(res, 'chg__full').length === 0, 'resolve 的表照舊畫原表');
   };
   round({ heads: ['動作', '歌曲', '說明', ''], heads2: '清單', full: '看完整表格', note: '5 筆變更(skip 不算變更)',
-    acts: ['加進正本(從 Spotify)', '從 Apple Music 拿掉', '在 Apple Music 換位置', 'Apple Music 上的清單改名', '從正本拿掉(重複)', '跳過'] });
+    acts: ['加進正本(從 Spotify)', '從 Apple Music 拿掉', '在 Apple Music 換位置', 'Apple Music 上的清單改名', '從正本拿掉(重複)', '跳過'],
+    each: { 'pull add': '加進正本(從 Apple Music)', 'pull remove': '從正本拿掉', 'pull move': '正本換位置', 'pull rename': '正本改名', 'pull unlink': '取消連結 Apple Music 上的清單',
+      'push add': '加到 Apple Music', 'push remove': '從 Apple Music 拿掉', 'push move': '在 Apple Music 換位置', 'push rename': 'Apple Music 上的清單改名',
+      'dedup remove': '從正本拿掉(重複)', 'push skip': '跳過', 'pull skip': '跳過', 'migrate add': 'add' } });
   i18nFile = './i18n-en.json';
   try {
     await loadI18n(api);
     round({ heads: ['Change', 'Song', 'Why', ''], heads2: 'Playlist', full: 'See the full table', note: '5 changes (skip rows don\'t count)',
-      acts: ['Add to the master copy (from Spotify)', 'Remove from Apple Music', 'Move on Apple Music', 'Rename the playlist on Apple Music', 'Remove from the master copy (duplicate)', 'Skip'] });
+      acts: ['Add to the master copy (from Spotify)', 'Remove from Apple Music', 'Move on Apple Music', 'Rename the playlist on Apple Music', 'Remove from the master copy (duplicate)', 'Skip'],
+      each: { 'pull add': 'Add to the master copy (from Apple Music)', 'pull remove': 'Remove from the master copy', 'pull move': 'Move in the master copy', 'pull rename': 'Rename the master copy',
+        'pull unlink': 'Unlink the playlist on Apple Music', 'push add': 'Add on Apple Music', 'push remove': 'Remove from Apple Music', 'push move': 'Move on Apple Music',
+        'push rename': 'Rename the playlist on Apple Music', 'dedup remove': 'Remove from the master copy (duplicate)', 'push skip': 'Skip', 'pull skip': 'Skip', 'migrate add': 'add' } });
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);

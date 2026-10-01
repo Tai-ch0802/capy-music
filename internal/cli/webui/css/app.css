@@ -230,8 +230,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .row-actions .btn { min-height: 32px; vertical-align: middle; } /* 按鈕(inline-block)與連結(a.btn,inline-flex)並排時基線對齊方式不同,置中才不會差 1px(#101 review) */
 .tbl td[data-action="add"] { color: var(--accent); }
 .tbl td[data-action="remove"] { color: var(--danger); }
-/* 精簡變更表(計畫 2026-10-01 §3.7):動作 / 歌曲 / 說明;完整原表收在 details 裡。表自己是容器:窄於 40rem 時每列拆兩行 */
-.chg { display: grid; gap: .5rem; min-width: 0; container-type: inline-size; }
+/* 精簡變更表(計畫 2026-10-01 §3.7):動作 / 歌曲 / 說明;完整原表收在 details 裡。.chg 是 grid,軌道寫成 minmax(0, 1fr):
+   不然打開完整原表時,details 的最小寬度(原表的 min-content)會把整個區塊連同頁面撐寬,寬表應該在自己的 .tbl-wrap 裡橫捲。
+   表自己是容器:窄到歌曲欄留不下約 12rem 時每列拆成多行。斷點跟著這張表實際有的固定欄走(compactTable 標 .chg--pl / .chg--sp):
+   動作 13 + 說明 16 = 29rem → 41rem;加連結欄 11rem → 52rem;加清單欄 9rem → 50rem;兩個都有 → 61rem。去重報告(# 3rem)落在 41rem 以內。 */
+.chg { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; min-width: 0; container-type: inline-size; }
 .chg__tbl { table-layout: fixed; }
 .chg__c-pos { width: 3rem; } .chg__c-pl { width: 9rem; } .chg__c-act { width: 13rem; } .chg__c-why { width: 16rem; } .chg__c-sp { width: 11rem; }
 .chg__pl { overflow-wrap: anywhere; }
@@ -239,15 +242,49 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .chg__why { color: var(--muted); font-size: var(--t-12); overflow-wrap: anywhere; }
 .chg__full summary { color: var(--accent); cursor: pointer; width: max-content; max-width: 100%; font-size: var(--t-14); }
 .chg__full[open] summary { margin-bottom: .5rem; }
-@container (max-width: 40rem) {
+@container (max-width: 41rem) {
   .chg__tbl, .chg__tbl tbody, .chg__tbl td { display: block; }
   .chg__tbl thead, .chg__tbl colgroup { display: none; }
   .chg__tbl tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .5rem .9rem; border-bottom: 1px solid var(--line); }
   .chg__tbl tbody tr:last-child { border-bottom: 0; }
   .chg__tbl td { padding: 0; border: 0; }
-  .chg__song { flex: 1 1 100%; order: 2; }
-  .chg__why { flex: 1 1 100%; order: 3; }
+  .chg__song, .chg__why { flex: 1 1 100%; }
+  .chg__song { order: 2; }
+  .chg__why { order: 3; }
   .chg__tbl td.row-actions { order: 4; }
+}
+@container (max-width: 50rem) {
+  .chg--pl .chg__tbl, .chg--pl .chg__tbl tbody, .chg--pl .chg__tbl td { display: block; }
+  .chg--pl .chg__tbl thead, .chg--pl .chg__tbl colgroup { display: none; }
+  .chg--pl .chg__tbl tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .5rem .9rem; border-bottom: 1px solid var(--line); }
+  .chg--pl .chg__tbl tbody tr:last-child { border-bottom: 0; }
+  .chg--pl .chg__tbl td { padding: 0; border: 0; }
+  .chg--pl .chg__song, .chg--pl .chg__why { flex: 1 1 100%; }
+  .chg--pl .chg__song { order: 2; }
+  .chg--pl .chg__why { order: 3; }
+  .chg--pl .chg__tbl td.row-actions { order: 4; }
+}
+@container (max-width: 52rem) {
+  .chg--sp .chg__tbl, .chg--sp .chg__tbl tbody, .chg--sp .chg__tbl td { display: block; }
+  .chg--sp .chg__tbl thead, .chg--sp .chg__tbl colgroup { display: none; }
+  .chg--sp .chg__tbl tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .5rem .9rem; border-bottom: 1px solid var(--line); }
+  .chg--sp .chg__tbl tbody tr:last-child { border-bottom: 0; }
+  .chg--sp .chg__tbl td { padding: 0; border: 0; }
+  .chg--sp .chg__song, .chg--sp .chg__why { flex: 1 1 100%; }
+  .chg--sp .chg__song { order: 2; }
+  .chg--sp .chg__why { order: 3; }
+  .chg--sp .chg__tbl td.row-actions { order: 4; }
+}
+@container (max-width: 61rem) {
+  .chg--pl.chg--sp .chg__tbl, .chg--pl.chg--sp .chg__tbl tbody, .chg--pl.chg--sp .chg__tbl td { display: block; }
+  .chg--pl.chg--sp .chg__tbl thead, .chg--pl.chg--sp .chg__tbl colgroup { display: none; }
+  .chg--pl.chg--sp .chg__tbl tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .6rem; padding: .5rem .9rem; border-bottom: 1px solid var(--line); }
+  .chg--pl.chg--sp .chg__tbl tbody tr:last-child { border-bottom: 0; }
+  .chg--pl.chg--sp .chg__tbl td { padding: 0; border: 0; }
+  .chg--pl.chg--sp .chg__song, .chg--pl.chg--sp .chg__why { flex: 1 1 100%; }
+  .chg--pl.chg--sp .chg__song { order: 2; }
+  .chg--pl.chg--sp .chg__why { order: 3; }
+  .chg--pl.chg--sp .chg__tbl td.row-actions { order: 4; }
 }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }

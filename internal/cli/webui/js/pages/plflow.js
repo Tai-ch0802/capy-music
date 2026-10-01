@@ -134,7 +134,11 @@ export function changeTable(header, rows, opts = {}) {
   }
   const box = el('div', 'chg');
   const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
-  wrap.appendChild(compactTable(header, rows, report, opts.dir || '', pick));
+  const { tbl, many, withLinks } = compactTable(header, rows, report, opts.dir || '', pick);
+  // 拆行的斷點看這張表實際有哪幾個固定寬的欄(app.css 的 .chg--pl / .chg--sp):歌曲欄要留得下歌名
+  if (many) box.classList.add('chg--pl');
+  if (withLinks) box.classList.add('chg--sp');
+  wrap.appendChild(tbl);
   const full = el('details', 'chg__full');
   full.appendChild(el('summary', null, t('webui.changes.full')));
   full.addEventListener('toggle', () => { if (full.open && !full.querySelector('.tbl')) full.appendChild(fullTable(header, rows, pick)); });
@@ -172,6 +176,7 @@ const ACTS = {
   'dedup remove': () => t('webui.changes.dedup.remove'),
 };
 
+// 窄的時候每列拆成多行(app.css 的容器查詢把表格元素改成 block / flex),所以每個元素都標上表格的 role,報讀才還是表格(同 songTable)。
 function compactTable(header, rows, report, dir, pick) {
   const col = (k) => header.indexOf(k);
   const [di, ai, pi, li, ti, ri, ari, posi] = ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'TITLE', 'REASON', 'ARTISTS', 'POS'].map(col);
@@ -179,6 +184,7 @@ function compactTable(header, rows, report, dir, pick) {
   const links = pick ? rows.map((r, i) => { const x = pick(r, i); return x && spotifyLink(x.kind, x.id, x.title); }) : [];
   const withLinks = links.some(Boolean);
   const tbl = el('table', 'tbl chg__tbl');
+  tbl.setAttribute('role', 'table');
   const cg = el('colgroup');
   const heads = [];
   const add = (cls, text) => { cg.appendChild(el('col', cls)); heads.push(text); };
@@ -190,39 +196,45 @@ function compactTable(header, rows, report, dir, pick) {
   if (withLinks) add('chg__c-sp', '');
   const thead = el('thead');
   const hr = el('tr');
-  for (const h of heads) hr.appendChild(el('th', null, h));
+  hr.setAttribute('role', 'row');
+  for (const h of heads) {
+    const th = el('th', null, h);
+    th.setAttribute('role', 'columnheader');
+    hr.appendChild(th);
+  }
   thead.appendChild(hr);
   const tbody = el('tbody');
   rows.forEach((r, i) => {
     const tr = el('tr');
-    if (report) tr.appendChild(el('td', 'num chg__pos', r[posi] || ''));
-    if (many) tr.appendChild(el('td', 'chg__pl', r[li] || ''));
+    tr.setAttribute('role', 'row');
+    if (report) tr.appendChild(cell('num chg__pos', r[posi] || ''));
+    if (many) tr.appendChild(cell('chg__pl', r[li] || ''));
     if (!report) {
       const d = (di >= 0 ? r[di] : dir) || '';
       const a = r[ai] || '';
       const f = a === 'skip' ? () => t('webui.changes.skip') : ACTS[`${d} ${a}`];
-      const td = el('td', 'chg__act', f ? f(providerName(pi >= 0 ? r[pi] : '')) : a);
+      const td = cell('chg__act', f ? f(providerName(pi >= 0 ? r[pi] : '')) : a);
       td.dataset.action = a; // 上色看機器值(app.css 的 td[data-action])
       tr.dataset.action = a;
       if (d) tr.dataset.dir = d;
       tr.appendChild(td);
     }
-    const song = el('td', 'chg__song');
+    const song = cell('chg__song');
     const title = ti >= 0 ? r[ti] || '' : '';
     const sub = ari >= 0 ? r[ari] || '' : '';
     song.appendChild(el('span', 'pl__title', title));
     if (sub) song.appendChild(el('span', 'pl__sub', sub));
     song.title = sub ? `${title}\n${sub}` : title; // 省略掉的字,滑過去看得到全文
-    tr.append(song, el('td', 'chg__why', ri >= 0 ? r[ri] || '' : ''));
+    tr.append(song, cell('chg__why', ri >= 0 ? r[ri] || '' : ''));
     if (withLinks) {
-      const td = el('td', 'row-actions');
+      const td = cell('row-actions');
       if (links[i]) td.appendChild(links[i]);
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
   });
   tbl.append(cg, thead, tbody);
-  return tbl;
+  return { tbl, many, withLinks };
 }
 
 // ── 就地的寫入流程(計畫 §3.5)──
