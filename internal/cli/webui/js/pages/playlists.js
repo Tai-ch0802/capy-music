@@ -41,7 +41,7 @@ export function initPlaylists(root, api, con, notice, providers, arg) {
   // st.devices:export 的 manifest.json:裝置 id → 名稱(連在別台電腦的本機清單說得出是哪一台)。
   // st.platLists:{ 平台: { rows: [{ id, name, tracks }], error } };null = 還沒讀過。
   // 放在一個物件裡交給共用的連結面板(plflow.js):它每次用到時才讀,重讀後拿到的是新的值。
-  const st = { auth: {}, devices: [], platLists: null };
+  const st = { auth: {}, devices: [], platLists: null, masters: null };
   let selected = arg || ''; // 選中的那份(pid):寫入後、回到這一頁時重讀,畫回同一份;#/playlists/<pid> 直接打開那一份
   // flow:寫入命令的就地區塊(步驟條、狀態句、變更表、提示;表在上、提示在下——CLI 先印表再問確認)。
   // 只在切到別份清單時清空;重讀後搬進新畫的右欄,收尾那句不會因為重讀而消失。
@@ -125,6 +125,7 @@ export function initPlaylists(root, api, con, notice, providers, arg) {
     const { masters: pls, track, devices } = indexExport(files);
     st.devices = devices;
     masters = pls;
+    st.masters = pls;
     renderPlatforms(); // 讀過平台清單的話,「連著哪一份」跟著新的正本更新
     left.replaceChildren();
     if (!pls.length) { right.replaceChildren(); empty(); return; } // 右欄交給 showItems 換:它要先讀舊畫面的篩選字與捲動位置
@@ -308,7 +309,15 @@ export function initPlaylists(root, api, con, notice, providers, arg) {
     let state = '';
     if (ls.kind === 'unknown') { /* 分不出來:不標、不給納入 */ }
     else if (ls.kind === 'linked') state = t('webui.playlists.platforms.linked', { name: ls.master.name });
-    else if (dup) state = t('webui.playlists.platforms.same_name', { name: ls.master.name, platform: providerName(p) }); // 不給納入、不指去搬家:出路是先在平台上改名
+    else if (dup) {
+      // 不給納入(會連到那一份、第一次 pull 照平台順序重排它)、不指去搬家:要一起同步就連到那份正本(合併,決策 62),要分開就先改名
+      // 那份正本已經連著這個平台的另一份:一份正本在每個平台只連一份,只能先改名(會變成另一份正本)
+      if (ls.kind === 'same_name_taken') state = t('webui.playlists.platforms.same_name_taken', { name: ls.master.name, platform: providerName(p) });
+      else {
+        state = t('webui.playlists.platforms.same_name', { name: ls.master.name, platform: providerName(p) });
+        acts.appendChild(btn(t('webui.sync.same_name_go', { name: ls.master.name }), '', () => lf.askMerge(p, ls.master, pflow, r.id)));
+      }
+    }
     else { state = t('webui.playlists.platforms.unlinked'); acts.appendChild(btn(t('webui.playlists.platforms.adopt'), '', () => lf.adopt(p, r, pflow))); }
     if (ls.kind !== 'unknown') row.dataset.state = dup ? 'same_name' : ls.kind;
     const count = /^\d+$/.test(r.tracks || '') ? t('webui.playlists.platforms.count', { count: Number(r.tracks) }) : '';

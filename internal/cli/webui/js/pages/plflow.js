@@ -188,6 +188,7 @@ const ACTS = {
   'push move': (p) => t('webui.changes.push.move', { platform: p }),
   'push rename': (p) => t('webui.changes.push.rename', { platform: p }),
   'dedup remove': () => t('webui.changes.dedup.remove'),
+  'resolve map': (p) => t('webui.changes.resolve.map', { platform: p }), // pl link --merge:清單裡那首認成正本的同一首
 };
 
 // 窄的時候每列拆成多行(app.css 的容器查詢把表格元素改成 block / flex),所以每個元素都標上表格的 role,報讀才還是表格(同 songTable)。
@@ -314,7 +315,7 @@ export function makeFlow(con) {
     }, { args, label, promptHost: f.host });
   }
 
-  return { openFlow, step, blocked, get busy() { return busy; } };
+  return { openFlow, step, blocked, con, get busy() { return busy; } };
 }
 
 // readLists:讀一個平台上的清單(pl list --provider p)。done({ rows } 或 { rows: [], error }, reason, code) 在 onExit 裡叫。
@@ -341,8 +342,9 @@ export function playlistLink(p, id, name) {
   return a;
 }
 
-// linkFlows:連結面板(正本連到哪幾份平台清單)與它發起的寫入流程(同步這份、找對應、逐首決定、在 X 建一份、納入)。
-// flow 是 makeFlow 的實例;state 是頁面的 { auth, devices, platLists }(用到時才讀);reload 是寫入收尾後的重讀;
+// linkFlows:連結面板(正本連到哪幾份平台清單)與它發起的寫入流程(同步這份、找對應、逐首決定、在 X 建一份、納入、
+// 連到 X 上已經有的清單)。flow 是 makeFlow 的實例;state 是頁面的 { auth, devices, platLists, masters }(用到時才讀);
+// reload 是寫入收尾後的重讀;
 // 每個流程畫在呼叫端給的 box 裡(那一頁的流程區,提示也畫在那裡)。
 export function linkFlows({ flow, state, providers, reload }) {
   // runOne:單一命令(同步這份清單、找對應、逐首決定);收尾後重讀。
@@ -404,7 +406,10 @@ export function linkFlows({ flow, state, providers, reload }) {
         const b = el('button', 'btn', t('webui.playlists.links.create', { platform })); // 只打開說明,還不送命令:不標 data-run
         b.type = 'button';
         b.addEventListener('click', () => askCreate(p, pl, box));
-        acts.appendChild(b);
+        const m = el('button', 'btn btn--ghost', t('webui.merge.open', { platform })); // 同上:只打開確認卡
+        m.type = 'button';
+        m.addEventListener('click', () => askMerge(p, pl, box));
+        acts.append(b, m);
       }
     }
     row.append(el('span', 'pl__link-name', platform), el('span', 'pl__link-state', label), info, acts);
@@ -428,7 +433,8 @@ export function linkFlows({ flow, state, providers, reload }) {
     const dup = lists?.[p]?.rows?.some((r) => same(r.name, pl.name) && r.tracks !== '0'); // 讀取中分不出來:照沒讀過處理,同名由 CLI 擋
     if (dup) {
       card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
-      acts.append(no);
+      const it = lists[p].rows.find((r) => same(r.name, pl.name) && r.tracks !== '0');
+      acts.append(btn(t('webui.merge.open', { platform }), '', () => askMerge(p, pl, box, it.id)), no);
     } else {
       card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
       if (p === 'apple') card.appendChild(el('p', 'page__note', t('webui.playlists.create.apple'))); // 決策 49:可能,不是必然
@@ -463,6 +469,115 @@ export function linkFlows({ flow, state, providers, reload }) {
     });
   }
 
+  // ── 連到 X 上已經有的清單 = 合併(計畫 2026-10-01 §2.5、§3.4,決策 62)──
+  // askMerge:先畫確認卡(卡上每一句都照實,按「開始合併」才送命令)。那個平台的清單沒讀過就先讀(會連網);
+  // 已經連著別的正本的清單在下拉裡不能選(一份平台清單只連一份正本)。preset:同名卡、撞同名時預選那一份。
+  const own = {}; // 頁面沒讀過的平台,這裡自己讀的清單(不塞進頁面的 state.platLists:清單頁的「各平台上的清單」只畫按了讀取的)
+  function askMerge(p, pl, box, preset) {
+    if (flow.blocked()) return;
+    const platform = providerName(p);
+    const L = state.platLists?.[p]?.rows && !state.platLists[p].loading ? state.platLists[p] : own[p];
+    if (!L || L.error) {
+      const f = flow.openFlow(null, box);
+      say(f, { text: t('webui.merge.reading', { platform }) });
+      readLists(flow.con, p, t('webui.playlists.list_label', { platform }), (res) => {
+        own[p] = res;
+        if (res.error) say(f, { text: t('webui.playlists.platforms.error', { platform, error: res.error }), warn: true });
+        else askMerge(p, pl, box, preset);
+      });
+      return;
+    }
+    const card = el('div', 'pl__flow-card');
+    card.appendChild(el('h4', 'pl__plat-name', t('webui.merge.title', { name: pl.name, platform })));
+    const pick = el('select', 'in');
+    const rows = L.rows.filter((r) => !(state.masters || []).some((m) => m.pid === pl.pid && (m.links || {})[p] === r.id));
+    for (const r of rows) {
+      const ls = listState(state.masters, p, r);
+      const o = el('option', null, ls.kind === 'linked' ? t('webui.merge.option_linked', { name: r.name, master: ls.master.name }) : r.name);
+      o.value = r.id;
+      if (ls.kind === 'linked') o.disabled = true; // 已經連著別的正本:CLI 也會以 taken 擋下
+      pick.appendChild(o);
+    }
+    const free = rows.filter((r) => listState(state.masters, p, r).kind !== 'linked');
+    if (!free.length) {
+      card.appendChild(el('p', null, t('webui.merge.none', { platform })));
+      const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
+      no.type = 'button';
+      no.addEventListener('click', () => box.replaceChildren());
+      card.appendChild(no);
+      box.replaceChildren(card);
+      return;
+    }
+    pick.value = free.some((r) => r.id === preset) ? preset : free[0].id;
+    const label = el('label', 'field field--grow');
+    label.append(el('span', 'field__label', t('webui.merge.which', { platform })), pick);
+    const steps = el('ol', 'wiz__steps');
+    for (const sx of [t('webui.merge.step.merge'), t('webui.playlists.step.resolve'), t('webui.merge.step.sync')]) steps.appendChild(el('li', 'wiz__step', sx));
+    const facts = el('ul', 'sync__merge-facts');
+    const draw = () => {
+      const r = rows.find((x) => x.id === pick.value);
+      const n = (pl.items || []).length;
+      const items = [
+        t('webui.merge.fact.match', { target: r.name, count: n }),
+        t('webui.merge.fact.shape', { target: r.name, platform }),
+        t('webui.merge.fact.confirm'),
+        t('webui.merge.fact.unique', { target: r.name }),
+        t('webui.merge.fact.same_song'),
+        t('webui.merge.fact.limit'),
+      ];
+      if (p !== 'local' && !same(r.name, pl.name)) items.splice(2, 0, t('webui.merge.fact.rename', { target: r.name, name: pl.name })); // 本機曲庫不改檔名
+      if (p === 'apple' || (pl.links || {}).apple) items.push(t('webui.playlists.create.apple')); // 決策 49:可能,不是必然
+      facts.replaceChildren(...items.map((x) => el('li', null, x)));
+    };
+    pick.addEventListener('change', draw);
+    draw();
+    const acts = el('div', 'form-row');
+    const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
+    no.type = 'button';
+    no.addEventListener('click', () => box.replaceChildren());
+    acts.append(btn(t('webui.merge.start'), 'btn--primary', () => merge(p, pl, rows.find((x) => x.id === pick.value), box)), no);
+    card.append(label, steps, el('p', 'page__note', t('webui.merge.happens')), facts, acts);
+    box.replaceChildren(card);
+  }
+
+  // merge:① pl link --merge(同一張表、一次確認;取消就什麼都不寫、不連上)② resolve <pid>(其他平台替新接的歌找對應)
+  // ③ pl sync <pid>(把新接的歌帶到其他平台;有連著的平台這台沒登入時一家一家同步,同同步頁的逐平台規則)。
+  function merge(p, pl, r, box) {
+    const platform = providerName(p);
+    const name = pl.name;
+    const f = flow.openFlow([t('webui.merge.step.merge'), t('webui.playlists.step.resolve'), t('webui.merge.step.sync')], box);
+    const stop23 = t('webui.merge.stop23', { target: r.name, name, button: t('webui.playlists.sync') });
+    markStep(f, 0);
+    flow.step(f, ['pl', 'link', '--merge', pl.pid, `${p}:${r.id}`], t('webui.merge.label', { target: r.name, name }), (c1, o1) => {
+      // exit 1 的原因 CLI 照實說(寫到一半時連結可能已經記下,那句會說);其他停下的情況都是零寫入、沒連上
+      if (c1 !== 0) { say(f, o1, c1 === 1 && o1.console ? '' : t('webui.merge.stop1')); reload(); return; }
+      markStep(f, 1);
+      flow.step(f, ['resolve', pl.pid], t('webui.merge.label_resolve', { name }), (c2, o2) => {
+        if (c2 !== 0) { say(f, o2, stop23); reload(); return; }
+        markStep(f, 2);
+        // 連著的平台:原本的連結加上剛連上的這一份;這台沒登入的、別台 / 別帳號的不算
+        const linked = { ...(pl.links || {}), [p]: r.id };
+        const sc = providers.list.map((q) => [q, linkState(state.auth, state.devices, q, { ...pl, links: linked })]).filter(([, s]) => s);
+        const run = sc.filter(([, s]) => s.kind === 'linked').map(([q]) => q);
+        const out = sc.filter(([, s]) => s.kind === 'out').map(([q]) => q);
+        const qs = out.length ? run : [''];
+        let wrote = false;
+        const next = (i) => {
+          const q = qs[i];
+          flow.step(f, ['pl', 'sync', pl.pid, ...(q ? ['--provider', q] : [])], q ? t('webui.sync.label.sync_on', { name, platform: providerName(q) }) : t('webui.playlists.label.sync', { name }), (c3, o3, w3) => {
+            wrote = wrote || w3;
+            if (c3 !== 0) { say(f, o3, stop23); reload(); return; }
+            if (i + 1 < qs.length) { next(i + 1); return; }
+            markStep(f, 3);
+            say(f, { text: t('webui.merge.done', { target: r.name, name, button: t('webui.sync.dedup') }) });
+            reload();
+          });
+        };
+        next(0);
+      });
+    });
+  }
+
   // adopt:納入 = 建一份新的空正本並連上(--new-only:名字已經是某份正本就擋,頁面讀的 export 可能過時)→ 把歌拉進來(第一次 pull
   // 採平台順序,新正本是空的,所以是對的)。名稱放在 -- 後面:以 - 開頭的清單名不被當成旗標。
   // next:做完之後接在完成那句後面的下一步(同步頁:去其他平台建一份);清單頁不給。
@@ -487,5 +602,5 @@ export function linkFlows({ flow, state, providers, reload }) {
     });
   }
 
-  return { panel: linkPanel, askCreate, adopt, syncOne: runOne };
+  return { panel: linkPanel, askCreate, askMerge, adopt, syncOne: runOne };
 }
