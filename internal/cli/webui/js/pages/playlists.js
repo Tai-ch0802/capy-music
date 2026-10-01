@@ -67,7 +67,7 @@ export function initPlaylists(root, api, con, notice, providers, arg) {
       onExit: (code, msg, reason) => {
         if (code !== 0) {
           // 已經畫過清單(寫入後、回到這一頁時的重讀):保留畫面與流程區裡「停在哪一步」那句,原因 Console 已經放進 notice
-          if (selected) return;
+          if (masters?.length) return; // 不看 selected:#/playlists/<pid> 進頁時它一開始就有值,第一次就失敗會整頁空白
           left.replaceChildren();
           right.replaceChildren();
           // 只有命令真的跑完、以非 0 結束才算「這台沒有本機資料」;斷線、被別的分頁佔著、中止、逾時都不是,照說原因

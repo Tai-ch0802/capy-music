@@ -1336,7 +1336,8 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, ".pl__left .pl__item[hidden] { display: none; }") || !strings.Contains(css, ".pl__tbl tr[hidden] { display: none; }") {
 		t.Error("清單頁的篩選:display:grid / flex 會蓋掉 [hidden],要各有一條 display:none")
 	}
-	if !strings.Contains(css, ".pl__list > .pl__item:focus-visible { outline-offset: -4px; }") {
+	// 同步頁的清單列是單選卡(label 裡藏著 radio):焦點落在 input 上,也要畫在項目裡面
+	if !strings.Contains(css, ".pl__list > .pl__item:focus-visible, .pl__list .pl__item:has(input:focus-visible) { outline-offset: -4px; }") {
 		t.Error("左欄清單是捲動容器:焦點環要畫在項目裡面")
 	}
 	// 回到清單頁要重讀(計畫 2026-09-30 §3.6 / Q7):別頁寫入之後這一頁不可以停在過時的畫面。

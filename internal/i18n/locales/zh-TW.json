@@ -1573,7 +1573,7 @@
   "webui.sync.readback_failed": "讀不回正本:{list}。",
   "webui.sync.readback_none": "先到「帳號」登入任一個音樂平台,capy 才能讀回正本。",
   "webui.sync.readback_still": "所以這台電腦還是沒有副本。",
-  "webui.sync.rename_note": "{platform} 上的這份現在叫「{current}」,下一次同步會改成「{name}」(會先列出來給你確認)。",
+  "webui.sync.rename_note": "{platform} 上的這份現在叫「{current}」,正本叫「{name}」。剛連上的,第一次同步會改成正本的名字;同步過後才在 {platform} 上改的,會把新名字帶回正本和其他平台。改名一樣會先列出來給你確認。",
   "webui.sync.reread": "重新讀取",
   "webui.sync.resolve_changes": {
     "other": "{count} 筆會寫入的對應(其餘等你逐首決定)"
@@ -1597,6 +1597,8 @@
   "webui.sync.title": "同步",
   "webui.sync.unknown": "這台電腦還沒有正本的副本,分不出這些清單是不是已經交給 capy 了。",
   "webui.sync.unknown_card": "這台電腦還沒有正本的副本,分不出這份是不是已經交給 capy 了。先在上面讀回正本。",
+  "webui.sync.unknown_card_error": "這台電腦這次沒讀到正本,分不出這份是不是已經交給 capy 了。先按上面的「重新讀取」。",
+  "webui.sync.unknown_error": "這台電腦這次沒讀到正本,分不出這些清單是不是已經交給 capy 了。先按上面的「重新讀取」。",
   "webui.wiki.artist_field": "歌手",
   "webui.wiki.artist_placeholder": "歌手(可不填)",
   "webui.wiki.ask": "查詢",

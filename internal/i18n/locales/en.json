@@ -1660,7 +1660,7 @@
   "webui.sync.readback_failed": "Couldn't read the master copies back: {list}.",
   "webui.sync.readback_none": "Sign in to any music service on the Account page first, so capy can read the master copies back.",
   "webui.sync.readback_still": "So this computer still has no copy.",
-  "webui.sync.rename_note": "The playlist on {platform} is called \"{current}\" now; the next sync renames it to \"{name}\" (listed for you to confirm first).",
+  "webui.sync.rename_note": "The playlist on {platform} is called \"{current}\" and the master copy is called \"{name}\". A newly linked playlist is renamed to the master copy's name at the first sync; a rename made on {platform} after syncing is carried back to the master copy and the other services. Either way the rename is listed for you to confirm first.",
   "webui.sync.reread": "Read again",
   "webui.sync.resolve_changes": {
     "one": "{count} match will be saved (the rest wait for you to review them one by one)",
@@ -1685,6 +1685,8 @@
   "webui.sync.title": "Sync",
   "webui.sync.unknown": "This computer has no copy of your master copies yet, so it can't tell which of these playlists are already in capy.",
   "webui.sync.unknown_card": "This computer has no copy of your master copies yet, so it can't tell whether this playlist is already in capy. Read the master copies back above first.",
+  "webui.sync.unknown_card_error": "This computer hasn't read its master copies this time, so it can't tell whether this playlist is already in capy. Press \"Read again\" above first.",
+  "webui.sync.unknown_error": "This computer hasn't read its master copies this time, so it can't tell which of these playlists are already in capy. Press \"Read again\" above first.",
   "webui.wiki.artist_field": "Artist",
   "webui.wiki.artist_placeholder": "artist (optional)",
   "webui.wiki.ask": "Ask",

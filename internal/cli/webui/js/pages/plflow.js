@@ -425,7 +425,7 @@ export function linkFlows({ flow, state, providers, reload }) {
     // 同名的那份確定是空的(曲數 0,例如上次建好了但連結沒寫進 Drive)照給「開始」:CLI 會停在第一步、給接回去的 pl link
     // 命令,那是這種情況唯一的復原路(#125 review 第 3 點)。
     const lists = state.platLists;
-    const dup = lists && lists[p] && lists[p].rows.some((r) => same(r.name, pl.name) && r.tracks !== '0');
+    const dup = lists?.[p]?.rows?.some((r) => same(r.name, pl.name) && r.tracks !== '0'); // 讀取中分不出來:照沒讀過處理,同名由 CLI 擋
     if (dup) {
       card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
       acts.append(no);

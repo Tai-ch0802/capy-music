@@ -1831,6 +1831,14 @@ await scenario('8t', async () => {
   dp.refresh('a');
   await idle(); await tick(5); await idle();
   check(active().startsWith('road trip'), `回到這一頁帶 a:換成 road trip:${active()}`);
+  // 帶 pid 進頁、export 第一次就失敗(這台沒有本機資料):照樣說下一步,不是整頁空白
+  reset();
+  script = { 'auth status --json': out({ google: { state: 'ok' } }), export: { events: [{ type: 'exit', code: 1, message: 'Error: x', reason: 'done' }] } };
+  const deep2 = mk();
+  initPlaylists(deep2, api, con, () => {}, { list: ['spotify'], current: 'spotify' }, 'b');
+  await idle(); await tick(5); await idle();
+  check(deep2.textContent.includes('這台電腦還沒讀過你 Google Drive 上的正本') && (() => { let ok = false; const w = (n) => { for (const c of n.children || []) { if (c.tagName === 'A' && c.href === '#/sync') ok = true; w(c); } }; w(deep2); return ok; })(),
+    `#/playlists/b 進頁、export 失敗:照樣說下一步:${deep2.textContent.slice(0, 80)}`);
 });
 
 // 8u. 同步頁(計畫 2026-10-01-sync-page-redesign.md §4 的 node 情境,T2):進頁只安靜讀 auth 與 export;在同步的清單照 export 畫;
@@ -1946,6 +1954,54 @@ await scenario('8u', async () => {
   await pickList(sy2, 'Gym');
   check(byText(allByClass(sec(sy2, 1), 'pl__flow-card')[0], '納入 capy') && sec(sy2, 1).textContent.includes('Apple Music 對空清單也會回「找不到」'), 'Apple 預覽找不到:可能是空的,照給納入');
 
+  // 序列槽被佔著時換清單:pl show 排隊再送,不被擋成「讀不到」(引導卡照給納入)
+  const [g1, rel1] = gate();
+  const sy3 = await open({ [`pl show ${SP2} --provider spotify`]: { gate: g1, events: [{ type: 'table', header: TH, rows: [] }, done] }, [`pl show ${SP6} --provider spotify`]: table(TH, []) });
+  await pickPlat(sy3, 'spotify');
+  radios(sy3, 'sync-list')[allByClass(sy3, 'sync__item').findIndex((w) => allByClass(w, 'pl__name')[0]?.textContent === 'Workout')].l.change();
+  await tick(5);
+  radios(sy3, 'sync-list')[allByClass(sy3, 'sync__item').findIndex((w) => allByClass(w, 'pl__name')[0]?.textContent === 'Road Trip')].l.change();
+  await tick(5);
+  rel1();
+  await settle();
+  check(sent().includes(`pl show ${SP6} --provider spotify`) && !sec(sy3, 1).textContent.includes('讀不到'), `換清單時槽被佔:排隊再讀,不算讀不到:${JSON.stringify(sent())}`);
+  // pl show 被中止:不算讀不到;引導卡照給納入、預覽給重新讀取
+  const sy4 = await open({ [`pl show ${SP2} --provider spotify`]: { events: [exit(130, '', 'cancelled')] } });
+  await pickPlat(sy4, 'spotify');
+  await pickList(sy4, 'Workout');
+  const rr = byText(allByClass(sec(sy4, 1), 'sync__preview')[0], '重新讀取');
+  check(byText(sec(sy4, 1), '納入 capy') && rr, '預覽被中止:照給納入、給重新讀取');
+  script[`pl show ${SP2} --provider spotify`] = table(TH, [[SP1, 'Song A', 'Artist', 'Album', '215000']]);
+  rr?.click();
+  await settle();
+  check(sent().filter((c) => c === `pl show ${SP2} --provider spotify`).length === 2 && allByClass(sec(sy4, 1), 'sync__preview')[0].querySelector('tbody')?.children.length === 1, '按重新讀取:重送 pl show 並畫出來');
+  // 平台清單讀取中按連結面板的「在 X 建一份」:不丟例外,說明卡照樣出現(同名由 CLI 擋)
+  const [g2, rel2] = gate();
+  const sy5 = await open({ 'pl list --provider apple': { gate: g2, events: [{ type: 'table', header: LH, rows: [] }, done] } });
+  await pickPlat(sy5, 'spotify');
+  await pickList(sy5, 'road trip');
+  radios(sy5, 'sync-plat')[providers.list.indexOf('apple')].l.change();
+  await tick(5);
+  radios(sy5, 'sync-plat')[0].l.change();
+  await tick(5);
+  radios(sy5, 'sync-list')[0].l.change();
+  await tick(5);
+  let thrown = '';
+  try { byText(allByClass(sy5, 'pl__link').find((x) => x.dataset.platform === 'apple'), '在 Apple Music 建一份').click(); } catch (e) { thrown = e.message; }
+  check(!thrown && sec(sy5, 1).textContent.includes('在 Apple Music 建一份'), `Apple 的清單還在讀時按建一份:不丟例外:${thrown}`);
+  rel2();
+  await settle();
+  // 名字附註:頁面讀不到 base,不預測改名的方向
+  const sy6 = await open({ 'pl list --provider spotify': table(LH, [[SP3, 'road trip (old)', '2', 'me']]) });
+  await pickPlat(sy6, 'spotify');
+  await pickList(sy6, 'road trip (old)');
+  check(sec(sy6, 1).textContent.includes('Spotify 上的這份現在叫「road trip (old)」,正本叫「road trip」') && !sec(sy6, 1).textContent.includes('下一次同步會改成'), '名字附註不預測方向');
+  // export 不是因為「沒有副本」而失敗:不叫人按讀回正本(那顆鈕不在),指到重新讀取
+  const sy7 = await open({ export: { events: [exit(1, 'Error: context canceled', 'cancelled')] } });
+  await pickPlat(sy7, 'spotify');
+  await pickList(sy7, 'Workout');
+  check(sy7.textContent.includes('先按上面的「重新讀取」') && !sy7.textContent.includes('讀回正本') && byText(sy7, '重新讀取'), 'export 沒讀到(不是沒有副本):指到重新讀取');
+
   // ── 看看有沒有重複:pl dedup <平台>:<清單>,不帶任何旗標;有表時接下一步、沒有時一句
   script[`pl dedup spotify:${SP2}`] = table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['2', SP1, 'Song A', 'a', 'r', 'dup_id']]);
   byText(sec(sy, 1), '看看這份有沒有重複').click();
@@ -1964,7 +2020,7 @@ await scenario('8u', async () => {
   let before = bodies.length;
   byText(sec(sy, 1), '納入 capy').click();
   await settle();
-  check(JSON.stringify(bodies.slice(before).filter((b) => b.args?.[0] === 'pl').map((b) => b.args)) === JSON.stringify([['pl', 'link', '--new-only', '--', 'Workout', `spotify:${SP2}`], ['pl', 'pull', '--', 'Workout']]),
+  check(JSON.stringify(bodies.slice(before).filter((b) => ['link', 'pull'].includes(b.args?.[1])).map((b) => b.args)) === JSON.stringify([['pl', 'link', '--new-only', '--', 'Workout', `spotify:${SP2}`], ['pl', 'pull', '--', 'Workout']]),
     `納入的兩個命令:${JSON.stringify(bodies.slice(before).map((b) => b.args))}`);
   check(status(sec(sy, 1)).includes('完成:「Workout」已經交給 capy 保管') && status(sec(sy, 1)).includes('下一步:從下面挑一個平台「建一份」'), `納入完成接上下一步:${status(sec(sy, 1))}`);
   check(allByClass(sec(sy, 1), 'pl__flow-prompts').length > 0 && globalThis.location.hash === '', '納入的提示畫在同步頁裡(不切到主控台)');
@@ -1976,6 +2032,18 @@ await scenario('8u', async () => {
   const two = allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.dataset.links);
   check(two && two.dataset.links === '2' && JSON.stringify(primaries(two)) === JSON.stringify(['同步這份清單']) && byText(two, '去除重複'), `連兩個平台:主要鈕是同步這份清單、另有去除重複:${two && primaries(two)}`);
   check(anchors(sec(sy, 1)).some((a) => a.href === '#/playlists/a'), '連著正本:可以在「我的清單」打開那一份');
+
+  // 寫入之後:清掉預覽、重讀選中的平台清單與那份的預覽(計畫 §3.2「寫入那份清單後清掉重讀」)
+  script[`pl show ${SP3} --provider spotify`] = table(TH, [[SP1, 'Song A', 'Artist', 'Album', '215000']]);
+  script['pl sync a'] = { events: [{ type: 'prompt', id: 2, kind: 'confirm', title: '?' }, { type: 'prompt_closed', id: 2, reason: 'answered' }, done] };
+  const showsBefore = sent().filter((c) => c === `pl show ${SP3} --provider spotify`).length;
+  const listsBefore = sent().filter((c) => c === 'pl list --provider spotify').length;
+  script[`pl show ${SP3} --provider spotify`] = table(TH, [[SP1, 'Song A', 'Artist', 'Album', '215000'], [SP2, 'Song New', 'Artist', 'Album', '1000']]);
+  byText(allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.dataset.links), '同步這份清單').click();
+  await settle();
+  const showsAfter = sent().filter((c) => c === `pl show ${SP3} --provider spotify`).length;
+  check(showsAfter === showsBefore + 1 && allByClass(sec(sy, 1), 'sync__preview')[0].querySelector('tbody').children.length === 2 && sent().filter((c) => c === 'pl list --provider spotify').length === listsBefore + 1,
+    `寫入之後重讀清單與預覽:${showsBefore} → ${showsAfter} ${JSON.stringify(sent().slice(-4))}`);
 
   // ── 逐平台:連著的平台這台沒登入時,先說明、按了才一家一家同步(不送整份)
   sy = await open({}, { ...AUTH, youtube: { state: 'missing' } });
@@ -1995,6 +2063,15 @@ await scenario('8u', async () => {
   await settle();
   check(JSON.stringify(sent().filter((c) => c.startsWith('pl sync --all --provider'))) === JSON.stringify(['pl sync --all --provider spotify', 'pl sync --all --provider apple', 'pl sync --all --provider youtube'])
     && status(sec(sy, 0)).includes('有平台沒有同步成功:Apple Music:Apple 讀不到'), `逐平台:照平台順序、失敗的記下來繼續:${JSON.stringify(sent())} ${status(sec(sy, 0))}`);
+
+  // 逐平台被後面的平台停下時,前面失敗過的也要說出來,後面沒跑的照實列出
+  sy = await open({ 'pl sync --all': { events: [exit(1, 'Error: x')] }, 'pl sync --all --provider spotify': { events: [exit(1, 'Error: S 失敗')] }, 'pl sync --all --provider apple': { events: [exit(2, 'Error: 待套用')] } });
+  byText(sec(sy, 0), '全部同步').click();
+  await settle();
+  byText(sec(sy, 0), '改成一個平台一個平台同步').click();
+  await settle();
+  check(status(sec(sy, 0)).includes('有平台沒有同步成功:Spotify:S 失敗') && status(sec(sy, 0)).includes('沒有同步的平台:YouTube Music') && status(sec(sy, 0)).includes('你按了取消'),
+    `逐平台停下:前面失敗的、這一家的原因、後面沒跑的都說:${status(sec(sy, 0))}`);
 
   // ── 這台沒有副本:讀回正本。範圍是 auth 說 ok 的音樂平台;exit 1 換下一家,第一個成功就停並重讀
   const noCopy = { events: [exit(1, 'Error: 本機沒有資料')] };
@@ -2050,7 +2127,13 @@ await scenario('8u', async () => {
   adv('dedup').click();
   await settle();
   check(sent().includes('pl dedup -- apple:p.B') && status(advBox).includes('這只是檢查') && !status(advBox).includes('已經是最新的'), `去重的平台清單形式:不帶旗標、收尾說是檢查:${JSON.stringify(sent().slice(-3))} ${status(advBox)}`);
+  // 去除重複名稱留空:挑選器選完、沒有重複(沒有表)時說「沒有重複的歌」,不說「完成」
   adv('name').value = '';
+  adv('provider').value = '';
+  script['pl dedup --dry-run'] = { events: [{ type: 'prompt', id: 9, kind: 'select', title: '?', options: [{ key: 'road trip', value: 'a' }] }, { type: 'prompt_closed', id: 9, reason: 'answered' }, done] };
+  adv('dedup').click();
+  await settle();
+  check(status(advBox).includes('沒有重複的歌') && !status(advBox).includes('完成'), `挑選器選完、沒有重複:${status(advBox)}`);
   adv('provider').value = 'apple';
   adv('pull').click();
   await settle();

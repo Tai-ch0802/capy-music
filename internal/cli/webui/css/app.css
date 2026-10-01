@@ -313,7 +313,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 @container (min-width: 64rem) { .pl__cols { grid-template-columns: 16rem minmax(0, 1fr); } }
 .pl__left, .pl__right { min-width: 0; }
 .pl__list { display: flex; flex-direction: column; gap: .35rem; max-height: 15rem; overflow: auto; }
-.pl__list > .pl__item:focus-visible { outline-offset: -4px; } /* 捲動容器會裁掉畫在外面的焦點環:改畫在項目裡面 */
+.pl__list > .pl__item:focus-visible, .pl__list .pl__item:has(input:focus-visible) { outline-offset: -4px; } /* 捲動容器會裁掉畫在外面的焦點環:改畫在項目裡面 */
 @container (min-width: 64rem) { .pl__list { max-height: 60vh; } }
 .pl__left .pl__item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .5rem; flex: none; }
 .pl__left .pl__item[hidden] { display: none; } /* display:grid 會蓋掉 UA 的 [hidden] */

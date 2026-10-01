@@ -20,9 +20,10 @@ export function initSync(root, api, con, notice, providers, arg) {
   let exportMsg = '';
   let track = () => ({});
   let pick = { p: providers.list.includes(arg) ? arg : '', id: '' }; // #/sync/<平台>:預選那個平台
-  const previews = {}; // `${平台}\n${清單 id}` → { header, rows } / { error } / { loading }
+  const previews = {}; // `${平台}\n${清單 id}` → { header, rows } / { error, done } / { loading }
+  let stale = false;   // 寫入後:選中的平台清單與預覽要重讀(afterWrite)
   const fl = makeFlow(con);
-  const lf = linkFlows({ flow: fl, state: st, providers, reload: load });
+  const lf = linkFlows({ flow: fl, state: st, providers, reload: afterWrite });
 
   pageHead(root, t('webui.sync.title'), t('webui.sync.lead'));
   const banner = el('div', 'sync__banner'); // Google Drive 本身的問題、export 失敗:整頁的前提,畫在最上面
@@ -55,6 +56,15 @@ export function initSync(root, api, con, notice, providers, arg) {
   render();
   con.idle(load); // 有命令在跑就等它結束,不要撞上它
 
+  // afterWrite:寫入流程的收尾。平台上的順序、首數、名字可能都變了:清掉預覽、別的平台的清單,重讀 auth 與 export,
+  // 讀完再重讀選中的平台清單與那份的預覽(readExport 的 onExit 接著送)。進頁與回到這一頁時的 load() 不清,讀過的不重送。
+  function afterWrite() {
+    for (const k of Object.keys(previews)) delete previews[k];
+    for (const q of Object.keys(st.platLists)) if (q !== pick.p) delete st.platLists[q];
+    stale = true;
+    load();
+  }
+
   // load:auth status --json → export,兩個都 quiet(整份 JSON 不灌進主控台);第二個在第一個的 onExit 裡送(見 plflow.js 的 step)。
   function load() {
     let status = '';
@@ -85,8 +95,14 @@ export function initSync(root, api, con, notice, providers, arg) {
           exportMsg = t('webui.playlists.bad_export', { error: e.message });
         }
         render();
-        // #/sync/<平台> 預選的平台:知道登入狀態之後才讀它的清單(在這個 onExit 裡送,不插隊)
-        if (pick.p && driveOK() && !loggedOut(st.auth, pick.p) && !st.platLists[pick.p]) readPlat(pick.p);
+        // #/sync/<平台> 預選的平台、寫入之後:知道登入狀態之後才讀它的清單,讀完再重讀選中那份的預覽
+        if (pick.p && driveOK() && !loggedOut(st.auth, pick.p) && (stale || !st.platLists[pick.p])) {
+          readPlat(pick.p, () => {
+            const r = (st.platLists[pick.p].rows || []).find((x) => x.id === pick.id);
+            if (r && !previews[`${pick.p}\n${r.id}`]) readPreview(pick.p, r);
+          });
+        }
+        stale = false;
       },
     }, { label: t('webui.playlists.load_label'), quiet: true });
   }
@@ -190,7 +206,7 @@ export function initSync(root, api, con, notice, providers, arg) {
         f.status.appendChild(el('span', null, ' '));
         f.status.appendChild(btn(t('webui.sync.per_platform'), 'btn--sm', () => chain(box, ['pl', 'sync', '--all'], sc.run, labelOn)));
       }
-      load();
+      afterWrite();
     });
   }
 
@@ -221,7 +237,7 @@ export function initSync(root, api, con, notice, providers, arg) {
         markStep(f, i);
         if (failed.length) say(f, { text: t('webui.sync.chain_failed', { list: failed.join(t('webui.sync.sep')) }), warn: true, console: true });
         else say(f, { text: wroteAny ? t('webui.playlists.flow.done') : t('webui.playlists.flow.up_to_date') });
-        load();
+        afterWrite();
         return;
       }
       markStep(f, i);
@@ -229,9 +245,12 @@ export function initSync(root, api, con, notice, providers, arg) {
         wroteAny = wroteAny || wrote;
         if (code === 1 && o.console) { failed.push(`${providerName(qs[i])}:${o.text}`); next(i + 1); return; }
         if (code !== 0) {
+          // 停下來:這一家的原因,加上前面失敗過的(不然它們就不見了)與後面沒跑的
           const left = qs.slice(i + 1);
-          say(f, { ...o, extra: [o.extra, left.length && t('webui.sync.chain_left', { platforms: names(left) })].filter(Boolean).join(' ') });
-          load();
+          say(f, { ...o, warn: o.warn || failed.length > 0, console: o.console || failed.length > 0,
+            extra: [o.extra, failed.length && t('webui.sync.chain_failed', { list: failed.join(t('webui.sync.sep')) }),
+              left.length && t('webui.sync.chain_left', { platforms: names(left) })].filter(Boolean).join(' ') });
+          afterWrite();
           return;
         }
         next(i + 1);
@@ -324,13 +343,16 @@ export function initSync(root, api, con, notice, providers, arg) {
     if (driveOK() && !loggedOut(st.auth, p) && !st.platLists[p]) readPlat(p);
   }
 
-  function readPlat(p) {
-    st.platLists[p] = { loading: true };
+  // readPlat:讀一個平台上的清單;then 在讀完之後叫(串接下一個命令用)。重讀時先留著舊的列:右欄不會跳回開頭,
+  // askCreate 看同名時也一定有 rows。排隊再送(con.idle):序列槽被別的命令佔著時不要被擋成「讀不到」。
+  function readPlat(p, then) {
+    st.platLists[p] = { loading: true, rows: st.platLists[p]?.rows || [] };
     renderLists();
-    readLists(con, p, t('webui.playlists.list_label', { platform: providerName(p) }), (res, reason, code) => {
+    con.idle(() => readLists(con, p, t('webui.playlists.list_label', { platform: providerName(p) }), (res, reason, code) => {
       st.platLists[p] = reason === 'cancelled' && code !== 0 ? { rows: [], skipped: true } : res;
       if (pick.p === p) { renderLists(); renderRight(); }
-    });
+      if (then) then();
+    }));
   }
 
   // ── 那個平台的清單:每列的狀態只看這台的正本,不連網;Spotify 的列連回去(連結是兄弟,不包進單選)──
@@ -344,7 +366,7 @@ export function initSync(root, api, con, notice, providers, arg) {
     const L = st.platLists[p];
     if (!L) return;
     const reread = btn(t('webui.sync.reread'), 'btn--ghost btn--sm', () => readPlat(p));
-    if (L.loading) { listBox.appendChild(skeleton(4)); return; }
+    if (L.loading && !L.rows.length) { listBox.appendChild(skeleton(4)); return; }
     if (L.error) {
       listBox.appendChild(el('p', 'page__warn', t('webui.playlists.platforms.error', { platform, error: L.error })));
       if (p === 'local') { const a = el('a', 'wiz__link', t('webui.move.see_console')); a.href = '#/console'; listBox.appendChild(a); } // 例如還沒設 local_root
@@ -355,7 +377,8 @@ export function initSync(root, api, con, notice, providers, arg) {
       listBox.append(el('p', 'page__note', L.skipped ? t('webui.playlists.platforms.skipped') : t('webui.playlists.platforms.empty', { platform })), reread);
       return;
     }
-    if (!masters) listBox.appendChild(el('p', 'page__note', t('webui.sync.unknown')));
+    // 分不出每列的狀態:這台沒有副本(上面有讀回正本)或 export 因為別的原因沒讀到(上面有重新讀取)
+    if (!masters) listBox.appendChild(el('p', 'page__note', exportFail === 'no_copy' ? t('webui.sync.unknown') : t('webui.sync.unknown_error')));
     const list = el('div', 'pl__list');
     const rows = L.rows.map((r) => listRow(p, r));
     if (L.rows.length > FILTER) {
@@ -397,18 +420,23 @@ export function initSync(root, api, con, notice, providers, arg) {
     if (!previews[key] || previews[key].error) readPreview(pick.p, r);
   }
 
+  // readPreview:排隊再送(序列槽被佔著時不要被擋成「讀不到」);排到時已經換了別份就不讀,之後選回來再讀。
+  // done:命令真的跑完、以非 0 結束(讀不到歌);中止、斷線、被拒不算,引導卡照給納入、預覽給「重新讀取」。
   function readPreview(p, r) {
     const key = `${p}\n${r.id}`;
     previews[key] = { loading: true };
-    let header = [];
-    const rows = [];
-    con.run('', {
-      onTable: (h, rs) => { header = h; rows.push(...rs); },
-      onExit: (code, msg) => {
-        previews[key] = code === 0 ? { header, rows } : { error: (msg || '').replace(/^Error: /, '') || t('webui.move.failed') };
-        if (`${pick.p}\n${pick.id}` === key) renderRight();
-      },
-    }, { args: ['pl', 'show', r.id, '--provider', p], label: t('webui.sync.label.show', { name: r.name }) });
+    con.idle(() => {
+      if (`${pick.p}\n${pick.id}` !== key) { delete previews[key]; return; }
+      let header = [];
+      const rows = [];
+      con.run('', {
+        onTable: (h, rs) => { header = h; rows.push(...rs); },
+        onExit: (code, msg, reason) => {
+          previews[key] = code === 0 ? { header, rows } : { error: (msg || '').replace(/^Error: /, '') || t('webui.move.failed'), done: reason === 'done' };
+          if (`${pick.p}\n${pick.id}` === key) renderRight();
+        },
+      }, { args: ['pl', 'show', r.id, '--provider', p], label: t('webui.sync.label.show', { name: r.name }) });
+    });
   }
 
   // ── 右欄:選中那一份 ──
@@ -436,7 +464,7 @@ export function initSync(root, api, con, notice, providers, arg) {
     const h = el('div', 'pl__head');
     const main = el('div', 'pl__head-main');
     const v = previews[`${p}\n${r.id}`];
-    const count = countText(r) || (v && v.rows ? t('webui.playlists.platforms.count', { count: v.rows.length }) : '');
+    const count = v && v.rows ? t('webui.playlists.platforms.count', { count: v.rows.length }) : countText(r); // 剛讀的預覽比 pl list 的首數新
     main.append(el('h3', 'card__sub', r.name), el('p', 'page__note', [providerName(p), count, stateText(p, ls)].filter(Boolean).join(' · ')));
     h.appendChild(main);
     const sp = p === 'spotify' && spotifyLink('playlist', r.id, r.name);
@@ -456,14 +484,14 @@ export function initSync(root, api, con, notice, providers, arg) {
     card.dataset.state = ls.kind;
     const acts = el('div', 'form-row');
     if (ls.kind === 'unknown') {
-      card.appendChild(el('p', null, t('webui.sync.unknown_card')));
+      card.appendChild(el('p', null, exportFail === 'no_copy' ? t('webui.sync.unknown_card') : t('webui.sync.unknown_card_error')));
       return card;
     }
     if (ls.kind === 'unlinked') {
       // 預覽讀不到歌(Spotify 上追蹤的別人的清單、權限不夠…):納入時 pl link 也會以 unreadable 擋下,不給按。
       // Apple 例外:它對空清單也回「找不到」,空清單照樣可以納入。
       const v = previews[`${p}\n${r.id}`];
-      if (v && v.error && p !== 'apple') { card.appendChild(el('p', null, t('webui.sync.adopt.unreadable'))); return card; }
+      if (v && v.error && v.done && p !== 'apple') { card.appendChild(el('p', null, t('webui.sync.adopt.unreadable'))); return card; }
       card.append(steps(0), el('p', null, t('webui.sync.adopt.explain', { button: t('webui.playlists.platforms.adopt'), name: r.name, platform })));
       acts.append(btn(t('webui.sync.dup_check'), 'btn--ghost', () => dupCheck(p, r)),
         btn(t('webui.playlists.platforms.adopt'), 'btn--primary', () => lf.adopt(p, r, rightFlow, t('webui.sync.adopt.next'))));
@@ -532,9 +560,9 @@ export function initSync(root, api, con, notice, providers, arg) {
     const labelOn = (q) => t('webui.sync.label.dedup_on', { name: pl.name, platform: providerName(q) });
     if (sc.out.length) { partial(rightFlow, sc, () => chain(rightFlow, ['pl', 'dedup', pl.pid], sc.run, labelOn)); return; }
     const f = fl.openFlow(null, rightFlow);
-    fl.step(f, ['pl', 'dedup', pl.pid], t('webui.sync.dedup_label'), (code, o, wrote) => {
-      say(f, code === 0 && !wrote ? { text: t('webui.sync.adv.no_dups') } : o);
-      load();
+    fl.step(f, ['pl', 'dedup', pl.pid], t('webui.sync.dedup_label'), (code, o) => {
+      say(f, code === 0 && !f.table.firstChild ? { text: t('webui.sync.adv.no_dups') } : o); // 沒有表 = 沒有重複
+      afterWrite();
     });
   }
 
@@ -561,6 +589,7 @@ export function initSync(root, api, con, notice, providers, arg) {
     else if (v.error) {
       box.appendChild(el('p', 'page__warn', t('webui.sync.preview.error', { error: v.error })));
       if (p === 'apple') box.appendChild(el('p', 'page__note', t('webui.sync.preview.apple_empty')));
+      if (!v.done) box.appendChild(btn(t('webui.sync.reread'), 'btn--ghost btn--sm', () => { readPreview(p, r); renderRight(); }));
     } else if (!v.rows.length) box.appendChild(el('p', 'page__note', t('webui.sync.preview.empty')));
     else box.appendChild(previewTable(p, v.header, v.rows));
     return box;
@@ -664,10 +693,11 @@ export function initSync(root, api, con, notice, providers, arg) {
       fl.step(f, args, label, (code, o, wrote) => {
         // 只看變更 + 有變更 = exit 2,是正常結果不是取消:說這一頁上的下一步(CLI 的原文會叫人「加 --yes」,那正是這一頁不會做的事)
         if (code === 2 && wasDry) say(f, { text: t('webui.sync.dry_note', { option: dryLabel }) });
-        else if (code === 0 && !wrote && !n && verb !== 'dedup' && masters && !masters.some((pl) => links(pl).length)) say(f, { text: t('webui.sync.adv.no_links') });
-        else if (code === 0 && !wrote && verb === 'dedup') say(f, { text: t('webui.sync.adv.no_dups') });
+        // 去除重複沒有表 = 沒有重複(名稱留空時是挑選器選的,答過提示也不代表寫了東西,看表不看 wrote)
+        else if (code === 0 && verb === 'dedup' && !f.table.firstChild) say(f, { text: t('webui.sync.adv.no_dups') });
+        else if (code === 0 && !wrote && !n && masters && !masters.some((pl) => links(pl).length)) say(f, { text: t('webui.sync.adv.no_links') });
         else say(f, o);
-        load();
+        afterWrite();
       });
     };
     // report:不管有沒有重複都 exit 0、不問確認;不進 outcome()(會說成「已經是最新的」)
