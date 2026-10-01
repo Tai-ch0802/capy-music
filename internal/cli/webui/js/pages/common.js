@@ -85,3 +85,13 @@ export function pageHead(root, title, lead) {
   root.appendChild(h);
   return h;
 }
+
+// radioCard:單選卡。真的 radio(方向鍵、表單語意都是原生的),藏起來,樣子由 label 扛(CSS 的 :has())。搬家精靈與同步頁共用。
+export function radioCard(cls, name, checked, disabled, onPick, ...children) {
+  const lab = el('label', cls);
+  const r = el('input', 'sr-only');
+  r.type = 'radio'; r.name = name; r.checked = checked; r.disabled = disabled;
+  r.addEventListener('change', onPick);
+  lab.append(r, ...children);
+  return lab;
+}

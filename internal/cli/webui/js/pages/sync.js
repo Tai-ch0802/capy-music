@@ -1,7 +1,7 @@
 // sync.js:#/sync —— 表單只組出一條命令,確認與變更表都在 dock 的區塊裡(寫入的確認是提示橋的 confirm,
 // 頁面絕不代加 --yes、絕不代加 --force)。這一頁再把同一份變更表畫大一點。
 import { el, quote, btn, field, input, select, providerOptions, emptyState, pageHead } from './common.js';
-import { renderTable, linkColumn, byProvider } from '../table.js';
+import { changeTable } from './plflow.js';
 import { t } from '../i18n.js';
 
 export function initSync(root, api, con, notice, providers) {
@@ -56,26 +56,4 @@ export function initSync(root, api, con, notice, providers) {
     el('p', 'page__note', t('webui.sync.dedup_note', { button: t('webui.sync.dedup') })),
     out);
   out.appendChild(emptyState(t('webui.sync.empty', { button: t('webui.sync.sync') })));
-}
-
-// changeTable:同步表(最後一欄是 REASON_CODE;清單頁的同步、找對應也用它):自己的捲動容器 + sticky 表頭;ACTION 的字本身上色,remove 另外標記(不靠顏色單獨表意)。
-// Spotify 的那幾列在最後補一欄連回 Spotify(table.js 的 byProvider;spotifyReport = Spotify 清單的去重報告,整張都是 Spotify 的)。
-export function changeTable(header, rows, spotifyReport) {
-  const wrap = el('div', 'tbl-wrap tbl-wrap--tall');
-  const tbl = renderTable(header, rows);
-  const pick = byProvider(header) || (spotifyReport && ((r) => ({ kind: 'track', id: r[header.indexOf('ID')], title: r[header.indexOf('TITLE')] })));
-  if (pick) linkColumn(tbl, rows, pick);
-  const ai = header.indexOf('ACTION');
-  if (ai >= 0) {
-    for (const tr of tbl.querySelectorAll('tbody tr')) {
-      const cell = tr.children[ai];
-      if (cell) cell.dataset.action = cell.textContent.trim();
-    }
-  }
-  wrap.appendChild(tbl);
-  // skip(pull / push)與 review / conflict(resolve:等人決定、這次不寫)都不算變更;resolve 的表另一句,數字要跟確認句的筆數一樣
-  const idle = new Set(['skip', 'review', 'conflict']);
-  const n = rows.filter((r) => ai < 0 || !idle.has(r[ai])).length;
-  wrap.appendChild(el('p', 'page__note', header.includes('CONFIDENCE') ? t('webui.sync.resolve_changes', { count: n }) : t('webui.sync.changes', { count: n })));
-  return wrap;
 }

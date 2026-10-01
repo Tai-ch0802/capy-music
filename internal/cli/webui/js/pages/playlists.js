@@ -4,14 +4,13 @@
 // 右欄上面是連結面板(正本連到哪幾份平台清單)與就地的寫入流程(同步、在 X 建一份、找對應;計畫 §3.5):寫入一律走 CLI 自己的
 // 變更表與確認,頁面絕不代加確認或越過的旗標(決策 46)。第二段是「各平台上的清單」:連著哪份正本、還沒納入的可以納入(§3.4 / §3.5)。
 // 顯示 Spotify 的曲目或清單的地方都連回 Spotify(計畫 2026-09-24 §1.7 S7)。
-import { el, btn, input, providerName, emptyState, pageHead } from './common.js';
+import { el, btn, providerName, emptyState, pageHead } from './common.js';
 import { spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
 import { parseStatus } from './account.js';
-import { changeTable } from './sync.js';
+import { COLUMNS, norm, mappingOf, links, driveState, loggedOut, relogin, listState, cell, filterBox, makeFlow, readLists, moveLink, linkFlows } from './plflow.js';
 import { lineSplitter, wikiRenderer } from './wiki.js';
 import { t } from '../i18n.js';
 
-const COLUMNS = ['spotify', 'apple', 'youtube']; // 會佔一欄的平台:本機沒有播放、也沒有網頁,不佔欄;也是找得到對應、建得出清單的平台
 const CATALOG_ID = /^\d+$/;                      // Apple 的 catalog id;i. / a. 是只在資料庫的列,play --id 會打 catalog 端點失敗
 const FILTER_PLAYLISTS = 8;                      // 清單超過這麼多份才出現篩選框(同搬家精靈第二步)
 const FILTER_SONGS = 20;                         // 一份清單超過這麼多首才出現「在這份清單裡找歌」
@@ -31,7 +30,6 @@ export function initPlaylists(root, api, con, notice, providers) {
   const plats = el('section', 'pl__plats');
   const platList = el('div', 'pl__plat-list');
   const pflow = el('div', 'pl__flow');
-  let platLists = null; // { 平台: { rows: [{ id, name, tracks }], error } };null = 還沒讀過
   let masters = null;   // 目前的正本:比對「連著哪一份」「有沒有同名」;null = 這台還沒讀到正本(export 失敗),分不出來
   plats.append(el('h3', 'card__sub', t('webui.playlists.platforms.title')), el('p', 'page__note', t('webui.playlists.platforms.lead')),
     btn(t('webui.playlists.platforms.read'), '', readPlatforms), pflow, platList);
@@ -39,24 +37,26 @@ export function initPlaylists(root, api, con, notice, providers) {
   root.append(about(), btn(t('webui.playlists.refresh'), 'btn--ghost', load), cols, plats);
   con.idle(load); // 同帳號頁:有命令在跑就等它結束,不要撞上它、畫成「沒有清單」
 
-  // auth:`auth status --json`(不連網)。▶ 要不要給、連結面板與空白態怎麼說都看它;讀不到 = {} = 不知道,當成有登入、是自己的。
-  let auth = {};
-  let devices = [];  // export 的 manifest.json:裝置 id → 名稱(連在別台電腦的本機清單說得出是哪一台)
+  // st.auth:`auth status --json`(不連網)。▶ 要不要給、連結面板與空白態怎麼說都看它;讀不到 = {} = 不知道,當成有登入、是自己的。
+  // st.devices:export 的 manifest.json:裝置 id → 名稱(連在別台電腦的本機清單說得出是哪一台)。
+  // st.platLists:{ 平台: { rows: [{ id, name, tracks }], error } };null = 還沒讀過。
+  // 放在一個物件裡交給共用的連結面板(plflow.js):它每次用到時才讀,重讀後拿到的是新的值。
+  const st = { auth: {}, devices: [], platLists: null };
   let selected = ''; // 選中的那份(pid):寫入後、回到這一頁時重讀,畫回同一份
   // flow:寫入命令的就地區塊(步驟條、狀態句、變更表、提示;表在上、提示在下——CLI 先印表再問確認)。
   // 只在切到別份清單時清空;重讀後搬進新畫的右欄,收尾那句不會因為重讀而消失。
   const flow = el('div', 'pl__flow');
-  // flowBusy:流程區裡有寫入命令在跑(提示畫在它裡面)。這時換一份清單或按「在 X 建一份」會清掉流程區、把提示一起拿掉,
-  // 命令就卡在序列槽裡等一個看不到的提示:擋下並說明(同 btn() 被擋時的 capy:busy)。▶ 與自動重讀不算,照常可以換清單。
-  let flowBusy = false;
-  const blocked = () => { if (flowBusy) document.dispatchEvent(new Event('capy:busy')); return flowBusy; };
+  // fl:寫入流程(plflow.js 的 makeFlow);流程區裡有寫入命令在跑時,換一份清單或開新的流程會被 fl.blocked() 擋下並說明。
+  const fl = makeFlow(con);
+  const blocked = fl.blocked;
+  const lf = linkFlows({ flow: fl, state: st, providers, reload: load });
   // 兩個命令都 quiet:export 的整份 JSON 不灌進主控台。第二個在第一個的 onExit 裡送——用 await 串的話,
   // 排隊中的 con.idle 會先被叫醒而插隊(console.js:onExit 先於 wake())。畫面等資料到了才換,重讀時不閃。
   function load() {
     let status = '';
     con.run('', {
       onStdout: (s) => { status += s; },
-      onExit: (code) => { if (code === 0) auth = parseStatus(status); readExport(); }, // 讀不到就沿用上一次讀到的
+      onExit: (code) => { if (code === 0) st.auth = parseStatus(status); readExport(); }, // 讀不到就沿用上一次讀到的
     }, { args: ['auth', 'status', '--json'], label: t('webui.move.label.status'), quiet: true });
   }
 
@@ -98,12 +98,11 @@ export function initPlaylists(root, api, con, notice, providers) {
   function empty() {
     if (!drive()) left.appendChild(emptyState(t('webui.playlists.empty')));
   }
-  // drive:Google Drive 本身有問題就先說它(畫了回 true)。auth status 的 google.state 是 ok | missing | keychain_error;
-  // keychain_error 不是「沒連」,是要到帳號頁處理的錯誤(同帳號頁,review #62;#122 review 第 2 點)。
+  // drive:Google Drive 本身有問題就先說它(畫了回 true);狀態怎麼判斷見 plflow.js 的 driveState。
   function drive() {
-    const st = auth.google && auth.google.state;
-    if (!st || st === 'ok') return false;
-    hint(st === 'missing' ? t('webui.playlists.empty_no_drive') : t('webui.playlists.empty_drive_error'), t('webui.playlists.go_account'), '#/account');
+    const ds = driveState(st.auth);
+    if (ds === 'ok') return false;
+    hint(ds === 'missing' ? t('webui.playlists.empty_no_drive') : t('webui.playlists.empty_drive_error'), t('webui.playlists.go_account'), '#/account');
     return true;
   }
   function hint(text, go, href) {
@@ -117,8 +116,8 @@ export function initPlaylists(root, api, con, notice, providers) {
   // 是要處理的錯誤、不是沒登入,照給,讓 CLI 把原因說出來(#122 review 第 2 點);不知道(讀不到 auth)也照給。
   function canPlay(p) {
     if (p === 'apple' && !isMac()) return false;
-    const st = auth[p] && auth[p].state;
-    return st !== 'missing' && st !== 'expired';
+    const s = st.auth[p] && st.auth[p].state;
+    return s !== 'missing' && s !== 'expired';
   }
 
   function render(files) {
@@ -133,7 +132,7 @@ export function initPlaylists(root, api, con, notice, providers) {
       .filter((k) => k.startsWith('pl__'))
       .sort()
       .map((k) => files[k]);
-    devices = ((files['manifest.json'] || {}).devices) || [];
+    st.devices = ((files['manifest.json'] || {}).devices) || [];
     masters = pls;
     renderPlatforms(); // 讀過平台清單的話,「連著哪一份」跟著新的正本更新
     left.replaceChildren();
@@ -177,11 +176,11 @@ export function initPlaylists(root, api, con, notice, providers) {
     title.append(el('h3', 'card__sub', t('webui.playlists.items_title', { name: pl.name, count: items.length })),
       el('p', 'page__note', t('webui.playlists.fresh')));
     // 這一頁唯一的主要動作(視覺規格:一頁一顆膠囊鈕)。沒有任何連結時停用並說原因。
-    const sync = btn(t('webui.playlists.sync'), 'btn--primary', () => runOne(['pl', 'sync', pl.pid], t('webui.playlists.label.sync', { name: pl.name })));
+    const sync = btn(t('webui.playlists.sync'), 'btn--primary', () => lf.syncOne(['pl', 'sync', pl.pid], t('webui.playlists.label.sync', { name: pl.name }), flow));
     sync.disabled = !links(pl).length;
     head.append(title, sync);
     if (sync.disabled) head.appendChild(el('p', 'page__note', t('webui.playlists.sync_none')));
-    right.append(head, linkPanel(pl, items, track));
+    right.append(head, lf.panel(pl, items, track, flow));
     if (flow.dataset.pid !== pl.pid) { flow.replaceChildren(); flow.dataset.pid = pl.pid; }
     right.appendChild(flow);
 
@@ -253,252 +252,29 @@ export function initPlaylists(root, api, con, notice, providers) {
     return { tbl, rows, texts };
   }
 
-  // ── 連結面板(計畫 §3.5):Google Drive 正本 → 每個平台一列;本機只在連著時出現 ──
-  function linkPanel(pl, items, track) {
-    const box = el('div', 'pl__links');
-    const hub = el('div', 'pl__hub');
-    hub.append(el('strong', null, t('webui.playlists.links.hub')), el('span', null, t('webui.playlists.links.hub_sub')));
-    const list = el('div', 'pl__link-rows');
-    // 算對應用不重複、這台電腦有資料的歌(懸空的 cid resolve 也會跳過)
-    const cids = [...new Set(items.map((it) => it.cid))].filter((cid) => track(cid).title !== undefined || track(cid).mappings);
-    for (const p of providers.list) {
-      const st = linkState(p, pl);
-      if (st) list.appendChild(linkRow(p, st, pl, cids, track));
-    }
-    box.append(hub, list);
-    return box;
-  }
-
-  // linkState:這份正本在一個平台上的狀態。判斷順序:這台有沒有登入 → 是不是別台電腦 / 別的帳號的 → 才是自己的
-  //(auth 讀不到 = 當成有登入、是自己的,同 ▶)。沒連的本機不顯示:本機不能 --create,連既有的 M3U 會碰到順序問題。
-  // loggedOut:這台電腦沒登入那個平台(missing / expired,或 YouTube 要重新登入)。auth 讀不到 = 當成有登入。
-  function loggedOut(p) {
-    const st = auth[p] && auth[p].state;
-    return st === 'missing' || st === 'expired' || relogin(p);
-  }
-  // relogin:YouTube 有登入卻沒有 channel_id(舊版登入):分不出清單是不是這個帳號的(CLI 也會當成別的帳號而跳過),
-  // 請人重新登入一次(#124 review)。
-  function relogin(p) {
-    return p === 'youtube' && auth.youtube?.state === 'ok' && !auth.youtube.channel_id;
-  }
-
-  function linkState(p, pl) {
-    const id = (pl.links || {})[p];
-    const out = loggedOut(p);
-    const re = relogin(p);
-    if (typeof id !== 'string' || !id) {
-      if (!COLUMNS.includes(p)) return null;
-      return { kind: out ? 'unlinked_out' : 'unlinked', relogin: re };
-    }
-    if (out) return { kind: 'out', id, relogin: re };
-    const owner = id.split('/')[0]; // local:<device_id>/<檔名>;youtube:<channel_id>/<playlistId>
-    const dev = auth.google && auth.google.device_id;
-    if (p === 'local' && dev && owner !== dev) {
-      const d = devices.find((x) => x.id === owner);
-      return { kind: 'foreign', id, device: (d && d.name) || owner };
-    }
-    const ch = auth.youtube && auth.youtube.channel_id;
-    if (p === 'youtube' && ch && owner !== ch) return { kind: 'foreign', id };
-    return { kind: 'linked', id };
-  }
-
-  function linkRow(p, st, pl, cids, track) {
-    const platform = providerName(p);
-    const row = el('div', 'pl__link');
-    row.dataset.state = st.kind;
-    row.dataset.platform = p;
-    const info = el('span', 'pl__link-info');
-    const acts = el('span', 'pl__link-acts');
-    const account = () => { const a = el('a', 'btn btn--ghost', t('webui.playlists.go_account')); a.href = '#/account'; return a; };
-    const open = () => { const a = playlistLink(p, st.id, pl.name); if (a) acts.appendChild(a); };
-    let state = t('webui.playlists.links.linked');
-    if (st.kind === 'linked') {
-      const missing = cids.filter((cid) => missingOn(track(cid), p)).length;
-      info.textContent = missing ? t('webui.playlists.links.missing', { count: missing }) : t('webui.playlists.links.all_mapped');
-      if (missing) info.dataset.warn = '';
-      open();
-      if (missing && COLUMNS.includes(p)) {
-        acts.append(
-          btn(t('webui.playlists.links.resolve'), '', () => runOne(['resolve', pl.pid, '--provider', p], t('webui.playlists.label.resolve', { name: pl.name, platform }))),
-          btn(t('webui.playlists.links.review'), 'btn--ghost', () => runOne(['resolve', pl.pid, '--provider', p, '--review'], t('webui.playlists.label.review', { name: pl.name, platform }))));
-      }
-    } else if (st.kind === 'out') {
-      info.textContent = st.relogin ? t('webui.playlists.links.relogin', { platform }) : t('webui.playlists.links.logged_out', { platform });
-      acts.appendChild(account());
-      open();
-    } else if (st.kind === 'foreign') {
-      info.textContent = st.device ? t('webui.playlists.links.foreign_device', { device: st.device }) : t('webui.playlists.links.foreign_account');
-    } else {
-      state = t('webui.playlists.links.unlinked');
-      if (st.kind === 'unlinked_out') {
-        info.textContent = st.relogin ? t('webui.playlists.links.relogin', { platform }) : t('webui.playlists.links.logged_out', { platform });
-        acts.appendChild(account());
-      } else {
-        const known = cids.filter((cid) => mappingOf(track(cid), p).id).length;
-        if (known) info.textContent = t('webui.playlists.links.known', { count: known, platform });
-        const b = el('button', 'btn', t('webui.playlists.links.create', { platform })); // 只打開說明,還不送命令:不標 data-run
-        b.type = 'button';
-        b.addEventListener('click', () => askCreate(p, pl));
-        acts.appendChild(b);
-      }
-    }
-    row.append(el('span', 'pl__link-name', platform), el('span', 'pl__link-state', state), info, acts);
-    return row;
-  }
-
-  // playlistLink:平台上那份清單的網頁(Apple 的資料庫清單沒有公開網址;本機沒有網頁)。
-  function playlistLink(p, id, name) {
-    if (p === 'spotify') return spotifyLink('playlist', id, name);
-    if (p !== 'youtube') return null;
-    const a = el('a', 'btn btn--ghost', t('webui.search.open_youtube'));
-    a.href = `https://music.youtube.com/playlist?list=${encodeURIComponent(id.split('/').pop())}`;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.setAttribute('aria-label', `${t('webui.search.open_youtube')}: ${name}`);
-    return a;
-  }
-
-  // ── 就地的寫入流程(計畫 §3.5)──
-  function openFlow(stepTexts, box = flow) {
-    const steps = el('ol', 'wiz__steps');
-    for (const s of stepTexts || []) steps.appendChild(el('li', 'wiz__step', s));
-    const status = el('p', 'page__note pl__flow-status');
-    status.setAttribute('role', 'status');
-    const table = el('div', 'pl__flow-table');
-    const host = el('div', 'pl__flow-prompts'); // promptHost:在 #page-playlists 裡,reveal() 不會把人丟去主控台
-    box.replaceChildren(...(stepTexts ? [steps] : []), status, table, host);
-    return { steps, status, table, host };
-  }
-
-  function markStep(f, n) {
-    [...f.steps.children].forEach((li, i) => { // 真的 DOM 的 children 是 HTMLCollection,沒有 forEach
-      li.dataset.state = i < n ? 'done' : i === n ? 'now' : 'todo';
-      if (i === n) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
-    });
-  }
-
-  // step:跑一個會寫入的命令;done(code, outcome, wrote) 在 onExit 裡叫——下一步要在那裡送(見 load 的註解)。
-  // 表在上、提示在下:table 事件一定先到(CLI 先印表再 confirmWrite),畫進表格區就自然在提示上面。
-  // wrote:這個頁面從不代加 --yes,sync / resolve / pull 的每一次寫入都要先有人答應確認(或逐首裁決)——
-  // exit 0 而且答過提示才算有寫入;只收到表(只有 skip 列、只有待決定的列)不算。
-  function step(f, args, label, done) {
-    let closedBy = '';
-    let answered = false;
-    let pending = 0; // resolve 表裡等人逐首決定的列(review / conflict)
-    f.table.replaceChildren();
-    flowBusy = true;
-    con.run('', {
-      onTable: (h, r) => {
-        const a = h.indexOf('ACTION');
-        pending = h.includes('CONFIDENCE') ? r.filter((x) => x[a] === 'review' || x[a] === 'conflict').length : 0;
-        f.table.replaceChildren(changeTable(h, r));
-      },
-      onPromptClosed: (ev) => { closedBy = ev.reason; if (ev.reason === 'answered') answered = true; },
-      onExit: (code, msg, reason) => {
-        flowBusy = false;
-        const wrote = code === 0 && answered;
-        done(code, outcome(code, msg, reason, closedBy, wrote, pending), wrote);
-      },
-    }, { args, label, promptHost: f.host });
-  }
-
-  // runOne:單一命令(同步這份清單、找對應、逐首決定);收尾後重讀。
-  function runOne(args, label) {
-    const f = openFlow();
-    step(f, args, label, (code, o) => { say(f, o); load(); });
-  }
-
-  // 在 X 建一份:先說清楚會發生什麼,按「開始」才依序跑三個命令;第一步(建立並連上)沒有 CLI 的確認,「開始」就是同意。
-  function askCreate(p, pl) {
-    if (blocked()) return;
-    const platform = providerName(p);
-    const card = el('div', 'pl__flow-card');
-    const acts = el('div', 'form-row');
-    const no = el('button', 'btn btn--ghost', t('webui.playlists.create.cancel'));
-    no.type = 'button';
-    no.addEventListener('click', () => flow.replaceChildren());
-    // 「各平台上的清單」讀過、那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,先說清楚。
-    // 同名的那份確定是空的(曲數 0,例如上次建好了但連結沒寫進 Drive)照給「開始」:CLI 會停在第一步、給接回去的 pl link
-    // 命令,那是這種情況唯一的復原路(#125 review 第 3 點)。
-    const dup = platLists && platLists[p] && platLists[p].rows.some((r) => same(r.name, pl.name) && r.tracks !== '0');
-    if (dup) {
-      card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
-      acts.append(moveLink(), no);
-    } else {
-      card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
-      if (p === 'apple') card.appendChild(el('p', 'page__note', t('webui.playlists.create.apple'))); // 決策 49:可能,不是必然
-      acts.append(btn(t('webui.playlists.create.start'), '', () => create(p, pl)), no);
-    }
-    card.appendChild(acts);
-    flow.replaceChildren(card);
-  }
-
-  function create(p, pl) {
-    const platform = providerName(p);
-    const name = pl.name;
-    const f = openFlow([t('webui.playlists.step.create'), t('webui.playlists.step.resolve'), t('webui.playlists.step.push')]);
-    markStep(f, 0);
-    // --new-only:頁面讀的 export 可能過時;平台那邊別台 / 別帳號剛連上的,CLI 會擋下來而不是接管(計畫 §3.5 前置 1)。
-    const stop2 = t('webui.playlists.create.stop2', { platform, name, button: t('webui.playlists.links.resolve') });
-    step(f, ['pl', 'link', '--new-only', pl.pid, p, '--create'], t('webui.playlists.label.create', { name, platform }), (c1, o1) => {
-      if (c1 !== 0) { say(f, o1, t('webui.playlists.create.stop1')); load(); return; }
-      markStep(f, 1);
-      step(f, ['resolve', pl.pid, '--provider', p], t('webui.playlists.label.resolve', { name, platform }), (c2, o2, w2) => {
-        if (c2 !== 0) { say(f, o2, stop2); load(); return; }
-        markStep(f, 2);
-        step(f, ['pl', 'sync', pl.pid, '--provider', p], t('webui.playlists.label.push', { name, platform }), (c3, o3, w3) => {
-          if (c3 === 0 && w3) { markStep(f, 3); say(f, { text: t('webui.playlists.create.done', { platform, name }) }); }
-          else if (c3 === 0) say(f, { text: t('webui.playlists.create.none', { platform, name, button: t('webui.playlists.links.review') }) }); // 一首都沒加:照實說
-          // 停在加歌:下一步一律是「同步這份清單」;「對應已經寫入」只在第二步真的寫了時才說(#124 review)
-          else say(f, o3, w2 ? t('webui.playlists.create.stop3', { platform, button: t('webui.playlists.sync') })
-            : t('webui.playlists.create.stop3_nowrite', { platform, name, button: t('webui.playlists.sync') }));
-          load();
-        });
-      });
-    });
-  }
-
-  // say:收尾那一句;lead 是這個流程自己的說明(停在哪一步),接在 CLI 的原因前面。
-  function say(f, o, lead) {
-    f.status.className = o.warn ? 'page__warn pl__flow-status' : 'page__note pl__flow-status';
-    f.status.textContent = [lead, o.text, o.extra].filter(Boolean).join(' ');
-    if (o.console) {
-      const a = el('a', 'wiz__link', t('webui.move.see_console'));
-      a.href = '#/console';
-      f.status.appendChild(el('span', null, ' '));
-      f.status.appendChild(a);
-    }
-  }
-
   // ── 各平台上的清單(計畫 §3.4)與納入(§3.5)──
   // readPlatforms:依序讀這台有登入的每個平台,下一家在上一家的 onExit 裡送;某一家讀不到就在那一段說原因,其他家照讀。
   function readPlatforms() {
     if (blocked()) return;
-    const todo = COLUMNS.filter((p) => providers.list.includes(p) && !loggedOut(p));
+    const todo = COLUMNS.filter((p) => providers.list.includes(p) && !loggedOut(st.auth, p));
     const got = {};
     // YouTube 有登入卻缺帳號資料:照送 pl list 只會被拒,不讀,那一段說要重新登入(不要默默消失、也不要說成沒登入任何平台)
-    for (const p of COLUMNS) if (providers.list.includes(p) && relogin(p)) got[p] = { rows: [], relogin: true };
+    for (const p of COLUMNS) if (providers.list.includes(p) && relogin(st.auth, p)) got[p] = { rows: [], relogin: true };
     const next = () => {
       const p = todo.shift();
-      if (!p) { platLists = got; renderPlatforms(); return; }
-      const rows = [];
-      con.run('', {
-        onTable: (h, r) => {
-          const [i, n, c] = ['ID', 'NAME', 'TRACKS'].map((k) => h.indexOf(k)); // 機器欄位,不跟語系(決策 50)
-          for (const x of r) rows.push({ id: x[i], name: x[n], tracks: x[c] });
-        },
-        onExit: (code, msg, reason) => {
-          got[p] = code === 0 ? { rows } : { rows: [], error: (msg || '').replace(/^Error: /, '') };
-          // 使用者按了中止:後面幾家不讀(同 console.js 的 isCancelled),但照樣列出來、說沒讀——整段不見會看起來像沒有那個平台(#125 review 第 4 點)
-          if (reason === 'cancelled' && code !== 0) for (const q of todo.splice(0)) got[q] = { rows: [], skipped: true };
-          next();
-        },
-      }, { args: ['pl', 'list', '--provider', p], label: t('webui.playlists.list_label', { platform: providerName(p) }) });
+      if (!p) { st.platLists = got; renderPlatforms(); return; }
+      readLists(con, p, t('webui.playlists.list_label', { platform: providerName(p) }), (res, reason, code) => {
+        got[p] = res;
+        // 使用者按了中止:後面幾家不讀(同 console.js 的 isCancelled),但照樣列出來、說沒讀——整段不見會看起來像沒有那個平台(#125 review 第 4 點)
+        if (reason === 'cancelled' && code !== 0) for (const q of todo.splice(0)) got[q] = { rows: [], skipped: true };
+        next();
+      });
     };
     next();
   }
 
   function renderPlatforms() {
+    const platLists = st.platLists;
     if (!platLists) return;
     const ps = COLUMNS.filter((p) => platLists[p]); // 照 COLUMNS 的順序:要重新登入的 YouTube 先塞進去也不會排到最前面(#125 review 第 1 點)
     if (!ps.length) {
@@ -536,40 +312,18 @@ export function initPlaylists(root, api, con, notice, providers) {
     const acts = el('span', 'pl__link-acts');
     const sp = p === 'spotify' && spotifyLink('playlist', r.id, r.name); // S7:Spotify 的清單都連回去(連結與按鈕是兄弟,不包進按鈕)
     if (sp) acts.appendChild(sp);
-    const linked = masters && masters.find((m) => (m.links || {})[p] === r.id);
-    const dup = masters && !linked && masters.find((m) => same(m.name, r.name));
+    const ls = listState(masters, p, r);
+    const dup = ls.kind === 'same_name' || ls.kind === 'same_name_taken';
     let state = '';
-    if (!masters) { /* 分不出來:不標、不給納入 */ }
-    else if (linked) state = t('webui.playlists.platforms.linked', { name: linked.name });
-    else if (dup) { state = t('webui.playlists.platforms.same_name', { name: dup.name }); acts.appendChild(moveLink()); }
-    else { state = t('webui.playlists.platforms.unlinked'); acts.appendChild(btn(t('webui.playlists.platforms.adopt'), '', () => adopt(p, r))); }
-    if (masters) row.dataset.state = linked ? 'linked' : dup ? 'same_name' : 'unlinked';
+    if (ls.kind === 'unknown') { /* 分不出來:不標、不給納入 */ }
+    else if (ls.kind === 'linked') state = t('webui.playlists.platforms.linked', { name: ls.master.name });
+    else if (dup) { state = t('webui.playlists.platforms.same_name', { name: ls.master.name }); acts.appendChild(moveLink()); }
+    else { state = t('webui.playlists.platforms.unlinked'); acts.appendChild(btn(t('webui.playlists.platforms.adopt'), '', () => lf.adopt(p, r, pflow))); }
+    if (ls.kind !== 'unknown') row.dataset.state = dup ? 'same_name' : ls.kind;
     const count = /^\d+$/.test(r.tracks || '') ? t('webui.playlists.platforms.count', { count: Number(r.tracks) }) : '';
     main.append(el('span', 'pl__name', r.name), el('small', null, [count, state].filter(Boolean).join(' · ')));
     row.append(main, acts);
     return row;
-  }
-
-  // adopt:納入 = 建一份新的空正本並連上(--new-only:名字已經是某份正本就擋,頁面讀的 export 可能過時)→ 把歌拉進來(第一次 pull
-  // 採平台順序,新正本是空的,所以是對的)。名稱放在 -- 後面:以 - 開頭的清單名不被當成旗標。
-  function adopt(p, r) {
-    if (blocked()) return;
-    const platform = providerName(p);
-    const name = r.name;
-    const f = openFlow([t('webui.playlists.step.adopt'), t('webui.playlists.step.pull')], pflow);
-    pflow.scrollIntoView?.({ block: 'nearest' }); // 流程區在整張平台清單上面:按了下面某一列,變更表與確認要看得到
-    markStep(f, 0);
-    step(f, ['pl', 'link', '--new-only', '--', name, `${p}:${r.id}`], t('webui.playlists.label.adopt', { name, platform }), (c1, o1) => {
-      if (c1 !== 0) { say(f, o1, t('webui.playlists.adopt.stop1')); load(); return; }
-      markStep(f, 1);
-      step(f, ['pl', 'pull', '--', name], t('webui.playlists.label.adopt_pull', { name }), (c2, o2, w2) => {
-        if (c2 === 0) {
-          markStep(f, 2);
-          say(f, { text: w2 ? t('webui.playlists.adopt.done', { name, platform }) : t('webui.playlists.adopt.done_empty', { name, platform }) });
-        } else say(f, o2, t('webui.playlists.adopt.stop2', { name, button: t('webui.playlists.sync') })); // 留下一份連著的空正本:照實說下一步
-        load();
-      });
-    });
   }
 
   // ── 歌曲 wiki 對話框(計畫 §3.3,Q2 A):就地開,在 #page-playlists 裡(setup 的表單用它當 promptHost,reveal() 才不會切到主控台)。
@@ -681,12 +435,6 @@ export function initPlaylists(root, api, con, notice, providers) {
     dStatus.textContent = text;
   }
 
-  function moveLink() {
-    const a = el('a', 'btn btn--ghost', t('webui.playlists.platforms.go_move'));
-    a.href = '#/move';
-    return a;
-  }
-
   // platformCell:一首歌在一個平台的那一格(計畫 §3.2 的表)。
   function platformCell(p, m, title) {
     const td = cell('row-actions pl__cell');
@@ -733,60 +481,8 @@ export function initPlaylists(root, api, con, notice, providers) {
     return b;
   }
 
-  // links:真的連著的 [平台, id](空字串 = 沒連結,同 pull.go / resolve 的規則;不是字串的壞資料也不算)。
-  function links(pl) {
-    return Object.entries(pl.links || {}).filter(([, id]) => typeof id === 'string' && id);
-  }
-
   // 回到這一頁時重讀(app.js 的 route;別頁寫入之後這一頁不會過時)。有命令在跑就等它結束。
   return { refresh: () => con.idle(load) };
-}
-
-// same:兩個清單名算不算同名(不分大小寫,同 CLI 的 canonState.find 與 sameNamePlaylists 的 EqualFold)。
-const same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
-
-// mappingOf:一首歌在一個平台上的對應 { id, pinned }(不是字串的壞資料 = 沒有)。格子(§3.2)與連結面板的計數(§3.5)共用。
-const norm = (m) => ({ id: m && typeof m.id === 'string' ? m.id : '', pinned: !!(m && m.pinned) });
-const mappingOf = (trk, p) => norm((trk.mappings || {})[p]);
-
-// missingOn:缺對應 = 沒有 id、也不是你標過「這個平台沒有這首」(那種 resolve 幫不了,不該叫人去找)。
-const missingOn = (trk, p) => {
-  const m = mappingOf(trk, p);
-  return !m.id && !m.pinned;
-};
-
-// outcome:寫入命令的收尾(計畫 §3.5 的表;照 move.js 的做法用 onPromptClosed 分辨關掉 / 逾時)。wrote 見 step();
-// pending:resolve 沒有自動寫入、只剩等人決定的列時,指到頁面上的「逐首決定」(CLI 那句叫人去終端機,這裡看不到)。
-function outcome(code, msg, reason, closedBy, wrote, pending) {
-  const why = (msg || '').replace(/^Error: /, '');
-  if (reason === 'cancelled' && code !== 0) return { text: t('webui.playlists.flow.stopped') };
-  if (code === 0 && wrote) return { text: t('webui.playlists.flow.done') };
-  if (code === 0 && pending) return { text: t('webui.playlists.flow.review_left', { count: pending, button: t('webui.playlists.links.review') }) };
-  if (code === 0) return { text: t('webui.playlists.flow.up_to_date') };
-  if (code === 2) return { text: t('webui.playlists.flow.cancelled') };
-  if (code === 1 && closedBy === 'dismissed') return { text: t('webui.playlists.flow.dismissed') };
-  if (code === 1 && closedBy === 'timeout') return { text: t('webui.playlists.flow.timeout') };
-  if (code === 3) return { text: why, extra: t('webui.playlists.flow.blocked'), warn: true }; // exit 3 的原文各自帶了出路,不暗示一定是 --force
-  return { text: why || t('webui.move.failed'), warn: true, console: code > 0 };
-}
-
-function cell(cls, text) {
-  const td = el('td', cls, text);
-  td.setAttribute('role', 'cell');
-  return td;
-}
-
-// filterBox:篩選框,不分大小寫比對;extra 是放在框旁邊的東西(顯示了幾首);initial:重畫時帶回來的篩選字。
-function filterBox(label, onFilter, extra, initial) {
-  const bar = el('div', 'form-row pl__filter');
-  const f = input('sans', label);
-  f.type = 'search';
-  f.setAttribute('aria-label', label);
-  f.addEventListener('input', () => onFilter(f.value.trim().toLowerCase()));
-  bar.appendChild(f);
-  if (extra) bar.appendChild(extra);
-  if (initial) { f.value = initial; onFilter(initial.trim().toLowerCase()); }
-  return bar;
 }
 
 // about:正本、連結、同步是什麼(計畫 §3.4 的第二層);預設收起,第一眼只有 lead。
