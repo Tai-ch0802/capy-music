@@ -74,6 +74,20 @@ func TestPushRowsReasonCodes(t *testing.T) {
 	}
 }
 
+// 正本 [a]、平台 [a, a]:拿掉的是平台上多出來的那份,說明照實說(不是「正本已移除」),代碼不變(計畫 2026-10-01 §3.4、§4 第 9 則)。
+func TestPushRowsExtraCopySaysSo(t *testing.T) {
+	s := &canonState{tracks: canon.NewTracks()}
+	s.tracks.Tracks["c1"] = canon.Track{CID: "c1", Title: "song", Mappings: map[string]canon.Mapping{"spotify": {ID: "a"}}}
+	pl := &canon.Playlist{Name: "通勤", Items: []canon.Item{{IID: "i1", CID: "c1"}}}
+	live := []canon.LiveItem{{CID: "c1", ProviderID: "a"}, {CID: "c1", ProviderID: "a"}}
+	ops, skipped := canon.PushPlan(live, pl.Items, pl.Name, pl.Name, func(string) (string, bool) { return "a", true })
+	plan := &pushPlan{pl: pl, prov: "spotify", liveName: pl.Name, current: []string{"a", "a"}, ops: ops}
+	rows, _ := pushRows(s, plan, []string{"c1", "c1"}, skipped)
+	if len(rows) != 1 || rows[0][0] != "remove" || rows[0][8] != "正本裡只有 1 份,這是平台上多出來的那份" || rows[0][9] != "removed_in_master" {
+		t.Fatalf("多出來的那份:%q", rows)
+	}
+}
+
 // migrateReason 的三種去向;網頁的搬家精靈靠 "push" 認「這一首搬得過去」(move.js 的 tally)。
 func TestMigrateReasonCodes(t *testing.T) {
 	var w provider.PlaylistWriter = spotify.New(http.DefaultClient, "http://127.0.0.1:1")

@@ -158,7 +158,7 @@ func TestLinkMergeShapesThePlaylistLikeTheMaster(t *testing.T) {
 	if !strings.Contains(out, "push\tskip\tapple\t通勤\t\t"+fakeCID("d")+"\t\tsong-d\tartist\t") || !strings.Contains(out, "\tno_mapping\n") {
 		t.Fatalf("d 列成 skip(no_mapping):\n%s", out)
 	}
-	if !strings.Contains(out, "push\tremove\tapple\t通勤\t") || !strings.Contains(out, "\tremoved_in_master\n") {
+	if !strings.Contains(out, "push\tremove\tapple\t通勤\t") || !strings.Contains(out, "\t正本裡只有 1 份,這是平台上多出來的那份\tremoved_in_master\n") {
 		t.Fatalf("多出來的那份 a 列成 remove:\n%s", out)
 	}
 	if got := cidsOf(drivePlaylistNamed(t, dc, "通勤")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b"), fakeCID("c"), fakeCID("d"), fakeCID("x")}) {

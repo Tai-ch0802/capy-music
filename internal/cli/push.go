@@ -286,7 +286,11 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		case provider.OpRemove:
 			cid := work[op.Pos]
 			work, ids = slices.Delete(work, op.Pos, op.Pos+1), slices.Delete(ids, op.Pos, op.Pos+1)
-			row("remove", op.Pos, cid, op.ProviderID, i18n.T("push.reason.removed"), "removed_in_master")
+			reason, code := i18n.T("push.reason.removed"), "removed_in_master"
+			if n := countCID(plan.pl.Items, cid); n > 0 { // 正本裡還有這首:拿掉的是平台上多出來的那份(同步、pl dedup 的推出半邊、pl link --merge 都會遇到)
+				reason = i18n.T("push.reason.removed_extra", "n", n)
+			}
+			row("remove", op.Pos, cid, op.ProviderID, reason, code)
 		case provider.OpMove:
 			cid, id := work[op.From], ids[op.From]
 			work = slices.Insert(slices.Delete(work, op.From, op.From+1), op.Pos, cid)
@@ -309,6 +313,15 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 	}
 	return rows, work
+}
+
+func countCID(items []canon.Item, cid string) (n int) {
+	for _, it := range items {
+		if it.CID == cid {
+			n++
+		}
+	}
+	return n
 }
 
 // apply:確認之後再讀一次 L 比對 current(平台端沒有 CAS,這是縮小窗口的做法;spec §6.5.2 規則 6)→ ApplyOps → 重讀 L′ → base := L′。

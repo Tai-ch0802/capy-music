@@ -893,10 +893,11 @@
   "push.manual_op": "Manual step: {platform} doesn't support {kind} for {playlist} (position {pos}); do it on the platform yourself",
   "push.next": "run capy pl pull, then capy pl push",
   "push.next_after_half": "then pull and push again",
-  "push.reason.moved": "reordered in the master copy",
+  "push.reason.moved": "following the master copy's order",
   "push.reason.push": "push to the platform",
   "push.reason.removed": "removed from the master copy",
-  "push.reason.renamed": "renamed in the master copy: {from} → {to}",
+  "push.reason.removed_extra": "an extra copy on the platform (the master copy has {n})",
+  "push.reason.renamed": "following the master copy's name: {from} → {to}",
   "push.reason.unpushable": "has a mapping but can't be pushed (local file / library-only / file not on this computer); add it on the platform by hand",
   "push.refuse.local_files": {
     "one": "{playlist} on {platform} has {count} local file ({titles}) that a full replace would lose, so pushing this playlist isn't supported yet",

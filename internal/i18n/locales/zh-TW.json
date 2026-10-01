@@ -836,10 +836,11 @@
   "push.manual_op": "手動:{playlist} 的 {platform} 不支援 {kind}(位置 {pos}),請在平台上自己做",
   "push.next": "先 capy pl pull 再 capy pl push",
   "push.next_after_half": "再 pull、再 push",
-  "push.reason.moved": "正本換序",
+  "push.reason.moved": "照正本的順序",
   "push.reason.push": "推到平台",
   "push.reason.removed": "正本已移除",
-  "push.reason.renamed": "正本改名:{from} → {to}",
+  "push.reason.removed_extra": "正本裡只有 {n} 份,這是平台上多出來的那份",
+  "push.reason.renamed": "照正本的名字:{from} → {to}",
   "push.reason.unpushable": "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加",
   "push.refuse.local_files": {
     "other": "{playlist} 在 {platform} 有 {count} 首 local file({titles}),整批取代會把它們弄丟,這個清單暫不支援 push"
