@@ -1576,6 +1576,7 @@
   "webui.sync.adv.dedup_note": "Removes duplicate songs in the master copy (keeping the first), then pushes to the linked services",
   "webui.sync.adv.lead": "These buttons map directly to capy's pl pull / pl push / pl sync / pl dedup, for when you already know what you want.",
   "webui.sync.adv.no_dups": "No duplicate songs.",
+  "webui.sync.adv.no_dups_checked": "Nothing to remove this time. If a service wasn't checked this time, or has changes that haven't been brought back yet, the details are on the Console page.",
   "webui.sync.adv.no_links": "No playlists are linked to a service, so there's nothing to sync.",
   "webui.sync.adv.pull_note": "Only brings changes on the services back into the master copy; doesn't push",
   "webui.sync.adv.push_note": "Only pushes the master copy out; stops if this computer hasn't updated first, or a service has changes not brought back yet",

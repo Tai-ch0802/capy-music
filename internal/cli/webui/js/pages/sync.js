@@ -85,6 +85,7 @@ export function initSync(root, api, con, notice, providers, arg) {
           exportMsg = (msg || '').replace(/^Error: /, '');
           if (exportFail === 'no_copy') masters = null;
           render();
+          readPicked(); // 分不出狀態也照樣列出平台上的清單(同手點平台卡)
           return;
         }
         try {
@@ -95,16 +96,21 @@ export function initSync(root, api, con, notice, providers, arg) {
           exportMsg = t('webui.playlists.bad_export', { error: e.message });
         }
         render();
-        // #/sync/<平台> 預選的平台、寫入之後:知道登入狀態之後才讀它的清單,讀完再重讀選中那份的預覽
-        if (pick.p && driveOK() && !loggedOut(st.auth, pick.p) && (stale || !st.platLists[pick.p])) {
-          readPlat(pick.p, () => {
-            const r = (st.platLists[pick.p].rows || []).find((x) => x.id === pick.id);
-            if (r && !previews[`${pick.p}\n${r.id}`]) readPreview(pick.p, r);
-          });
-        }
-        stale = false;
+        readPicked();
       },
     }, { label: t('webui.playlists.load_label'), quiet: true });
+  }
+
+  // readPicked:#/sync/<平台> 預選的平台、寫入之後:知道登入狀態之後才讀它的清單,讀完再重讀選中那份的預覽
+  // (在 readExport 的 onExit 裡叫,接著送不插隊)。
+  function readPicked() {
+    if (pick.p && driveOK() && !loggedOut(st.auth, pick.p) && (stale || !st.platLists[pick.p])) {
+      readPlat(pick.p, () => {
+        const r = (st.platLists[pick.p].rows || []).find((x) => x.id === pick.id);
+        if (r && !previews[`${pick.p}\n${r.id}`]) readPreview(pick.p, r);
+      });
+    }
+    stale = false;
   }
 
   function render() {
@@ -561,10 +567,14 @@ export function initSync(root, api, con, notice, providers, arg) {
     if (sc.out.length) { partial(rightFlow, sc, () => chain(rightFlow, ['pl', 'dedup', pl.pid], sc.run, labelOn)); return; }
     const f = fl.openFlow(null, rightFlow);
     fl.step(f, ['pl', 'dedup', pl.pid], t('webui.sync.dedup_label'), (code, o) => {
-      say(f, code === 0 && !f.table.firstChild ? { text: t('webui.sync.adv.no_dups') } : o); // 沒有表 = 沒有重複
+      say(f, code === 0 && !f.table.firstChild ? noDups() : o);
       afterWrite();
     });
   }
+
+  // noDups:pl dedup <正本> 沒有出表就結束。不斷定「沒有重複」:有平台這次沒檢查到、或有還沒帶回的變更時,dedup.go 也是
+  // exit 0 沒表,但書只印在 stderr(#54 review:沒看過的平台不能算進「沒有重複」的結論),所以照實說並指到主控台。
+  function noDups() { return { text: t('webui.sync.adv.no_dups_checked'), console: true }; }
 
   // dupCheck:看看這份平台清單自己有沒有重複(pl dedup <平台>:<清單>,唯讀、不帶任何旗標:帶了會被 dedup.go 退回)。
   function dupCheck(p, r) {
@@ -693,8 +703,8 @@ export function initSync(root, api, con, notice, providers, arg) {
       fl.step(f, args, label, (code, o, wrote) => {
         // 只看變更 + 有變更 = exit 2,是正常結果不是取消:說這一頁上的下一步(CLI 的原文會叫人「加 --yes」,那正是這一頁不會做的事)
         if (code === 2 && wasDry) say(f, { text: t('webui.sync.dry_note', { option: dryLabel }) });
-        // 去除重複沒有表 = 沒有重複(名稱留空時是挑選器選的,答過提示也不代表寫了東西,看表不看 wrote)
-        else if (code === 0 && verb === 'dedup' && !f.table.firstChild) say(f, { text: t('webui.sync.adv.no_dups') });
+        // 去除重複沒有表:沒有要拿掉的(名稱留空時是挑選器選的,答過提示也不代表寫了東西,看表不看 wrote)
+        else if (code === 0 && verb === 'dedup' && !f.table.firstChild) say(f, noDups());
         else if (code === 0 && !wrote && !n && masters && !masters.some((pl) => links(pl).length)) say(f, { text: t('webui.sync.adv.no_links') });
         else say(f, o);
         afterWrite();

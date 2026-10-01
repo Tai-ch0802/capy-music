@@ -2133,7 +2133,8 @@ await scenario('8u', async () => {
   script['pl dedup --dry-run'] = { events: [{ type: 'prompt', id: 9, kind: 'select', title: '?', options: [{ key: 'road trip', value: 'a' }] }, { type: 'prompt_closed', id: 9, reason: 'answered' }, done] };
   adv('dedup').click();
   await settle();
-  check(status(advBox).includes('沒有重複的歌') && !status(advBox).includes('完成'), `挑選器選完、沒有重複:${status(advBox)}`);
+  check(status(advBox).includes('這次沒有要拿掉的重複') && status(advBox).includes('主控台') && !status(advBox).includes('完成') && !status(advBox).includes('沒有重複的歌'),
+    `挑選器選完、沒有表:不斷定沒有重複(可能有平台沒檢查),指到主控台:${status(advBox)}`);
   adv('provider').value = 'apple';
   adv('pull').click();
   await settle();
@@ -2145,6 +2146,9 @@ await scenario('8u', async () => {
   page.refresh('spotify');
   await settle();
   check(sent().includes('pl list --provider spotify'), '回到這一頁帶 spotify:換過去並讀');
+  // export 失敗(這台沒有副本)時,預選的平台也照樣讀清單(同手點平台卡)
+  await open({ export: { events: [exit(1, 'Error: 本機沒有資料')] }, 'pl list --provider apple': table(LH, [['p.B', 'mix', '-', '']]) }, AUTH, data(), 'apple');
+  check(sent().includes('pl list --provider apple'), `#/sync/apple、export 失敗:照樣讀 Apple 的清單:${JSON.stringify(sent())}`);
 
   // ── 英文:頁面沒有中文、label 是進行式
   i18nFile = './i18n-en.json';

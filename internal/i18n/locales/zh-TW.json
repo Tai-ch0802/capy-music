@@ -1492,6 +1492,7 @@
   "webui.sync.adv.dedup_note": "整理正本裡重複的歌(只留第一份),再推到連著的平台",
   "webui.sync.adv.lead": "這裡的按鈕直接對應 capy 的 pl pull / pl push / pl sync / pl dedup,適合已經知道要做什麼的時候。",
   "webui.sync.adv.no_dups": "沒有重複的歌。",
+  "webui.sync.adv.no_dups_checked": "這次沒有要拿掉的重複。有平台這次沒檢查到、或有還沒帶回的變更時,說明在主控台。",
   "webui.sync.adv.no_links": "還沒有清單連著平台,沒有東西可以同步。",
   "webui.sync.adv.pull_note": "只把平台上的改動帶回正本,不推出去",
   "webui.sync.adv.push_note": "只把正本推出去;這台沒先更新過、或平台上有沒帶回的改動時會停下",
