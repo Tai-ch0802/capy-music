@@ -1,6 +1,6 @@
 # web「同步」頁改版:從平台清單出發的引導、正本說明、同步到既有清單與去重複(2026-10-01 計畫)
 
-**狀態:草案,等使用者確認細節(§6 的 Q1–Q11)。** 使用者 2026-10-01 明說「提交 plan,先不要直接改程式碼。我們確認過細節以後再實作。」所以這份計畫 PR **是** gate,跟決策 44(web mode 的 T0 不當 gate)相反;確認之前不開 T1。定案後寫成附錄 C 決策 62;Q1 選 B 時,`pl link --merge` 與決策 38 的例外也寫在決策 62(§3.4)。
+**狀態:已定案(2026-10-01 使用者:「Q 都按照推薦的做」,Q1–Q11 與 Q1 子題 a/b/c 全部照推薦),開始實作。** 使用者 2026-10-01 明說「提交 plan,先不要直接改程式碼。我們確認過細節以後再實作。」所以這份計畫 PR **是** gate,跟決策 44(web mode 的 T0 不當 gate)相反;確認之前不開 T1。定案後寫成附錄 C 決策 62;Q1 選 B 時,`pl link --merge` 與決策 38 的例外也寫在決策 62(§3.4)。
 版面示意圖(五個狀態,色票、按鈕與字級照 app.css 的真實尺寸):見 PR 描述裡的 Artifact 連結。
 Q 用計畫內編號 Q1…(同前兩份計畫的寫法)。驗收接續 R-56 起,開發階段 P12,node 情境從 8t 起。
 
@@ -204,7 +204,7 @@ Q 用計畫內編號 Q1…(同前兩份計畫的寫法)。驗收接續 R-56 起,
 
 「說明」欄是 CLI 印的 REASON;其中「正本裡只有 {n} 份,這是平台上多出來的那份」「照正本的順序」「照正本的名字:{from} → {to}」是 T3 要改 / 新增的 `push.reason.*` 字串(§3.4),現在的 zh 是「canonical 已移除 / 換序 / 改名」。
 
-第二步 `resolve <pid>`(其他平台:替新接進正本的歌找對應)、第三步 `pl sync <pid>`:合併本身不會再改「上班聽」;這一步把新接的歌加到其他連著的平台,其他平台這段時間自己的改動也會一起帶過來(一樣先列表給你確認)。停點:
+第二步 `resolve <pid>`(其他平台:替新接進正本的歌找對應)、第三步 `pl sync <pid>`:把新接的歌加到其他連著的平台;其他平台這段時間自己的改動也會帶進正本,再推到每一個連著的平台,「上班聽」也可能因此更新(一樣先列表給你確認)。停點:
 - 確認之前停在第一步(取消、dry-run、被前置檢查或上限擋下):零寫入、沒連上。
 - 確認後寫到一半失敗:照貼 capy 的說明(「上班聽」可能已經改了一部分、還沒連上;再按一次「開始合併」會重新算,§3.4)。
 - 停在第二、三步:「已經把「上班聽」合併並連上「太好聽」;按「同步這份清單」接著把新接的歌帶到其他平台。不想同步這份,到主控台跑 capy pl unlink。」
@@ -250,7 +250,7 @@ Q 用計畫內編號 Q1…(同前兩份計畫的寫法)。驗收接續 R-56 起,
 | `pl show` 讀不到 | restricted / Apple 回 404 / 其他 | 照貼原因;Apple 時補「Apple Music 對空清單也會回「找不到」,它可能是空的」 | 無 |
 | 序列槽被佔、流程在等提示 | onExit -1 / `blocked()` | 換平台、換清單、開新卡都擋下並說明(同「我的清單」) | 等它結束 |
 
-**讀回正本**(這台沒有副本):按鈕叫「讀回正本(會順便讀已登入的平台)」,說明「capy 會讀你 Google Drive 上的正本,順便讀這台已登入的平台;平台上有還沒帶回的改動時,會先列出來請你確認,答應之後才會在這台建好副本。」範圍是 auth 說 ok 的 Spotify / Apple Music / YouTube Music(照 `providers.list`,不含本機曲庫);依序送 `['pl','pull','--all','--provider',q]`,第一個 exit 0 就停、安靜重讀 export(只要成功一次,`commitCanonical` 會把整份正本寫進這台,`pull.go:383-392`);exit 1 換下一家;exit 2 / 3、關掉提示、中止照 `outcome()` 收尾並停下(exit 3 不提 `--force`),後面接「所以這台電腦還是沒有副本」,並保留這顆按鈕;一家都沒登入時不送命令,說「先到「帳號」登入任一個音樂平台,capy 才能讀回正本」;每一家都 exit 1 時,逐家列出原因(CLI 那句,剝 `Error: `)。說明句另補「只要讀回一次,這台就有全部正本的副本;沒登入的平台之後在全部同步時再處理」。
+**讀回正本**(這台沒有副本):按鈕叫「讀回正本(會順便讀已登入的平台)」,說明「capy 會讀你 Google Drive 上的正本,順便讀這台已登入的平台;平台上有還沒帶回的改動時,會先列出來請你確認,答應之後才會在這台建好副本。」範圍是 auth 說 ok 的 Spotify / Apple Music / YouTube Music(照 `providers.list`,不含本機曲庫);依序送 `['pl','pull','--all','--provider',q]`,第一個 exit 0 就停、安靜重讀 export(只要成功一次,`commitCanonical` 會把整份正本寫進這台,`pull.go:383-392`);重讀後 export 仍以 `reason === 'done'` 失敗時(寫本機快取失敗只印 `pull.warn.cache_write`、不回錯,`pull.go:390-392`),說「所以這台電腦還是沒有副本」並保留按鈕,不說完成;exit 1 換下一家;exit 2 / 3、關掉提示、中止照 `outcome()` 收尾並停下(exit 3 不提 `--force`),後面接「所以這台電腦還是沒有副本」,並保留這顆按鈕;一家都沒登入時不送命令,說「先到「帳號」登入任一個音樂平台,capy 才能讀回正本」;每一家都 exit 1 時,逐家列出原因(CLI 那句,剝 `Error: `)。說明句另補「只要讀回一次,這台就有全部正本的副本;沒登入的平台之後在全部同步時再處理」。
 
 ### 2.9 窄版(390px)
 
@@ -295,12 +295,12 @@ Q 用計畫內編號 Q1…(同前兩份計畫的寫法)。驗收接續 R-56 起,
 - **前置檢查**(任何一條不過都 exit 1、零寫入):沿用一般 link 的 `link.err.not_listed` / `unreadable` / `taken`;那份正本在這個平台已有連結時不接管(不管是不是別台、別帳號的);那份清單寫不進去時擋下(`PlaylistRef.Unwritable`,`provider.go:135-137`:Apple 的 canEdit:false 與協作清單、YouTube 別人的與自動清單已會標;Spotify 他人的清單讀不到內容,`unreadable` 已擋);那份清單含任何 `Track.Unpushable`(目前是 Spotify 本機檔)時擋下,不然之後的同步會因為 `push.go:245-248` 永遠跳過它。
 - **一個命令做完,同一把鎖、一張表、一次確認**(照 `dedup.go:22-25` 正本路徑的形狀):
   1. **先找對應**(Q1 子題 b 推薦 A):
-     - 先拿正本的歌跟**那份清單自己的曲目**比:同 ISRC 用 `resolve.PickISRC`,其餘用 `resolve.RankFuzzy`(`internal/resolve/resolve.go:217,242`),候選只限那份清單,分數 ≥ 85 算同一首。這一步不打搜尋 API,而且避開 YouTube 同一首有音訊版與 MV 兩個 id、目錄搜尋命中另一支的問題。
+     - 先拿正本的歌跟**那份清單自己的曲目**比:同 ISRC 用 `resolve.PickISRC`,其餘用 `resolve.RankFuzzy`(`internal/resolve/resolve.go:217,242`),候選只限那份清單,分數 ≥ 85 算同一首,而且**一對一**:同一個清單曲目只給分數最高的那首正本歌(同分取正本裡先出現的),其他正本歌落到下一步搜平台目錄。這一步不打搜尋 API,而且避開 YouTube 同一首有音訊版與 MV 兩個 id、目錄搜尋命中另一支的問題。**自動認成同一首的配對也列在表上**:`dir=resolve`、`action=map`,REASON「認成同一首(分數 {score})」,REASON_CODE 沿用 resolve 的 `isrc` / `fuzzy`(README ×2 代碼表補 `pl link --merge` 的 `dir=resolve` 列);這樣「一次確認」時看得到哪些被認成同一首,確認後這些 mapping 才寫進 Drive。
      - 比不上的,再照 `migrate.go:266-276` 的佔位 link 手法對這個平台跑 `planResolve`(搜整個平台目錄),讓正本有、那份清單沒有的歌拿到這個平台的 id,第 3 步才推得過去。代價:`--dry-run` 也會打這個平台的搜尋 API。
      - 沒把握的(review / conflict / 找不到),照 Q1 子題 c 的推薦 A:跟搬家一樣先問要不要逐首決定(`migrate.go:286-292` 的 `confirmWrite("migrate.confirm.review")` + `reviewLoop`),接受的釘進這次的 canonState;沒決定的不算同一首。
      - 所有 mapping 只寫進這次的 canonState(確認前不 COMMIT),寫完重建 Identity。
   2. **接進正本**:Observe 那份清單,把正本還沒有的歌照它的順序接到正本尾端,同一首只接第一份(同 `migrate.go:238-256` 的迴圈,抽成函式兩邊共用)。表裡的 pull 列:add(加進正本,REASON_CODE 沿用 `added_on_platform`)與 skip(那份清單裡多出來的同一首,REASON_CODE 沿用 `dup_id` / `dup_isrc`;`dir=pull` 的 skip 是新的 action 與代碼組合,README ×2 的代碼表要補一列 `pl link --merge`,並把它加進「哪些命令的 TSV 有 reason_code」那句)。沒決定、當成不同的歌接進來的,之後可以在 `resolve --review`(連結面板的「逐首決定」)接受候選或用 `resolve pin`,走決策 21 的人工合併(`resolve.go:376-388`,`canon.Merge` 只把 item 改指同一個 cid,`identity.go:168-170`),合併後正本有同一首兩份,`pl dedup <pid>` 以重導後的 cid 為鍵(`dedup.go:244-247`)才抓得到;確認卡照實說。
-  3. **把那份清單排成正本的樣子**:對這一個平台跑 `planPush`(以子題 a 的推薦 A「以正本為準」):add(正本有、它沒有、有這個平台 id 的)、skip(正本有、找不到對應的,REASON_CODE `no_mapping`)、remove(份數比正本多的那幾份)、move(照正本順序)、rename(改成正本的名字)。表裡的 push 列。
+  3. **把那份清單排成正本的樣子**:呼叫 `planPush` 之前,把第 2 步 Observe 到的快照放進 `merged[pid][p]` 當這個 (清單, 平台) 的暫時 base(只在記憶體、不 COMMIT),並把讀過的 L 放進 `lives` 重用(同 `pl sync` 的決策 31,不再讀一次)。不然剛要連上的清單沒有 base,前提一(`push.go:187-190`,`push.refuse.no_base`)與前提二(`push.go:214-216`,`liveUnchanged`)都會把它列成 refused,`--force` 也越不過。之後對這一個平台跑 `planPush`(以子題 a 的推薦 A「以正本為準」):add(正本有、它沒有、有這個平台 id 的)、skip(正本有、找不到對應的,REASON_CODE `no_mapping`)、remove(份數比正本多的那幾份)、move(照正本順序)、rename(改成正本的名字)。表裡的 push 列。
   4. 合成一張表(`syncHeader`,DIR = pull / push),一次確認。
   - `--dry-run`、取消、非 TTY 沒帶 `--yes`:exit 2,Drive 與平台都零寫入、不留連結。
   - 要拿掉的超過閾值(`removalBlocked`,`pull.go:718-722`)而且沒帶 `--force`:exit 3、零寫入、不留連結;所以之後的「全部同步」不會被它卡住。訊息沿用 `changeset.blocked`(叫人加 `--force`,在終端機成立);頁面的 exit 3 收尾說「到主控台處理」。
@@ -383,11 +383,11 @@ Q 用計畫內編號 Q1…(同前兩份計畫的寫法)。驗收接續 R-56 起,
 5. 選清單送 `pl show <id> --provider p`,預覽表的列序與欄位;快取:再點同一份不重送;寫入後清掉重讀。
 6. 納入:依序送 `pl link --new-only -- <名> <p>:<id>`、`pl pull -- <名>`,名稱以 `-` 開頭時 `--` 在;提示在本頁;收尾句接上下一步;做完只有一個連結時,主要鈕不是 `pl sync`、步驟條停在第 3 步;有兩個連結時主要鈕才是「同步這份清單」。
 7. 同步這份 / 每列同步 / 全部同步:送出的 args;有連著的平台沒登入時改成逐平台、說明句列出沒跑的;`--all` exit 1 時出現「改成一個平台一個平台同步」;收尾規則表每一列(含關掉提示沒有 `user aborted`、逾時、中止、exit 3 不提 `--force`)。
-8. 讀回正本:範圍是 auth ok 的平台;第一個 exit 0 就停並重讀;exit 1 換下一家;取消後、exit 3 後(收尾不提 `--force`)都說「這台電腦還是沒有副本」並保留按鈕;一家都沒登入時不送命令;每一家都 exit 1 時逐家列出原因。
+8. 讀回正本:範圍是 auth ok 的平台;第一個 exit 0 就停並重讀;exit 1 換下一家;取消後、exit 3 後(收尾不提 `--force`)、exit 0 但重讀 export 仍失敗時,都說「這台電腦還是沒有副本」並保留按鈕;一家都沒登入時不送命令;每一家都 exit 1 時逐家列出原因。
 9. 在 X 建一份:三個命令、都帶 pid、提示在本頁;已讀到同名非空清單時不給「開始」。
 10. 看看有沒有重複:送 `pl dedup <p>:<id>` 不帶任何旗標;有表時有下一步那句、沒表時一句。
 11. 合併連結(T4,Q1=B):確認卡每一句的出現條件(改名只在名字不同且不是本機、Apple 揭露在目標是 Apple 或正本連著 Apple 時);三個命令;下拉裡連著正本的列是 disabled;前置檢查 exit 1 時卡片換成那句說明、不再給「開始合併」;第一步 exit 2 / 3 時停點句說零寫入、沒連上;第三步取消時停點句出現、右欄換成「連著正本」卡、收尾不只說「沒有寫入」;未上線時那一格是說明句、沒有按鈕、沒有連到搬家。
-12. 進階:args 陣列、flag 在 `--` 前面、promptHost、收尾句;勾著只看變更且 exit 2 時出現 dry_note、不出現「你按了取消」;dedup 平台清單形式不帶 `--provider` / `--dry-run`,exit 0 且有表時說「這只是檢查」、不出現 `webui.playlists.flow.up_to_date` 的字。
+12. 進階:args 陣列、flag 在 `--` 前面、promptHost、收尾句;勾著只看變更且 exit 2 時出現 dry_note、不出現「你按了取消」;dedup 平台清單形式(`spotify:` / `apple:` / `youtube:` / `local:` 都算)不帶 `--provider` / `--dry-run`,exit 0 且有表時說「這只是檢查」、不出現 `webui.playlists.flow.up_to_date` 的字。
 13. 路由:`#/sync/apple` 預選 Apple;`#/playlists/<pid>` 打開那一份;回到同步頁會重讀。
 14. 精簡變更表:每種 DIR + ACTION 的白話;完整表在 details 裡;REMOVE 列不只靠顏色。
 15. 英文輪:頁面與 label 沒有 CJK,label 符合 `/^[A-Z][a-z]*ing /`;收集到的 label 數量對得上(流程真的跑過)。
@@ -396,7 +396,7 @@ Q 用計畫內編號 Q1…(同前兩份計畫的寫法)。驗收接續 R-56 起,
 
 1. `--merge` 後正本既有項目的相對順序不變;尾端每首只有一份、照那份清單的順序。
 2. **沒有 ISRC 的情況**:正本來自 Spotify(cid 是 ISRC),合併一份與它有重疊、還沒對應過的 YouTube 清單;清單內比對命中的不會在正本多出第二份;沒命中的出現在表裡,REASON 照實。另一則:正本的某首在 YouTube 目錄搜尋會命中 MV、那份清單裡放的是音訊版,合併後那份清單不會同時有兩支。
-3. 那份清單排成正本的樣子:確認後平台上有對應的歌,順序、份數都等於正本,名字等於正本;沒有對應的正本歌曲在表裡是 skip(`no_mapping`)、平台上沒有;它獨有的歌每首至少留一份(份數跟正本一樣)。
+3. 那份清單排成正本的樣子:確認後平台上有對應的歌,順序、份數都等於正本,名字等於正本;沒有對應的正本歌曲在表裡是 skip(`no_mapping`)、平台上沒有;它獨有的歌每首至少留一份(份數跟正本一樣);目標清單本來就有歌、沒有 base 時照樣產出 push 列,不會 exit 3。另一則:正本有兩首很像的歌(原版 / Remaster)時,清單裡的那一首只認給一首,表上有對應的 `dir=resolve` 列。
 4. 取消、`--dry-run`、非 TTY 沒 `--yes`:Drive 與平台位元組都不變、不留連結、exit 2。
 5. 要拿掉的超過 10 份:exit 3、零寫入、不留連結;之後 `pl sync --all` 不受影響;同一情況帶 `--force` 時照常寫入並連上。
 5′. 確認後平台寫完、Drive COMMIT 被版本守衛擋下:`Links[p]` 沒寫、訊息不說零寫入;再跑一次 `--merge`,對那份清單零或極少筆。
