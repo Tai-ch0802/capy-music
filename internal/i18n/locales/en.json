@@ -610,6 +610,7 @@
   "migrate.err.need_from_to": "--from and --to are required (there is no picker outside a terminal): capy migrate <playlist> --from apple --to spotify[:<existing-playlist>]",
   "migrate.err.pending_non_add": "{name} has an unsynced {kind} on {platform} (migrate only adds): run capy pl sync {name_arg} --provider {platform} first, then migrate",
   "migrate.err.same_name_exists": "{platform} already has a playlist named \"{name}\" ({ids}): to add to it, use --to {platform}:{id}; if you really want another one, create it in the app first, then use --to {platform}:<ID>",
+  "migrate.err.same_name_no_base": "{platform} already has a playlist named \"{name}\" ({ids}), but the master copy with the same name, {canon} ({pid}), already has tracks and {platform}:{id} hasn't been pulled for it yet (no base): adding to that playlist would reorder the master copy to the order on {platform}, so capy won't. Rename that playlist on {platform} first and run this again, and capy will create a new playlist on {platform} instead; the renamed one won't be synced",
   "migrate.err.target_gone": "playlist {id} was not found on {platform} (the link was removed); run it again",
   "migrate.err.target_not_listed": "{platform}:{id} is not in your playlist list (only what capy pl list shows counts), so it can't be the target",
   "migrate.err.target_read_only": "{platform} is read-only for now, so it can't be a migrate target: {err}",

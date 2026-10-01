@@ -294,6 +294,48 @@ func TestMigrateRefusesSameNameCanonicalWithoutTargetBase(t *testing.T) {
 	}
 }
 
+// 正本在 apple 上的 base 是另一份清單 q1 留下的(link q1 → pull → unlink):對 q2 不算數(同 observeAndDerive),照樣擋下。
+// 守門只看「有沒有 base」時這則會 fail(#134 review)。
+func TestMigrateRefusesWhenTargetBaseIsFromOtherPlaylist(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	catalogISRC(fs2, "c")
+	fs1.set("p1", "公路旅行", "a", "b")
+	fs1.set("p9", "新歌", "c")
+	fs2.set("q1", "舊的", "a", "b")
+	fs2.set("q2", "公路旅行", "b", "a")
+	mustPull(t, "pl", "link", "公路旅行", "spotify:p1")
+	mustPull(t, "pl", "link", "公路旅行", "apple:q1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	mustPull(t, "pl", "unlink", "公路旅行", "apple")
+	files := driveFiles(t, dc)
+	_, errs, err := runPull(t, "migrate", "新歌", "--from", "spotify", "--to", "apple:q2", "--yes")
+	if got := cidsOf(drivePlaylistNamed(t, dc, "公路旅行")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b")}) || exitOf(t, err) != 1 || !sameFiles(files, driveFiles(t, dc)) || len(fs2.written()) != 0 {
+		t.Fatalf("q1 的 base 不算數,要擋下、零寫入:%v(exit %d)\n%s", got, exitOf(t, err), errs)
+	}
+}
+
+// 兩步驟:新建目標撞到同名清單時,不再指路 --to <那份>(下一步會被沒有 base 擋下),第一步就給改名指引;兩步都零寫入(#134 review)。
+// 修之前第一步說「要加進它就 --to apple:q2」,照做就被擋、要人改名。
+func TestMigrateSameNameTargetGivesRenameHintFirst(t *testing.T) {
+	fs1, fs2, dc, _ := twoPlatforms(t)
+	fs1.set("p1", "公路旅行", "a", "b")
+	fs2.set("q2", "公路旅行", "b", "a")
+	mustPull(t, "pl", "link", "公路旅行", "spotify:p1")
+	mustPull(t, "pl", "pull", "公路旅行", "--yes")
+	files, db := driveFiles(t, dc), dumpBytes(t)
+	_, _, err := runPull(t, "migrate", "公路旅行", "--from", "spotify", "--to", "apple", "--yes")
+	if exitOf(t, err) != 1 || strings.Contains(err.Error(), "--to apple:q2") || !strings.Contains(err.Error(), "先在 apple 上把那份清單改名") {
+		t.Fatalf("第一步就給改名指引、不指路 --to:%v", err)
+	}
+	_, _, err = runPull(t, "migrate", "公路旅行", "--from", "spotify", "--to", "apple:q2", "--yes")
+	if exitOf(t, err) != 1 || !strings.Contains(err.Error(), "先在 apple 上把那份清單改名") {
+		t.Fatalf("第二步一樣要改名:%v", err)
+	}
+	if !sameFiles(files, driveFiles(t, dc)) || !bytes.Equal(db, dumpBytes(t)) || len(fs1.written()) != 0 || len(fs2.written()) != 0 || fs2.createdCount() != 0 {
+		t.Fatal("兩步都零寫入")
+	}
+}
+
 // 正本連著來源平台的另一份清單(不是來源本身):不 pull 那份、結尾也不說來源連著——同 follow,只有 Links[來源平台] == 來源 id 才算。
 // 修之前只看 Links[來源平台] 非空:多 pull 了 spotify:p1 剛加的 e、結尾說「來源 spotify:p1 也連著這個正本」。
 func TestMigrateSourceIsOtherPlaylistOnLinkedPlatform(t *testing.T) {

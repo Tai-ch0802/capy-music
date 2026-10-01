@@ -574,6 +574,7 @@
   "migrate.err.need_from_to": "--from 與 --to 必填(非終端機沒有挑選器):capy migrate <清單> --from apple --to spotify[:<既有清單>]",
   "migrate.err.pending_non_add": "{name} 在 {platform} 有還沒同步的 {kind}(migrate 只做新增):先 capy pl sync {name_arg} --provider {platform},再 migrate",
   "migrate.err.same_name_exists": "{platform} 上已經有叫「{name}」的清單({ids}):要加進它就 --to {platform}:{id};真的要另建一個,先在 app 裡建好再用 --to {platform}:<ID>",
+  "migrate.err.same_name_no_base": "{platform} 上已經有叫「{name}」的清單({ids}),但同名的正本 {canon}({pid})已經有歌、這份正本的 {platform}:{id} 又還沒 pull 過(沒有 base):加進那份清單會照 {platform} 上的順序重排正本,所以 capy 不做。先在 {platform} 上把那份清單改名再重跑,capy 會改在 {platform} 建一份新的清單;改了名的那份不會被同步",
   "migrate.err.target_gone": "{platform} 端找不到清單 {id}(已取消連結),重跑一次",
   "migrate.err.target_not_listed": "{platform}:{id} 不在你的清單列表裡(capy pl list 看得到的才算),不能當目標",
   "migrate.err.target_read_only": "{platform} 目前只讀,不能當 migrate 的目標:{err}",
