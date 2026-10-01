@@ -46,7 +46,7 @@ func TestMigrateNewPlaylistKeepsSourceOrderAndSkipsDuplicates(t *testing.T) {
 	if !slices.Equal(dirActions(out), []string{"migrate add apple", "migrate add apple", "migrate add apple"}) || !slices.Equal(fs1.tracksOf("new1"), []string{"a", "b", "c"}) {
 		t.Fatalf("新清單 = 來源順序、重複只留一份:%v\n%s", fs1.tracksOf("new1"), out)
 	}
-	for _, want := range []string{"建立 canonical 清單 公路旅行(", "在 spotify 建立清單 公路旅行(new1)", "已推送 3 筆變更", "已把 apple:q1 的 3 首接進正本 公路旅行(", "推了 3 首到 spotify:new1", "來源沒有連結", "capy pl link \"公路旅行\" apple:q1"} {
+	for _, want := range []string{"建立 canonical 清單 公路旅行(", "在 spotify 建立清單 公路旅行(new1)", "已推送 3 筆變更", "已把 apple:q1 的 3 首接進正本 公路旅行(", "推了 3 首到 spotify:new1", "來源沒有連結", "capy pl link --merge \"公路旅行\" apple:q1"} {
 		if !strings.Contains(errs, want) {
 			t.Fatalf("stderr 少了 %q:\n%s", want, errs)
 		}

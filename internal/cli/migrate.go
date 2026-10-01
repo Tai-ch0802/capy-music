@@ -238,31 +238,12 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 				return i18n.Errorf("migrate.err.target_gone", "platform", dst.prov, "id", dst.id)
 			}
 		}
-		type appended struct {
-			pos   int
-			cid   string
-			track provider.Track
-		}
 		var added []appended
 		// 正本就是來源的正本(pull 剛做過):以正本為準,不再尾端追加——來源裡 C 刻意移除的那幾首(規則 4′ 留給 push)不能被加回來
 		follow := pl.Links[src.prov] == src.id
 		if !follow { // A 的曲目:C 還沒有的依 A 的順序接在尾端;同一首(同平台 id 或同 ISRC)只留一份
-			id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
-			lcid, updated := canon.Observe(id, src.prov, s.tracks.Tracks, tracksA)
-			s.absorb(updated)
-			have := map[string]bool{}
-			for _, it := range pl.Items {
-				have[id.Redirect(it.CID)] = true
-			}
-			for i, cid := range lcid {
-				if have[cid] {
-					continue
-				}
-				have[cid] = true
-				if _, err := pl.Append(cid); err != nil {
-					return err
-				}
-				added = append(added, appended{len(pl.Items) - 1, cid, tracksA[i]})
+			if _, added, err = appendUnseen(s, pl, src.prov, tracksA); err != nil {
+				return err
 			}
 		}
 		existing := len(pl.Items) - len(added) // 正本既有的份數:新建的目標要把它們一起推過去(沿用了連著來源的正本時就是全部);既有的目標它們已在上面
@@ -444,6 +425,36 @@ func runMigrate(cmd *cobra.Command, args []string, from, to string, dryRun, yes 
 		}
 	}
 	return finishPush(err, applied, touched, deferred, next, after)
+}
+
+// appended:接進正本尾端的一首;pos 是它在正本裡的位置。
+type appended struct {
+	pos   int
+	cid   string
+	track provider.Track
+}
+
+// appendUnseen:平台清單的曲目依身分規則算 cid(觀測寫回 tracks),正本 C 還沒有的依清單的順序接在 C 尾端,同一首(同 cid)只接第一份;
+// C 原有的 item 一個都不動(決策 38)。回傳與 tracks 對齊的 cid 與接上的那些。migrate 與 pl link --merge 共用。
+func appendUnseen(s *canonState, pl *canon.Playlist, prov string, tracks []provider.Track) (lcid []string, added []appended, err error) {
+	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
+	lcid, updated := canon.Observe(id, prov, s.tracks.Tracks, tracks)
+	s.absorb(updated)
+	have := map[string]bool{}
+	for _, it := range pl.Items {
+		have[id.Redirect(it.CID)] = true
+	}
+	for i, cid := range lcid {
+		if have[cid] {
+			continue
+		}
+		have[cid] = true
+		if _, err := pl.Append(cid); err != nil {
+			return nil, nil, err
+		}
+		added = append(added, appended{len(pl.Items) - 1, cid, tracks[i]})
+	}
+	return lcid, added, nil
 }
 
 // migrateCanonical:決定 migrate 用哪個 canonical 清單 C。

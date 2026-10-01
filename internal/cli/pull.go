@@ -480,10 +480,18 @@ func readableCount(ctx context.Context, r provider.PlaylistReader, id string) (o
 }
 
 func newPlLinkCmd() *cobra.Command {
-	var createFlag, newOnly bool
+	var createFlag, newOnly, merge, dryRun, yes, force bool
 	cmd := &cobra.Command{
 		Use: i18n.T("cmd.pl.link.use"), Short: i18n.T("cmd.pl.link.short"), Args: argsOrPicker(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch {
+			case merge && (createFlag || newOnly):
+				return i18n.Errorf("link.err.merge_flags")
+			case merge:
+				return runLinkMerge(cmd, args, dryRun, yes, force)
+			case dryRun || yes || force: // 一般 link 不問確認、沒有刪除,這三個只對 --merge 有意義
+				return i18n.Errorf("link.err.merge_only_flags")
+			}
 			ctx := cmd.Context()
 			create := createFlag // 挑選器第二段選「建新的空清單」也會把它打開
 			prov, ref := "", ""
@@ -645,6 +653,10 @@ func newPlLinkCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&createFlag, "create", false, i18n.T("cmd.pl.link.flag.create"))
 	cmd.Flags().BoolVar(&newOnly, "new-only", false, i18n.T("cmd.pl.link.flag.new_only"))
+	cmd.Flags().BoolVar(&merge, "merge", false, i18n.T("cmd.pl.link.flag.merge"))
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("cmd.pl.link.flag.dry_run"))
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("cmd.pl.link.flag.yes"))
+	cmd.Flags().BoolVar(&force, "force", false, i18n.T("cmd.pl.link.flag.force"))
 	return cmd
 }
 

@@ -136,7 +136,11 @@ type pushPlan struct {
 // 同理 refused(前提、local file、清單消失)在 strict 時擋整輪(exit 3),不 strict 時只跳過那一格的 push 半邊(PR #36 review:
 // cron 的 sync --all 不能被一個含 local file 的清單永久綁死;pull 半邊照常落地)。
 func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]*canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
-	merged := mergedBase(s)
+	return planPushWith(ctx, s, mergedBase(s), targets, only, stderr, pf, lives, strict)
+}
+
+// planPushWith:planPush 本體,base 由呼叫端給(pl link --merge 要把剛讀到的那份清單放進去當暫時 base,計畫 2026-10-01 §3.4 第 3 步)。
+func planPushWith(ctx context.Context, s *canonState, merged map[string]map[string]canon.Base, targets []*canon.Playlist, only string, stderr io.Writer, pf *platforms, lives map[liveKey]*canon.Observed, strict bool) (plans []*pushPlan, rows [][]string, blocked, refused []string, err error) {
 	for _, pl := range targets {
 		for _, prov := range slices.Sorted(maps.Keys(pl.Links)) {
 			if only != "" && prov != only {
@@ -282,7 +286,11 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		case provider.OpRemove:
 			cid := work[op.Pos]
 			work, ids = slices.Delete(work, op.Pos, op.Pos+1), slices.Delete(ids, op.Pos, op.Pos+1)
-			row("remove", op.Pos, cid, op.ProviderID, i18n.T("push.reason.removed"), "removed_in_master")
+			reason, code := i18n.T("push.reason.removed"), "removed_in_master"
+			if n := countCID(plan.pl.Items, cid); n > 0 { // 正本裡還有這首:拿掉的是平台上多出來的那份(同步、pl dedup 的推出半邊、pl link --merge 都會遇到)
+				reason = i18n.T("push.reason.removed_extra", "n", n)
+			}
+			row("remove", op.Pos, cid, op.ProviderID, reason, code)
 		case provider.OpMove:
 			cid, id := work[op.From], ids[op.From]
 			work = slices.Insert(slices.Delete(work, op.From, op.From+1), op.Pos, cid)
@@ -305,6 +313,15 @@ func pushRows(s *canonState, plan *pushPlan, lcid []string, skipped []canon.Skip
 		rows = append(rows, []string{"skip", plan.prov, plan.pl.Name, "", sk.CID, id, t.Title, strings.Join(t.Artists, ", "), reason, code})
 	}
 	return rows, work
+}
+
+func countCID(items []canon.Item, cid string) (n int) {
+	for _, it := range items {
+		if it.CID == cid {
+			n++
+		}
+	}
+	return n
 }
 
 // apply:確認之後再讀一次 L 比對 current(平台端沒有 CAS,這是縮小窗口的做法;spec §6.5.2 規則 6)→ ApplyOps → 重讀 L′ → base := L′。
@@ -402,16 +419,13 @@ func applyPlans(ctx context.Context, s *canonState, plans []*pushPlan, stderr io
 // 半截寫入 + Drive 沒寫成兩件事都要講——那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
 // next 是「接下來怎麼做」那句(push / sync 各自的說法);nextAfterHalf 是半截寫入那條「先 pl pull --dry-run 看清楚」之後接的那句。
 func finishPush(err error, applied int, touched bool, deferred error, next, nextAfterHalf string) error {
-	var ge *guardError
 	var driveMsg string
 	switch {
 	case err == nil:
 	case !touched:
 		return err
-	case errors.As(err, &ge):
-		driveMsg = i18n.T("push.drive.guard", "files", ge.Files)
 	default:
-		driveMsg = i18n.T("push.drive.failed", "err", err.Error())
+		driveMsg = driveFailure(err)
 	}
 	switch { // 傳 .Error() 不傳 error:原本是 %v、不包起來,exit code 照舊是 1(deferred 可能是確認期間變了的 BlockedError)
 	case driveMsg != "" && deferred != nil:
@@ -420,6 +434,15 @@ func finishPush(err error, applied int, touched bool, deferred error, next, next
 		return i18n.Errorf("push.err.written_but_drive", "count", applied, "drive", driveMsg, "next", next)
 	}
 	return deferred
+}
+
+// driveFailure:COMMIT 失敗的說法(版本守衛擋下 / 其他),接在「平台已經改了」後面。
+func driveFailure(err error) string {
+	var ge *guardError
+	if errors.As(err, &ge) {
+		return i18n.T("push.drive.guard", "files", ge.Files)
+	}
+	return i18n.T("push.drive.failed", "err", err.Error())
 }
 
 func newPlPushCmd() *cobra.Command {

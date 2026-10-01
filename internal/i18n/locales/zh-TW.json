@@ -238,7 +238,11 @@
   "cmd.pl.dedup.long": "重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首)。保留第一次出現的那份、拿掉後面的,剩下的相對順序一個都不動。\n\n<provider>:<清單 ID 或名稱>:直接讀平台清單、只報告(非 TTY 是無標題 TSV:pos id title artists reason reason_code;pos 從 0 起;reason 給人看、跟著語系,reason_code 是給腳本的固定代碼);不碰 Drive、\n不需要連結;有沒有重複 exit code 都是 0。要由 capy 移除,把清單連到正本再用下面那種寫法。--yes / --force / --dry-run / --provider 配這種寫法是錯誤。\n\ncanonical 清單(name|pid;不帶參數且在終端機裡會開挑選器):pl sync 的一輪中間多一步——先 pull(平台現況吸進正本)、\n正本去重、再 push 把多出來的份從可寫的平台拿掉。一張表(非 TTY 是 TSV:dir action provider playlist pos cid provider_id title artists reason reason_code,\ndir ∈ pull / dedup / push;dedup 列的 pos 是正本裡的位置)、一次確認;exit code 同 pl sync(0 無變更或已套用、1 錯誤、2 待套用、3 安全閥)。\n正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 pl sync;--provider 沒選到或讀不到的平台這次沒檢查,stderr 會說)。\n刪除閾值去重與 push 各算(>10 首,或 >30% 且 >3 首),--force 越過;寫不了的平台還留著的份會列在 stderr,請手動刪,下一次 pull 不會把它們加回正本。",
   "cmd.pl.dedup.short": "去掉清單裡重複的曲目(同平台 id 或同 ISRC;保留第一份,其餘順序不動)",
   "cmd.pl.link.flag.create": "在平台上建一個跟 canonical 清單同名的空清單再連結;此時第二個參數只給平台、不帶「:」(例如 spotify);Spotify、Apple Music 與 YouTube Music 支援,local 不行",
+  "cmd.pl.link.flag.dry_run": "(配 --merge)只印表,什麼都不寫、也不連上",
+  "cmd.pl.link.flag.force": "(配 --merge)越過刪除閾值",
+  "cmd.pl.link.flag.merge": "把已經存在的正本(不會建新的)連到一份已經有歌的平台清單:那份清單有、正本沒有的歌照它的順序接在正本最後面,再把那份清單排成正本的樣子(歌、份數、順序、名字都跟正本一樣)。全部列成一張表、確認一次;確認之前什麼都不寫、也不連上。不能跟 --create、--new-only 一起用",
   "cmd.pl.link.flag.new_only": "只建新的:第一個參數是名稱、而且已經有同名(不分大小寫)的 canonical 清單時不連它;canonical 清單在那個平台已經有連結(包括別台裝置或別的帳號的)時不接管。擋下來一律零寫入。web 介面發出的 pl link 都帶它",
+  "cmd.pl.link.flag.yes": "(配 --merge)跳過確認",
   "cmd.pl.link.short": "把 canonical 清單連結到平台清單(不存在就建立;只認明確 link。不帶參數且在終端機裡會三段挑選)",
   "cmd.pl.link.use": "link [name|pid] [provider]:[playlist ID|名稱](或 [provider] --create)",
   "cmd.pl.list.short": "列出我的播放清單",
@@ -503,6 +507,18 @@
   "link.done": "已連結 {name}({pid})↔ {platform}:{id};接著 capy pl pull {name}",
   "link.err.already_linked": "{name}({pid})已連結 {platform}:{id},先 capy pl unlink {name} {platform}",
   "link.err.create_platform_only": "配 --create 時第二個參數只給平台({ids}),清單名稱跟著 canonical 清單:{arg}",
+  "link.err.merge_args": "--merge 要兩個參數:capy pl link --merge <name|pid> <provider>:<playlist ID|名稱>",
+  "link.err.merge_flags": "--merge 不能跟 --create、--new-only 一起用",
+  "link.err.merge_half_and_drive": "{err};而且 {drive}:{platform} 改了一部分,但連結沒有記下。再跑一次 capy pl link --merge {pid} {platform}:{id},會從那份清單現在的樣子重算",
+  "link.err.merge_linked": "{name}({pid})在 {platform} 已經連著 {id};一份正本在每個平台只連一份,--merge 不接管任何連結(要換,先 capy pl unlink {name} {platform})",
+  "link.err.merge_no_master": "找不到正本 {arg};--merge 只接到已經存在的正本,不會建新的(要用這份清單建一份新的正本,執行不帶 --merge 的 capy pl link)",
+  "link.err.merge_not_written": "{err};{platform} 一筆都沒寫、也沒有連上",
+  "link.err.merge_only_flags": "--dry-run、--yes、--force 只能配 --merge",
+  "link.err.merge_partial": "{err};連結已經記下,{platform} 改了一部分:再跑 capy pl sync {name_arg} 接著做完",
+  "link.err.merge_unpushable": {
+    "other": "{platform}:{id} 有 {count} 首 capy 加不回去的曲目({titles};例如 Spotify 的本機檔):整份重寫會弄丟它們,之後的同步也永遠推不過去,所以不能合併"
+  },
+  "link.err.merge_unwritable": "{platform}:{id} 寫不進去({reason}),不能合併",
   "link.err.new_only_linked": "{name}({pid})已經連到{owner}的 {platform}:--new-only 不接管;真的要接管,不帶 --new-only 再跑一次",
   "link.err.new_only_name": "已經有叫「{name}」的 canonical 清單({pid}):--new-only 不連到既有的清單;要把平台清單的曲目加進它,用 capy migrate <清單 ID> --from <平台> --to <平台>:<清單 ID>,目標填它連著的清單(只加在尾端、不重排)",
   "link.err.no_pid": "找不到 pid {pid} 的 canonical 清單",
@@ -514,6 +530,13 @@
   "link.err.taken": "{platform}:{id} 已連結到 canonical 清單 {name}({pid}),一個平台清單只能連一個",
   "link.err.unreadable": "{platform} 清單 {id} 讀不到內容(開發模式 app 拿不到 Spotify 官方 / 他人的清單),不可連結",
   "link.err.with_recovery": "{err};{recovery}",
+  "link.merge.confirm": {
+    "other": "套用以上 {count} 筆變更,並把 {platform}:{id} 連到正本 {name}?"
+  },
+  "link.merge.done": "已把 {platform}:{id} 併進正本 {name}({pid})並連上(接進正本 {added} 首、寫到 {platform} {count} 筆)。下一步:capy resolve {name_arg} 替新接的歌找其他平台的對應,再 capy pl sync {name_arg} 帶過去",
+  "link.merge.next": "連結沒有記下。再跑一次 capy pl link --merge {pid} {platform}:{id}(正本沒變,會算出同一個樣子,對那份清單只剩很少或零筆)",
+  "link.merge.reason.matched": "認成同一首(分數 {score})",
+  "link.merge.stale": "{platform}:{id} 在確認期間有變動;這次什麼都沒寫、也沒有連上。再跑一次同一個 capy pl link --merge",
   "link.pick.create_new": "+ 在 {platform} 建一個新的空清單(名字跟著下一步選的清單)",
   "link.pick.platform": "連到哪個平台?",
   "link.recovery": "{platform} 上的空清單 {id} 已經建好,但連結沒寫進 Drive:用 capy pl link {quoted} {platform}:{id} 把它接回來",
@@ -608,7 +631,7 @@
     "other": "正本 {name}({pid})連著 {src},以正本為準、pull 了 {pulled} 筆來源變更,推了 {count} 首到 {dst}"
   },
   "migrate.summary.source_linked": "來源 {platform}:{id} 也連著這個正本(不是一次性複製):之後 capy pl sync {name_arg} 會讓兩邊都跟上正本",
-  "migrate.summary.source_unlinked": "來源沒有連結(一次性複製)。之後要跟著 {platform} 的變動:capy pl link {name_arg} {platform}:{id},再 capy pl sync {name_arg}",
+  "migrate.summary.source_unlinked": "來源沒有連結(一次性複製)。之後要跟著 {platform} 的變動:capy pl link --merge {name_arg} {platform}:{id}(來源會排成正本的樣子,先列表給你確認),再 capy pl sync {name_arg}",
   "migrate.summary.unmapped": {
     "other": "{count} 首在 {platform} 沒有對應、這次沒推:capy resolve {name_arg} --provider {platform} --review 裁決後,capy pl sync {name_arg} --provider {platform} 推過去"
   },
@@ -813,10 +836,11 @@
   "push.manual_op": "手動:{playlist} 的 {platform} 不支援 {kind}(位置 {pos}),請在平台上自己做",
   "push.next": "先 capy pl pull 再 capy pl push",
   "push.next_after_half": "再 pull、再 push",
-  "push.reason.moved": "正本換序",
+  "push.reason.moved": "照正本的順序",
   "push.reason.push": "推到平台",
   "push.reason.removed": "正本已移除",
-  "push.reason.renamed": "正本改名:{from} → {to}",
+  "push.reason.removed_extra": "正本裡只有 {n} 份,這是平台上多出來的那份",
+  "push.reason.renamed": "照正本的名字:{from} → {to}",
   "push.reason.unpushable": "有 mapping 但推不出去(local file / library-only / 檔不在這台),只能在平台手動加",
   "push.refuse.local_files": {
     "other": "{playlist} 在 {platform} 有 {count} 首 local file({titles}),整批取代會把它們弄丟,這個清單暫不支援 push"
@@ -1299,7 +1323,7 @@
   "webui.move.truths.local.title": "硬碟裡的歌單也可以搬",
   "webui.move.truths.no_delete.text": "來源的清單不會被更動;對目的地只新增,不移除、不重排。",
   "webui.move.truths.no_delete.title": "不會刪你的東西",
-  "webui.move.truths.order.text": "你排的順序是你的記憶,capy 沒有任何路徑會打亂它。",
+  "webui.move.truths.order.text": "你排的順序是你的記憶,搬家不會打亂它;capy 唯一會重排清單的,是你確認過的合併(把正本連到一份已經有歌的清單)。",
   "webui.move.truths.order.title": "順序不會變",
   "webui.move.truths.setup.text": "capy 用的是你自己的帳號憑證,存在這台電腦的鑰匙圈裡。沒有人替你代管,所以也沒有人能跟你收費。",
   "webui.move.truths.setup.title": "連接帳號要花幾分鐘",

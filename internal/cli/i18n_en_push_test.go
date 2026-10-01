@@ -92,9 +92,9 @@ func TestChinesePushReasonsSayMasterCopy(t *testing.T) {
 	}
 	want := []string{
 		"remove|正本已移除|removed_in_master",
-		"move|正本換序|moved_in_master",
+		"move|照正本的順序|moved_in_master",
 		"add|推到平台|push",
-		"rename|正本改名:Commute → Commute2|renamed_in_master",
+		"rename|照正本的名字:Commute → Commute2|renamed_in_master",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("列:%q", got)
@@ -113,9 +113,9 @@ func TestEnglishPushFlowReasonsAndCounts(t *testing.T) {
 	}
 	want := []string{
 		"remove|removed from the master copy|removed_in_master",
-		"move|reordered in the master copy|moved_in_master",
+		"move|following the master copy's order|moved_in_master",
 		"add|push to the platform|push",
-		"rename|renamed in the master copy: Commute → Commute2|renamed_in_master",
+		"rename|following the master copy's name: Commute → Commute2|renamed_in_master",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("列:%q", got)
