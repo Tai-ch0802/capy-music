@@ -155,6 +155,21 @@ func foreignLink(p provider.Provider, id string) bool {
 	return ok && p.Caps().Has(provider.CapDeviceBound) && ds.Foreign(id)
 }
 
+// linkProvider:pull / push / sync 對每一格連結取 provider。這台沒設 local_root 時 local 建不起來,但別台裝置的本機清單本來
+// 就只跳過(決策 33)、不該讓整輪 exit 1;Foreign 只看 device_id,就回一個沒有 root 的 local 讓呼叫端照常走 foreignLink 那條。
+// 本機自己的 link、沒有 device_id、config 讀不到都照舊回建構錯誤。
+func (c *platforms) linkProvider(prov, link string) (provider.Provider, error) {
+	p, err := c.provider(prov)
+	if err != nil && prov == "local" {
+		if cfg, cerr := config.Load(); cerr == nil && cfg.DeviceID != "" {
+			if probe := local.New("", cfg.DeviceID); probe.Foreign(link) {
+				return probe, nil // 不進 c.provs:root 是 "." 不能拿來讀寫;呼叫端判 foreign 後一定 continue
+			}
+		}
+	}
+	return p, err
+}
+
 // youtubeAPIBaseSeed:測試用種子(httptest);正式為空(用預設 base)。
 var youtubeAPIBaseSeed string
 

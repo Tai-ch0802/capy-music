@@ -142,11 +142,11 @@ func planPush(ctx context.Context, s *canonState, targets []*canon.Playlist, onl
 			if only != "" && prov != only {
 				continue
 			}
-			p, err := pf.provider(prov)
+			link := pl.Links[prov]
+			p, err := pf.linkProvider(prov, link)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
-			link := pl.Links[prov]
 			if foreignLink(p, link) { // 決策 33:別台裝置的本機清單只跳過——不算 refused;明說要推這個平台才算錯(同下面寫入端的規矩)
 				if strict && only == prov {
 					return nil, nil, nil, nil, i18n.Errorf("push.err.foreign_link", "playlist", pl.Name, "platform", prov, "link", link, "owner", linkOwner(p, s, link))
