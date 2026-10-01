@@ -305,7 +305,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 
 /* ── 我的清單(計畫 2026-09-30,決策 61):兩欄看這一頁自己的寬度(容器查詢;.page 是九頁共用的 class,容器設在這一頁的
    section 上)≥ 64rem 並排,以下上下疊。歌曲表的容器 < 50rem 時一首拆成多行,每格前面寫出平台名(沒有表頭可以對)。 ── */
-#page-playlists { container-type: inline-size; }
+#page-playlists, #page-sync { container-type: inline-size; }
 .pl__cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; margin-top: 1rem; align-items: start; }
 @container (min-width: 64rem) { .pl__cols { grid-template-columns: 16rem minmax(0, 1fr); } }
 .pl__left, .pl__right { min-width: 0; }
@@ -327,6 +327,46 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .pl__about-list li { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: .6rem .8rem; }
 .pl__about-list strong { color: var(--text-hi); font-weight: 600; }
 .pl__about-list span { color: var(--muted); }
+/* 同步頁(計畫 2026-10-01-sync-page-redesign.md §2):頁首的小示意圖、在同步的清單、平台清單的列、進階。顏色與元件沿用既有的 */
+.sync__intro { display: grid; gap: .75rem; margin: 1rem 0 0; }
+.sync__diagram { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: var(--t-14); }
+.sync__box { border: 1px solid var(--line-hi); border-radius: var(--r); padding: .2rem .7rem; background: var(--surface); }
+.sync__box--hub { border-color: var(--accent); color: var(--text-hi); background: rgb(var(--accent-rgb) / .1); }
+.sync__arrow { color: var(--muted); font-family: var(--mono); }
+.sync__banner:empty { display: none; }
+.sync__banner { margin-top: 1rem; }
+.sync__sec { margin-top: 1.5rem; }
+.sync__sec > .card__sub { margin-top: 0; }
+.sync__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; }
+.sync__head .card__sub, .sync__head .page__note { margin: 0; }
+.sync__head > .btn { margin-left: auto; }
+.sync__linked { border: 1px solid var(--line); border-radius: var(--r); container-type: inline-size; margin-top: .5rem; }
+.sync__row { display: grid; grid-template-columns: minmax(0, 1fr) 6rem minmax(0, 1.4fr) auto; gap: .25rem .75rem; align-items: center; padding: .45rem .9rem; border-top: 1px solid var(--line); font-size: var(--t-14); }
+.sync__row:first-child { border-top: 0; }
+.sync__row[hidden] { display: none; }
+.sync__row a:first-child { color: var(--text-hi); font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
+.sync__row a:first-child:hover { text-decoration: underline; }
+.sync__count { color: var(--muted); font-size: var(--t-12); }
+.sync__to, .sync__why { color: var(--muted); font-size: var(--t-12); overflow-wrap: anywhere; }
+@container (max-width: 40rem) {
+  .sync__row { grid-template-columns: minmax(0, 1fr) auto; }
+  .sync__to, .sync__why { grid-column: 1 / -1; }
+}
+.sync__item { display: grid; gap: .15rem; flex: none; }
+.sync__item[hidden] { display: none; }
+.sync__item .pl__item small { grid-column: 1 / -1; color: var(--muted); font-size: var(--t-12); }
+.sync__item > .wiz__link { justify-self: start; margin-left: .9rem; font-size: var(--t-12); }
+.sync__lists { display: grid; gap: .5rem; margin-top: 1rem; }
+.sync__lists > .btn { justify-self: start; }
+.sync__start { margin: 0; padding-left: 1.2rem; display: grid; gap: .35rem; font-size: var(--t-14); }
+.sync__guide { display: grid; gap: .75rem; margin-bottom: .75rem; }
+.pl__right > .pl__flow-card { margin-bottom: .75rem; }
+.sync__preview { margin-top: .5rem; }
+.sync__adv { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: var(--t-14); }
+.sync__adv summary { color: var(--accent); cursor: pointer; width: max-content; max-width: 100%; }
+.sync__adv-acts { display: grid; gap: .5rem; margin-bottom: 1rem; }
+.sync__adv-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; }
+.sync__adv-row .page__note { margin: 0; }
 .pl__songs { container-type: inline-size; }
 .pl__tbl { table-layout: fixed; }
 .pl__c-pos { width: 3rem; }

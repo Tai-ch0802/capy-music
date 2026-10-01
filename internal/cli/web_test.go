@@ -1370,7 +1370,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// pl dedup 沒有 --all:清單留空時不可以送它。
 	sync := read("js/pages/sync.js")
-	if !strings.Contains(sync, `verb === 'dedup' ? '' : ' --all'`) {
+	if !strings.Contains(sync, `verb === 'dedup' ? [] : ['--all']`) {
 		t.Error("dedup 不可以帶 --all(cobra 會直接退回)")
 	}
 	// doctor 會彈系統對話框,不可以由切頁動作觸發。

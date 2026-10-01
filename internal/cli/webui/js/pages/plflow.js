@@ -25,6 +25,20 @@ export function links(pl) {
   return Object.entries(pl.links || {}).filter(([, id]) => typeof id === 'string' && id);
 }
 
+// indexExport:export 的輸出(Drive 檔的合併形式)→ { masters, track, devices }。masters 照檔名排(export 的鍵序本來就是決定性的;
+// 不用 localeCompare:它的結果隨瀏覽器的 ICU 版本浮動,review #62);track(cid) 沿墓碑找勝者(清單檔裡可能還是敗者的 cid:
+// 別台裝置寫的、還沒被 pull 改指勝者;寫入時已壓平,一步就到);devices 是 manifest.json 的裝置 id → 名稱。
+export function indexExport(files) {
+  const tr = files['tracks.json'] || {};
+  const tracks = tr.tracks || {};
+  const merged = tr.merged || {};
+  return {
+    masters: Object.keys(files).filter((k) => k.startsWith('pl__')).sort().map((k) => files[k]),
+    track: (cid) => tracks[merged[cid] || cid] || {},
+    devices: ((files['manifest.json'] || {}).devices) || [],
+  };
+}
+
 // driveState:Google Drive 本身的狀態。auth status 的 google.state 是 ok | missing | keychain_error;keychain_error 不是「沒連」,
 // 是要到帳號頁處理的錯誤(同帳號頁,review #62;#122 review 第 2 點)。讀不到 auth = 不知道,當成 ok。
 export function driveState(auth) {

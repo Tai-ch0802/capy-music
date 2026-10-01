@@ -621,10 +621,11 @@ await scenario('8k', async () => {
       await settle();
 
       const table = { type: 'table', header: ['DIR', 'ACTION', 'CID', 'REASON_CODE'], rows: [['push', 'add', 'c1', 'push'], ['push', 'skip', 'c2', 'no_mapping']] };
-      script = { 'pl sync --all --dry-run': { events: [table, { type: 'exit', code: 2, message: 'x', reason: 'done' }] } };
+      script = { export: stdout(exported), 'pl sync --all --dry-run': { events: [table, { type: 'exit', code: 2, message: 'x', reason: 'done' }] } };
       const sy = page(initSync);
       await settle();
-      for (const b of sy.children[2].children) { b.click(); await settle(); } // 從平台更新 / 推到平台 / 雙向同步 / 去除重複
+      const adv = (k) => { let x = null; const w = (n) => { for (const c of n.children || []) { if (!x && c.dataset?.adv === k) x = c; w(c); } }; w(sy); return x; };
+      for (const k of ['pull', 'push', 'sync', 'dedup']) { adv(k).click(); await settle(); } // 進階:從平台更新 / 推到平台 / 雙向同步 / 去除重複
       const all = sy.querySelector('select').children[0];
       return { seen, labels, calls: [...calls], all: [all.value, all.textContent], rowsDrawn };
     } finally {
@@ -647,9 +648,10 @@ await scenario('8k', async () => {
     return s;
   };
   const want = (r, lang, list) => { for (const s of list) check(r.seen.has(s), `${lang}:頁面上少了「${s}」:${JSON.stringify([...r.seen])}`); };
+  const reread = ['auth status --json', 'export']; // 同步頁進頁、每次寫入收尾後都安靜重讀
   const cmds = JSON.stringify(['auth status --json', 'export', 'pl list --provider spotify', 'auth status --json', 'export', 'auth status --json', 'export', 'search x --provider spotify --limit 10', 'search y --provider spotify --limit 10',
-    'search z --provider spotify --limit 10', 'play --id sp1 --provider spotify',
-    'pl pull --all --dry-run', 'pl push --all --dry-run', 'pl sync --all --dry-run', 'pl dedup --dry-run']);
+    'search z --provider spotify --limit 10', 'play --id sp1 --provider spotify', ...reread,
+    'pl pull --all --dry-run', ...reread, 'pl push --all --dry-run', ...reread, 'pl sync --all --dry-run', ...reread, 'pl dedup --dry-run', ...reread]);
 
   const zh = await paint();
   want(zh, 'zh-TW', ['我的清單', '每份清單的正本存在你自己的 Google Drive。正本可以連到每個平台(Spotify、Apple Music、YouTube Music)上各一份清單;同步時,兩邊的新增、刪除與順序會互相帶過去。',
@@ -657,15 +659,17 @@ await scenario('8k', async () => {
     'road trip(2 首)', '(本機沒有這首的資料)', '同步這份清單', 'Google Drive 正本', '連到這些平台上的清單', '已連結', '這台電腦還沒讀過你 Google Drive 上的正本。到「同步」按「讀回正本(會順便讀已登入的平台)」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。',
     '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
     '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
-    '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
-    '從平台更新', '推到平台', '雙向同步', '去除重複',
-    '「去除重複」整理的是 capy 保管的那一份(不分平台);上面選的平台只決定這次去檢查哪個平台上的重複——沒選到的平台這次不會檢查。清單留空時會讓你挑一個。要把清單搬到另一個平台,請到「搬家」。',
-    '選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。', '兩邊已經一致,沒有要改的東西。', '1 筆變更(跳過的不算)',
+    '同步', '讓同一份清單在幾個平台上保持一樣:改了任何一邊,按「同步」,其他地方跟著改。加歌、拿掉、換位置、改名之前,capy 一定先列出要改什麼,你確認了才寫;建一份新的正本或平台清單並連上,按下去就會做。',
+    '正本在你的 Google Drive', '從哪一份開始都可以', '同步後用正本的名字', '在同步的清單', '全部同步', '同步', '讓一份清單開始同步', '從哪個平台開始', '從左邊挑一份清單',
+    '正本名稱或 pid(留空 = 全部)', '全部平台', '正本', '只看變更,先不寫入', '從平台更新', '推到平台', '雙向同步', '去除重複',
+    '「去除重複」整理的是正本裡重複的歌(只留第一份),再推到連著的平台;上面選的平台只決定這次去檢查哪個平台上的重複,沒選到的平台這次不會檢查。正本留空時會讓你挑一份;填「平台:清單」(例如 spotify:清單 ID)只檢查那份平台清單,不改任何東西。',
+    '1 筆變更(跳過的不算)',
     '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。']);
   check([...zh.seen].some((s) => s.startsWith('export 的輸出不是 JSON:') && s.length > 'export 的輸出不是 JSON:'.length), 'zh-TW:export 不是 JSON 要說出來並附上原因');
   const st = t('webui.move.label.status');
+  const rl = [st, '讀取你的清單'];
   check(JSON.stringify(zh.labels) === JSON.stringify([st, '讀取你的清單', '讀取 Spotify 上的清單', st, '讀取你的清單', st, '讀取你的清單',
-    '在 Spotify 找「x」', '在 Spotify 找「y」', '在 Spotify 找「z」', '播放「Song One」', '把平台上的變更拉回來', '把 capy 保管的清單推到平台', '雙向同步', '去除重複的歌']), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
+    '在 Spotify 找「x」', '在 Spotify 找「y」', '在 Spotify 找「z」', '播放「Song One」', ...rl, '把平台上的變更拉回來', ...rl, '把 capy 保管的清單推到平台', ...rl, '雙向同步', ...rl, '去除重複的歌', ...rl]), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
   check(JSON.stringify(zh.calls) === cmds && JSON.stringify(zh.all) === JSON.stringify(['', '全部平台']), `送出的命令與「全部平台」的值:${JSON.stringify(zh.calls)} ${JSON.stringify(zh.all)}`);
   check(JSON.stringify(zh.rowsDrawn) === JSON.stringify([['sp1', 'Song One', '播放']]), `zh-TW 的搜尋結果表:${JSON.stringify(zh.rowsDrawn)}`);
   const zhChecking = await checking();
@@ -770,7 +774,9 @@ await scenario('8n', async () => {
   };
   const sy = mk();
   initSync(sy, api, con, () => {}, { list: ['spotify', 'apple'], current: 'spotify' });
-  const [pullBtn, pushBtn, syncBtn] = sy.children[2].children;
+  await idle();
+  const adv = (k) => { let x = null; walk(sy, (c) => { if (!x && c.dataset?.adv === k) x = c; }); return x; }; // 進階區的控制項(不靠 DOM 位置)
+  const [pullBtn, pushBtn, syncBtn] = ['pull', 'push', 'sync'].map(adv);
   pullBtn.click();
   await idle();
   check(allByClass(sy, 'chg__act')[0]?.textContent === '加進正本(從 Spotify)', `同步頁 pl pull 的表:依按下的那一顆給方向:${allByClass(sy, 'chg__act')[0]?.textContent}`);
@@ -799,10 +805,9 @@ await scenario('8n', async () => {
   const rl = anchors(rt[rt.length - 1]).map(label);
   check(JSON.stringify(rl) === JSON.stringify(['在 Spotify 上聽「Song A」', `在 Spotify 上聽「${T2}」`]), `resolve:map 列說歌名、review 列說候選的 id:${JSON.stringify(rl)}`);
   // pl dedup spotify:<清單>:平台清單的去重報告沒有 PROVIDER 欄,但每一列都是 Spotify 的
-  script = { 'pl dedup spotify:mix': table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['1', T1, 'Song A', 'a', 'r', 'duplicate']]) };
-  sy.querySelector('input').value = 'spotify:mix';
-  walk(sy, (c) => { if (c.type === 'checkbox') c.checked = false; }); // 平台清單的報告不能配 --dry-run
-  sy.children[2].children[3].click(); // 去除重複
+  script = { 'pl dedup -- spotify:mix': table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['1', T1, 'Song A', 'a', 'r', 'duplicate']]) };
+  adv('name').value = 'spotify:mix'; // 平台清單的報告:勾著「只看變更」也只送名稱(帶旗標會被 dedup.go 退回)
+  adv('dedup').click();
   await idle();
   const rep = anchors(sy.querySelector('.tbl-wrap'));
   check(rep.length === 1 && rep[0].href === track(T1), `Spotify 清單的去重報告也連:${JSON.stringify(rep.map((a) => a.href))}`);
@@ -1826,6 +1831,249 @@ await scenario('8t', async () => {
   dp.refresh('a');
   await idle(); await tick(5); await idle();
   check(active().startsWith('road trip'), `回到這一頁帶 a:換成 road trip:${active()}`);
+});
+
+// 8u. 同步頁(計畫 2026-10-01-sync-page-redesign.md §4 的 node 情境,T2):進頁只安靜讀 auth 與 export;在同步的清單照 export 畫;
+//     Google Drive 沒連 / 讀不到時不送 pl list;平台卡選了才讀、沒登入的不讀;每列狀態;選清單才 pl show、讀過不重送;納入的兩個命令與
+//     下一步;只連一個平台時主要鈕不是同步;逐平台同步與 --all 失敗後的改法;讀回正本;看看有沒有重複;進階區的 args 與收尾;路由。
+await scenario('8u', async () => {
+  const { initSync } = await import('./pages/sync.mjs');
+  const SP1 = '4uLU6hMCjMI75M1A2tKUQC', SP2 = '7qiZfU4dY1lWllzX7mPBI3', SP3 = '37i9dQZF1DXcBWIGoYBM5M', SP6 = '1A2B3C4D5E6F7G8H9I0J1K';
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const anchors = (n) => { const o = []; if (n) walk(n, (c) => { if (c.tagName === 'A') o.push(c); }); return o; };
+  const byText = (n, text) => { let b = null; if (n) walk(n, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
+  const idle = () => new Promise((r) => con.idle(r));
+  const settle = async () => { for (let k = 0; k < 4; k++) { await idle(); await tick(5); } };
+  const out = (o) => ({ events: [{ type: 'stdout', text: JSON.stringify(o) }, done] });
+  const table = (header, rows, end = done) => ({ events: [{ type: 'table', header, rows }, end] });
+  const exit = (code, message = '', reason = 'done') => ({ type: 'exit', code, message, reason });
+  const LH = ['ID', 'NAME', 'TRACKS', 'OWNER'];
+  const TH = ['ID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'];
+  const PH = ['ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
+  const AUTH = { google: { state: 'ok', device_id: 'devA' }, spotify: { state: 'ok' }, apple: { state: 'ok' }, youtube: { state: 'ok', channel_id: 'UCme' } };
+  const tracks = { c1: { title: 'Song A', mappings: { spotify: { id: SP1 } } } };
+  const data = (extra = {}) => ({
+    'pl__a.json': { pid: 'a', name: 'road trip', links: { spotify: SP3, youtube: 'UCme/PLy' }, items: [{ cid: 'c1' }, { cid: 'c1' }] },
+    'pl__b.json': { pid: 'b', name: 'mix', links: { apple: 'p.B' }, items: [{ cid: 'c1' }] },
+    'pl__c.json': { pid: 'c', name: 'Chill', links: {}, items: [] },
+    'tracks.json': { tracks }, ...extra });
+  const SPOTIFY_LISTS = table(LH, [[SP3, 'road trip', '2', 'me'], [SP2, 'Workout', '5', 'me'], ['3zzzzzzzzzzzzzzzzzzzzz', 'CHILL', '3', 'me'], [SP6, 'Road Trip', '1', 'me'], ['5mmmmmmmmmmmmmmmmmmmmm', 'MIX', '4', 'me']]);
+  const providers = { list: ['spotify', 'apple', 'local', 'youtube'], current: 'spotify' };
+  const radios = (r, name) => { const o = []; walk(r, (c) => { if (c.tagName === 'INPUT' && c.type === 'radio' && c.name === name) o.push(c); }); return o; };
+  const pickPlat = async (sy, p) => { radios(sy, 'sync-plat')[providers.list.indexOf(p)].l.change(); await settle(); };
+  const pickList = async (sy, name) => { const i = allByClass(sy, 'sync__item').findIndex((w) => allByClass(w, 'pl__name')[0]?.textContent === name); radios(sy, 'sync-list')[i].l.change(); await settle(); };
+  const sec = (sy, i) => allByClass(sy, 'sync__sec')[i];
+  const status = (box) => allByClass(box, 'pl__flow-status').map((x) => x.textContent).join(' | ');
+  const sent = () => bodies.filter((b) => b.args).map((b) => b.args.join(' '));
+  let page = null;
+  const open = async (more = {}, auth = AUTH, d = data(), arg = '') => {
+    reset();
+    script = { 'auth status --json': out(auth), export: out(d), 'pl list --provider spotify': SPOTIFY_LISTS, ...more };
+    const sy = mk();
+    page = initSync(sy, api, con, () => {}, providers, arg);
+    await settle();
+    return sy;
+  };
+
+  // ── 進頁:只安靜讀 auth 與 export(主控台不多區塊);在同步的清單照 export 畫,零網路
+  const blocks0 = allByClass(root, 'block').length;
+  let sy = await open();
+  check(JSON.stringify(calls) === JSON.stringify(['auth status --json', 'export']) && allByClass(root, 'block').length === blocks0, `進頁只送 auth status 與 export、都 quiet:${JSON.stringify(calls)}`);
+  check(sy.textContent.includes('加歌、拿掉、換位置、改名之前,capy 一定先列出要改什麼,你確認了才寫;建一份新的正本或平台清單並連上,按下去就會做。'), 'lead 照實說哪些會先問、哪些按下去就做');
+  const rws = allByClass(sy, 'sync__row');
+  check(rws.map((r) => r.dataset.pid).join() === 'a,b' && rws.every((r) => byText(r, '同步')), `在同步的清單:只列有連結的、每列一顆同步:${rws.map((r) => r.dataset.pid)}`);
+  check(anchors(rws[0]).some((a) => a.href === '#/playlists/a') && rws[0].textContent.includes('Spotify · YouTube Music'), '名稱連到「我的清單」那一份、列出連到哪些平台');
+  check(byText(sec(sy, 0), '全部同步') && !byText(sec(sy, 0), '全部同步').disabled, '有可以同步的清單:全部同步可以按');
+
+  // 連著的平台這台全都沒登入:那一列不給同步、說原因、指到帳號頁
+  sy = await open({}, { ...AUTH, apple: { state: 'missing' } });
+  const mixRow = allByClass(sy, 'sync__row').find((r) => r.dataset.pid === 'b');
+  check(!byText(mixRow, '同步') && mixRow.textContent.includes('這台電腦沒有登入 Apple Music') && anchors(mixRow).some((a) => a.href === '#/account'), `全沒登入的列:${mixRow && mixRow.textContent}`);
+
+  // 沒有任何連結:說從下面開始、全部同步停用
+  sy = await open({}, AUTH, { 'pl__c.json': { pid: 'c', name: 'Chill', links: {}, items: [] }, 'tracks.json': { tracks } });
+  check(sy.textContent.includes('還沒有清單在同步。從下面挑一份平台上的清單開始。') && byText(sec(sy, 0), '全部同步').disabled, '沒有連結:說從下面開始、全部同步停用');
+
+  // ── Google Drive:沒連 / 讀不到登入資料。都不送 pl list
+  sy = await open({}, { ...AUTH, google: { state: 'missing' } });
+  await pickPlat(sy, 'spotify');
+  check(sy.textContent.includes('capy 把正本存在你的 Google Drive,同步之前要先連接它。') && !sent().some((c) => c.startsWith('pl list')) && byText(sec(sy, 0), '全部同步').disabled,
+    `Google Drive 沒連:說要先連、不讀平台清單、全部同步停用:${JSON.stringify(sent())}`);
+  sy = await open({}, { ...AUTH, google: { state: 'keychain_error' } }, data(), '');
+  check(sy.textContent.includes('讀不到你的 Google Drive 登入資料') && !sy.textContent.includes('先連接') && !byText(sy, '讀回正本(會順便讀已登入的平台)'), 'Google 讀不到登入資料:不說先連接、不給讀回正本');
+
+  // ── 平台卡:選了才讀、讀過不重讀;每列狀態只看正本
+  sy = await open({ 'pl list --provider apple': table(LH, [['p.B', 'mix', '-', ''], ['p.X', 'Gym', '-', '']]) });
+  check(!sent().some((c) => c.startsWith('pl list')), '還沒選平台:不讀');
+  await pickPlat(sy, 'spotify');
+  const states = Object.fromEntries(allByClass(sy, 'sync__item').map((w) => [allByClass(w, 'pl__name')[0].textContent, w.dataset.state]));
+  check(JSON.stringify(states) === JSON.stringify({ 'road trip': 'linked', Workout: 'unlinked', CHILL: 'same_name', 'Road Trip': 'same_name_taken', MIX: 'same_name' }), `每列的狀態(只差大小寫也算同名):${JSON.stringify(states)}`);
+  check(allByClass(sy, 'sync__item').every((w) => !allByClass(w, 'pl__item')[0].children.some((c) => c.tagName === 'A')) && anchors(allByClass(sy, 'sync__item')[1]).some((a) => a.href === `https://open.spotify.com/playlist/${SP2}`),
+    'Spotify 的列連回去,連結是單選的兄弟、不包進去');
+  await pickPlat(sy, 'apple');
+  check(allByClass(sy, 'sync__item').map((w) => allByClass(w, 'pl__count')[0].textContent).join('|') === '|' && !sy.textContent.includes('- 首'), 'Apple 的 TRACKS 是 -:首數留白');
+  await pickPlat(sy, 'spotify');
+  check(sent().filter((c) => c === 'pl list --provider spotify').length === 1, `讀過的平台不重讀:${JSON.stringify(sent())}`);
+  sy = await open({}, { ...AUTH, youtube: { state: 'missing' } });
+  await pickPlat(sy, 'youtube');
+  check(!sent().includes('pl list --provider youtube') && sy.textContent.includes('這台電腦沒有登入 YouTube Music'), '沒登入的平台:不讀、說原因');
+  sy = await open({}, { ...AUTH, youtube: { state: 'ok' } });
+  await pickPlat(sy, 'youtube');
+  check(!sent().includes('pl list --provider youtube') && sy.textContent.includes('重新登入一次'), 'YouTube 缺帳號資料:不讀、請人重新登入');
+
+  // ── 選清單才 pl show;讀過不重送;預覽表的列與欄
+  sy = await open({ [`pl show ${SP2} --provider spotify`]: table(TH, [[SP1, 'Song A', 'Artist', 'Album', '215000'], ['spotify:local:x:y:z:1', 'Local', '', '', '0']]) });
+  await pickPlat(sy, 'spotify');
+  await pickList(sy, 'Workout');
+  const pv = allByClass(sy, 'sync__preview')[0];
+  const prow = pv.querySelector('tbody').children;
+  check(sent().includes(`pl show ${SP2} --provider spotify`) && prow.length === 2 && allByClass(prow[0], 'pl__dur')[0].textContent === '3:35' && anchors(pv).length === 1,
+    `預覽表:兩首、時長 m:ss、只有 Spotify id 的那首連回去:${prow.length}`);
+  const card = allByClass(sec(sy, 1), 'pl__flow-card')[0];
+  check(card.dataset.state === 'unlinked' && byText(card, '納入 capy') && byText(card, '看看這份有沒有重複') && card.textContent.includes('這一步按下去就做'), '還沒納入:引導卡照實說、主要鈕是納入');
+  await pickList(sy, 'road trip');
+  await pickList(sy, 'Workout');
+  check(sent().filter((c) => c === `pl show ${SP2} --provider spotify`).length === 1, '讀過的清單不重讀');
+
+  // ── 看看有沒有重複:pl dedup <平台>:<清單>,不帶任何旗標;有表時接下一步、沒有時一句
+  script[`pl dedup spotify:${SP2}`] = table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['2', SP1, 'Song A', 'a', 'r', 'dup_id']]);
+  byText(sec(sy, 1), '看看這份有沒有重複').click();
+  await settle();
+  check(JSON.stringify(bodies.filter((b) => b.args?.[1] === 'dedup').at(-1).args) === JSON.stringify(['pl', 'dedup', `spotify:${SP2}`]) && status(sec(sy, 1)).includes('這份清單裡有 1 首重複。這只是檢查,沒有改任何東西。'),
+    `看看有沒有重複:命令與結果:${status(sec(sy, 1))}`);
+  script[`pl dedup spotify:${SP2}`] = { events: [done] };
+  byText(sec(sy, 1), '看看這份有沒有重複').click();
+  await settle();
+  check(status(sec(sy, 1)) === '這份清單裡沒有重複。', `沒有重複:${status(sec(sy, 1))}`);
+
+  // ── 納入:兩個命令、名稱放在 -- 後面、提示在這一頁;做完接下一步;只連一個平台時主要鈕不是同步
+  script[`pl link --new-only -- Workout spotify:${SP2}`] = { events: [done] };
+  script['pl pull -- Workout'] = { events: [{ type: 'table', header: PH, rows: [['add', 'spotify', 'Workout', '0', 'c1', SP1, 'Song A', 'X', 'r', 'added_on_platform']] }, { type: 'prompt', id: 1, kind: 'confirm', title: '?' }, { type: 'prompt_closed', id: 1, reason: 'answered' }, done] };
+  script.export = out(data({ 'pl__w.json': { pid: 'w', name: 'Workout', links: { spotify: SP2 }, items: [{ cid: 'c1' }] } }));
+  let before = bodies.length;
+  byText(sec(sy, 1), '納入 capy').click();
+  await settle();
+  check(JSON.stringify(bodies.slice(before).filter((b) => b.args?.[0] === 'pl').map((b) => b.args)) === JSON.stringify([['pl', 'link', '--new-only', '--', 'Workout', `spotify:${SP2}`], ['pl', 'pull', '--', 'Workout']]),
+    `納入的兩個命令:${JSON.stringify(bodies.slice(before).map((b) => b.args))}`);
+  check(status(sec(sy, 1)).includes('完成:「Workout」已經交給 capy 保管') && status(sec(sy, 1)).includes('下一步:從下面挑一個平台「建一份」'), `納入完成接上下一步:${status(sec(sy, 1))}`);
+  check(allByClass(sec(sy, 1), 'pl__flow-prompts').length > 0 && globalThis.location.hash === '', '納入的提示畫在同步頁裡(不切到主控台)');
+  const one = allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.dataset.links);
+  const primaries = (c) => { const o = []; walk(c, (x) => { if (x.tagName === 'BUTTON' && x.classList.contains('btn--primary')) o.push(x.textContent); }); return o; };
+  check(one && one.dataset.links === '1' && !primaries(one).includes('同步這份清單') && one.textContent.includes('這份目前只連著 Spotify,同步要有第二個平台')
+    && allByClass(one, 'wiz__step')[2]?.dataset.state === 'now', `剛納入、只連一個平台:主要鈕不是同步、停在第 3 步:${one && primaries(one)}`);
+  await pickList(sy, 'road trip');
+  const two = allByClass(sec(sy, 1), 'pl__flow-card').find((c) => c.dataset.links);
+  check(two && two.dataset.links === '2' && JSON.stringify(primaries(two)) === JSON.stringify(['同步這份清單']) && byText(two, '去除重複'), `連兩個平台:主要鈕是同步這份清單、另有去除重複:${two && primaries(two)}`);
+  check(anchors(sec(sy, 1)).some((a) => a.href === '#/playlists/a'), '連著正本:可以在「我的清單」打開那一份');
+
+  // ── 逐平台:連著的平台這台沒登入時,先說明、按了才一家一家同步(不送整份)
+  sy = await open({}, { ...AUTH, youtube: { state: 'missing' } });
+  before = bodies.length;
+  byText(allByClass(sy, 'sync__row')[0], '同步').click();
+  await settle();
+  check(sec(sy, 0).textContent.includes('這台電腦沒有登入 YouTube Music,全部一起同步會失敗。') && bodies.length === before, '有連著的平台沒登入:先說明,不送命令');
+  byText(sec(sy, 0), '只同步有登入的平台').click();
+  await settle();
+  check(JSON.stringify(sent().filter((c) => c.startsWith('pl sync'))) === JSON.stringify(['pl sync a --provider spotify']), `只同步有登入的平台:${JSON.stringify(sent())}`);
+  // 全部同步以 exit 1 結束:多一顆「改成一個平台一個平台同步」;逐平台時某一家失敗就記下、換下一家
+  sy = await open({ 'pl sync --all': { events: [exit(1, 'Error: 還沒設 local_root')] }, 'pl sync --all --provider apple': { events: [exit(1, 'Error: Apple 讀不到')] } });
+  byText(sec(sy, 0), '全部同步').click();
+  await settle();
+  check(status(sec(sy, 0)).includes('還沒設 local_root') && !status(sec(sy, 0)).includes('Error:') && byText(sec(sy, 0), '改成一個平台一個平台同步'), `全部同步失敗:說原因、給逐平台:${status(sec(sy, 0))}`);
+  byText(sec(sy, 0), '改成一個平台一個平台同步').click();
+  await settle();
+  check(JSON.stringify(sent().filter((c) => c.startsWith('pl sync --all --provider'))) === JSON.stringify(['pl sync --all --provider spotify', 'pl sync --all --provider apple', 'pl sync --all --provider youtube'])
+    && status(sec(sy, 0)).includes('有平台沒有同步成功:Apple Music:Apple 讀不到'), `逐平台:照平台順序、失敗的記下來繼續:${JSON.stringify(sent())} ${status(sec(sy, 0))}`);
+
+  // ── 這台沒有副本:讀回正本。範圍是 auth 說 ok 的音樂平台;exit 1 換下一家,第一個成功就停並重讀
+  const noCopy = { events: [exit(1, 'Error: 本機沒有資料')] };
+  sy = await open({ 'pl pull --all --provider spotify': { events: [exit(1, 'Error: Spotify 讀不到')] } }, { ...AUTH, youtube: { state: 'missing' } }, data());
+  script.export = noCopy;
+  page.refresh();
+  await settle();
+  check(sec(sy, 0).textContent.includes('這台電腦還沒有正本的副本') && byText(sec(sy, 0), '讀回正本(會順便讀已登入的平台)'), '沒有副本:說明並給讀回正本');
+  script.export = out(data());
+  byText(sec(sy, 0), '讀回正本(會順便讀已登入的平台)').click();
+  await settle();
+  check(JSON.stringify(sent().filter((c) => c.startsWith('pl pull'))) === JSON.stringify(['pl pull --all --provider spotify', 'pl pull --all --provider apple'])
+    && status(sec(sy, 0)).includes('完成:已經讀回正本') && allByClass(sy, 'sync__row').length === 2, `讀回正本:Spotify 失敗換 Apple、成功就停並重讀:${JSON.stringify(sent())} ${status(sec(sy, 0))}`);
+  // 取消:照實說還是沒有副本,按鈕還在
+  sy = await open({ 'pl pull --all --provider spotify': { events: [exit(2, 'Error: 待套用')] } }, AUTH, data());
+  script.export = noCopy;
+  page.refresh();
+  await settle();
+  byText(sec(sy, 0), '讀回正本(會順便讀已登入的平台)').click();
+  await settle();
+  check(status(sec(sy, 0)).includes('你按了取消') && status(sec(sy, 0)).includes('所以這台電腦還是沒有副本') && byText(sec(sy, 0), '讀回正本(會順便讀已登入的平台)'), `讀回正本被取消:${status(sec(sy, 0))}`);
+  // exit 0 但重讀還是沒有副本(寫本機快取失敗只印警告)
+  script['pl pull --all --provider spotify'] = { events: [done] };
+  byText(sec(sy, 0), '讀回正本(會順便讀已登入的平台)').click();
+  await settle();
+  check(status(sec(sy, 0)).includes('所以這台電腦還是沒有副本') && !status(sec(sy, 0)).includes('完成'), `成功了卻還是沒有副本:照實說:${status(sec(sy, 0))}`);
+  // 一個音樂平台都沒登入:不送命令,指到帳號頁
+  sy = await open({}, { google: { state: 'ok' }, spotify: { state: 'missing' }, apple: { state: 'missing' }, youtube: { state: 'missing' } }, data());
+  script.export = noCopy;
+  page.refresh();
+  await settle();
+  before = bodies.length;
+  byText(sec(sy, 0), '讀回正本(會順便讀已登入的平台)').click();
+  await settle();
+  check(!sent().slice(before).some((c) => c.startsWith('pl pull')) && sec(sy, 0).textContent.includes('先到「帳號」登入任一個音樂平台'), '沒有登入任何平台:不送命令、指到帳號頁');
+
+  // ── 進階:args 陣列、flag 在 -- 前面;只看變更 + exit 2 說 dry_note;去重的平台清單形式只送名稱、收尾說是檢查
+  sy = await open({ 'pl sync --dry-run -- road trip': { events: [exit(2, 'Error: 待套用')] }, 'pl sync -- road trip': { events: [exit(2, 'Error: 待套用')] },
+    'pl dedup -- apple:p.B': table(['POS', 'ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'], [['1', 'i.1', 'Song A', 'a', 'r', 'dup_id']]) });
+  const adv = (k) => { let x = null; walk(sy, (c) => { if (!x && c.dataset?.adv === k) x = c; }); return x; };
+  const advBox = allByClass(sy, 'sync__adv')[0];
+  adv('name').value = 'road trip';
+  adv('sync').click();
+  await settle();
+  check(sent().includes('pl sync --dry-run -- road trip') && status(advBox).includes('以上是會改的東西,還沒有寫入') && !status(advBox).includes('你按了取消'), `勾著只看變更:${status(advBox)}`);
+  adv('dry').checked = false;
+  adv('sync').click();
+  await settle();
+  check(sent().includes('pl sync -- road trip') && status(advBox).includes('你按了取消'), `沒勾只看變更、按了取消:${status(advBox)}`);
+  adv('name').value = 'apple:p.B';
+  adv('dry').checked = true;
+  adv('provider').value = 'spotify';
+  adv('dedup').click();
+  await settle();
+  check(sent().includes('pl dedup -- apple:p.B') && status(advBox).includes('這只是檢查') && !status(advBox).includes('已經是最新的'), `去重的平台清單形式:不帶旗標、收尾說是檢查:${JSON.stringify(sent().slice(-3))} ${status(advBox)}`);
+  adv('name').value = '';
+  adv('provider').value = 'apple';
+  adv('pull').click();
+  await settle();
+  check(sent().includes('pl pull --all --provider apple --dry-run'), `留空 = 全部、平台在名稱前:${JSON.stringify(sent().slice(-3))}`);
+
+  // ── 路由:#/sync/apple 預選 Apple 並讀它的清單;回到這一頁帶別的平台就換過去
+  sy = await open({ 'pl list --provider apple': table(LH, [['p.B', 'mix', '-', '']]) }, AUTH, data(), 'apple');
+  check(radios(sy, 'sync-plat')[1].checked === true && sent().includes('pl list --provider apple'), `#/sync/apple:預選 Apple 並讀它的清單:${JSON.stringify(sent())}`);
+  page.refresh('spotify');
+  await settle();
+  check(sent().includes('pl list --provider spotify'), '回到這一頁帶 spotify:換過去並讀');
+
+  // ── 英文:頁面沒有中文、label 是進行式
+  i18nFile = './i18n-en.json';
+  const labels = [];
+  try {
+    await loadI18n(api);
+    con.run = (line, hooks, opts = {}) => { labels.push(opts.label); return Console.prototype.run.call(con, line, hooks, opts); };
+    sy = await open({ [`pl show ${SP2} --provider spotify`]: table(TH, [[SP1, 'Song A', 'Artist', 'Album', '215000']]) });
+    await pickPlat(sy, 'spotify');
+    await pickList(sy, 'Workout');
+    byText(sec(sy, 1), 'Check for duplicates')?.click();
+    await settle();
+    const texts = [];
+    walk(sy, (c) => { if (c._text) texts.push(c._text); if (c.placeholder) texts.push(c.placeholder); });
+    const CJK = /[　-〿㐀-鿿＀-￯]/;
+    for (const x of [...texts, ...labels]) check(!CJK.test(x), `en:同步頁還有中文:「${x}」`);
+    for (const x of labels) check(/^[A-Z][a-z]*ing /.test(x), `en:label 要是進行式:「${x}」`);
+    check(labels.length >= 5 && texts.some((x) => x.includes('Start syncing a playlist')), `en:流程真的跑過:${labels.length}`);
+  } finally {
+    delete con.run;
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
 });
 
 // 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,

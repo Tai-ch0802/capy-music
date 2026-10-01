@@ -419,7 +419,7 @@ node 替身沒有排版,寬度與捲動留給 §8 人工驗收。
 - **T2 同步頁改版**(合併那一格照 Q1 的 C 出貨,不等 CLI):頁首三則與示意圖、在同步的清單、平台卡與清單、預覽表、納入 / 同步這份 / 在 X 建一份 / 看看有沒有重複 / 去除重複(Q11)、逐平台串接、讀回正本、進階修正、路由 `#/sync/<p>` 與 `#/playlists/<pid>`、回到頁面重讀;搬家的「讓兩邊之後保持同步 →」先藏起來;清單頁 `create.same_name` / `platforms.same_name` 的「請用搬家」改成「先在 {platform} 上把那份改名,capy 才會建新的;原本那份不會被同步」(Q2 修好之前,不指向會重排的路)。
 - **Q2 的 CLI 小修**(獨立 PR,可以跟 T2 並行):migrate 加進既有清單時,沿用的同名正本有歌而目的平台沒有 base 就擋下、零寫入;同 PR 修正 `migrate.go:217,416` 用 `pl.Links[src.prov] != ""` 卻沒比對 `src.id`(應跟 `:237` 的 follow 一致)。
 - **T3 CLI `pl link --merge`**(Q1=B,等決策 62):`--merge` 本體、`push.reason.*`(含新的 `removed_extra`)、README ×2 命令表與 reason_code 表(`pl link --merge` 的 add / skip 列、`removed_in_master` / `moved_in_master` / `renamed_in_master` 的意思、「哪些命令的 TSV 有 reason_code」清單)、隱私權政策 §3 核對、ARCHITECTURE 的 P12 / 決策 62 / 附錄 A、CLAUDE.md 決策 38 的例外句、§3.4「同 PR 要改的句子」全部(README ×2、ARCHITECTURE、指南 ×2 與 `-update`、網站首頁 ×2、搬家頁兩句);動到網站就照 CLAUDE.md 合併後看線上。
-- **T4 接上合併流程與文件**:兩頁的「連到 X 上已經有的清單」與同名卡;搬家的「保持同步」放回來並帶 `#/sync/<目的平台>`;指南 ×2(`docs/guide.html:396` 與英文版)、`go test ./site/ -run TestGuideOnSiteIsCurrent -update`、重發兩個指南 Artifact、合併後看線上 /guide、/en/guide、/guide.css;README ×2 的頁面清單。
+- **T4 接上合併流程與文件**:兩頁的「連到 X 上已經有的清單」與同名卡;搬家的「保持同步」放回來並帶 `#/sync/<目的平台>`;搬家精靈遇到目的地有同名清單、而同名正本有歌時(Q2 的 #134 之後「建新的」與「加進它」都會被擋),不再預選「加進它」,改指同步頁的「連到 X 上已經有的清單」(#134 留言定的);指南 ×2(`docs/guide.html:396` 與英文版)、`go test ./site/ -run TestGuideOnSiteIsCurrent -update`、重發兩個指南 Artifact、合併後看線上 /guide、/en/guide、/guide.css;README ×2 的頁面清單。
 
 每個 PR 都跑 `go build ./...`、`gofmt -l .`、`go mod tidy -diff`、`go test ./...`,送出前跑三視角自審。選 B′(Q1)要另外加 CLI 與頁面分支,本節還沒排,定案後補。
 

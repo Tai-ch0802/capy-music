@@ -7,7 +7,7 @@
 import { el, btn, providerName, emptyState, pageHead } from './common.js';
 import { spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
 import { parseStatus } from './account.js';
-import { COLUMNS, norm, mappingOf, links, driveState, loggedOut, relogin, listState, cell, filterBox, makeFlow, readLists, linkFlows } from './plflow.js';
+import { COLUMNS, norm, mappingOf, links, indexExport, driveState, loggedOut, relogin, listState, cell, filterBox, makeFlow, readLists, linkFlows } from './plflow.js';
 import { lineSplitter, wikiRenderer } from './wiki.js';
 import { t } from '../i18n.js';
 
@@ -121,18 +121,9 @@ export function initPlaylists(root, api, con, notice, providers, arg) {
   }
 
   function render(files) {
-    const tr = files['tracks.json'] || {};
-    const tracks = tr.tracks || {};
-    const merged = tr.merged || {};
-    // 清單檔裡可能還是敗者的 cid(別台裝置寫的、還沒被 pull 改指勝者):沿墓碑找勝者。寫入時已壓平,一步就到(canon.Tracks.Merged)。
-    const track = (cid) => tracks[merged[cid] || cid] || {};
-    // 不重排:export 的鍵序本來就是決定性的(map 鍵排序),而 localeCompare 的結果會隨瀏覽器的 ICU 版本浮動,
-    // 同一份資料在不同瀏覽器上會不一樣。清單集合與清單內容都照原順序(review #62)。
-    const pls = Object.keys(files)
-      .filter((k) => k.startsWith('pl__'))
-      .sort()
-      .map((k) => files[k]);
-    st.devices = ((files['manifest.json'] || {}).devices) || [];
+    // 清單集合照檔名排、清單內容照原順序;敗者的 cid 沿墓碑找勝者(plflow.js 的 indexExport)
+    const { masters: pls, track, devices } = indexExport(files);
+    st.devices = devices;
     masters = pls;
     renderPlatforms(); // 讀過平台清單的話,「連著哪一份」跟著新的正本更新
     left.replaceChildren();
