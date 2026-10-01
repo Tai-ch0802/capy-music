@@ -674,7 +674,7 @@
     "other": "The master copy {name} ({pid}) is linked to {src}, so the master copy wins: pulled the source's changes into it first ({pulled} pulled), then pushed {count} tracks to {dst}"
   },
   "migrate.summary.source_linked": "The source {platform}:{id} is linked to this master copy too (not a one-time copy): from now on, capy pl sync {name_arg} keeps both sides in step with the master copy",
-  "migrate.summary.source_unlinked": "The source isn't linked (a one-time copy). To follow later changes on {platform}: capy pl link {name_arg} {platform}:{id}, then capy pl sync {name_arg}",
+  "migrate.summary.source_unlinked": "The source isn't linked (a one-time copy). To follow later changes on {platform}: capy pl link --merge {name_arg} {platform}:{id} (the source is arranged like the master copy; you see the table and confirm first), then capy pl sync {name_arg}",
   "migrate.summary.unmapped": {
     "one": "{count} track has no match on {platform} and wasn't pushed: review it with capy resolve {name_arg} --provider {platform} --review, then push it with capy pl sync {name_arg} --provider {platform}",
     "other": "{count} tracks have no match on {platform} and weren't pushed: review them with capy resolve {name_arg} --provider {platform} --review, then push them with capy pl sync {name_arg} --provider {platform}"
@@ -1403,7 +1403,7 @@
   "webui.move.truths.local.title": "Playlists on your disk can move too",
   "webui.move.truths.no_delete.text": "The source playlist isn't changed; at the destination, capy only adds, never removes or reorders.",
   "webui.move.truths.no_delete.title": "Nothing of yours is deleted",
-  "webui.move.truths.order.text": "The order you chose is your memory; nothing in capy ever shuffles it.",
+  "webui.move.truths.order.text": "The order you chose is your memory; moving never shuffles it. The only time capy rearranges a playlist is a merge you confirm (joining a master copy to a playlist that already has songs).",
   "webui.move.truths.order.title": "The order stays the same",
   "webui.move.truths.setup.text": "capy uses your own account credentials, stored in this computer's keychain. Nobody holds them for you, so nobody can charge you for that either.",
   "webui.move.truths.setup.title": "Connecting accounts takes a few minutes",

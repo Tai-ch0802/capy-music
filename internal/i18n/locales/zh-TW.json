@@ -631,7 +631,7 @@
     "other": "正本 {name}({pid})連著 {src},以正本為準、pull 了 {pulled} 筆來源變更,推了 {count} 首到 {dst}"
   },
   "migrate.summary.source_linked": "來源 {platform}:{id} 也連著這個正本(不是一次性複製):之後 capy pl sync {name_arg} 會讓兩邊都跟上正本",
-  "migrate.summary.source_unlinked": "來源沒有連結(一次性複製)。之後要跟著 {platform} 的變動:capy pl link {name_arg} {platform}:{id},再 capy pl sync {name_arg}",
+  "migrate.summary.source_unlinked": "來源沒有連結(一次性複製)。之後要跟著 {platform} 的變動:capy pl link --merge {name_arg} {platform}:{id}(來源會排成正本的樣子,先列表給你確認),再 capy pl sync {name_arg}",
   "migrate.summary.unmapped": {
     "other": "{count} 首在 {platform} 沒有對應、這次沒推:capy resolve {name_arg} --provider {platform} --review 裁決後,capy pl sync {name_arg} --provider {platform} 推過去"
   },
@@ -1324,7 +1324,7 @@
   "webui.move.truths.local.title": "硬碟裡的歌單也可以搬",
   "webui.move.truths.no_delete.text": "來源的清單不會被更動;對目的地只新增,不移除、不重排。",
   "webui.move.truths.no_delete.title": "不會刪你的東西",
-  "webui.move.truths.order.text": "你排的順序是你的記憶,capy 沒有任何路徑會打亂它。",
+  "webui.move.truths.order.text": "你排的順序是你的記憶,搬家不會打亂它;capy 唯一會重排清單的,是你確認過的合併(把正本連到一份已經有歌的清單)。",
   "webui.move.truths.order.title": "順序不會變",
   "webui.move.truths.setup.text": "capy 用的是你自己的帳號憑證,存在這台電腦的鑰匙圈裡。沒有人替你代管,所以也沒有人能跟你收費。",
   "webui.move.truths.setup.title": "連接帳號要花幾分鐘",
