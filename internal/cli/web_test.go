@@ -205,10 +205,20 @@ func blockingHook(t *testing.T, fs *fakeSpotify) (entered <-chan struct{}, relea
 
 func waitFor(t *testing.T, what string, ch <-chan struct{}) {
 	t.Helper()
+	waitWithin(t, what, ch, 5*time.Second)
+}
+
+// jobDoneWait:等整個命令跑完(不是只等它進 hook)。放行後 search 還要從零建 state.db(13 個 CREATE 加 user_version,
+// 各自一個寫交易、各自建 / fsync / 刪 journal)再寫最近搜尋;Windows -race 的 CI 上 SQLite 重的套件比本機慢 5–7 倍、
+// 偶爾整台 runner 的 I/O 卡住,5 秒不夠(PR #89 與 #127 都在「job 結束」逾時)。真的卡死照樣會失敗,只是晚一點報。
+const jobDoneWait = 30 * time.Second
+
+func waitWithin(t *testing.T, what string, ch <-chan struct{}, d time.Duration) {
+	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("等 %s 逾時", what)
+	case <-time.After(d):
+		t.Fatalf("等 %s 逾時(%v)", what, d)
 	}
 }
 
@@ -691,15 +701,12 @@ func TestWebGlobalStderrAfterJobEndsFallsBackToOsStderr(t *testing.T) {
 	defer release()
 	s, c := startWeb(t)
 	fb := s.fallbackStderr.(*lockedBuffer)
-	done := make(chan []map[string]any, 1)
-	go func() {
-		_, ev, _ := c.run(map[string]any{"args": []string{"search", "x"}})
-		done <- ev
-	}()
+	done := make(chan struct{})
+	go func() { defer close(done); c.run(map[string]any{"args": []string{"search", "x"}}) }()
 	waitFor(t, "job 進 hook", entered)
 	job := s.current()
 	release()
-	waitFor(t, "job 結束", func() <-chan struct{} { ch := make(chan struct{}); go func() { <-done; close(ch) }(); return ch }())
+	waitWithin(t, "job 結束", done, jobDoneWait)
 	if err := job.sse.event(map[string]any{"type": "stderr", "text": "遲到的退避提示"}); err == nil {
 		t.Error("job 結束後串流要標 closed,遲到的寫入要回錯而不是寫進已結束的 ResponseWriter")
 	}
