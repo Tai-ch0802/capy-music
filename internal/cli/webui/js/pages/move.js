@@ -430,10 +430,8 @@ export function initMove(root, api, con, notice, providers) {
         live.appendChild(el('p', 'page__note', t('webui.move.missed', { count: r.missed.length, provider: providerName(state.to) })));
         live.appendChild(missedList(r.missed));
       }
+      // 「讓兩邊之後保持同步」先拿掉:讓來源也持續同步要把正本連到一份已經有歌的清單,那要等 pl link --merge(計畫 2026-10-01 §5 T4)
       acts.append(btn(t('webui.move.again'), 'btn--primary', () => { state.result = null; enterStep2(); }));
-      const sync = el('a', 'wiz__link', t('webui.move.keep_synced'));
-      sync.href = '#/sync';
-      acts.appendChild(sync);
     } else {
       // 「取消」是 exit 2;關掉提示(✕)或等到逾時是 huh.ErrUserAborted → exit 1 + 英文的 user aborted(review #68)。
       // 三種都發生在寫入之前,都是同一種收尾;靠 prompt_closed 的 reason 分辨,不比對那句英文。

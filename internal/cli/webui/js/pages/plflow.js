@@ -25,6 +25,20 @@ export function links(pl) {
   return Object.entries(pl.links || {}).filter(([, id]) => typeof id === 'string' && id);
 }
 
+// indexExport:export 的輸出(Drive 檔的合併形式)→ { masters, track, devices }。masters 照檔名排(export 的鍵序本來就是決定性的;
+// 不用 localeCompare:它的結果隨瀏覽器的 ICU 版本浮動,review #62);track(cid) 沿墓碑找勝者(清單檔裡可能還是敗者的 cid:
+// 別台裝置寫的、還沒被 pull 改指勝者;寫入時已壓平,一步就到);devices 是 manifest.json 的裝置 id → 名稱。
+export function indexExport(files) {
+  const tr = files['tracks.json'] || {};
+  const tracks = tr.tracks || {};
+  const merged = tr.merged || {};
+  return {
+    masters: Object.keys(files).filter((k) => k.startsWith('pl__')).sort().map((k) => files[k]),
+    track: (cid) => tracks[merged[cid] || cid] || {},
+    devices: ((files['manifest.json'] || {}).devices) || [],
+  };
+}
+
 // driveState:Google Drive 本身的狀態。auth status 的 google.state 是 ok | missing | keychain_error;keychain_error 不是「沒連」,
 // 是要到帳號頁處理的錯誤(同帳號頁,review #62;#122 review 第 2 點)。讀不到 auth = 不知道,當成 ok。
 export function driveState(auth) {
@@ -327,12 +341,6 @@ export function playlistLink(p, id, name) {
   return a;
 }
 
-export function moveLink() {
-  const a = el('a', 'btn btn--ghost', t('webui.playlists.platforms.go_move'));
-  a.href = '#/move';
-  return a;
-}
-
 // linkFlows:連結面板(正本連到哪幾份平台清單)與它發起的寫入流程(同步這份、找對應、逐首決定、在 X 建一份、納入)。
 // flow 是 makeFlow 的實例;state 是頁面的 { auth, devices, platLists }(用到時才讀);reload 是寫入收尾後的重讀;
 // 每個流程畫在呼叫端給的 box 裡(那一頁的流程區,提示也畫在那裡)。
@@ -413,13 +421,14 @@ export function linkFlows({ flow, state, providers, reload }) {
     no.type = 'button';
     no.addEventListener('click', () => box.replaceChildren());
     // 「各平台上的清單」讀過、那個平台已經有同名(不分大小寫,同 CLI)的清單:CLI 會停下來不建,不給「開始」,先說清楚。
+    // 不指去搬家:搬家加進同名的既有清單會擋下或重排正本(計畫 2026-10-01 §0.3、Q2),出路是先在平台上改名。
     // 同名的那份確定是空的(曲數 0,例如上次建好了但連結沒寫進 Drive)照給「開始」:CLI 會停在第一步、給接回去的 pl link
     // 命令,那是這種情況唯一的復原路(#125 review 第 3 點)。
     const lists = state.platLists;
-    const dup = lists && lists[p] && lists[p].rows.some((r) => same(r.name, pl.name) && r.tracks !== '0');
+    const dup = lists?.[p]?.rows?.some((r) => same(r.name, pl.name) && r.tracks !== '0'); // 讀取中分不出來:照沒讀過處理,同名由 CLI 擋
     if (dup) {
       card.appendChild(el('p', null, t('webui.playlists.create.same_name', { platform, name: pl.name })));
-      acts.append(moveLink(), no);
+      acts.append(no);
     } else {
       card.appendChild(el('p', null, t('webui.playlists.create.explain', { platform, name: pl.name, start: t('webui.playlists.create.start') })));
       if (p === 'apple') card.appendChild(el('p', 'page__note', t('webui.playlists.create.apple'))); // 決策 49:可能,不是必然
@@ -456,7 +465,8 @@ export function linkFlows({ flow, state, providers, reload }) {
 
   // adopt:納入 = 建一份新的空正本並連上(--new-only:名字已經是某份正本就擋,頁面讀的 export 可能過時)→ 把歌拉進來(第一次 pull
   // 採平台順序,新正本是空的,所以是對的)。名稱放在 -- 後面:以 - 開頭的清單名不被當成旗標。
-  function adopt(p, r, box) {
+  // next:做完之後接在完成那句後面的下一步(同步頁:去其他平台建一份);清單頁不給。
+  function adopt(p, r, box, next) {
     if (flow.blocked()) return;
     const platform = providerName(p);
     const name = r.name;
@@ -469,7 +479,8 @@ export function linkFlows({ flow, state, providers, reload }) {
       flow.step(f, ['pl', 'pull', '--', name], t('webui.playlists.label.adopt_pull', { name }), (c2, o2, w2) => {
         if (c2 === 0) {
           markStep(f, 2);
-          say(f, { text: w2 ? t('webui.playlists.adopt.done', { name, platform }) : t('webui.playlists.adopt.done_empty', { name, platform }) });
+          const done = w2 ? t('webui.playlists.adopt.done', { name, platform }) : t('webui.playlists.adopt.done_empty', { name, platform });
+          say(f, { text: [done, next].filter(Boolean).join(' ') });
         } else say(f, o2, t('webui.playlists.adopt.stop2', { name, button: t('webui.playlists.sync') })); // 留下一份連著的空正本:照實說下一步
         reload();
       });
