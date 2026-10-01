@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -278,10 +279,13 @@ func runLinkMerge(cmd *cobra.Command, args []string, dryRun, yes, force bool) er
 }
 
 // mergeMatch:第 1 步的前半(計畫 §3.4),不打網路。比的是「正本有、L 裡依身分規則認不出來、這個平台還沒有 mapping」的歌
-// (釘成不可得的不算),對 L 裡認不出是正本哪首的曲目。ISRC 命中 95 分、其餘 RankFuzzy,≥85 才算;一對一:同一首 L 曲目只給分數
-// 最高的那首正本歌(同分取正本裡先出現的),輸的落到目錄搜尋。這樣 YouTube 同一首有音訊版與 MV 兩個 id 時,認的是 L 裡那一支。
-// 最佳候選已經屬於別的既有曲目(例如另一份正本從這個平台觀測過它)時不自動對應:要合併兩首,決策 21 只由人決定——列成一筆
-// review(candidate_taken)交給逐首決定,也不再搜目錄(不然目錄先排到另一個版本就會自動對上,L 同時留兩支)。
+// (釘成不可得的不算),對 L 裡認不出是正本哪首的曲目。ISRC 命中 95 分、其餘 RankFuzzy,≥85 才算。一對一用貪婪指派:所有
+// (正本歌, L 曲目)配對依 ISRC 命中優先、分數由高到低、同分取正本裡先出現的、再同分取 L 裡先出現的,兩邊都還沒被指派才成立——
+// 比輸的正本歌改試它下一個還沒被佔走的 L 曲目(#137 review),都沒有才落到目錄搜尋;不然目錄回另一個版本時,L 自己那一支會被
+// 當成新歌接進來。這樣 YouTube 同一首有音訊版與 MV 兩個 id 時,認的也是 L 裡那一支。
+// 一首正本歌的最佳候選(它所有 ≥85 候選裡排第一的)已經屬於別的既有曲目(例如另一份正本從這個平台觀測過它)時不自動對應:要合併
+// 兩首,決策 21 只由人決定——列成一筆 review(candidate_taken)交給逐首決定,不參與指派、也不再搜目錄(不然目錄先排到另一個版本
+// 就會自動對上,L 同時留兩支)。屬於別首的 L 曲目也不指派給任何正本歌。
 // 回傳 map 列(依正本順序,還沒寫入)、要人裁決的 review 列,與 L 裡本來就認得的 cid。
 func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.Track) (matched, taken []resolveItem, inLive map[string]bool) {
 	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
@@ -291,17 +295,25 @@ func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.
 	}
 	inLive = map[string]bool{}
 	var cands []provider.Track
-	seen := map[string]bool{}
+	lpos := map[string]int{} // L 曲目的 provider id → 它在候選裡的順序(= L 的順序)
 	for _, t := range live {
 		cid := id.Resolve(prov, t.ProviderID, t.ISRC)
 		inLive[cid] = true
-		if master[cid] || seen[t.ProviderID] {
+		if _, dup := lpos[t.ProviderID]; master[cid] || dup {
 			continue
 		}
-		seen[t.ProviderID] = true
+		lpos[t.ProviderID] = len(cands)
 		cands = append(cands, t)
 	}
-	best := map[string]resolveItem{} // L 的 id → 目前認給的正本歌
+	type pair struct {
+		m, l, tier int // 正本歌的順序、L 曲目的順序;tier 1 = ISRC 命中,先於所有模糊比對
+		item       resolveItem
+	}
+	order := func(a, b pair) int {
+		return cmp.Or(cmp.Compare(b.tier, a.tier), cmp.Compare(b.item.score, a.item.score), cmp.Compare(a.m, b.m), cmp.Compare(a.l, b.l))
+	}
+	var pairs []pair
+	var songs []string // 參與比對的正本歌(cid),依正本順序
 	done := map[string]bool{}
 	for _, it := range pl.Items {
 		cid := id.Redirect(it.CID)
@@ -313,34 +325,48 @@ func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.
 		if m, has := tr.Mappings[prov]; has && (m.ID != "" || m.Pinned) {
 			continue
 		}
-		var cand provider.Track
-		score, source, code := 0, "", ""
+		mi := len(songs)
+		songs = append(songs, cid)
+		add := func(mine []pair, t provider.Track, tier, score int, source, code string) []pair {
+			return append(mine, pair{mi, lpos[t.ProviderID], tier, resolveItem{action: "map", cid: cid, prov: prov, track: tr, cand: &t, score: score, source: source, code: code}})
+		}
+		var mine []pair
 		if pick, ok := resolve.PickISRC(tr, cands); ok {
-			cand, score, source, code = pick, isrcConfidence, canon.SourceISRC, "isrc"
-		} else if ranked := resolve.RankFuzzy(tr, cands); len(ranked) > 0 {
-			cand, score, source, code = ranked[0].Track, ranked[0].Score, canon.SourceFuzzy, "fuzzy"
+			mine = add(mine, pick, 1, isrcConfidence, canon.SourceISRC, "isrc")
 		}
-		if score < autoThreshold {
+		for _, r := range resolve.RankFuzzy(tr, cands) {
+			if r.Score >= autoThreshold {
+				mine = add(mine, r.Track, 0, r.Score, canon.SourceFuzzy, "fuzzy")
+			}
+		}
+		if len(mine) == 0 {
 			continue
 		}
-		if owner := ownedBy(s, id, cid, prov, cand); owner != "" {
-			taken = append(taken, resolveItem{action: "review", cid: cid, prov: prov, track: tr, cand: &cand, score: score, source: source,
-				reason: i18n.T("resolve.reason.candidate_taken", "candidate", describe(cand), "cid", owner), code: "candidate_taken"})
+		slices.SortStableFunc(mine, order)
+		if best := mine[0].item; ownedBy(s, id, cid, prov, *best.cand) != "" {
+			best.action = "review"
+			best.reason, best.code = i18n.T("resolve.reason.candidate_taken", "candidate", describe(*best.cand), "cid", ownedBy(s, id, cid, prov, *best.cand)), "candidate_taken"
+			taken = append(taken, best)
 			continue
 		}
-		if prev, ok := best[cand.ProviderID]; ok && prev.score >= score {
-			continue
+		for _, p := range mine {
+			if ownedBy(s, id, cid, prov, *p.item.cand) == "" {
+				pairs = append(pairs, p)
+			}
 		}
-		best[cand.ProviderID] = resolveItem{action: "map", cid: cid, prov: prov, track: tr, cand: &cand, score: score, source: source, code: code}
 	}
-	byCID := map[string]resolveItem{}
-	for _, it := range best {
-		byCID[it.cid] = it
+	slices.SortStableFunc(pairs, order)
+	won := map[int]resolveItem{}
+	usedL := map[int]bool{}
+	for _, p := range pairs {
+		if _, ok := won[p.m]; ok || usedL[p.l] {
+			continue
+		}
+		won[p.m], usedL[p.l] = p.item, true
 	}
-	for _, it := range pl.Items {
-		if m, ok := byCID[id.Redirect(it.CID)]; ok {
-			matched = append(matched, m)
-			delete(byCID, m.cid)
+	for mi := range songs {
+		if it, ok := won[mi]; ok {
+			matched = append(matched, it)
 		}
 	}
 	return matched, taken, inLive

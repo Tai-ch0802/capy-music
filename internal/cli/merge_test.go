@@ -565,3 +565,31 @@ func TestLinkMergeMasterDuplicateKeepsPlaylistCopy(t *testing.T) {
 		t.Fatalf("份數跟正本一樣:%v", got)
 	}
 }
+
+// #137 review 第 1 點:一對一比輸的正本歌改試清單裡下一個分數 ≥85、還沒被佔走的曲目,不直接掉到目錄搜尋。正本 a「Blue Mornings」、
+// b「Blue Morning」,清單 [vx「Blue Mornin」, vy「Blue Morning」]:a→vy 99、a→vx 98、b→vy 100。只看第一名時 a 輸掉 vy、落到目錄
+// 搜尋對上另一個版本 vz,清單同時有 vx 與 vz、正本多一首;現在 a→vx、b→vy,兩列 dir=resolve,清單不多版本、正本不多一首。
+func TestLinkMergeLoserTriesNextCandidateInPlaylist(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	fs.retitle("a", "Blue Mornings")
+	fs.retitle("b", "Blue Morning")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	yt := youtubetest.New(t)
+	for _, tr := range [][2]string{{"vx", "Blue Mornin"}, {"vy", "Blue Morning"}, {"vz", "Blue Mornings"}} {
+		yt.AddTrack(youtubetest.Track{ID: tr[0], Title: tr[1], Artist: "artist", Album: "A", DurationMS: 200000})
+	}
+	yt.AddPlaylist("PLm", "通勤", "vx", "vy")
+	swapYouTube(t, yt)
+	out, _ := mustPull(t, "pl", "link", "--merge", "通勤", "youtube:PLm", "--yes")
+	if strings.Count(out, "resolve\tmap\t") != 2 || !strings.Contains(out, "resolve\tmap\tyoutube\t通勤\t\t"+fakeCID("a")+"\tvx\t") || !strings.Contains(out, "resolve\tmap\tyoutube\t通勤\t\t"+fakeCID("b")+"\tvy\t") {
+		t.Fatalf("a→vx、b→vy 兩列 dir=resolve:\n%s", out)
+	}
+	if got := yt.Rows("PLm"); !slices.Equal(got, []string{"vx", "vy"}) {
+		t.Fatalf("清單不多出另一個版本:%v", got)
+	}
+	if got := cidsOf(drivePlaylistNamed(t, dc, "通勤")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b")}) {
+		t.Fatalf("正本不多一首:%v", got)
+	}
+}
