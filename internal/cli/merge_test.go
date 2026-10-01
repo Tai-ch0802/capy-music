@@ -10,6 +10,7 @@ import (
 
 	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/drive"
+	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/provider/youtube/youtubetest"
 )
 
@@ -166,7 +167,7 @@ func TestLinkMergeShapesThePlaylistLikeTheMaster(t *testing.T) {
 	}
 }
 
-// 3 之二:正本有兩首很像的歌(原版 / Remaster,Norm 之後同名),清單裡的那一首只認給一首(正本裡先出現的),表上一列 dir=resolve;
+// 3 之二:正本有兩首很像的歌(原版 / Remaster,Norm 之後同名、同分),清單裡的那一首只認給一首(同分取正本裡先出現的),表上一列 dir=resolve;
 // 另一首在目錄搜尋撞到同一首(已經認給別人 = candidate_taken)進 review,不會自動合併、清單也不會多一份。
 func TestLinkMergeRemasterMatchesOnlyOne(t *testing.T) {
 	fs, dc, _ := pullWorld(t)
@@ -439,5 +440,110 @@ func TestLinkMergePartialWriteKeepsLinkAndSyncFinishes(t *testing.T) {
 	out, _ := mustPull(t, "pl", "sync", "通勤", "--yes")
 	if strings.Contains(out, "\tremove\t") || !slices.Equal(fs2.tracksOf("q1"), ids) {
 		t.Fatalf("sync 接著做完、不刪:%d\n%s", len(fs2.tracksOf("q1")), out)
+	}
+}
+
+// 3 之三(自審第 4 則):一對一照分數,不是先到先得——後出現、但分數較高的正本歌拿走清單裡那首;先出現的那首落到目錄搜尋(這裡搜不到)。
+func TestLinkMergeHigherScoreTakesThePlaylistTrack(t *testing.T) {
+	fs, _, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	fs.retitle("a", "Blue Mornin")
+	fs.retitle("b", "Blue Morning")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	yt := youtubetest.New(t)
+	yt.AddTrack(youtubetest.Track{ID: "y1", Title: "Blue Morning", Artist: "artist", Album: "A", DurationMS: 200000})
+	yt.AddPlaylist("PLm", "通勤", "y1")
+	swapYouTube(t, yt)
+	out, _, _ := runPull(t, "pl", "link", "--merge", "通勤", "youtube:PLm", "--dry-run")
+	if strings.Count(out, "resolve\tmap\t") != 1 || !strings.Contains(out, "resolve\tmap\tyoutube\t通勤\t\t"+fakeCID("b")+"\ty1\t") {
+		t.Fatalf("分數 100 的 b 拿走 y1:\n%s", out)
+	}
+	if !strings.Contains(out, "push\tskip\tyoutube\t通勤\t\t"+fakeCID("a")+"\t") {
+		t.Fatalf("a 落到目錄搜尋、搜不到,列成 skip:\n%s", out)
+	}
+}
+
+// 自審第 2 則(實驗 A):清單裡那首已經是另一份正本從 YouTube 觀測過的曲目(有自己的 cid)。修之前它不進清單內比對,目錄搜尋先排到
+// MV 就自動對上:PLm 同時有 MV 與音訊版、正本多一份、而且不問人。現在列成一筆要人裁決(candidate_taken),也不再搜目錄。
+func TestLinkMergeOwnedTrackInPlaylistGoesToReview(t *testing.T) {
+	yt, _ := ytMergeWorld(t, true, "y1")
+	yt.AddPlaylist("PLother", "其他", "y1")
+	mustPull(t, "pl", "link", "其他", "youtube:PLother")
+	mustPull(t, "pl", "pull", "其他", "--yes")
+	keys := stubMergeTTY(t, false)
+	if _, _, err := runPull(t, "pl", "link", "--merge", "通勤", "youtube:PLm"); exitOf(t, err) != 2 || !slices.Equal(*keys, []string{"migrate.confirm.review", "link.merge.confirm"}) {
+		t.Fatalf("終端機裡先問要不要逐首決定:%v %v", err, *keys)
+	}
+	_, errs := mustPull(t, "pl", "link", "--merge", "通勤", "youtube:PLm", "--yes")
+	if got := yt.Rows("PLm"); slices.Contains(got, "y0mv") || !strings.Contains(errs, "1 首要人裁決") {
+		t.Fatalf("不自動對到 MV、留給人裁決:%v\n%s", got, errs)
+	}
+}
+
+// 自審第 6 則:清單裡的歌已經屬於別的既有曲目時不自動合併(決策 21 只由人決定):沒有 dir=resolve 列、正本那首的 mapping 不動、
+// 列成要人裁決;沒決定就當成不同的歌接進正本。
+func TestLinkMergeDoesNotAutoMergeTrackOwnedByAnotherSong(t *testing.T) {
+	fs, dc, _ := pullWorld(t)
+	fs.set("p1", "通勤", "a")
+	fs.retitle("a", "Blue Morning")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	yt := youtubetest.New(t)
+	yt.AddTrack(youtubetest.Track{ID: "yX", Title: "Blue Morning", Artist: "artist", Album: "A", DurationMS: 200000})
+	yt.AddPlaylist("PLo", "別的", "yX")
+	yt.AddPlaylist("PLm", "上班聽", "yX")
+	swapYouTube(t, yt)
+	mustPull(t, "pl", "link", "別的", "youtube:PLo")
+	mustPull(t, "pl", "pull", "別的", "--yes")
+	out, errs := mustPull(t, "pl", "link", "--merge", "通勤", "youtube:PLm", "--yes")
+	if strings.Contains(out, "resolve\tmap\t") || !strings.Contains(out, "pull\tadd\tyoutube\t通勤\t1\tp:youtube:yX\tyX\t") || !strings.Contains(errs, "1 首要人裁決") {
+		t.Fatalf("不自動合併、列成要人裁決、當成不同的歌接進來:\n%s%s", out, errs)
+	}
+	if m, has := driveTracks(t, dc).Tracks[fakeCID("a")].Mappings["youtube"]; has {
+		t.Fatalf("a 的 youtube mapping 不動:%+v", m)
+	}
+}
+
+// 自審第 6 則之二:正本裡釘成不可得的歌(resolve pin … none),合併後不被清單裡同名的那首蓋掉;它列成 skip,清單裡那首當成不同的歌。
+func TestLinkMergeKeepsPinnedUnavailable(t *testing.T) {
+	_, dc := ytMergeWorld(t, false, "y1", "y9")
+	mustPull(t, "resolve", "pin", fakeCID("a"), "youtube:none")
+	out, _ := mustPull(t, "pl", "link", "--merge", "通勤", "youtube:PLm", "--yes")
+	if m := driveTracks(t, dc).Tracks[fakeCID("a")].Mappings["youtube"]; !m.Pinned || m.ID != "" {
+		t.Fatalf("a 仍釘成不可得:%+v", m)
+	}
+	if strings.Contains(out, "resolve\tmap\tyoutube\t通勤\t\t"+fakeCID("a")) || !strings.Contains(out, "push\tskip\tyoutube\t通勤\t\t"+fakeCID("a")+"\t") || !strings.Contains(out, "\tno_mapping\n") {
+		t.Fatalf("a 不被認成 y1、列成 skip:\n%s", out)
+	}
+}
+
+// 自審第 3、8 則:逐首決定在接進正本之前生效——接受清單裡那首,就認回正本、不另接一份,mapping 釘成那首;
+// 提示依序是要不要逐首決定、一次確認。終端機裡帶 --dry-run 不問逐首決定(答了也一定被丟掉)。
+func TestLinkMergeReviewAcceptsTrackInPlaylist(t *testing.T) {
+	_, fs2, dc := mergeWorld(t) // a、b 都不在 apple 目錄:兩首都要人裁決
+	fs2.set("q1", "上班聽", "c", "x")
+	fs2.retitle("x", "Paper Boat")
+	keys := stubMergeTTY(t, true)
+	orig := reviewPrompt
+	reviewPrompt = func(it resolveItem, _, _ int, _ func(string) ([]provider.Track, error)) (reviewDecision, error) {
+		if it.cid != fakeCID("b") {
+			return reviewDecision{kind: "skip"}, nil
+		}
+		return reviewDecision{kind: "manual", cand: &provider.Track{ProviderID: "x", Title: "Paper Boat", Artists: []string{"artist"}}}, nil
+	}
+	t.Cleanup(func() { reviewPrompt = orig })
+	if _, _, err := runPull(t, "pl", "link", "--merge", "通勤", "apple:q1", "--dry-run"); exitOf(t, err) != 2 || len(*keys) != 0 {
+		t.Fatalf("--dry-run 不問逐首決定、也不問確認:%v %v", err, *keys)
+	}
+	out, _ := mustPull(t, "pl", "link", "--merge", "通勤", "apple:q1")
+	if got := cidsOf(drivePlaylistNamed(t, dc, "通勤")); !slices.Equal(got, []string{fakeCID("a"), fakeCID("b"), fakeCID("c")}) || strings.Contains(out, "pull\tadd") {
+		t.Fatalf("接受清單裡那首 = 認回正本、不另接一份:%v\n%s", got, out)
+	}
+	if m := driveTracks(t, dc).Tracks[fakeCID("b")].Mappings["apple"]; m.ID != "x" || !m.Pinned || !slices.Equal(fs2.tracksOf("q1"), []string{"x", "c"}) {
+		t.Fatalf("mapping 釘成 x、清單排成正本的樣子:%+v %v", m, fs2.tracksOf("q1"))
+	}
+	if !slices.Equal(*keys, []string{"migrate.confirm.review", "link.merge.confirm"}) {
+		t.Fatalf("提示順序:%v", *keys)
 	}
 }

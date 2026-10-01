@@ -108,14 +108,17 @@ func runLinkMerge(cmd *cobra.Command, args []string, dryRun, yes, force bool) er
 		targets := []*canon.Playlist{pl}
 
 		// 1. 找對應:先跟 L 自己的曲目比,再搜目錄(只搜 L 裡認不出來的正本歌)
-		matched, inLive := mergeMatch(s, pl, prov, tracks)
+		matched, taken, inLive := mergeMatch(s, pl, prov, tracks)
 		applyMappings(s, matched)
-		probe := *pl
-		probe.Items = slices.DeleteFunc(slices.Clone(pl.Items), func(it canon.Item) bool { return inLive[it.CID] })
+		probe := *pl // L 裡已經認得的、在 L 裡找到候選卻要人裁決的,都不再搜目錄
+		probe.Items = slices.DeleteFunc(slices.Clone(pl.Items), func(it canon.Item) bool {
+			return inLive[it.CID] || slices.ContainsFunc(taken, func(r resolveItem) bool { return r.cid == it.CID })
+		})
 		items, err := planResolve(ctx, s, []*canon.Playlist{&probe}, prov, stderr)
 		if err != nil {
 			return err
 		}
+		items = append(taken, items...)
 		mapped := applyMappings(s, items)
 		inL := map[string]bool{}
 		for _, t := range tracks {
@@ -275,11 +278,12 @@ func runLinkMerge(cmd *cobra.Command, args []string, dryRun, yes, force bool) er
 }
 
 // mergeMatch:第 1 步的前半(計畫 §3.4),不打網路。比的是「正本有、L 裡依身分規則認不出來、這個平台還沒有 mapping」的歌
-// (釘成不可得的不算),對「L 裡認不出是哪首、也不屬於任何既有曲目」的曲目——屬於別的曲目就要合併,決策 21 只由人決定,
-// 留給 planResolve 列成 candidate_taken。ISRC 命中 95 分、其餘 RankFuzzy,≥85 才算;一對一:同一首 L 曲目只給分數最高的那首
-// 正本歌(同分取正本裡先出現的),輸的落到目錄搜尋。這樣 YouTube 同一首有音訊版與 MV 兩個 id 時,認的是 L 裡那一支。
-// 回傳 map 列(依正本順序,還沒寫入)與 L 裡本來就認得的 cid。
-func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.Track) (matched []resolveItem, inLive map[string]bool) {
+// (釘成不可得的不算),對 L 裡認不出是正本哪首的曲目。ISRC 命中 95 分、其餘 RankFuzzy,≥85 才算;一對一:同一首 L 曲目只給分數
+// 最高的那首正本歌(同分取正本裡先出現的),輸的落到目錄搜尋。這樣 YouTube 同一首有音訊版與 MV 兩個 id 時,認的是 L 裡那一支。
+// 最佳候選已經屬於別的既有曲目(例如另一份正本從這個平台觀測過它)時不自動對應:要合併兩首,決策 21 只由人決定——列成一筆
+// review(candidate_taken)交給逐首決定,也不再搜目錄(不然目錄先排到另一個版本就會自動對上,L 同時留兩支)。
+// 回傳 map 列(依正本順序,還沒寫入)、要人裁決的 review 列,與 L 裡本來就認得的 cid。
+func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.Track) (matched, taken []resolveItem, inLive map[string]bool) {
 	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
 	master := map[string]bool{}
 	for _, it := range pl.Items {
@@ -291,7 +295,7 @@ func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.
 	for _, t := range live {
 		cid := id.Resolve(prov, t.ProviderID, t.ISRC)
 		inLive[cid] = true
-		if _, owned := s.tracks.Tracks[cid]; master[cid] || owned || seen[t.ProviderID] {
+		if master[cid] || seen[t.ProviderID] {
 			continue
 		}
 		seen[t.ProviderID] = true
@@ -319,6 +323,11 @@ func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.
 		if score < autoThreshold {
 			continue
 		}
+		if owner := ownedBy(s, id, cid, prov, cand); owner != "" {
+			taken = append(taken, resolveItem{action: "review", cid: cid, prov: prov, track: tr, cand: &cand, score: score, source: source,
+				reason: i18n.T("resolve.reason.candidate_taken", "candidate", describe(cand), "cid", owner), code: "candidate_taken"})
+			continue
+		}
 		if prev, ok := best[cand.ProviderID]; ok && prev.score >= score {
 			continue
 		}
@@ -334,5 +343,5 @@ func mergeMatch(s *canonState, pl *canon.Playlist, prov string, live []provider.
 			delete(byCID, m.cid)
 		}
 	}
-	return matched, inLive
+	return matched, taken, inLive
 }
