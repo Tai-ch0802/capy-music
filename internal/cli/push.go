@@ -406,16 +406,13 @@ func applyPlans(ctx context.Context, s *canonState, plans []*pushPlan, stderr io
 // 半截寫入 + Drive 沒寫成兩件事都要講——那是規則 7 要防的狀態(平台缺一截、base 又沒落地),下一次 pull 會把缺的那截列成移除(計畫 Q24)。
 // next 是「接下來怎麼做」那句(push / sync 各自的說法);nextAfterHalf 是半截寫入那條「先 pl pull --dry-run 看清楚」之後接的那句。
 func finishPush(err error, applied int, touched bool, deferred error, next, nextAfterHalf string) error {
-	var ge *guardError
 	var driveMsg string
 	switch {
 	case err == nil:
 	case !touched:
 		return err
-	case errors.As(err, &ge):
-		driveMsg = i18n.T("push.drive.guard", "files", ge.Files)
 	default:
-		driveMsg = i18n.T("push.drive.failed", "err", err.Error())
+		driveMsg = driveFailure(err)
 	}
 	switch { // 傳 .Error() 不傳 error:原本是 %v、不包起來,exit code 照舊是 1(deferred 可能是確認期間變了的 BlockedError)
 	case driveMsg != "" && deferred != nil:
@@ -424,6 +421,15 @@ func finishPush(err error, applied int, touched bool, deferred error, next, next
 		return i18n.Errorf("push.err.written_but_drive", "count", applied, "drive", driveMsg, "next", next)
 	}
 	return deferred
+}
+
+// driveFailure:COMMIT 失敗的說法(版本守衛擋下 / 其他),接在「平台已經改了」後面。
+func driveFailure(err error) string {
+	var ge *guardError
+	if errors.As(err, &ge) {
+		return i18n.T("push.drive.guard", "files", ge.Files)
+	}
+	return i18n.T("push.drive.failed", "err", err.Error())
 }
 
 func newPlPushCmd() *cobra.Command {

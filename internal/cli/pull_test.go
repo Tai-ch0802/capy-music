@@ -48,6 +48,7 @@ type fakeSpotify struct {
 	snapshots    bool               // /me/playlists 附 snapshot_id(名稱或曲目一變就換;決策 57 的快取才會用上)
 	snapFixed    map[string]string  // 這些清單的 snapshot_id 釘死(模擬「版本沒換、內容卻變了」)
 	owners       map[string]string  // 清單 id → 擁有者 id;沒列的 = 登入的使用者 tai(GET /me 回的 id)
+	titles       map[string]string  // id → 清單裡回的歌名;沒列的 = song-<id>(假歌名彼此模糊比對分數很高,要測「不同的歌」時換掉)
 }
 
 // snapshotOf:清單版本——名稱或曲目任何變動就換(同 Spotify)。呼叫端持鎖。
@@ -163,16 +164,29 @@ func (f *fakeSpotify) index(id string) int {
 
 func fakeTrackJSON(id string) string { return fakeTrackJSONISRC(id, fakeISRC(id)) }
 
-func fakeTrackJSONISRC(id, isrc string) string {
-	return fmt.Sprintf(`{"id":%q,"name":"song-%s","duration_ms":200000,"explicit":false,"album":{"name":"A"},"artists":[{"name":"artist"}],"external_ids":{"isrc":%q}}`, id, id, isrc)
+func fakeTrackJSONISRC(id, isrc string) string { return fakeTrackJSONTitled(id, "song-"+id, isrc) }
+
+func fakeTrackJSONTitled(id, title, isrc string) string {
+	return fmt.Sprintf(`{"id":%q,"name":%q,"duration_ms":200000,"explicit":false,"album":{"name":"A"},"artists":[{"name":"artist"}],"external_ids":{"isrc":%q}}`, id, title, isrc)
 }
 
-// trackJSON:清單項目的 JSON;isrcAlias 裡的 id 借用別的 id 的 ISRC。呼叫端持鎖。
+// trackJSON:清單項目的 JSON;isrcAlias 裡的 id 借用別的 id 的 ISRC、titles 裡的 id 換歌名。呼叫端持鎖。
 func (f *fakeSpotify) trackJSON(id string) string {
+	isrc := fakeISRC(id)
 	if src, ok := f.isrcAlias[id]; ok {
-		return fakeTrackJSONISRC(id, fakeISRC(src))
+		isrc = fakeISRC(src)
 	}
-	return fakeTrackJSON(id)
+	return fakeTrackJSONTitled(id, cmp.Or(f.titles[id], "song-"+id), isrc)
+}
+
+// retitle:讓 id 在清單裡回這個歌名。
+func (f *fakeSpotify) retitle(id, title string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.titles == nil {
+		f.titles = map[string]string{}
+	}
+	f.titles[id] = title
 }
 
 func fakeCID(id string) string { return "i:TW" + strings.Repeat("0", 10-len(id)) + strings.ToUpper(id) }
