@@ -33,6 +33,12 @@ Release binaries include the project's own Google OAuth client: `capy auth login
 go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 ```
 
+`go install` puts `capy` in `$(go env GOPATH)/bin` (`~/go/bin` by default; `GOBIN` overrides it), and the official Go installer for Windows already adds `%USERPROFILE%\go\bin` to your user PATH. If your shell can't find `capy`, that directory needs to be on your PATH; on macOS with zsh, for example, run this once and open a new terminal:
+
+```bash
+echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zprofile
+```
+
 Binaries built from source (`go install`, your own `go build`, `capy update --dev`) **have no built-in Google client**: `capy auth login google` runs a wizard that walks you through creating your own OAuth client (see the Google section below). Homebrew / Scoop / winget aren't planned.
 
 ### Updating

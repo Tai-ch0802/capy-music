@@ -33,6 +33,12 @@ Releases 的 binary 內建專案自己的 Google OAuth client:`capy auth login g
 go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 ```
 
+`go install` 會把 `capy` 放在 `$(go env GOPATH)/bin`(預設是 `~/go/bin`;設了 `GOBIN` 就改放那裡),Windows 的 Go 官方安裝程式已經把 `%USERPROFILE%\go\bin` 加進使用者的 PATH。shell 找不到 `capy` 的話,這個目錄就得加進 PATH;以 macOS 的 zsh 為例,跑一次下面這行,再開一個新的終端機:
+
+```bash
+echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zprofile
+```
+
 從原始碼建的 binary(`go install`、自己 `go build`、`capy update --dev`)**沒有內建 Google client**:`capy auth login google` 會用精靈引導你建自己的 OAuth client(見下方 Google 一節)。Homebrew / Scoop / winget 不在計畫內。
 
 ### 更新
