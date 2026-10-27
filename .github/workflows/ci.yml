@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+# 最小權限:CI 只需要讀 repo。沒寫 permissions 時 GITHUB_TOKEN 權限取決於 repo 設定,
+# 明寫 contents: read,PR 裡被改壞的步驟也拿不到寫入權。
+permissions:
+  contents: read
 jobs:
   test:
     strategy:
@@ -11,8 +15,12 @@ jobs:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      # action 一律釘 commit SHA(tag 可被移動,參考 2025-03 tj-actions 事件);
+      # 版本註解留在行尾,Dependabot 升版時會一起改寫。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # 後續步驟不需要 git 憑證,不留在 .git/config
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
       - run: test -z "$(gofmt -l .)"
@@ -31,13 +39,15 @@ jobs:
     # 不必等到推 tag 才發現 release 壞掉;--snapshot 不建 Release、不上傳。
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+          persist-credentials: false
+      # --snapshot 不發布任何東西,這裡保留快取加速 PR;真正發版的 release.yml 已關快取
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: "~> v2"
