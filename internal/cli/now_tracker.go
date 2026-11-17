@@ -22,6 +22,9 @@ const (
 	// webNowUnsupportedTTL:平台不支援播放(local、Windows 上的 apple)——這個行程裡不會變,dropNow(換帳號、改設定)時才重來。
 	webNowUnsupportedTTL = 24 * time.Hour
 	webNowPlayTTL        = 10 * time.Second // Spotify 正在播:手機上暫停或換歌,最慢 10 秒出現;這首結束時提早重問
+	webNowAppleErrTTL    = 4 * time.Second  // Apple State 回錯(如 Music.app 沒開):4 秒節流,避免背景每 2 秒狂開 osascript 子行程
+	webNowAppleIdleTTL   = 3 * time.Second  // Apple 閒置或暫停:3 秒節流
+	webNowApplePlayTTL   = 2 * time.Second  // Apple 播放中:2 秒節流(期間由 advance 線性推進進度,settleNow 立即失效)
 	webNowSettle         = 3 * time.Second  // 播放命令後的安定期:Spotify 的播放器寫入是最終一致,剛按完可能讀到舊狀態
 )
 
@@ -209,8 +212,15 @@ func nowTTL(id string, st *provider.PlaybackState, err error) time.Duration {
 		return webNowUnsupportedTTL
 	case errors.As(err, &be):
 		return webNowFailTTL
-	case id == "apple": // Apple 的 State 錯只會來自 osascript(Music.app 沒開、沒有時長的串流),不會是 ErrAuthExpired
-		return 0
+	case id == "apple": // Apple 的 State 錯只會來自 osascript(Music.app 沒開、沒有時長的串流),不會是 ErrAuthExpired;分級節流省子行程
+		switch {
+		case err != nil:
+			return webNowAppleErrTTL
+		case st == nil || !st.Playing:
+			return webNowAppleIdleTTL
+		default:
+			return webNowApplePlayTTL
+		}
 	case errors.Is(err, provider.ErrAuthExpired):
 		return webNowFailTTL
 	case err != nil:

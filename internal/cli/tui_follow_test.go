@@ -51,12 +51,14 @@ func TestTUIFollowsThePlayingPlatform(t *testing.T) {
 // TestTUIControlsGoToTheShownPlatform:控制鍵送給狀態列上**顯示中**的那一家(applyState 記下的),不是 tracker 當下認定的那一家——
 // 在飛的那一輪可能已經換到別家,但畫面還沒顯示;按 n 的人要的是畫面上那首的下一首。
 func TestTUIControlsGoToTheShownPlatform(t *testing.T) {
+	advance := fakeNowClock(t)
 	sp := &watchFake{st: nowTrack(false, "昨天那首", 1000, 200000)}
 	ap := &watchFake{st: nowTrack(true, "Sugar", 30000, 235000)}
 	m := newTestTUI(t, sp)
 	m.trk.now["apple"] = ap
 	m = pollOnce(t, m)
 	ap.st, sp.st = nowTrack(false, "Sugar", 31000, 235000), nowTrack(true, "昨天那首", 1000, 200000)
+	advance(3 * time.Second)
 	_ = m.poll()() // tracker 已經換到 Spotify,這一輪的結果還沒進畫面
 	if p := m.trk.shown.Load(); p == nil || *p != "spotify" {
 		t.Fatalf("前提:tracker 已經換到 spotify:%v", p)
@@ -436,6 +438,7 @@ func TestTUISlowRoundSaysSoThenDelivers(t *testing.T) {
 // TestTUIHungStateStillStalls:【delta 審查】State 卡到逾時(10 s)比畫面等的上限(3 s)久:那一輪的錯誤也要送到、照算失敗,
 // 連續幾次就停擺、叫使用者按 r——不能只是一直說「等待平台回應」。Apple 的結果不快取(有效期 0),每輪都是真的問到的。
 func TestTUIHungStateStillStalls(t *testing.T) {
+	advance := fakeNowClock(t)
 	shrinkRoundWait(t, 10*time.Millisecond)
 	recordPrintln(t)
 	f := newNowFakeAs("apple", nil)
@@ -446,7 +449,10 @@ func TestTUIHungStateStillStalls(t *testing.T) {
 	trk.timeout = 40 * time.Millisecond
 	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "apple", "apple", trk, watchPollSpotify)
 	m.frozen = true
-	for range tuiMaxFails {
+	for i := range tuiMaxFails {
+		if i > 0 {
+			advance(5 * time.Second)
+		}
 		m = applyAll(t, m, within(t, 5*time.Second, "一輪", m.poll()))
 	}
 	if !m.stalled || m.fails != tuiMaxFails {

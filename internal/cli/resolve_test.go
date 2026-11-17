@@ -558,6 +558,9 @@ func TestResolveReviewAbortWritesNothing(t *testing.T) {
 
 // manual 搜尋打 API 失敗(429 / 未登入):這筆當搜不到略過,不中斷整輪、前面的裁決不丟。
 func TestResolveReviewManualSearchFailureSkips(t *testing.T) {
+	origWait := provider.Wait
+	provider.Wait = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { provider.Wait = origWait })
 	fs, dc, _ := resolveWorld(t)
 	stubReview(t, func(it resolveItem, search func(string) ([]provider.Track, error)) reviewDecision {
 		if it.cid == fakeCID("a") {

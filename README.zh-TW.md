@@ -183,6 +183,7 @@ capy pl push 通勤 [--dry-run] [--yes] [--force] / capy pl push --all [--provid
 capy pl sync 通勤 [--dry-run] [--yes] [--force] / capy pl sync --all [--provider spotify]   # 先 pull 再 push 的一輪:一張表、一次確認;cron 放這個
 capy pl dedup 通勤 [--dry-run] [--yes] [--force]   # 去掉正本裡重複的曲目(同平台 id 或同 ISRC;保留第一份、順序不動),再推到可寫的平台;沒有重複就零寫入
 capy pl dedup apple:冬日暖調                     # 直接讀平台清單、只報告哪幾首重複(不碰 Drive、不需要連結);要由 capy 去掉就用上一行的寫法
+capy pl add [通勤] [<provider>:<曲目 ID> | --now] [--provider apple] [--push] [--allow-dup] [--dry-run] [--yes]   # 把曲目(或正在播的歌)加在正本尾端;--push 同一輪推到可寫的已連結平台
 capy migrate 公路旅行 --from spotify --to apple[:既有清單] [--dry-run] [--yes]   # 把清單搬到另一個平台(兩個方向都行;新建或加進既有;順序不動、只新增、不動來源);見下方「跨平台複製清單」
 capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
 capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
@@ -241,13 +242,15 @@ capy update [--dev]                      # 見上方「更新」
 
 `capy pl dedup` 去掉清單裡重複的曲目。重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首);保留第一次出現的那份、拿掉後面的,**剩下的相對順序一個都不動——清單順序是你加歌的記憶,capy 沒有任何路徑會排序或打亂它**(去重只拿掉後出現的份;同步只在平台自己重排時才跟著動)。`capy pl dedup apple:冬日暖調` 這種寫法直接讀平台清單、只印報告(非 TTY 是 TSV:`pos id title artists reason reason_code`,`pos` 從 0 起、是重複的那份(該拿掉的)的位置,保留的那份寫在 `reason` 裡,`reason_code` 是 `dup_id` 或 `dup_isrc`;有沒有重複 exit code 都是 0),不碰 Drive、不需要連結——要由 capy 去掉,就把清單連到正本再用下一種寫法;這種寫法配 `--yes` / `--force` / `--dry-run` / `--provider` 是錯誤(它們是 canonical 那條路的 flag)。給 canonical 清單名(`capy pl dedup 通勤`)則是 `pl sync` 的一輪中間多一步:先 pull、正本去重、再 push 把多出來的份從可寫的平台拿掉;一張表(`dir` 多一種 `dedup`,那些列的 `pos` 是正本裡的位置)、一次確認,exit code 同 `pl sync`;正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 `pl sync`,stderr 會說;`--provider` 沒選到或讀不到的平台這次沒檢查,stderr 也會說,不會被算成「沒重複」)。刪除閾值去重與 push 各算,`--force` 越過(去掉的份會在同一個指令裡推到清單連結的每個可寫平台)。寫不了的平台上還留著的份會列在 stderr 請你手動刪,下一次 pull 不會把它們加回正本。同 ISRC 不同 id 時正本記第一份,平台上留下哪個 id 由配對決定(相鄰兩份時留後面那個)。
 
+`capy pl add` 把一首曲目(`<provider>:<id>` 或 `--now`)嚴格加在 Drive 正本清單的最尾端(既有項目順序不動;在終端機裡不給清單名會開挑選器)。`--now` 取目前正在播的那首(有 `--provider` 釘住該家,否則優先找正在播放的平台、再退回 `default_provider`;macOS Apple Music 因 `Music.app` 腳本介面不提供目錄 ID,會用你登入的 Apple 網頁 token 以歌名、歌手與時長 ±2 秒反查目錄補齊 ID 與 ISRC)。正本已有同一首(同 `cid`)且未帶 `--allow-dup` 時零寫入、exit 0。預設只更新 Drive 正本與本機快取;`--push` 比照 `pl dedup` 雙半邊模式(先對已連結平台 pull 對齊 → 正本尾端新增 → 對可寫且有 base 的平台推播;無 base 或推不了的平台印 stderr 跳過 push 半邊,不阻斷正本寫入)。
+
 `capy resolve` 補 `pl pull` 不做的事:清單連結了兩個平台、曲目只從其中一邊 pull 進來時,另一邊的 id 由它找——先用 ISRC 反查(信心 95),沒有再用標題 + 藝人 + 時長模糊比對(0–100;標題一邊有 live / remix / acoustic / cover 之類、或時長差 >3 秒,上限 84)。≥85 自動寫入,走 `pl pull` 同一套鎖、閘與寫入順序;其餘印成 review 佇列——候選已屬另一首的一律進佇列,**合併只由人決定**。exit code:`0` 無事可寫或已寫入(佇列有東西仍是 0,cron 放 `capy resolve --yes` 不會因為永遠有幾首解不開而報錯)、`1` 錯誤、`2` 有可自動寫入的 mapping 但沒確認(`--dry-run`、非 TTY 沒 `--yes`、取消)。非 TTY 的 TSV:`action cid provider provider_id confidence source title artists reason reason_code`(`action` ∈ `map` 待寫入 / `review` 要人裁決 / `conflict` 同 ISRC 觀測到不同 id)。`--review` 在終端機逐筆裁決,決定寫成釘選(之後自動程序不再改);非 TTY 只印佇列並以 exit 2 結束——腳本用 `capy resolve pin`。單次 resolve 打超過 200 次 API 會在 stderr 提醒(未解開的曲目每次都會重查,目前沒有 negative cache)。某個平台授權失效時只跳過那個平台(stderr 會說),別的平台照解;單次查詢失敗的那首列成 `review` 並在 reason 寫明,下次再查。`pl pull` 結尾會提示「N 首尚未對應到 <provider>」。
 
 兩個逃生口:`capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),把 Drive 檔的合併形式輸出到 stdout——鍵是檔名(`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`)、值是該檔內容的縮排形式(壓回 compact 後與 Drive 上逐位元相同);本機沒資料時 exit 1 且不印東西。它用唯讀方式開 `state.db`:壞檔不刪、版本不符不改名、全新機器不建檔,而且整份匯出是一個一致的快照(與 cron 的 `pl pull` 同時跑也不會撕裂)。`capy drive init --from-local` 是 `pl pull` 以 exit 3 擋下「Drive 不完整」之後的出口:只建 Drive 缺的檔、不覆寫還在的檔、不動本機快取,別台裝置的 `dev__` 檔不代為上傳;先列出要建的檔(非 TTY 是 TSV `action file`),`--yes` 或在終端機確認後才上傳,`--dry-run` 只列不傳。確認訊息會帶目前登入的 Google 帳號:登錯帳號會把整個曲庫傳到別人的 appdata。
 
 ### reason_code 代碼表
 
-`pl pull` / `push` / `sync` / `migrate` / `dedup` / `resolve` 的 TSV 最後一欄都是 `reason_code`:固定的英文代碼,**永不翻譯、只增不改**;前一欄 `reason` 是同一件事給人看的說法,跟著語系。腳本判斷原因請看這一欄。同一個代碼可以出現在不同命令(例如 `push`)。`pl sync` / `migrate` / `pl dedup` 的 TSV 最前面多一欄 `dir`,每一列照它的 `dir` 對下表:`dir=pull` 同 `pl pull`、`dir=push` 同 `pl push`。新增代碼時同一個 PR 補這張表與英文 [README](README.md#reason_code-table) 的同一張表(`internal/cli/reason_code_test.go` 兩份都比)。
+`pl pull` / `push` / `sync` / `migrate` / `dedup` / `add` / `resolve` 的 TSV 最後一欄都是 `reason_code`:固定的英文代碼,**永不翻譯、只增不改**;前一欄 `reason` 是同一件事給人看的說法,跟著語系。腳本判斷原因請看這一欄。同一個代碼可以出現在不同命令(例如 `push`)。`pl sync` / `migrate` / `pl dedup` / `pl add` 的 TSV 最前面多一欄 `dir`,每一列照它的 `dir` 對下表:`dir=pull` 同 `pl pull`、`dir=push` 同 `pl push`。新增代碼時同一個 PR 補這張表與英文 [README](README.md#reason_code-table) 的同一張表(`internal/cli/reason_code_test.go` 兩份都比)。
 
 | 命令(列) | action | reason_code | 意思 |
 |---|---|---|---|
@@ -268,6 +271,7 @@ capy update [--dev]                      # 見上方「更新」
 | `pl dedup <正本>` 的 `dir=dedup` 列 | `remove` | `duplicate` | 正本裡後出現的重複份(保留第一份) |
 | `pl dedup <平台>:<清單>`(只報告,沒有 action 欄) | | `dup_id` | 同平台 id |
 | | | `dup_isrc` | 同 ISRC |
+| `pl add` 的 `dir=add` 列 | `add` | `added_to_master` | 加進正本尾端 |
 | `resolve` | `map` | `isrc` | ISRC 反查到,自動寫入 |
 | | `map` | `fuzzy` | 模糊比對 ≥85,自動寫入 |
 | | `review` | `no_candidate` | 找不到候選 |

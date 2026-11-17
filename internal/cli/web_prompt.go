@@ -249,12 +249,14 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 	origCID, origDisclosure, origApple := runClientIDWizard, confirmAppleDisclosure, runAppleWizardInputs
 	origGoogle, origGoogleSecret, origOpen := googleWizard, googleSecretPrompt, openBrowser
 	origWiki := wikiSetupForm
+	origPickCanon := pickCanonicalPlaylist
 	origYTDisclosure, origYTInput, origYTAccount := confirmYouTubeDisclosure, runYouTubeWizardInput, confirmYouTubeAccount
 	isInteractive = func(*cobra.Command) bool { return true }
 	stdinIsTTY = func() bool { return true }
 	bothTTY = func(*cobra.Command) bool { return true } // reviewIsTTY / migrateIsTTY 委派到這裡(T1)
 	confirmWrite = s.webConfirmWrite
 	pickOne = s.webPickOne
+	pickCanonicalPlaylist = s.webPickCanonicalPlaylist
 	promptNewName = s.webPromptNewName
 	reviewPrompt = s.webReviewPrompt
 	runClientIDWizard = s.webClientIDWizard
@@ -268,6 +270,7 @@ func installWebPromptSeams(s *webServer) (restore func()) {
 	return func() {
 		isInteractive, stdinIsTTY, bothTTY = origInteractive, origStdin, origBoth
 		confirmWrite, pickOne, promptNewName, reviewPrompt = origConfirm, origPick, origName, origReview
+		pickCanonicalPlaylist = origPickCanon
 		runClientIDWizard, confirmAppleDisclosure, runAppleWizardInputs = origCID, origDisclosure, origApple
 		googleWizard, googleSecretPrompt, openBrowser = origGoogle, origGoogleSecret, origOpen
 		wikiSetupForm = origWiki
@@ -336,6 +339,18 @@ func (s *webServer) webPickOne(title string, labels []string) (int, error) {
 		return 0, errCancelled
 	}
 	return a.intValue(), nil
+}
+
+func (s *webServer) webPickCanonicalPlaylist(st *canonState, title string) (string, error) {
+	pls, labels, err := sortedCanonicalPlaylists(st)
+	if err != nil {
+		return "", err
+	}
+	idx, err := s.webPickOne(title, labels)
+	if err != nil {
+		return "", err
+	}
+	return pls[idx].PID, nil
 }
 
 func (s *webServer) webPromptNewName(title string) (string, error) {
