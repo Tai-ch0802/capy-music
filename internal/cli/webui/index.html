@@ -54,13 +54,53 @@
 </main>
 <footer class="dock">
   <div class="dock__now" id="now" data-playing="false">
-    <span class="dock__now-line" id="now-line" data-i18n="webui.player.loading"></span>
-    <span class="dock__now-ctl">
-      <button type="button" class="btn btn--ghost" data-cmd="play" data-run data-i18n-aria-label="webui.player.play">▶</button>
-      <button type="button" class="btn btn--ghost" data-cmd="pause" data-run data-i18n-aria-label="webui.player.pause">⏸</button>
-      <button type="button" class="btn btn--ghost" data-cmd="prev" data-run data-i18n-aria-label="webui.player.prev">⏮</button>
-      <button type="button" class="btn btn--ghost" data-cmd="next" data-run data-i18n-aria-label="webui.player.next">⏭</button>
-    </span>
+    <span class="sr-only dock__now-line" id="now-line" data-i18n="webui.player.loading"></span>
+    <div class="dock__now-left">
+      <button type="button" class="dock__art-btn" id="now-art-btn" data-i18n-aria-label="webui.player.open_theater" data-i18n-title="webui.player.open_theater">
+        <img class="dock__art" id="now-art" alt="" hidden>
+        <span class="dock__art-fallback" id="now-art-fallback" aria-hidden="true"></span>
+      </button>
+      <div class="dock__meta">
+        <div class="dock__title-row">
+          <span class="dock__prov" id="now-prov" hidden></span>
+          <span class="dock__title" id="now-title" data-i18n="webui.player.loading"></span>
+        </div>
+        <div class="dock__sub" id="now-sub"></div>
+      </div>
+      <button type="button" class="btn btn--ghost btn--icon dock__collect" id="now-collect" hidden data-i18n-aria-label="webui.player.collect">+</button>
+    </div>
+    <div class="dock__now-mid">
+      <div class="dock__ctl">
+        <button type="button" class="btn btn--ghost btn--icon dock__ctl-btn" id="now-shuffle" data-act="shuffle" data-i18n-aria-label="webui.player.shuffle">🔀</button>
+        <button type="button" class="btn btn--ghost btn--icon dock__ctl-btn" data-act="prev" data-i18n-aria-label="webui.player.prev">⏮</button>
+        <button type="button" class="btn dock__ctl-btn dock__ctl-btn--main" id="now-toggle" data-act="toggle" data-i18n-aria-label="webui.player.play">▶</button>
+        <button type="button" class="btn btn--ghost btn--icon dock__ctl-btn" data-act="next" data-i18n-aria-label="webui.player.next">⏭</button>
+        <button type="button" class="btn btn--ghost btn--icon dock__ctl-btn" id="now-repeat" data-act="repeat" data-i18n-aria-label="webui.player.repeat">🔁</button>
+      </div>
+      <div class="dock__seek">
+        <span class="dock__time num" id="now-pos">0:00</span>
+        <input type="range" class="dock__range" id="now-seek" min="0" max="0" value="0" step="1000" disabled data-i18n-aria-label="webui.player.seek">
+        <span class="dock__time num" id="now-dur">0:00</span>
+      </div>
+    </div>
+    <div class="dock__now-right">
+      <div class="dock__vol" id="now-vol-wrap">
+        <button type="button" class="btn btn--ghost btn--icon dock__ctl-btn" id="now-mute" data-act="mute" data-i18n-aria-label="webui.player.mute">🔊</button>
+        <input type="range" class="dock__range dock__range--vol" id="now-vol" min="0" max="100" value="0" disabled data-i18n-aria-label="webui.player.volume">
+      </div>
+      <div class="dock__pop-wrap" id="now-dev-wrap">
+        <button type="button" class="btn btn--ghost dock__chip-btn" id="now-dev-btn" aria-expanded="false" data-i18n-aria-label="webui.player.devices">
+          <span aria-hidden="true">🔈</span><span class="dock__chip-text" id="now-dev-label"></span>
+        </button>
+        <div class="dock__pop" id="now-dev-pop" hidden></div>
+      </div>
+      <div class="dock__pop-wrap" id="now-timer-wrap">
+        <button type="button" class="btn btn--ghost dock__chip-btn" id="now-timer-btn" aria-expanded="false" data-i18n-aria-label="webui.timer.button">
+          <span aria-hidden="true">♨</span><span class="dock__chip-text" id="now-timer-label" data-i18n="webui.timer.short"></span>
+        </button>
+        <div class="dock__pop" id="now-timer-pop" hidden></div>
+      </div>
+    </div>
   </div>
   <div class="dock__busy" id="busy" hidden>
     <span class="dock__busy-dot" aria-hidden="true">●</span>
@@ -79,6 +119,8 @@
     <button type="button" class="btn btn--primary" id="run" data-run data-i18n="webui.shell.run"></button>
   </div>
 </footer>
+<dialog id="collect" class="collect-dlg"></dialog>
+<dialog id="theater" class="theater"></dialog>
 <dialog id="keys" class="keys">
   <h2 class="keys__title" data-i18n="webui.keys.title"></h2>
   <dl class="keys__list">
@@ -86,6 +128,10 @@
     <dt>n p</dt><dd data-i18n="webui.keys.next_prev"></dd>
     <dt>← →</dt><dd data-i18n="webui.keys.seek"></dd>
     <dt>+ -</dt><dd data-i18n="webui.keys.volume"></dd>
+    <dt>m</dt><dd data-i18n="webui.keys.mute"></dd>
+    <dt>s</dt><dd data-i18n="webui.keys.search"></dd>
+    <dt>a</dt><dd data-i18n="webui.keys.collect"></dd>
+    <dt>z</dt><dd data-i18n="webui.keys.theater"></dd>
     <dt>1 – 9</dt><dd data-i18n="webui.keys.pages"></dd>
     <dt>/</dt><dd data-i18n="webui.keys.slash"></dd>
     <dt>Ctrl-C</dt><dd data-i18n="webui.keys.ctrl_c"></dd>

@@ -1,8 +1,10 @@
-// app.js:token 引導、/api/commands、命令列;命令的串流與區塊在 console.js。
+// app.js:token 引導、Smart Landing(/api/commands 的 has_local_db)、命令列與快捷鍵層;命令的串流與區塊在 console.js。
 import { Console } from './console.js';
 import { loadI18n, applyStatic, t } from './i18n.js';
 import { languageMenu } from './lang.js';
 import { Player } from './player.js';
+import { createCollector } from './collect.js';
+import { createTheater } from './theater.js';
 import { initISRC } from './pages/isrc.js';
 import { initSearch } from './pages/search.js';
 import { initPlaylists } from './pages/playlists.js';
@@ -21,12 +23,19 @@ export const api = {
   },
 };
 
+let hasExplicitRoute = false;
+let defaultPage = 'move';
+
 function bootToken() {
-  const m = /[#&]t=([A-Za-z0-9_-]+)/.exec(location.hash);
+  const raw = location.hash || '';
+  const routeMatch = /^#\/([a-z]+(?:\/[^&#?]*)?)/.exec(raw);
+  if (routeMatch) hasExplicitRoute = true;
+  const m = /[#&]t=([A-Za-z0-9_-]+)/.exec(raw);
   if (m) {
     try { sessionStorage.setItem('capy.token', m[1]); } catch (_) { /* 私密視窗:留在記憶體 */ }
     api.token = m[1];
-    history.replaceState(null, '', location.pathname + '#/move');
+    const target = routeMatch ? `#/${routeMatch[1]}` : '#/move';
+    history.replaceState(null, '', location.pathname + target);
     return;
   }
   try { api.token = sessionStorage.getItem('capy.token') || ''; } catch (_) { api.token = ''; }
@@ -65,7 +74,6 @@ bootToken();
 // 目錄要在任何畫面算字之前到(i18n.js 開頭的載入順序鐵則)。讀不到(token 不對 / 過期、伺服器不在)時 t() 只會回 key 本身:
 // 頁面、播放列與鍵盤層一個都不起(route()、底下的 player、keydown 都看 i18nOK),畫面上只有 notice 說原因——
 // loadCommands 印 401 回應裡伺服器語系的那一句,連不上時印瀏覽器的錯誤。
-// ponytail: 兩個端點過同一道守門,一個失敗另一個也會失敗;只有目錄那一次失敗、下一次又連上的話頁面是空的,重新整理即可。
 const i18nOK = await loadI18n(api);
 applyStatic();
 const con = new Console(document.getElementById('console'), api, notice);
@@ -75,8 +83,6 @@ const runBtn = document.getElementById('run');
 const busyHint = () => t('webui.shell.busy_hint');
 
 // 不用 <form>:CSP form-action 'none' 與 submit 的互動零暴露;Enter 與按鈕都走 submit()。
-// 執行中命令列照樣可以打字(設計規格 §5 / §10):Enter 只說明、不排隊、不並行,打好的那一行留著。
-// 執行狀態列與中止鈕由 Console.run 管,頁面按鈕發起的命令也一樣。
 async function submit() {
   if (con.running) { notice(busyHint()); return; }
   if (document.body.hasAttribute('data-stale')) { notice(t('webui.shell.stale')); return; }
@@ -86,10 +92,8 @@ async function submit() {
   if (reason === 'refused' && !input.value) input.value = line; // 根本沒跑(別的分頁佔著槽、403…):打好的那行還給使用者
   input.focus();
 }
-// 組字中的 Enter 是「確認候選字」,不是「送出」:注音 / 拼音使用者按的第一個 Enter 會被輸入法吃掉。
-// Safari 先送 compositionend 再送這個 keydown(isComposing 已是 false),所以還要看 keyCode 229。
+
 input.addEventListener('keydown', (ev) => {
-  // Ctrl-C = 中止(設計規格 §10,同終端機)。只在有命令在跑、輸入框沒有選取文字時攔:Windows 的 Ctrl-C 是複製。
   if (ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.toLowerCase() === 'c' && con.running &&
       input.selectionStart === input.selectionEnd) {
     ev.preventDefault();
@@ -101,26 +105,23 @@ input.addEventListener('keydown', (ev) => {
   submit();
 });
 runBtn.addEventListener('click', submit);
-document.addEventListener('capy:busy', () => notice(busyHint())); // 頁面按鈕在執行中被按(common.js btn)
+document.addEventListener('capy:busy', () => notice(busyHint()));
 window.addEventListener('beforeunload', (ev) => { if (con.running) { ev.preventDefault(); ev.returnValue = ''; } });
-// ── 路由:九頁,#/<page>[/<arg>];每頁第一次到達時才初始化。順序 = 導覽的順序 = 鍵位 1–9;
-// 預設落在搬家(決策 45),後三頁收在「進階」;歌曲 wiki(決策 59)在搜尋之後。
+
+// ── 路由:九頁,#/<page>[/<arg>];無指定路由時依 has_local_db 決定 Smart Landing(#/playlists 或新戶 #/move) ──
 const providers = { list: ['spotify', 'apple', 'local', 'youtube'], current: 'spotify' };
 const PAGES = ['move', 'playlists', 'sync', 'search', 'wiki', 'account', 'console', 'isrc', 'doctor'];
 const ADVANCED = ['console', 'isrc', 'doctor'];
 const ready = new Set();
 let isrcPage = null;
 let playlistsPage = null;
+let searchPage = null;
 
 function showPage(name) {
-  document.body.dataset.page = name; // 命令列只在主控台頁(CSS 看這個屬性)
+  document.body.dataset.page = name;
   for (const p of document.querySelectorAll('.page')) p.hidden = p.id !== 'page-' + name;
-  // 藏起來的頁面裡還開著的對話框(清單頁的歌曲 wiki)要關掉:不然它看不見卻還是 modal,整頁 inert、單鍵全失效
-  // (瀏覽器上一頁 / 觸控板往回滑就會走到這裡)。關掉會觸發它自己的 close,命令在跑就中止。
   for (const d of document.querySelectorAll('.page[hidden] dialog[open]')) d.close();
   for (const it of document.querySelectorAll('.rail__item')) it.classList.toggle('is-active', it.dataset.page === name);
-  // 人在進階頁時那一段一定是打開的(active 項目與焦點不能落在收合區裡;review #66);離開就收起來。
-  // 收起來之前,焦點若還在裡面就先搬到新的 active 項目:不然它會掉回 <body>,鍵盤使用者的位置就沒了(review #67)。
   const more = document.getElementById('rail-more');
   const open = ADVANCED.includes(name);
   if (!open && more.open && more.contains(document.activeElement)) document.querySelector(`.rail__item[data-page="${name}"]`)?.focus();
@@ -129,9 +130,8 @@ function showPage(name) {
 
 function route() {
   if (!i18nOK) return;
-  // 結尾錨點:沒有的話 #/isrcfoo 也會被判成 isrc 頁(review #61)。
   const m = /^#\/([a-z]+)(?:\/([^/?#]+))?$/.exec(location.hash || '');
-  const name = m && PAGES.includes(m[1]) ? m[1] : 'move';
+  const name = m && PAGES.includes(m[1]) ? m[1] : defaultPage;
   const arg = m && m[2] ? decodeURIComponent(m[2]) : '';
   showPage(name);
   const root = document.getElementById('page-' + name);
@@ -139,7 +139,7 @@ function route() {
     ready.add(name);
     const args = [root, api, con, notice, providers];
     if (name === 'move') initMove(...args);
-    else if (name === 'search') initSearch(...args);
+    else if (name === 'search') searchPage = initSearch(...args);
     else if (name === 'playlists') playlistsPage = initPlaylists(...args);
     else if (name === 'sync') initSync(...args);
     else if (name === 'wiki') initWiki(...args, player);
@@ -147,19 +147,18 @@ function route() {
     else if (name === 'doctor') initDoctor(...args);
     else if (name === 'isrc') isrcPage = initISRC(root, api, arg);
   } else if (name === 'isrc' && arg) {
-    // 每次都餵目前 hash 的值:上一頁 / 直接改網址列都要生效,不然網址寫 A、畫面是 B(review #61)。
-    // show() 只在與輸入框現值不同時才重查,所以 look() 自己設 hash 造成的那次 hashchange 不會打成迴圈。
     isrcPage?.show(arg);
   } else if (name === 'playlists') {
-    playlistsPage?.refresh(); // 別頁寫入之後回到這一頁:重讀 export,不留過時的畫面(計畫 2026-09-30 Q7)
+    playlistsPage?.refresh();
+  } else if (name === 'search') {
+    searchPage?.refresh?.();
   }
-  const prompted = con.focusPrompt(root); // 這一頁有開著的提示(主控台的區塊或精靈的就地提示)就把焦點給它
+  const prompted = con.focusPrompt(root);
   if (name === 'console') { con.showIdle(providers.current); if (!prompted) input.focus(); }
   else if (name === 'isrc') document.getElementById('isrc-input').focus();
 }
 window.addEventListener('hashchange', route);
 
-// ── 鍵盤層:任何可編輯元素有焦點時單鍵全部失效,由一個集中的 inInput() 守門(設計規格 §11)──
 function inInput() {
   const a = document.activeElement;
   if (!a) return false;
@@ -167,42 +166,69 @@ function inInput() {
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName);
 }
 
+const player = i18nOK ? new Player(document.getElementById('now'), api, notice, con) : null;
+if (i18nOK) createCollector(document.getElementById('collect'), api, con, notice);
+const theater = i18nOK ? createTheater(document.getElementById('theater'), player, api, con, notice) : null;
+if (player && theater) player.onOpenTheater = () => theater.open();
+
 const keysDialog = document.getElementById('keys');
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && inInput()) { document.activeElement.blur(); return; }
-  // 鍵位表開著時 activeElement 是裡面的 <button>,inInput() 擋不到:1–7 會在背後換頁(review #62)。
-  if (!i18nOK || inInput() || document.querySelector('dialog[open]') || ev.metaKey || ev.ctrlKey || ev.altKey) return; // 任何對話框開著(鍵位表、清單頁的歌曲 wiki)
-  // 按鈕有焦點時空白鍵就是「按下它」、<summary> 上是「展開 / 收起」:在這裡搶走,那些元素都不能用空白鍵操作了(review #62 第 8 點)。
+  if (!i18nOK || inInput() || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const openDlg = document.querySelector('dialog[open]');
+  // 任何非劇場對話框(鍵位表、一鍵收藏、清單頁歌曲 wiki)開著時單鍵全部失效;劇場開啟時放行播放單鍵與 z(#9 §2.3.3)。
+  if (openDlg && openDlg.id !== 'theater') return;
   if (ev.key === ' ' && ['BUTTON', 'SUMMARY'].includes(document.activeElement?.tagName)) return;
-  const n = PAGES[Number(ev.key) - 1];
-  if (n) { location.hash = '#/' + n; return; }
+
+  if (!openDlg) {
+    const n = PAGES[Number(ev.key) - 1];
+    if (n) { location.hash = '#/' + n; return; }
+    switch (ev.key) {
+      case '?': ev.preventDefault(); keysDialog.showModal(); return;
+      case '/': ev.preventDefault(); location.hash = '#/console'; input.focus(); break;
+      case 's': {
+        ev.preventDefault();
+        if (document.body.dataset.page === 'playlists') {
+          const pf = document.getElementById('page-playlists').querySelector('.pl__filter input');
+          if (pf) { pf.focus(); return; }
+        }
+        location.hash = '#/search';
+        searchPage?.focusSearch?.();
+        return;
+      }
+      case 'a': ev.preventDefault(); player?.openCollectNow(); return;
+      default: break;
+    }
+    if (ev.key === '/') return;
+  }
+
   switch (ev.key) {
-    case '?': ev.preventDefault(); keysDialog.showModal(); break;
-    case '/': ev.preventDefault(); location.hash = '#/console'; input.focus(); break; // 命令列只在主控台頁
-    case 'r': player.start(); break;
-    case ' ': ev.preventDefault(); player.control(player.root.dataset.playing === 'true' ? 'pause' : 'play'); break;
-    case 'n': player.control('next'); break;
-    case 'p': player.control('prev'); break;
-    case 'ArrowLeft': ev.preventDefault(); player.seekBy(-10); break;
-    case 'ArrowRight': ev.preventDefault(); player.seekBy(10); break;
-    case '+': case '=': player.volBy(5); break;
-    case '-': player.volBy(-5); break;
+    case 'z': ev.preventDefault(); theater?.toggle(); break;
+    case 'r': player?.start(); break;
+    case ' ': ev.preventDefault(); player?.togglePlay(); break;
+    case 'n': player?.act({ action: 'next' }); break;
+    case 'p': player?.act({ action: 'prev' }); break;
+    case 'ArrowLeft': ev.preventDefault(); player?.seekBy(-10); break;
+    case 'ArrowRight': ev.preventDefault(); player?.seekBy(10); break;
+    case '+': case '=': player?.volBy(5); break;
+    case '-': player?.volBy(-5); break;
+    case 'm': player?.toggleMute(); break;
     default: break;
   }
 });
 
-const player = i18nOK ? new Player(document.getElementById('now'), api, notice, con) : null; // 建構子就掛 visibilitychange → 輪詢
-// 先拿到 providers 再路由:深連結或在某頁 F5 時,該頁的平台下拉才不會用寫死的預設值建起來
-// (ready 保證每頁只初始化一次,建好之後不會補正)。連不上時照樣路由,頁面至少畫得出來。
 loadCommands()
   .then((d) => {
     if (d && d.default_provider) providers.current = d.default_provider;
     if (d && d.providers) providers.list = d.providers;
+    if (d && d.has_local_db) {
+      defaultPage = 'playlists';
+      if (!hasExplicitRoute) history.replaceState(null, '', location.pathname + '#/playlists');
+    }
   })
-  .catch((e) => notice(i18nOK ? t('webui.shell.unreachable', { err: e.message }) : e.message)) // 沒有目錄時 t() 只會回 key
+  .catch((e) => notice(i18nOK ? t('webui.shell.unreachable', { err: e.message }) : e.message))
   .finally(() => {
     route();
     player?.start();
-    // 目錄讀不到、/api/commands 卻成功(網路閃斷):畫面是空的,至少說一句。沒有目錄可翻,只能用英文(也是預設語系)。
     if (!i18nOK && !document.getElementById('notice').textContent) notice("capy --web couldn't load the interface texts; reload the page");
   });

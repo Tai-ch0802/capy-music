@@ -201,3 +201,37 @@ func TestEnglishWebStartupAndPortErrors(t *testing.T) {
 		t.Errorf("ctx 取消 = 正常結束:%v", err)
 	}
 }
+
+func TestEnglishWebStage2DirectEndpointErrors(t *testing.T) {
+	setCLITestConfig(t)
+	webEnglish(t)
+	f := newNowFake()
+	swapNow(t, f)
+	_, c := startInMemWeb(t)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   any
+		code   int
+		want   string
+	}{
+		{http.MethodPost, "/api/player", map[string]any{"action": "teleport"}, http.StatusBadRequest, "unknown player action: teleport"},
+		{http.MethodPost, "/api/player", map[string]any{"action": "seek"}, http.StatusBadRequest, "position_ms is required"},
+		{http.MethodPost, "/api/player", map[string]any{"action": "volume"}, http.StatusBadRequest, "volume_pct is required"},
+		{http.MethodPost, "/api/player", map[string]any{"action": "repeat", "repeat": "forever"}, http.StatusBadRequest, "repeat must be off, context or track"},
+		{http.MethodPost, "/api/player", map[string]any{"action": "transfer"}, http.StatusBadRequest, "device_id is required"},
+		{http.MethodPost, "/api/player", map[string]any{"action": "play", "id": "a", "playlist_id": "b"}, http.StatusBadRequest, "pass only one of id, track_ids or playlist_id"},
+		{http.MethodPost, "/api/timer", map[string]any{"mode": "countdown", "minutes": 0}, http.StatusBadRequest, "invalid timer request"},
+		{http.MethodGet, "/api/player/devices?provider=tidal", nil, http.StatusBadRequest, "unknown provider tidal"},
+	} {
+		rec := c.do(tc.method, tc.path, tc.body, nil)
+		var e struct{ Error string }
+		if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+			t.Fatalf("%s %s:%v", tc.method, tc.path, err)
+		}
+		if rec.Code != tc.code || e.Error != tc.want || hasCJK(e.Error) {
+			t.Errorf("%s %s → %d %q,要 %d %q", tc.method, tc.path, rec.Code, e.Error, tc.code, tc.want)
+		}
+	}
+}

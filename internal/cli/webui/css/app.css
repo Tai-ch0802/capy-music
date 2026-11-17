@@ -86,6 +86,7 @@ code, pre, kbd, .mono { font-family: var(--mono); }
 @keyframes ear-flick { 0%, 78%, 100% { transform: none; } 82% { transform: rotate(-16deg); } 86% { transform: rotate(5deg); } 90% { transform: rotate(-11deg); } 94% { transform: none; } } /* 往後撥兩下;週期跟眨眼(4s)錯開,兩個動作不會同步 */
 /* 有命令在跑時示意停住:裝飾動畫不冒充進度 */
 body[data-busy] .route__note, body[data-busy] .capy-svg__eye, body[data-busy] .capy-svg__ear { animation-play-state: paused; }
+body[data-busy] .onsen-svg__eye, body[data-busy] .onsen-svg__ear, body[data-busy] .onsen-svg__steam { animation-play-state: paused; }
 
 /* 三步:這真的是有順序的流程,所以有編號 */
 .wiz__steps { display: flex; gap: .5rem 1.5rem; flex-wrap: wrap; list-style: none; margin: 0 0 1.5rem; padding: 0 0 1rem; border-bottom: 1px solid var(--line); counter-reset: wiz; font-size: var(--t-14); font-weight: 500; }
@@ -289,6 +290,13 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .pl__none, .pl__only { color: var(--muted); font-size: var(--t-12); padding-left: .5rem; cursor: help; }
 .pl__head { justify-content: space-between; }
 .pl__head .btn--primary { flex: none; }
+.pl__playbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0 0 .75rem; }
+.pl__playbar .in { height: 34px; font-size: var(--t-14); min-width: 7.5rem; }
+.pl__playbar-note { font-size: var(--t-12); color: var(--muted); }
+.pl__tbl tr[data-playing="true"] { background: rgb(var(--accent-rgb) / .1); }
+.pl__tbl tr[data-playing="true"] .pl__pos { color: var(--accent); font-weight: 700; }
+.pl__tbl tr[data-playing="true"] .pl__pos::before { content: '♪ '; }
+.pl__tbl tr[data-playing="true"] .pl__title { color: var(--accent-hi); font-weight: 600; }
 /* 連結面板:Google Drive 正本 → 每個平台一列(計畫 §3.5)。正本節點在 ≥ 40rem 時放左邊,以下疊在上面 */
 .pl__links { display: grid; grid-template-columns: minmax(0, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; margin: 0 0 1rem; }
 .pl__hub { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); background: rgb(var(--accent-rgb) / .06); }
@@ -428,16 +436,60 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; } /* �
 .prompt__hint { font-size: var(--t-12); color: var(--muted); }
 .prompt__closed { margin-top: .5rem; font-size: var(--t-12); color: var(--muted); }
 
-/* ── dock:播放列 + 執行狀態列;命令列只在主控台頁(決策 45) ── */
-.dock { grid-area: dock; min-width: 0; position: relative; z-index: var(--z-dock); background: var(--surface); border-top: 1px solid var(--line); padding: .6rem 2rem .75rem; display: flex; flex-direction: column; gap: .5rem; transition: border-color var(--dur-2) var(--ease); }
-.dock__now { font-size: var(--t-14); color: var(--text); display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
-.dock__now[data-stale="true"] .dock__now-line { color: var(--muted); }
+/* ── dock:三區播放面板 + 執行狀態列;命令列只在主控台頁(決策 45) ── */
+.dock { grid-area: dock; min-width: 0; position: relative; z-index: var(--z-dock); background: var(--surface); border-top: 1px solid var(--line); padding: .6rem 1.5rem .75rem; display: flex; flex-direction: column; gap: .5rem; transition: border-color var(--dur-2) var(--ease); }
+.dock__now { font-size: var(--t-14); color: var(--text); display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(14rem, 1.5fr) minmax(0, 1.15fr); gap: .75rem 1.25rem; align-items: center; }
+.dock__now[data-stale="true"] .dock__title, .dock__now[data-stale="true"] .dock__sub, .dock__now[data-stale="true"] .dock__now-line { color: var(--muted); }
 .dock__now-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dock__now-line a { color: var(--text-hi); text-decoration: none; }
-.dock__now-line a:hover, .dock__now-line a:focus-visible { text-decoration: underline; }
-.dock__now[data-stale="true"] .dock__now-line a, body[data-connected="false"] .dock__now-line a { color: inherit; }
-.dock__now-ctl { display: flex; gap: .25rem; flex: none; }
-.dock__now-ctl .btn { min-height: 36px; min-width: 40px; padding: 0 .5rem; border-radius: var(--r-pill); color: var(--text-hi); }
+.dock__now-left { display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.dock__art-btn { width: 48px; height: 48px; padding: 0; border: 1px solid var(--line-hi); border-radius: var(--r); background: var(--surface-2); cursor: pointer; flex: none; overflow: hidden; display: grid; place-items: center; transition: border-color var(--dur-2) var(--ease), transform var(--dur-1) var(--ease); }
+.dock__art-btn:hover { border-color: var(--accent); }
+.dock__art-btn:active { transform: scale(.97); }
+.dock__art { width: 48px; height: 48px; object-fit: cover; display: block; }
+.dock__art[hidden], .dock__art-fallback[hidden], .dock__prov[hidden], .dock__collect[hidden] { display: none; }
+.dock__art-fallback { width: 48px; height: 48px; display: grid; place-items: center; }
+.vinyl-svg { width: 100%; height: 100%; display: block; }
+.vinyl-svg__disc { fill: var(--ink); stroke: var(--line-hi); stroke-width: 1.5; }
+.vinyl-svg__groove { fill: none; stroke: var(--line); stroke-width: 1; }
+.vinyl-svg__label { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1.5; }
+.vinyl-svg__hole { fill: var(--ink); }
+.vinyl-svg__ear { fill: var(--surface-2); stroke: var(--accent); stroke-width: 1.5; }
+.dock__meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: .1rem; }
+.dock__title-row { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
+.dock__prov { flex: none; font-size: var(--t-12); color: var(--accent); border: 1px solid var(--accent-dim); border-radius: var(--r); padding: 0 .35rem; line-height: 1.4; }
+.dock__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-hi); }
+.dock__title a { color: var(--text-hi); text-decoration: none; }
+.dock__title a:hover, .dock__title a:focus-visible { text-decoration: underline; }
+.dock__now[data-stale="true"] .dock__title a, body[data-connected="false"] .dock__title a { color: inherit; }
+.dock__sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-12); color: var(--muted); }
+.dock__collect { flex: none; min-height: 32px; min-width: 32px; border-radius: var(--r-pill); font-weight: 700; }
+.dock__collect[data-collected="true"] { color: var(--accent-hi); border-color: var(--accent-dim); background: rgb(var(--accent-rgb) / .12); }
+.dock__now-mid { display: flex; flex-direction: column; align-items: center; gap: .2rem; min-width: 0; }
+.dock__ctl { display: flex; align-items: center; gap: .3rem; }
+.dock__ctl-btn { min-height: 32px; min-width: 32px; padding: 0 .4rem; border-radius: var(--r-pill); color: var(--text); }
+.dock__ctl-btn--main { min-height: 36px; min-width: 40px; background: var(--accent); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+.dock__ctl-btn--main:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
+.dock__ctl-btn[data-active="true"] { color: var(--accent); background: rgb(var(--accent-rgb) / .14); border-color: var(--accent-dim); }
+.dock__seek { width: 100%; max-width: 28rem; display: flex; align-items: center; gap: .5rem; }
+.dock__time { font-family: var(--mono); font-size: var(--t-12); color: var(--muted); flex: none; min-width: 2.4rem; }
+.dock__time:last-child { text-align: right; }
+.dock__range { flex: 1; min-width: 3.5rem; height: 6px; accent-color: var(--accent); cursor: pointer; margin: 0; }
+.dock__range:disabled { opacity: .4; cursor: default; }
+.dock__range--vol { max-width: 5.5rem; }
+.dock__now-right { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; min-width: 0; flex-wrap: wrap; }
+.dock__vol { display: flex; align-items: center; gap: .25rem; }
+.dock__vol[hidden] { display: none; }
+.dock__pop-wrap { position: relative; }
+.dock__chip-btn { min-height: 32px; padding: 0 .6rem; display: inline-flex; align-items: center; gap: .3rem; font-size: var(--t-12); color: var(--text); border-radius: var(--r-pill); max-width: 10rem; }
+.dock__chip-btn[data-active="true"] { color: var(--accent-hi); border-color: var(--accent-dim); background: rgb(var(--accent-rgb) / .12); }
+.dock__chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock__pop { position: absolute; right: 0; bottom: calc(100% + .5rem); z-index: var(--z-pop); min-width: 15rem; max-width: 20rem; padding: .75rem; background: var(--surface); border: 1px solid var(--line-hi); border-radius: var(--r-lg); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: .35rem; }
+.dock__pop[hidden] { display: none; }
+.dock__pop-title { font-size: var(--t-12); font-weight: 600; color: var(--muted); margin: 0 0 .15rem; }
+.dock__pop-status { font-size: var(--t-12); color: var(--accent); margin: 0; }
+.dock__pop-note { font-size: var(--t-12); color: var(--muted); margin: .2rem 0 0; }
+.dock__pop-item { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: .5rem; text-align: left; min-height: 34px; padding: .25rem .65rem; font-size: var(--t-14); }
+.dock__pop-item[data-active="true"] { border-color: var(--accent); background: rgb(var(--accent-rgb) / .12); color: var(--text-hi); }
 .dock__notice { font-size: var(--t-14); color: var(--warn); }
 .dock__cmd { display: flex; gap: .5rem; align-items: center; }
 body:not([data-page="console"]) .dock__cmd { display: none; }
@@ -479,9 +531,81 @@ body[data-busy] [data-run][data-pending] { opacity: 1; }
 .dock::after { content: ''; position: absolute; left: 0; right: 0; top: -1px; height: 1px; box-shadow: var(--glow); opacity: 0; transition: opacity var(--dur-2); pointer-events: none; }
 body[data-busy] .dock::after { opacity: 1; }
 
-/* ── 鍵位表(原生 dialog:自帶焦點陷阱與 Esc) ── */
-.keys::backdrop, .pl__wiki-dlg::backdrop { background: rgb(14 21 18 / .72); }
-.keys, .pl__wiki-dlg { background: var(--surface); color: var(--text); border: 1px solid var(--line-hi); border-radius: var(--r-lg); padding: 1.5rem; max-width: 34rem; box-shadow: var(--shadow); }
+/* ── 鍵位表、一鍵收藏、水豚溫泉劇場(原生 dialog:自帶焦點陷阱與 Esc) ── */
+.keys::backdrop, .pl__wiki-dlg::backdrop, .collect-dlg::backdrop { background: rgb(14 21 18 / .72); }
+.theater::backdrop { background: rgb(10 16 13 / .88); }
+.keys, .pl__wiki-dlg, .collect-dlg, .theater { background: var(--surface); color: var(--text); border: 1px solid var(--line-hi); border-radius: var(--r-lg); padding: 1.5rem; max-width: 34rem; box-shadow: var(--shadow); }
+.collect-dlg { width: calc(100% - 2rem); max-width: 38rem; max-height: 85vh; z-index: var(--z-modal); }
+.collect__top, .theater__top { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.collect__title { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 0; }
+.collect__song { font-size: var(--t-14); color: var(--accent); margin: .25rem 0 0; overflow-wrap: anywhere; }
+.collect__list { display: flex; flex-direction: column; gap: .35rem; max-height: 16rem; overflow-y: auto; margin: .75rem 0; }
+.collect__opt { display: flex; gap: .5rem; align-items: center; font-size: var(--t-14); color: var(--text); margin: .5rem 0; cursor: pointer; }
+.collect__table:empty, .collect__prompts:empty, .collect__foot:empty { display: none; }
+.collect__status:empty { margin: 0; }
+
+/* 水豚溫泉劇場(Theater Mode):左欄大封面 + 側面泡湯水豚 + 播放列;右欄離線快取介紹 */
+.theater { width: calc(100vw - 2rem); max-width: 68rem; max-height: calc(100vh - 2rem); overflow-y: auto; z-index: var(--z-modal); animation: rise var(--dur-2) var(--ease) both; }
+.theater__head { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.theater__badge { font-size: var(--t-12); color: var(--accent); border: 1px solid var(--accent-dim); border-radius: var(--r-pill); padding: .1rem .65rem; font-weight: 600; }
+.theater__timer { font-size: var(--t-12); color: var(--warn); border: 1px solid var(--warn); border-radius: var(--r-pill); padding: .1rem .65rem; }
+.theater__timer[hidden] { display: none; }
+.theater__grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.75rem; margin-top: 1.25rem; align-items: start; }
+@media (min-width: 52rem) { .theater__grid { grid-template-columns: minmax(18rem, 23rem) minmax(0, 1fr); gap: 2.25rem; } }
+.theater__stage { display: flex; flex-direction: column; align-items: center; gap: 1rem; background: var(--ink); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1.25rem; }
+.theater__art-wrap { width: 100%; max-width: 17rem; aspect-ratio: 1; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--line-hi); background: var(--surface-2); display: grid; place-items: center; }
+.theater__art { width: 100%; height: 100%; object-fit: cover; display: block; }
+.theater__art[hidden], .theater__art-fallback[hidden] { display: none; }
+.theater__art-fallback { width: 68%; height: 68%; display: grid; place-items: center; }
+.theater__meta { width: 100%; text-align: center; display: flex; flex-direction: column; gap: .2rem; }
+.theater__song { font-size: var(--t-20); font-weight: 700; color: var(--text-hi); overflow-wrap: anywhere; }
+.theater__song a { color: var(--text-hi); text-decoration: none; }
+.theater__song a:hover { text-decoration: underline; }
+.theater__by { font-size: var(--t-14); color: var(--muted); overflow-wrap: anywhere; }
+.theater__ctl { display: flex; align-items: center; gap: .5rem; }
+.theater__seek { width: 100%; display: flex; align-items: center; gap: .5rem; }
+.onsen-svg { width: 12rem; max-width: 100%; height: auto; }
+.onsen-svg__tub { fill: var(--surface); stroke: var(--line-hi); stroke-width: 3; }
+.onsen-svg__water { fill: rgb(var(--accent-rgb) / .14); stroke: var(--accent-dim); stroke-width: 2; }
+.onsen-svg__line { fill: var(--ink); stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.onsen-svg__ear { stroke-width: 3; transform-box: fill-box; transform-origin: 50% 100%; animation: ear-flick 5.5s ease-in-out infinite; }
+.onsen-svg__stroke { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+.onsen-svg__steam { fill: none; stroke: var(--muted); stroke-width: 2.2; stroke-linecap: round; opacity: .55; animation: steam-rise var(--dur-loop) ease-in-out infinite; }
+.onsen-svg__steam:nth-of-type(2) { animation-delay: -2s; }
+.onsen-svg__dot { fill: var(--accent); }
+.onsen-svg__eye { fill: var(--accent); transform-box: fill-box; transform-origin: center; animation: blink 4s ease-in-out infinite; }
+.onsen-svg__yuzu { fill: var(--warn); stroke: var(--ink); stroke-width: 2; opacity: 0; transition: opacity var(--dur-2) var(--ease); }
+.onsen-svg[data-yuzu="true"] .onsen-svg__yuzu { opacity: 1; }
+@keyframes steam-rise { 0%, 100% { transform: translateY(2px); opacity: .25; } 50% { transform: translateY(-6px); opacity: .7; } }
+.theater__notes { min-width: 0; display: flex; flex-direction: column; gap: .75rem; }
+.theater__notes-head { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: .5rem; }
+.theater__notes-title { font-size: var(--t-20); font-weight: 600; color: var(--text-hi); margin: 0; }
+.theater__notes-badge { font-size: var(--t-12); color: var(--muted); }
+.theater__disclaimer { margin: .5rem 0 0; padding: .5rem .75rem; border-left: 3px solid var(--warn); background: var(--surface-2); border-radius: var(--r); font-size: var(--t-12); color: var(--muted); }
+.theater__disclaimer[hidden] { display: none; }
+.theater__prompts:empty, .theater__foot:empty { display: none; }
+.theater__status:empty { margin: 0; }
+
+/* 搜尋頁:最近點播與今日聆聽膠囊(嚴守決策 42 / 48:純文字排版、無封面圖、無官方標誌) */
+.capsule { margin-top: 2rem; display: grid; gap: 1.5rem; }
+.capsule__sec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 1.1rem 1.25rem; }
+.capsule__head { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem; }
+.capsule__title { font-size: var(--t-16); font-weight: 600; color: var(--text-hi); margin: 0; }
+.capsule__sub { font-size: var(--t-12); color: var(--muted); margin: 0; }
+.capsule__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .6rem; }
+.capsule__card { display: flex; flex-direction: column; justify-content: space-between; gap: .45rem; padding: .7rem .85rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); }
+.capsule__card-main { min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
+.capsule__card-title { font-weight: 600; color: var(--text-hi); font-size: var(--t-14); overflow-wrap: anywhere; }
+.capsule__card-meta { font-size: var(--t-12); color: var(--muted); overflow-wrap: anywhere; }
+.capsule__acts { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+.capsule__acts .btn { min-height: 30px; font-size: var(--t-12); padding: 0 .6rem; }
+.capsule__jlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.capsule__jrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem .75rem; padding: .5rem 0; border-top: 1px solid var(--line); font-size: var(--t-14); }
+.capsule__jrow:first-child { border-top: 0; }
+.capsule__jmain { display: flex; align-items: baseline; gap: .5rem; min-width: 0; flex: 1 1 14rem; flex-wrap: wrap; }
+.capsule__jtime { font-family: var(--mono); font-size: var(--t-12); color: var(--muted); flex: none; }
+.capsule__jtitle { font-weight: 600; color: var(--text-hi); overflow-wrap: anywhere; }
+.capsule__jby { font-size: var(--t-12); color: var(--muted); overflow-wrap: anywhere; }
 /* 清單頁的歌曲 wiki:比鍵位表寬,長的回答在對話框裡捲;停止鈕在回答上面,串流中一直看得到 */
 .pl__wiki-dlg { width: calc(100% - 2rem); max-width: 44rem; max-height: 85vh; }
 .pl__wiki-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
@@ -508,6 +632,8 @@ body[data-stale] .dock__input { border-color: var(--warn); }
   .route__note { animation: none; opacity: 0; }
   .route__note:nth-child(2) { opacity: 1; transform: translateX(22%); }
   .capy-svg__eye, .capy-svg__ear, .beat__row, .beat__card, .beat__ok, .skeleton__bar { animation: none; }
+  .onsen-svg__eye, .onsen-svg__ear, .onsen-svg__steam, .theater { animation: none; }
+  .onsen-svg__yuzu, .dock__art-btn { transition: none; }
   .pcard { transition: none; }
   .dock__busy-dot, [data-run][data-pending]::before { animation: none; opacity: .8; } /* 脈衝改靜態 */
   .dock::after, .btn, .in, .rail__item, .pl__item, .dock { transition: none; } /* 靜態 glow 保留:它是狀態不是動效 */
@@ -522,6 +648,8 @@ body[data-stale] .dock__input { border-color: var(--warn); }
   .rail__more { margin-top: 0; flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; } /* 自己一列;展開的三項接在後面換行,不浮層 */
   .main { padding: 1.25rem 1rem; }
   .dock { padding: .5rem 1rem .6rem; }
+  .dock__now { grid-template-columns: minmax(0, 1fr); gap: .45rem; }
+  .dock__now-right { justify-content: space-between; }
   .hero__title { font-size: var(--t-28); }
   .dock__busy-bar { display: none; } /* 窄畫面:狀態列只留「比對歌曲 37 / 120」的字,條讓給中止鈕 */
   .route { grid-template-columns: minmax(0, 1fr); }
