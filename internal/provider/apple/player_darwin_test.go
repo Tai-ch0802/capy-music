@@ -236,13 +236,17 @@ func TestRunOSAPassesArgsAfterDoubleDash(t *testing.T) {
 	}
 }
 
-// TestPlayScriptsCompile:兩個新腳本要編得過(osacompile 不會啟動 Music.app)。變數叫 st 之類的保留字只有編譯時才抓得到。
+// TestPlayScriptsCompile:所有 AppleScript 都要編得過(osacompile 不會啟動 Music.app),且反組譯後不得殘留無法解析的 «...» 字典符號。
 func TestPlayScriptsCompile(t *testing.T) {
 	if _, err := exec.LookPath("osacompile"); err != nil {
 		if os.Getenv("CI") != "" {
 			t.Fatal("CI 的 macOS 上要有 osacompile")
 		}
 		t.Skip("沒有 osacompile")
+	}
+	hasDecompile := false
+	if _, err := exec.LookPath("osadecompile"); err == nil {
+		hasDecompile = true
 	}
 	for name, script := range map[string]string{
 		"libraryMatchScript": libraryMatchScript,
@@ -253,9 +257,19 @@ func TestPlayScriptsCompile(t *testing.T) {
 		"setShuffleScript":   setShuffleScript,
 		"setRepeatScript":    setRepeatScript,
 	} {
-		out, err := exec.Command("osacompile", "-o", filepath.Join(t.TempDir(), name+".scpt"), "-e", script).CombinedOutput()
+		scptPath := filepath.Join(t.TempDir(), name+".scpt")
+		out, err := exec.Command("osacompile", "-o", scptPath, "-e", script).CombinedOutput()
 		if err != nil {
 			t.Errorf("%s 編不過:%v %s", name, err, out)
+			continue
+		}
+		if hasDecompile {
+			dec, derr := exec.Command("osadecompile", scptPath).CombinedOutput()
+			if derr != nil {
+				t.Errorf("%s 反組譯失敗:%v %s", name, derr, dec)
+			} else if strings.Contains(string(dec), "«") {
+				t.Errorf("%s 反組譯含未解析的原始碼符號 «...»:\n%s", name, dec)
+			}
 		}
 	}
 }
@@ -447,6 +461,27 @@ func TestStateParsesNineFieldsAndVolumeZero(t *testing.T) {
 		t.Errorf("repeat off 解析錯誤:%+v %v", stOff, err)
 	}
 
+	// vol = -1(讀不到音量時降級):VolumeKnown=false,VolumePct=0,不應炸掉整個 State(),且 shuffle/repeat 照常解析
+	stubOSA(t, "playing\t派對動物\t五月天\t自傳\t227500\t61200\t-1\ttrue\tone")
+	stNegVol, err := p.State(context.Background())
+	if err != nil {
+		t.Fatalf("vol=-1 應降級為 VolumeKnown=false 而非回錯:%v", err)
+	}
+	if stNegVol.Device.VolumeKnown || stNegVol.Device.VolumePct != 0 || !stNegVol.Shuffle || stNegVol.Repeat != provider.RepeatTrack {
+		t.Errorf("vol=-1 降級狀態錯誤:%+v", stNegVol)
+	}
+
+	// 電台或串流緩衝中缺歌手/專輯/時長(missing value 退回空字串與 0)
+	stubOSA(t, "playing\tApple Music 1\t\t\t0\t0\t-1\tfalse\toff")
+	stStream, err := p.State(context.Background())
+	if err != nil {
+		t.Fatalf("電台/串流缺欄位不應回錯:%v", err)
+	}
+	if stStream.Track.Title != "Apple Music 1" || len(stStream.Track.Artists) != 0 || stStream.Track.Album != "" ||
+		stStream.Track.DurationMS != 0 || stStream.ProgressMS != 0 || stStream.Device.VolumeKnown {
+		t.Errorf("電台/串流欄位降級錯誤:%+v track=%+v", stStream, stStream.Track)
+	}
+
 	// 壞掉的音量欄位要回錯
 	stubOSA(t, "playing\t派對動物\t五月天\t自傳\t227500\t61200\tbad\tfalse\toff")
 	if _, err := p.State(context.Background()); err == nil {
@@ -465,6 +500,18 @@ func TestDevicesAirPlayAndFallback(t *testing.T) {
 		devs[0] != (provider.Device{ID: "AP1", Name: "MacBook Pro", Type: "Computer", Active: true, VolumePct: 65, VolumeKnown: true}) ||
 		devs[1] != (provider.Device{ID: "AP2", Name: "Living Room HomePod", Type: "HomePod", Active: false, VolumePct: 40, VolumeKnown: true}) {
 		t.Fatalf("AirPlay 裝置解析錯誤:%+v", devs)
+	}
+
+	// 首筆無 persistent ID(開頭是 tab)不得被誤裁切,且 vol=-1 應降級為 VolumeKnown=false,VolumePct=0
+	stubOSA(t, "\tMacBook Pro\tComputer\ttrue\t65\nAP2\tApple TV\tApple TV\tfalse\t-1")
+	devs2, err := p.Devices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devs2) != 2 ||
+		devs2[0] != (provider.Device{ID: "MacBook Pro", Name: "MacBook Pro", Type: "Computer", Active: true, VolumePct: 65, VolumeKnown: true}) ||
+		devs2[1] != (provider.Device{ID: "AP2", Name: "Apple TV", Type: "Apple TV", Active: false, VolumePct: 0, VolumeKnown: false}) {
+		t.Fatalf("無 persistent ID 與 vol=-1 裝置解析錯誤:%+v", devs2)
 	}
 
 	// 未啟動、空輸出或 osascript 失敗時一律靜默退回預設 Music.app 裝置
@@ -547,6 +594,71 @@ func TestTransferShuffleRepeatAndRunningGuards(t *testing.T) {
 	} {
 		if err := fn(); !errors.Is(err, ErrNotRunning) || !errors.Is(err, provider.ErrPlayerNotRunning) {
 			t.Errorf("%s 在未啟動時應回 ErrNotRunning:%v", name, err)
+		}
+	}
+}
+
+func TestFormatOSAErrAndRunOSAStderr(t *testing.T) {
+	if got := formatOSAErr(nil); got != nil {
+		t.Errorf("nil 應回 nil:%v", got)
+	}
+	plain := errors.New("plain")
+	if got := formatOSAErr(plain); got != plain {
+		t.Errorf("非 ExitError 應原樣回傳:%v", got)
+	}
+	emptyEE := &exec.ExitError{Stderr: []byte("  \n\t ")}
+	if got := formatOSAErr(emptyEE); got != error(emptyEE) {
+		t.Errorf("空白 Stderr 應原樣回傳:%v", got)
+	}
+	multiEE := &exec.ExitError{Stderr: []byte("line 1\n\tCan't make song repeat into type text. (-1700)\n")}
+	if got := formatOSAErr(multiEE); got == nil || strings.ContainsAny(got.Error(), "\r\n\t") || !strings.Contains(got.Error(), "(-1700)") {
+		t.Errorf("多行 Stderr 應壓成單行:%q", got)
+	}
+
+	// 真實 osascript(純腳本,不碰 Music.app):驗證 stderr 併入錯誤且保留首欄空 tab
+	if _, err := runOSA(context.Background(), `error "denied" number -1743`); err == nil ||
+		!strings.Contains(err.Error(), "exit status 1") ||
+		!strings.Contains(err.Error(), "-1743") ||
+		strings.ContainsAny(err.Error(), "\r\n") {
+		t.Errorf("runOSA 應將單行 stderr 併入 ExitError:%v", err)
+	}
+	if out, err := runOSA(context.Background(), `return tab & "MacBook Pro"`); err != nil || out != "\tMacBook Pro" {
+		t.Errorf("runOSA 不得裁掉首欄空 tab:out=%q err=%v", out, err)
+	}
+}
+
+// TestScriptsForbidEnumCoercionAndGuardMissingValue:防回歸守門——在 tell application "Music" 區塊內
+// 嚴禁任何 `as text` 強制轉型(Music.app 對 enum/boolean/specifier 的 getd 請求帶 utxt 會拋 -1700),
+// 且 stateScript 必須用 try 保護 current track 與 missing value 算術。
+func TestScriptsForbidEnumCoercionAndGuardMissingValue(t *testing.T) {
+	for name, script := range map[string]string{
+		"stateScript":        stateScript,
+		"devicesScript":      devicesScript,
+		"transferScript":     transferScript,
+		"setShuffleScript":   setShuffleScript,
+		"setRepeatScript":    setRepeatScript,
+		"libraryMatchScript": libraryMatchScript,
+		"playLibraryScript":  playLibraryScript,
+	} {
+		start := strings.Index(script, `tell application "Music"`)
+		end := strings.LastIndex(script, "end tell")
+		if start < 0 || end <= start {
+			t.Fatalf("%s 找不到 tell 區塊", name)
+		}
+		tellBody := script[start:end]
+		if strings.Contains(tellBody, "as text") {
+			t.Errorf("%s 的 tell 區塊內禁止出現 `as text`(會觸發 -1700 轉型失敗):\n%s", name, tellBody)
+		}
+	}
+	for _, needle := range []string{
+		"set t to current track",
+		"is missing value",
+		"set volNum to -1",
+		"if curState is playing then",
+		"if repVal is one then",
+	} {
+		if !strings.Contains(stateScript, needle) {
+			t.Errorf("stateScript 缺少必要防禦片段 %q", needle)
 		}
 	}
 }

@@ -4,6 +4,7 @@ package apple
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -26,10 +27,28 @@ var (
 		if err != nil && ctx.Err() != nil { // 被 ctx 殺掉的:回取消 / 逾時本身,不是「signal: killed」——結束碼 130 / 143、web 的「已中止」都認得
 			return "", fmt.Errorf("osascript: %w", ctx.Err())
 		}
-		return strings.TrimSpace(string(out)), err
+		return strings.TrimRight(string(out), "\r\n"), formatOSAErr(err)
 	}
 	runOpen = func(u string) error { return exec.Command("open", u).Run() }
 )
+
+// formatOSAErr:exec.Command(...).Output() 失敗時預設只帶 exit status 1,真正的 AppleScript 錯誤碼
+// (如 -1743 未授權、-1700 轉型失敗、-1728 找不到物件)在 *exec.ExitError.Stderr;壓成單行併入錯誤方便診斷。
+func formatOSAErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if detail := strings.Join(strings.Fields(string(ee.Stderr)), " "); detail != "" {
+			if ee.ProcessState == nil {
+				return errors.New(detail)
+			}
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+	}
+	return err
+}
 
 const musicDevice = "music.app"
 
@@ -54,12 +73,47 @@ const devicesScript = `if not (application "Music" is running) then return "not 
 tell application "Music"
 	set out to {}
 	repeat with d in (every AirPlay device)
-		set pidStr to ""
 		try
-			set pidVal to persistent ID of d
-			if pidVal is not missing value then set pidStr to (pidVal as text)
+			set pidStr to ""
+			try
+				set pidVal to persistent ID of d
+				if pidVal is not missing value then set pidStr to pidVal
+			end try
+			set nameStr to ""
+			try
+				set nameVal to name of d
+				if nameVal is not missing value then set nameStr to nameVal
+			end try
+			set kindStr to "Speaker"
+			try
+				set kVal to kind of d
+				if kVal is computer then
+					set kindStr to "Computer"
+				else if kVal is HomePod then
+					set kindStr to "HomePod"
+				else if kVal is Apple TV then
+					set kindStr to "Apple TV"
+				else if kVal is TV then
+					set kindStr to "TV"
+				else if kVal is Bluetooth device then
+					set kindStr to "Bluetooth"
+				else if kVal is AirPort Express then
+					set kindStr to "AirPort Express"
+				end if
+			end try
+			set selStr to "false"
+			try
+				if (selected of d) is true then set selStr to "true"
+			end try
+			set volNum to -1
+			try
+				set volVal to sound volume of d
+				if volVal is not missing value then set volNum to (volVal as integer)
+			end try
+			if nameStr is not "" then
+				set end of out to pidStr & tab & nameStr & tab & kindStr & tab & selStr & tab & volNum
+			end if
 		end try
-		set end of out to pidStr & tab & (name of d) & tab & (kind of d as text) & tab & (selected of d as text) & tab & ((sound volume of d) as integer)
 	end repeat
 end tell
 set AppleScript's text item delimiters to linefeed
@@ -90,18 +144,22 @@ func (p *Provider) Devices(ctx context.Context) ([]provider.Device, error) {
 			id = name
 		}
 		kind := strings.TrimSpace(cols[2])
-		if kind == "computer" {
+		if strings.EqualFold(kind, "computer") {
 			kind = "Computer"
 		}
 		active := strings.TrimSpace(cols[3]) == "true"
 		vol, verr := strconv.Atoi(strings.TrimSpace(cols[4]))
+		volKnown := verr == nil && vol >= 0
+		if !volKnown {
+			vol = 0
+		}
 		devs = append(devs, provider.Device{
 			ID:          id,
 			Name:        name,
 			Type:        kind,
 			Active:      active,
 			VolumePct:   vol,
-			VolumeKnown: verr == nil,
+			VolumeKnown: volKnown,
 		})
 	}
 	if len(devs) == 0 {
@@ -110,18 +168,79 @@ func (p *Provider) Devices(ctx context.Context) ([]provider.Device, error) {
 	return devs, nil
 }
 
-// stateScript:一行 tab 分隔輸出;stopped 時只回 "stopped"。
+// stateScript:一行 tab 分隔輸出;stopped 或無當前曲目時只回 "stopped"。
 // 時長/進度/音量在 AppleScript 端先算成整數(而非 "as text" 後在 Go 端乘 1000)——
 // 避開 macOS 非 en-US locale(如 de/fr)把小數點印成 "," 導致 Go 端解析失敗的問題
 // (review finding 1;"," 不是合法 Go float,且原本錯誤被 "_" 吞掉,靜默變 0)。
-// 尾端同趟順帶讀回 sound volume、shuffle enabled 與 song repeat,零額外 AppleEvent 往返。
-// 先用 `application "Music" is running` 判斷(不進 tell 區塊就不會把沒開的 Music.app 啟動起來;
-// now --watch 輪詢時若每次都啟動 app 會很糟)。
+// 嚴禁對 enum(player state / song repeat)或 boolean(shuffle enabled)使用 `as text`,否則 Music.app
+// 會在非 stopped 狀態直接拋 -1700 轉型錯誤導致 osascript exit 1;同時完整防禦 current track -1728 與 missing value。
+// 先用 `application "Music" is running` 判斷(不進 tell 區塊就不會把沒開的 Music.app 啟動起來;決策 16)。
 const stateScript = `if not (application "Music" is running) then return "not running"
 tell application "Music"
-	if player state is stopped then return "stopped"
-	set t to current track
-	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer) & tab & (sound volume as integer) & tab & (shuffle enabled as text) & tab & (song repeat as text)
+	set curState to player state
+	if curState is stopped then return "stopped"
+	set stateStr to "paused"
+	if curState is playing then set stateStr to "playing"
+	try
+		set t to current track
+		if t is missing value then return "stopped"
+	on error
+		return "stopped"
+	end try
+	set trackName to ""
+	try
+		set nameVal to name of t
+		if nameVal is not missing value then set trackName to nameVal
+	end try
+	if trackName is "" then
+		try
+			set streamTitle to current stream title
+			if streamTitle is not missing value then set trackName to streamTitle
+		end try
+	end if
+	set trackArtist to ""
+	try
+		set artistVal to artist of t
+		if artistVal is not missing value then set trackArtist to artistVal
+	end try
+	set trackAlbum to ""
+	try
+		set albumVal to album of t
+		if albumVal is not missing value then set trackAlbum to albumVal
+	end try
+	set durMS to 0
+	try
+		set durVal to duration of t
+		if durVal is not missing value and durVal > 0 and durVal < 536870 then
+			set durMS to ((durVal * 1000) as integer)
+		end if
+	end try
+	set posMS to 0
+	try
+		set posVal to player position
+		if posVal is not missing value and posVal > 0 and posVal < 536870 then
+			set posMS to ((posVal * 1000) as integer)
+		end if
+	end try
+	set volNum to -1
+	try
+		set volVal to sound volume
+		if volVal is not missing value then set volNum to (volVal as integer)
+	end try
+	set shufStr to "false"
+	try
+		if shuffle enabled is true then set shufStr to "true"
+	end try
+	set repStr to "off"
+	try
+		set repVal to song repeat
+		if repVal is one then
+			set repStr to "one"
+		else if repVal is all then
+			set repStr to "all"
+		end if
+	end try
+	return stateStr & tab & trackName & tab & trackArtist & tab & trackAlbum & tab & durMS & tab & posMS & tab & volNum & tab & shufStr & tab & repStr
 end tell`
 
 func parseAppleRepeat(s string) provider.RepeatMode {
@@ -168,12 +287,18 @@ func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
 		if verr != nil {
 			return nil, i18n.Errorf("apple.player.err.bad_number", "output", strconv.Quote(out))
 		}
-		dev.VolumePct = vol
-		dev.VolumeKnown = true
+		if vol >= 0 {
+			dev.VolumePct = vol
+			dev.VolumeKnown = true
+		}
 		shuffle = f[7] == "true"
 		repeat = parseAppleRepeat(f[8])
 	}
-	tr := provider.Track{Title: f[1], Artists: []string{f[2]}, Album: f[3], DurationMS: dur}
+	var artists []string
+	if f[2] != "" {
+		artists = []string{f[2]}
+	}
+	tr := provider.Track{Title: f[1], Artists: artists, Album: f[3], DurationMS: dur}
 	return &provider.PlaybackState{
 		Playing:    f[0] == "playing",
 		Track:      &tr,
@@ -245,13 +370,20 @@ const libraryMatchScript = `on run argv
 		set ts to (every track of library playlist 1 whose name is wantName and artist is wantArtist)
 		set out to {}
 		repeat with t in ts
-			set d to duration of t
-			if d is not missing value and media kind of t is song then
-				ignoring diacriticals
-					set sameAlbum to (album of t is wantAlbum)
-				end ignoring
-				set end of out to (persistent ID of t) & tab & (((d * 1000) as integer) as text) & tab & (sameAlbum as integer)
-			end if
+			try
+				set d to duration of t
+				if d is not missing value and d > 0 and d < 536870 and media kind of t is song then
+					ignoring diacriticals
+						set sameAlbum to (album of t is wantAlbum)
+					end ignoring
+					set sameInt to 0
+					if sameAlbum is true then set sameInt to 1
+					set pidVal to persistent ID of t
+					if pidVal is not missing value then
+						set end of out to pidVal & tab & ((d * 1000) as integer) & tab & sameInt
+					end if
+				end if
+			end try
 		end repeat
 	end tell
 	set AppleScript's text item delimiters to linefeed
@@ -266,9 +398,11 @@ const playLibraryScript = `on run argv
 	tell application "Music"
 		play (first track of library playlist 1 whose persistent ID is wantPID)
 		repeat 25 times
-			if player state is playing then
-				if persistent ID of current track is wantPID then return "pid"
-			end if
+			try
+				if player state is playing then
+					if persistent ID of current track is wantPID then return "pid"
+				end if
+			end try
 			delay 0.2
 		end repeat
 		return "unconfirmed"
@@ -350,16 +484,25 @@ const transferScript = `on run argv
 			set pidStr to ""
 			try
 				set pidVal to persistent ID of d
-				if pidVal is not missing value then set pidStr to (pidVal as text)
+				if pidVal is not missing value then set pidStr to pidVal
 			end try
-			if pidStr is wantID or (name of d) is wantID then
+			set nameStr to ""
+			try
+				set nameVal to name of d
+				if nameVal is not missing value then set nameStr to nameVal
+			end try
+			if pidStr is wantID or nameStr is wantID then
 				set chosenDev to contents of d
 				exit repeat
 			end if
 		end repeat
 		if chosenDev is missing value and (wantID is "music.app" or wantID is "computer") then
 			repeat with d in (every AirPlay device)
-				if (kind of d) is computer then
+				set isComp to false
+				try
+					if (kind of d) is computer then set isComp to true
+				end try
+				if isComp then
 					set chosenDev to contents of d
 					exit repeat
 				end if
@@ -376,7 +519,11 @@ const setShuffleScript = `on run argv
 	if not (application "Music" is running) then return "not running"
 	set wantOn to item 1 of argv
 	tell application "Music"
-		set shuffle enabled to (wantOn is "1")
+		if wantOn is "1" then
+			set shuffle enabled to true
+		else
+			set shuffle enabled to false
+		end if
 	end tell
 	return "ok"
 end run`
