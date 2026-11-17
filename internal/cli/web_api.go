@@ -1,23 +1,33 @@
 package cli
 
-// 兩個直達端點(P7 決策 42):ISRC 查詢與播放面板。它們不經 cobra、不進 runMu、不呼叫 defaultProvider()——
+// 直達端點(P7 決策 42 + Stage 2 主力播放器):ISRC 查詢、播放面板、直達播放控制(/api/player、/api/player/devices)、
+// 定時器(/api/timer)、唯讀曲庫摘要(/api/library)與離線快取歌曲介紹(/api/wiki/cached)。
+// 它們不經 cobra、不進 runMu、不呼叫 defaultProvider()、不呼叫 i18n.Set——
 // 會碰的接縫只有 BackoffStderr / LockStderr 兩個 stderr 全域(已序列化)與 package var newProvider(不換)。
 // 共享點另有 SQLite,唯讀開、零副作用。
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/ai"
 	"github.com/Tai-ch0802/capy-music/internal/canon"
+	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/resolve"
 	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
@@ -30,6 +40,16 @@ const (
 	webISRCTimeout = 30 * time.Second
 	// webCanonBusy:唯讀開 SQLite 的 busy timeout;讀不到就回 canonical: null,不等寫入者。
 	webCanonBusy = 200 * time.Millisecond
+	// webNowStoreBusy:/api/now 離線查詢本機 state.db 的短逾時,絕不卡住輪詢。
+	webNowStoreBusy = 50 * time.Millisecond
+	// webPlayerTimeout:/api/player 與 /api/player/devices 對 PlaybackController 的單次操作逾時。
+	webPlayerTimeout = 3 * time.Second
+	// webMaxPlayQueue:歌單依序/隨機連播單次最多送出的曲目數上限。
+	webMaxPlayQueue = 100
+	// webPlayerBodyMax:直達 JSON POST 端點的請求大小上限。
+	webPlayerBodyMax = 64 << 10
+	webRecentLimit   = 20
+	webJournalLimit  = 100
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -223,17 +243,23 @@ func (s *webServer) fillCanonical(resp *isrcResponse, isrc string) {
 // 這裡只剩 HTTP 的部分:單飛、handler 逾時回上一輪的結果、JSON 形狀。
 
 type nowResponse struct {
-	Provider   string     `json:"provider"`
-	Playing    bool       `json:"playing"`
-	Track      *webTrack  `json:"track"`
-	PositionMS int        `json:"position_ms"`
-	Device     *nowDevice `json:"device"`
-	Error      string     `json:"error,omitempty"` // 播放器沒開 / 未登入 / 不支援都是 200 帶 error
-	Stale      bool       `json:"stale"`
-	StaleMS    int64      `json:"stale_ms,omitempty"`
+	Provider    string          `json:"provider"`
+	Playing     bool            `json:"playing"`
+	Track       *webTrack       `json:"track"`
+	PositionMS  int             `json:"position_ms"`
+	Device      *nowDevice      `json:"device"`
+	Shuffle     bool            `json:"shuffle,omitempty"`
+	Repeat      string          `json:"repeat,omitempty"`
+	InPlaylists []string        `json:"in_playlists,omitempty"`
+	WikiCached  *cachedWikiView `json:"wiki_cached,omitempty"`
+	Timer       *sleepSnapshot  `json:"timer,omitempty"`
+	Error       string          `json:"error,omitempty"` // 播放器沒開 / 未登入 / 不支援都是 200 帶 error
+	Stale       bool            `json:"stale"`
+	StaleMS     int64           `json:"stale_ms,omitempty"`
 }
 
 type nowDevice struct {
+	ID          string `json:"id,omitempty"`
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	VolumePct   int    `json:"volume_pct"`
@@ -249,8 +275,12 @@ func toNowResponse(r nowResult) *nowResponse {
 	}
 	if st := r.st; st != nil {
 		resp.Playing = st.Playing
-		resp.Device = &nowDevice{Name: st.Device.Name, Type: st.Device.Type,
-			VolumePct: st.Device.VolumePct, VolumeKnown: st.Device.VolumeKnown}
+		resp.Shuffle = st.Shuffle
+		resp.Repeat = string(st.Repeat)
+		resp.Device = &nowDevice{
+			ID: st.Device.ID, Name: st.Device.Name, Type: st.Device.Type,
+			VolumePct: st.Device.VolumePct, VolumeKnown: st.Device.VolumeKnown,
+		}
 		if st.Track != nil {
 			t := toWebTrack(*st.Track)
 			resp.Track, resp.PositionMS = &t, st.ProgressMS
@@ -277,14 +307,15 @@ func (s *webServer) handleNow(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		var (
 			resp  *nowResponse
+			res   nowResult
+			ok    bool
 			entry *store.PlayJournalEntry
 		)
 		func() {
 			defer s.pollMu.Unlock()
 			gen := s.nowGen.Load()
-			res := s.pollRound(pin)
+			res = s.pollRound(pin)
 			resp = toNowResponse(res)
-			var ok bool
 			ok, entry = s.commitNow(res, pin == "", gen)
 			if !ok { // 問的期間 dropNow 過(登出、換帳號):舊帳號的結果不記、也不送
 				resp = s.staleNow(pin)
@@ -292,6 +323,12 @@ func (s *webServer) handleNow(w http.ResponseWriter, r *http.Request) {
 		}()
 		if entry != nil {
 			s.recordPlayJournal(*entry)
+		}
+		if ok {
+			if res.err == nil && s.timer != nil {
+				s.timer.Observe(res.provider, res.st)
+			}
+			s.enrichNow(resp)
 		}
 		done <- resp
 	}()
@@ -318,13 +355,700 @@ func (s *webServer) staleNow(pin string) *nowResponse {
 				id = *p
 			}
 		}
-		return &nowResponse{Provider: id, Stale: true}
+		resp := &nowResponse{Provider: id, Stale: true}
+		s.attachTimer(resp)
+		return resp
 	}
 	age := webNowClock().Sub(snap.at)
 	resp := toNowResponse(advance(snap.res, age))
 	resp.Stale = true
 	resp.StaleMS = age.Milliseconds()
+	s.enrichNow(resp)
 	return resp
+}
+
+func (s *webServer) attachTimer(resp *nowResponse) {
+	if s.timer == nil || resp == nil {
+		return
+	}
+	if snap := s.timer.Snapshot(); snap.Mode != SleepOff {
+		resp.Timer = &snap
+	}
+}
+
+// enrichNow:純本機離線補齊 in_playlists、Apple catalog 單曲外連、wiki_cached 與定時器快照。
+// 嚴守 #9 1D 與 CLAUDE.md:絕不在背景輪詢打 SearchSongs 或任何網路/AI 請求,只做本機唯讀查詢。
+func (s *webServer) enrichNow(resp *nowResponse) {
+	if resp == nil {
+		return
+	}
+	s.attachTimer(resp)
+	if resp.Track == nil {
+		return
+	}
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil || cfg == nil {
+		cfg = &config.Config{}
+	}
+	enrichNowFromCanon(resp, cfg)
+	if wv, ok := lookupCachedWikiWithLang(*cfg, ai.Song{
+		Title:       resp.Track.Title,
+		Artists:     resp.Track.Artists,
+		Album:       resp.Track.Album,
+		ReleaseDate: resp.Track.ReleaseDate,
+		Genres:      resp.Track.Genres,
+	}); ok {
+		resp.WikiCached = wv
+	}
+}
+
+func lookupCachedWikiWithLang(cfg config.Config, song ai.Song) (*cachedWikiView, bool) {
+	wv, ok := lookupCachedWiki(cfg, song)
+	if !ok || wv == nil {
+		return nil, false
+	}
+	lang, _ := configLanguage()
+	if msgs := i18n.Messages(lang, func(k string) bool { return k == "wiki.disclaimer" }); msgs != nil {
+		if d, ok := msgs["wiki.disclaimer"].(string); ok && d != "" {
+			wv.Disclaimer = d
+		}
+	}
+	return wv, true
+}
+
+func enrichNowFromCanon(resp *nowResponse, cfg *config.Config) {
+	st, err := store.OpenReadOnly(webNowStoreBusy)
+	if err != nil {
+		return
+	}
+	defer st.Close()
+	c, err := st.Dump()
+	if err != nil {
+		return
+	}
+	idx := canon.NewIdentity(c.Tracks.Tracks, c.Tracks.Merged)
+	var cid string
+	if resp.Track.ID != "" || resp.Track.ISRC != "" {
+		if cand := idx.Resolve(resp.Provider, resp.Track.ID, resp.Track.ISRC); cand != "" {
+			if _, ok := c.Tracks.Tracks[cand]; ok {
+				cid = cand
+			}
+		}
+		if cid == "" && resp.Track.ISRC != "" {
+			if cand := idx.Resolve("", "", resp.Track.ISRC); cand != "" {
+				if _, ok := c.Tracks.Tracks[cand]; ok {
+					cid = cand
+				}
+			}
+		}
+	}
+	if cid == "" {
+		cid = matchOfflineCanonTrack(resp.Track, c.Tracks.Tracks)
+	}
+	if cid == "" {
+		return
+	}
+	tr, ok := c.Tracks.Tracks[cid]
+	if !ok {
+		return
+	}
+	var pids []string
+	for _, pl := range c.Playlists {
+		for _, it := range pl.Items {
+			if idx.Redirect(it.CID) == cid {
+				pids = append(pids, pl.PID)
+				break
+			}
+		}
+	}
+	sort.Strings(pids)
+	resp.InPlaylists = pids
+
+	if resp.Provider == "apple" && resp.Track.URL == "" {
+		if m, ok := tr.Mappings["apple"]; ok && isAllDigits(m.ID) {
+			sf := strings.TrimSpace(cfg.AppleStorefront)
+			if sf != "" {
+				resp.Track.URL = "https://music.apple.com/" + url.PathEscape(sf) + "/song/" + url.PathEscape(m.ID)
+			} else {
+				resp.Track.URL = "https://music.apple.com/song/" + url.PathEscape(m.ID)
+			}
+		}
+	}
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func matchOfflineCanonTrack(want *webTrack, tracks map[string]canon.Track) string {
+	if want == nil || len(want.Artists) == 0 || want.DurationMS <= 0 {
+		return ""
+	}
+	rawTitle := strings.TrimSpace(want.Title)
+	rawArtist := strings.TrimSpace(want.Artists[0])
+	if rawTitle == "" || rawArtist == "" {
+		return ""
+	}
+	normTitle := resolve.Norm(rawTitle)
+	normArtist := resolve.Norm(rawArtist)
+	normAlbum := resolve.Norm(want.Album)
+	type cand struct {
+		cid      string
+		albumHit bool
+		durDiff  int
+	}
+	var hits []cand
+	for cid, tr := range tracks {
+		if tr.DurationMS <= 0 || absPlAddDiff(tr.DurationMS, want.DurationMS) > 2000 {
+			continue
+		}
+		titleOK := (normTitle != "" && resolve.Norm(tr.Title) == normTitle) || strings.EqualFold(strings.TrimSpace(tr.Title), rawTitle)
+		if !titleOK {
+			continue
+		}
+		artistOK := false
+		for _, a := range tr.Artists {
+			if (normArtist != "" && resolve.Norm(a) == normArtist) || strings.EqualFold(strings.TrimSpace(a), rawArtist) {
+				artistOK = true
+				break
+			}
+		}
+		if !artistOK {
+			continue
+		}
+		hits = append(hits, cand{
+			cid:      cid,
+			albumHit: normAlbum != "" && resolve.Norm(tr.Album) == normAlbum,
+			durDiff:  absPlAddDiff(tr.DurationMS, want.DurationMS),
+		})
+	}
+	if len(hits) == 0 {
+		return ""
+	}
+	slices.SortStableFunc(hits, func(a, b cand) int {
+		if a.albumHit != b.albumHit {
+			if a.albumHit {
+				return -1
+			}
+			return 1
+		}
+		if c := cmp.Compare(a.durDiff, b.durDiff); c != 0 {
+			return c
+		}
+		return strings.Compare(a.cid, b.cid)
+	})
+	return hits[0].cid
+}
+
+// ── POST /api/player & GET /api/player/devices ──
+
+type playerActionReq struct {
+	Action     string   `json:"action"`
+	Provider   string   `json:"provider"`
+	ID         string   `json:"id"`
+	TrackIDs   []string `json:"track_ids"`
+	PlaylistID string   `json:"playlist_id"`
+	Shuffle    bool     `json:"shuffle"`
+	On         *bool    `json:"on"`
+	PositionMS *int     `json:"position_ms"`
+	VolumePct  *int     `json:"volume_pct"`
+	Repeat     string   `json:"repeat"`
+	DeviceID   string   `json:"device_id"`
+	Play       *bool    `json:"play"`
+}
+
+type webDevice struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Active      bool   `json:"active"`
+	VolumePct   int    `json:"volume_pct"`
+	VolumeKnown bool   `json:"volume_known"`
+}
+
+func (s *webServer) resolveActiveProvider(explicit string) (string, bool) {
+	if explicit != "" {
+		if !isProviderID(explicit) {
+			return "", false
+		}
+		return explicit, true
+	}
+	if s.provFlag != "" {
+		return s.provFlag, true
+	}
+	if p := s.shown.Load(); p != nil && *p != "" {
+		return *p, true
+	}
+	return loadDefaultProvider(), true
+}
+
+func decodeJSONBody(r *http.Request, dst any) error {
+	return json.NewDecoder(io.LimitReader(r.Body, webPlayerBodyMax)).Decode(dst)
+}
+
+func (s *webServer) evictIfAuthExpired(prov string, err error) {
+	if errors.Is(err, provider.ErrAuthExpired) {
+		s.nowMu.Lock()
+		delete(s.now, prov)
+		s.nowMu.Unlock()
+	}
+}
+
+func (s *webServer) handlePlayer(w http.ResponseWriter, r *http.Request) {
+	var req playerActionReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_json", "err", err.Error()))
+		return
+	}
+	prov, ok := s.resolveActiveProvider(strings.TrimSpace(req.Provider))
+	if !ok {
+		httpErr(w, http.StatusBadRequest, i18n.T("web.err.unknown_provider", "id", req.Provider))
+		return
+	}
+	pc, err := s.playback(prov)
+	if err != nil {
+		httpErr(w, http.StatusUnprocessableEntity, friendlyErr(prov, err).Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(provider.WithoutWait(r.Context()), webPlayerTimeout)
+	defer cancel()
+
+	action := strings.TrimSpace(req.Action)
+	var (
+		opErr  error
+		queued int
+		pr     provider.PlayRequest
+	)
+	switch action {
+	case "play":
+		targets := 0
+		if strings.TrimSpace(req.ID) != "" {
+			targets++
+		}
+		if len(req.TrackIDs) > 0 {
+			targets++
+		}
+		if strings.TrimSpace(req.PlaylistID) != "" {
+			targets++
+		}
+		if targets > 1 {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.play_conflict"))
+			return
+		}
+		pr.DeviceID = strings.TrimSpace(req.DeviceID)
+		switch {
+		case strings.TrimSpace(req.PlaylistID) != "":
+			if p, ok := pc.(provider.Provider); ok && !p.Caps().Has(provider.CapPlayPlaylist) {
+				httpErr(w, http.StatusUnprocessableEntity, friendlyErr(prov, provider.ErrNotSupported).Error())
+				return
+			}
+			pr.PlaylistID = strings.TrimSpace(req.PlaylistID)
+		case len(req.TrackIDs) > 0:
+			ids := make([]string, 0, len(req.TrackIDs))
+			for _, id := range req.TrackIDs {
+				if trimmed := strings.TrimSpace(id); trimmed != "" {
+					ids = append(ids, trimmed)
+				}
+			}
+			if len(ids) == 0 {
+				httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.empty_tracks"))
+				return
+			}
+			if req.Shuffle {
+				rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+			}
+			if len(ids) > webMaxPlayQueue {
+				ids = ids[:webMaxPlayQueue]
+			}
+			pr.TrackIDs = ids
+			queued = len(ids)
+		case strings.TrimSpace(req.ID) != "":
+			pr.TrackIDs = []string{strings.TrimSpace(req.ID)}
+			queued = 1
+		}
+		opErr = pc.Play(ctx, pr)
+		if errors.Is(opErr, provider.ErrOpenedNotPlaying) {
+			label := strings.TrimSpace(req.ID)
+			if label == "" && len(pr.TrackIDs) > 0 {
+				label = pr.TrackIDs[0]
+			}
+			var oe *provider.OpenedError
+			if errors.As(opErr, &oe) && oe.Label != "" {
+				label = oe.Label
+			}
+			if req.Provider != "" && s.provFlag == "" {
+				p := prov
+				s.shown.Store(&p)
+			}
+			s.settleNow()
+			writeJSON(w, map[string]any{
+				"ok":                 true,
+				"provider":           prov,
+				"opened_not_playing": true,
+				"message":            i18n.T("play.opened_not_playing", "label", label),
+			})
+			return
+		}
+
+	case "pause":
+		opErr = pc.Pause(ctx)
+
+	case "next":
+		opErr = pc.Next(ctx)
+
+	case "prev":
+		opErr = pc.Prev(ctx)
+
+	case "seek":
+		if req.PositionMS == nil {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_seek"))
+			return
+		}
+		opErr = pc.Seek(ctx, max(0, *req.PositionMS))
+
+	case "volume":
+		if req.VolumePct == nil {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_volume"))
+			return
+		}
+		opErr = pc.SetVolume(ctx, min(100, max(0, *req.VolumePct)))
+
+	case "shuffle":
+		mc, ok := pc.(provider.PlaybackModeController)
+		if !ok {
+			httpErr(w, http.StatusUnprocessableEntity, friendlyErr(prov, provider.ErrNotSupported).Error())
+			return
+		}
+		on := req.Shuffle
+		if req.On != nil {
+			on = *req.On
+		}
+		opErr = mc.SetShuffle(ctx, on)
+
+	case "repeat":
+		mode := provider.RepeatMode(strings.TrimSpace(req.Repeat))
+		if mode != provider.RepeatOff && mode != provider.RepeatContext && mode != provider.RepeatTrack {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_repeat"))
+			return
+		}
+		mc, ok := pc.(provider.PlaybackModeController)
+		if !ok {
+			httpErr(w, http.StatusUnprocessableEntity, friendlyErr(prov, provider.ErrNotSupported).Error())
+			return
+		}
+		opErr = mc.SetRepeat(ctx, mode)
+
+	case "transfer":
+		devID := strings.TrimSpace(req.DeviceID)
+		if devID == "" {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.missing_device"))
+			return
+		}
+		dt, ok := pc.(provider.DeviceTransferrer)
+		if !ok {
+			httpErr(w, http.StatusUnprocessableEntity, friendlyErr(prov, provider.ErrNotSupported).Error())
+			return
+		}
+		play := false
+		if req.Play != nil {
+			play = *req.Play
+		} else if snap := s.lastNow.Load(); snap != nil && snap.res.provider == prov && snap.res.playing() {
+			play = true
+		}
+		opErr = dt.Transfer(ctx, devID, play)
+
+	default:
+		httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_action", "action", req.Action))
+		return
+	}
+
+	if opErr != nil {
+		s.evictIfAuthExpired(prov, opErr)
+		httpErr(w, http.StatusUnprocessableEntity, friendlyErr(prov, opErr).Error())
+		return
+	}
+	if req.Provider != "" && s.provFlag == "" && action == "play" {
+		p := prov
+		s.shown.Store(&p)
+	}
+	s.settleNow()
+	out := map[string]any{"ok": true, "provider": prov}
+	if queued > 0 {
+		out["queued"] = queued
+	}
+	writeJSON(w, out)
+}
+
+func (s *webServer) handlePlayerDevices(w http.ResponseWriter, r *http.Request) {
+	prov, ok := s.resolveActiveProvider(strings.TrimSpace(r.URL.Query().Get("provider")))
+	if !ok {
+		httpErr(w, http.StatusBadRequest, i18n.T("web.err.unknown_provider", "id", r.URL.Query().Get("provider")))
+		return
+	}
+	pc, err := s.playback(prov)
+	if err != nil {
+		writeJSON(w, map[string]any{
+			"provider":           prov,
+			"supported_transfer": false,
+			"devices":            []webDevice{},
+			"error":              friendlyErr(prov, err).Error(),
+		})
+		return
+	}
+	_, canTransfer := pc.(provider.DeviceTransferrer)
+	ctx, cancel := context.WithTimeout(provider.WithoutWait(r.Context()), webPlayerTimeout)
+	defer cancel()
+	ds, err := pc.Devices(ctx)
+	if err != nil {
+		s.evictIfAuthExpired(prov, err)
+		writeJSON(w, map[string]any{
+			"provider":           prov,
+			"supported_transfer": canTransfer,
+			"devices":            []webDevice{},
+			"error":              friendlyErr(prov, err).Error(),
+		})
+		return
+	}
+	out := make([]webDevice, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, webDevice{
+			ID: d.ID, Name: d.Name, Type: d.Type, Active: d.Active,
+			VolumePct: d.VolumePct, VolumeKnown: d.VolumeKnown,
+		})
+	}
+	writeJSON(w, map[string]any{
+		"provider":           prov,
+		"supported_transfer": canTransfer,
+		"devices":            out,
+	})
+}
+
+// ── POST /api/timer ──
+
+type timerReq struct {
+	Mode         string `json:"mode"`
+	Minutes      int    `json:"minutes"`
+	FocusMinutes int    `json:"focus_minutes"`
+	BreakMinutes int    `json:"break_minutes"`
+	Provider     string `json:"provider"`
+}
+
+func (s *webServer) handleTimer(w http.ResponseWriter, r *http.Request) {
+	var req timerReq
+	if err := decodeJSONBody(r, &req); err != nil {
+		httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_json", "err", err.Error()))
+		return
+	}
+	prov := strings.TrimSpace(req.Provider)
+	if prov != "" && !isProviderID(prov) {
+		httpErr(w, http.StatusBadRequest, i18n.T("web.err.unknown_provider", "id", prov))
+		return
+	}
+	if s.timer == nil {
+		writeJSON(w, sleepSnapshot{Mode: SleepOff})
+		return
+	}
+	switch strings.TrimSpace(req.Mode) {
+	case "", "off":
+		s.timer.Cancel(r.Context())
+	case "end_of_track":
+		s.timer.SetEndOfTrack(prov)
+	case "countdown":
+		if req.Minutes <= 0 || req.Minutes > 720 {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_timer"))
+			return
+		}
+		s.timer.SetCountdownMinutes(prov, req.Minutes)
+	case "pomodoro":
+		if req.FocusMinutes < 0 || req.FocusMinutes > 240 || req.BreakMinutes < 0 || req.BreakMinutes > 120 {
+			httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_timer"))
+			return
+		}
+		s.timer.SetPomodoro(prov, time.Duration(req.FocusMinutes)*time.Minute, time.Duration(req.BreakMinutes)*time.Minute)
+	default:
+		httpErr(w, http.StatusBadRequest, i18n.T("webui.api.err.bad_timer"))
+		return
+	}
+	writeJSON(w, s.timer.Snapshot())
+}
+
+// ── GET /api/library ──
+
+type libraryPlaylistSummary struct {
+	PID   string            `json:"pid"`
+	Name  string            `json:"name"`
+	Count int               `json:"count"`
+	Links map[string]string `json:"links"`
+}
+
+type webRecentItem struct {
+	At       int64  `json:"at"`
+	Provider string `json:"provider"`
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+type webJournalItem struct {
+	ID         int64    `json:"id"`
+	PlayedAt   int64    `json:"played_at"`
+	Provider   string   `json:"provider"`
+	ProviderID string   `json:"provider_id,omitempty"`
+	ISRC       string   `json:"isrc,omitempty"`
+	Title      string   `json:"title"`
+	Artists    []string `json:"artists"`
+	Album      string   `json:"album,omitempty"`
+	DurationMS int      `json:"duration_ms,omitempty"`
+}
+
+type libraryResponse struct {
+	Auth        authStatus                `json:"auth"`
+	HasDB       bool                      `json:"has_db"`
+	HasCanon    bool                      `json:"has_canon"`
+	StoreError  string                    `json:"store_error,omitempty"`
+	Files       map[string]json.RawMessage `json:"files"`
+	Playlists   []libraryPlaylistSummary  `json:"playlists"`
+	Recent      []webRecentItem           `json:"recent"`
+	PlayJournal []webJournalItem          `json:"play_journal"`
+}
+
+// handleLibrary:GET /api/library——唯讀直達端點,不進 runMu、不連網、絕不含任何 token/secret 值。
+func (s *webServer) handleLibrary(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		cfg = &config.Config{}
+	}
+	resp := &libraryResponse{
+		Auth:        authStatusOf(cfg),
+		HasDB:       hasLocalDB(),
+		Files:       map[string]json.RawMessage{},
+		Playlists:   []libraryPlaylistSummary{},
+		Recent:      []webRecentItem{},
+		PlayJournal: []webJournalItem{},
+	}
+	st, err := store.OpenReadOnly(webCanonBusy)
+	if errors.Is(err, store.ErrNoDB) {
+		writeJSON(w, resp)
+		return
+	}
+	if err != nil {
+		resp.StoreError = i18n.Errorf("escape.err.open_local", "err", err, "hint", retainedHint()).Error()
+		writeJSON(w, resp)
+		return
+	}
+	defer st.Close()
+	resp.HasDB = true
+
+	if c, err := st.Dump(); err == nil {
+		if len(c.Playlists) > 0 || len(c.Devices) > 0 || len(c.Tracks.Tracks) > 0 || len(c.Manifest.Devices) > 0 {
+			resp.HasCanon = true
+			addRaw := func(ref canon.FileRef, v any) {
+				if b, encErr := canon.Encode(v); encErr == nil {
+					resp.Files[ref.Name] = bytes.TrimSpace(b)
+				}
+			}
+			addRaw(canon.ManifestFile(), c.Manifest)
+			addRaw(canon.TracksFile(), c.Tracks)
+			for i := range c.Playlists {
+				pl := &c.Playlists[i]
+				addRaw(canon.PlaylistFile(pl.PID), pl)
+				links := map[string]string{}
+				for k, v := range pl.Links {
+					if v != "" {
+						links[k] = v
+					}
+				}
+				resp.Playlists = append(resp.Playlists, libraryPlaylistSummary{
+					PID:   pl.PID,
+					Name:  pl.Name,
+					Count: len(pl.Items),
+					Links: links,
+				})
+			}
+			for i := range c.Devices {
+				addRaw(canon.DeviceFile(c.Devices[i].DeviceID), &c.Devices[i])
+			}
+			slices.SortStableFunc(resp.Playlists, func(a, b libraryPlaylistSummary) int {
+				if c := strings.Compare(a.Name, b.Name); c != 0 {
+					return c
+				}
+				return strings.Compare(a.PID, b.PID)
+			})
+		}
+	} else {
+		resp.StoreError = err.Error()
+	}
+
+	if _, recent, err := st.LoadCache(); err == nil {
+		if len(recent) > webRecentLimit {
+			recent = recent[:webRecentLimit]
+		}
+		for _, r := range recent {
+			resp.Recent = append(resp.Recent, webRecentItem{
+				At: r.At, Provider: r.Provider, Type: r.Type,
+				ID: r.ID, Label: r.Label, Detail: r.Detail,
+			})
+		}
+	}
+
+	if journal, err := st.ListPlayJournal(webJournalLimit); err == nil {
+		for _, e := range journal {
+			resp.PlayJournal = append(resp.PlayJournal, webJournalItem{
+				ID:         e.ID,
+				PlayedAt:   e.PlayedAt.Unix(),
+				Provider:   e.Provider,
+				ProviderID: e.ProviderID,
+				ISRC:       e.ISRC,
+				Title:      e.Title,
+				Artists:    nonNilStrings(e.Artists),
+				Album:      e.Album,
+				DurationMS: e.DurationMS,
+			})
+		}
+	}
+	writeJSON(w, resp)
+}
+
+// ── GET /api/wiki/cached ──
+
+func (s *webServer) handleWikiCached(w http.ResponseWriter, r *http.Request) {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		cfg = &config.Config{}
+	}
+	title := strings.TrimSpace(r.URL.Query().Get("title"))
+	artistParam := strings.TrimSpace(r.URL.Query().Get("artist"))
+	var song ai.Song
+	if title != "" {
+		song.Title = title
+		if artistParam != "" {
+			for _, part := range strings.Split(artistParam, ",") {
+				if a := strings.TrimSpace(part); a != "" {
+					song.Artists = append(song.Artists, a)
+				}
+			}
+		}
+	} else if snap := s.lastNow.Load(); snap != nil && snap.res.st != nil && snap.res.st.Track != nil {
+		tr := snap.res.st.Track
+		song = ai.Song{
+			Title:       tr.Title,
+			Artists:     tr.Artists,
+			Album:       tr.Album,
+			ReleaseDate: tr.ReleaseDate,
+			Genres:      tr.Genres,
+		}
+	}
+	wv, ok := lookupCachedWikiWithLang(*cfg, song)
+	writeJSON(w, map[string]any{"cached": ok, "wiki": wv})
 }
 
 // webNowInvalidatedBy:這個命令跑完要不要作廢快取的 controller 與結果(帳號或設定變了)。auth status 是唯讀的——

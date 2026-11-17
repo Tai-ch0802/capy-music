@@ -4,7 +4,8 @@ package cli
 //
 // 不變式(-race 會抓,寫在檔頭給後人):Serve 開始後,newRootCmd()、defaultProvider()、resetDefaultProvider()、
 // 任何 var 接縫與 i18n.Set 的**寫入**只在 runMu 內發生;允許清單與 /api/commands 的命令樹在 Serve 前算好(後者每個語系一份);
-// /api/now、/api/isrc(T4)、/api/i18n(i18n T3)三個直達端點不經 cobra、不進 runMu、不呼叫 defaultProvider()、不 i18n.Set。
+// /api/now、/api/isrc(T4)、/api/i18n(i18n T3)、/api/player、/api/player/devices、/api/timer、/api/library、/api/wiki/cached
+// 直達端點不經 cobra、不進 runMu、不呼叫 defaultProvider()、不 i18n.Set。
 // 五個 stderr 全域是例外:它們在 Serve 前指派一次(之後不再寫那幾個 var),但**寫入那些 writer** 的 goroutine
 // 不只 job——/api/now 與 /api/isrc 也會經 BackoffStderr / LockStderr 印退避與等鎖提示(決策 42),所以併發安全靠的是
 // sseWriter 的 mu + closed 與 curMu,不是 runMu。/api/i18n 只讀 config 與嵌入的語系目錄,不寫任何 stderr。
@@ -73,6 +74,7 @@ type webServer struct {
 	// 與結果快取、安定期、單飛的 pollMu 都在 nowTracker(now_tracker.go,跟 TUI 共用);它的 ctx 就是伺服器 ctx。
 	provFlag string
 	nowTracker
+	timer *sleepTimer
 }
 
 type webCommand struct {
@@ -107,12 +109,14 @@ func newWebServer(ctx context.Context) (*webServer, error) {
 		cmds[l] = webCommands(newRootCmd())
 	}
 	i18n.Set(lang)
-	return &webServer{
+	ws := &webServer{
 		ctx: ctx, token: token,
 		allow: webAllowlist(root), commands: cmds,
 		static: http.FileServerFS(sub), fallbackStderr: os.Stderr,
 		nowTracker: nowTracker{ctx: ctx}, // webServer.ctx 蓋住了 nowTracker.ctx:這裡不設,輪詢拿到的是 nil ctx
-	}, nil
+	}
+	ws.timer = newTrackerSleepTimer(ctx, &ws.nowTracker)
+	return ws, nil
 }
 
 // runWeb:root 的 --web。非 TTY 啟動(launchd / nohup)也能開:只印網址、不開瀏覽器;網址連 token 一起
@@ -150,6 +154,9 @@ func runWeb(cmd *cobra.Command, port int) error {
 }
 
 func (s *webServer) serve(ln net.Listener) error {
+	if s.timer != nil {
+		defer s.timer.Close()
+	}
 	srv := &http.Server{Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second} // 不設 WriteTimeout:要串流
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -170,6 +177,11 @@ func (s *webServer) handler() http.Handler {
 	mux.HandleFunc("GET /api/i18n", s.api(s.handleI18n))
 	mux.HandleFunc("GET /api/isrc/{isrc}", s.api(s.handleISRC))
 	mux.HandleFunc("GET /api/now", s.api(s.handleNow))
+	mux.HandleFunc("POST /api/player", s.api(s.handlePlayer))
+	mux.HandleFunc("GET /api/player/devices", s.api(s.handlePlayerDevices))
+	mux.HandleFunc("POST /api/timer", s.api(s.handleTimer))
+	mux.HandleFunc("GET /api/library", s.api(s.handleLibrary))
+	mux.HandleFunc("GET /api/wiki/cached", s.api(s.handleWikiCached))
 	mux.HandleFunc("POST /api/run", s.api(s.handleRun))
 	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.api(s.handleCancel))
 	mux.HandleFunc("POST /api/jobs/{job}/answer", s.api(s.handleAnswer))
@@ -234,6 +246,15 @@ func httpErr(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+func hasLocalDB() bool {
+	p, err := store.Path()
+	if err != nil || p == "" {
+		return false
+	}
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir() && fi.Size() > 0
+}
+
 func (s *webServer) handleCommands(w http.ResponseWriter, _ *http.Request) {
 	lang, _ := configLanguage() // 同 default_provider:每次讀 config,終端機切的語系也看得到(不 Set:這裡在 runMu 外)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -241,6 +262,7 @@ func (s *webServer) handleCommands(w http.ResponseWriter, _ *http.Request) {
 		"version":          version,
 		"providers":        providerIDs,
 		"default_provider": loadDefaultProvider(), // 每次讀 config,不走 defaultProvider() 的 OnceValue
+		"has_local_db":     hasLocalDB(),
 		"commands":         s.commands[lang],
 	})
 }
@@ -254,6 +276,7 @@ var webSharedKeys = []string{
 	"changeset.confirm.apply",  // 確認鈕的字(web_prompt.go 送的 affirmative):搬家精靈的白話講到它
 	"changeset.confirm.cancel", // 同上(negative);console.js 在確認框沒給否定鈕的字時也用它
 	"local.display_name",       // common.js 的 providerName:本機曲庫的顯示名稱
+	"wiki.disclaimer",          // theater.js 的已快取歌曲介紹結尾免責聲明(不可關閉)
 }
 
 // webI18n:/api/i18n 的回應。messages 的值是字串,複數訊息是「CLDR 類別 → 字串」;supported 的 name 是語系自己的名稱。

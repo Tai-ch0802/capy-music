@@ -36,5 +36,7 @@
   --ease: cubic-bezier(.2, .7, .2, 1);
   --rail-w: 15rem;
   --z-dock: 20;
+  --z-pop: 30;
+  --z-modal: 40;
   color-scheme: dark;
 }

@@ -479,6 +479,7 @@ export class Console {
   // 切頁的 hashchange 可能晚於上面的 setTimeout(那時焦點落在 hidden 子樹裡是 no-op),由 route() 叫 focusPrompt() 補上。
   // host = 提示實際畫在哪裡:主控台的區塊,或呼叫端給的 promptHost。它所在的頁面是 hidden 就切過去。
   reveal(host) {
+    if (host && host.dataset && 'globalHost' in host.dataset) return;
     const page = (host && host.closest('.page')) || this.root.closest('.page');
     if (page && page.hidden) location.hash = page.id === 'page-console' || !page.id ? '#/console' : '#/' + page.id.replace(/^page-/, '');
   }

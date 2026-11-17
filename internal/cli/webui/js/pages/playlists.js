@@ -4,9 +4,9 @@
 // 右欄上面是連結面板(正本連到哪幾份平台清單)與就地的寫入流程(同步、在 X 建一份、找對應;計畫 §3.5):寫入一律走 CLI 自己的
 // 變更表與確認,頁面絕不代加確認或越過的旗標(決策 46)。第二段是「各平台上的清單」:連著哪份正本、還沒納入的可以納入(§3.4 / §3.5)。
 // 顯示 Spotify 的曲目或清單的地方都連回 Spotify(計畫 2026-09-24 §1.7 S7)。
-import { el, btn, input, providerName, emptyState, pageHead } from './common.js';
+import { el, btn, input, select, providerName, emptyState, pageHead } from './common.js';
 import { spotifyLink, youtubeLink, mmss, SPOTIFY_ID } from '../table.js';
-import { parseStatus } from './account.js';
+import { postPlayerAction } from '../player.js';
 import { changeTable } from './sync.js';
 import { lineSplitter, wikiRenderer } from './wiki.js';
 import { t } from '../i18n.js';
@@ -36,58 +36,76 @@ export function initPlaylists(root, api, con, notice, providers) {
   plats.append(el('h3', 'card__sub', t('webui.playlists.platforms.title')), el('p', 'page__note', t('webui.playlists.platforms.lead')),
     btn(t('webui.playlists.platforms.read'), '', readPlatforms), pflow, platList);
 
-  root.append(about(), btn(t('webui.playlists.refresh'), 'btn--ghost', load), cols, plats);
-  con.idle(load); // 同帳號頁:有命令在跑就等它結束,不要撞上它、畫成「沒有清單」
+  const refreshBtn = el('button', 'btn btn--ghost', t('webui.playlists.refresh'));
+  refreshBtn.type = 'button';
+  refreshBtn.addEventListener('click', () => load());
+  root.append(about(), refreshBtn, cols, plats);
 
-  // auth:`auth status --json`(不連網)。▶ 要不要給、連結面板與空白態怎麼說都看它;讀不到 = {} = 不知道,當成有登入、是自己的。
+  // auth:/api/library 的 auth(同 auth status --json,不連網、零 secret)。▶ 要不要給、連結面板與空白態怎麼說都看它。
   let auth = {};
   let devices = [];  // export 的 manifest.json:裝置 id → 名稱(連在別台電腦的本機清單說得出是哪一台)
   let selected = ''; // 選中的那份(pid):寫入後、回到這一頁時重讀,畫回同一份
+  let currentSongRows = []; // [{ tr, trk }]:跟著 capy:now 標記 data-playing="true"
+  let lastNow = null;
   // flow:寫入命令的就地區塊(步驟條、狀態句、變更表、提示;表在上、提示在下——CLI 先印表再問確認)。
   // 只在切到別份清單時清空;重讀後搬進新畫的右欄,收尾那句不會因為重讀而消失。
   const flow = el('div', 'pl__flow');
-  // flowBusy:流程區裡有寫入命令在跑(提示畫在它裡面)。這時換一份清單或按「在 X 建一份」會清掉流程區、把提示一起拿掉,
-  // 命令就卡在序列槽裡等一個看不到的提示:擋下並說明(同 btn() 被擋時的 capy:busy)。▶ 與自動重讀不算,照常可以換清單。
   let flowBusy = false;
   const blocked = () => { if (flowBusy) document.dispatchEvent(new Event('capy:busy')); return flowBusy; };
-  // 兩個命令都 quiet:export 的整份 JSON 不灌進主控台。第二個在第一個的 onExit 裡送——用 await 串的話,
-  // 排隊中的 con.idle 會先被叫醒而插隊(console.js:onExit 先於 wake())。畫面等資料到了才換,重讀時不閃。
-  function load() {
-    let status = '';
-    con.run('', {
-      onStdout: (s) => { status += s; },
-      onExit: (code) => { if (code === 0) auth = parseStatus(status); readExport(); }, // 讀不到就沿用上一次讀到的
-    }, { args: ['auth', 'status', '--json'], label: t('webui.move.label.status'), quiet: true });
-  }
 
-  function readExport() {
-    let text = '';
-    con.run('export', {
-      onStdout: (s) => { text += s; },
-      onExit: (code, msg, reason) => {
-        if (code !== 0) {
-          // 已經畫過清單(寫入後、回到這一頁時的重讀):保留畫面與流程區裡「停在哪一步」那句,原因 Console 已經放進 notice
-          if (selected) return;
-          left.replaceChildren();
-          right.replaceChildren();
-          // 只有命令真的跑完、以非 0 結束才算「這台沒有本機資料」;斷線、被別的分頁佔著、中止、逾時都不是,照說原因
-          //(#122 review 第 1 點;原因的句子 Console 也會放進 notice)。
-          if (reason === 'done') noLocal();
-          else left.appendChild(emptyState(msg || t('webui.playlists.not_loaded', { button: t('webui.playlists.refresh') })));
-          return;
-        }
-        let files;
-        try {
-          files = JSON.parse(text);
-        } catch (e) {
-          left.replaceChildren(el('p', 'card__error', t('webui.playlists.bad_export', { error: e.message })));
-          right.replaceChildren();
-          return;
-        }
-        render(files);
-      },
-    }, { label: t('webui.playlists.load_label'), quiet: true });
+  // load:走唯讀直達端點 GET /api/library,不進 runMu、不阻塞也不被背景 sync / wiki 卡住。
+  let loadSeq = 0;
+  async function load() {
+    const mine = ++loadSeq;
+    let r;
+    try {
+      r = await api.fetch('/api/library');
+    } catch (e) {
+      if (mine !== loadSeq || selected) return;
+      left.replaceChildren(emptyState(e.message || t('webui.playlists.not_loaded', { button: t('webui.playlists.refresh') })));
+      right.replaceChildren();
+      return;
+    }
+    if (mine !== loadSeq) return;
+    if (!r.ok) {
+      let msg = '';
+      try { msg = (await r.json()).error || ''; } catch (_) { /* ignore */ }
+      if (selected) { if (msg) notice(msg); return; }
+      left.replaceChildren(emptyState(msg || t('webui.playlists.not_loaded', { button: t('webui.playlists.refresh') })));
+      right.replaceChildren();
+      return;
+    }
+    let lib;
+    try {
+      lib = await r.json();
+    } catch (e) {
+      if (selected) return;
+      left.replaceChildren(el('p', 'card__error', e.message));
+      right.replaceChildren();
+      return;
+    }
+    if (mine !== loadSeq) return;
+    if (lib && lib.auth && typeof lib.auth === 'object') auth = lib.auth;
+    if (lib && lib.store_error) {
+      masters = null;
+      renderPlatforms();
+      if (selected) { notice(lib.store_error); return; }
+      left.replaceChildren(el('p', 'card__error', lib.store_error));
+      right.replaceChildren();
+      return;
+    }
+    if (!lib || !lib.has_db) {
+      masters = null;
+      renderPlatforms();
+      if (selected) return;
+      left.replaceChildren();
+      right.replaceChildren();
+      noLocal();
+      return;
+    }
+    render(lib.files || {});
   }
+  load();
 
   // 沒有東西可以畫的三種情況,下一步各不一樣:還沒連 Google Drive(正本就放在那裡)→ 帳號頁;連了、但這台電腦還沒讀過 Drive
   // (export 失敗 = 本機沒有資料,例如第二台電腦;export 沒辦法知道 Drive 上有沒有清單)→ 同步頁把正本拉回來;
@@ -181,11 +199,16 @@ export function initPlaylists(root, api, con, notice, providers) {
     sync.disabled = !links(pl).length;
     head.append(title, sync);
     if (sync.disabled) head.appendChild(el('p', 'page__note', t('webui.playlists.sync_none')));
-    right.append(head, linkPanel(pl, items, track));
+    right.append(head);
+    const pbar = playBar(items, track);
+    if (pbar) right.appendChild(pbar);
+    right.appendChild(linkPanel(pl, items, track));
     if (flow.dataset.pid !== pl.pid) { flow.replaceChildren(); flow.dataset.pid = pl.pid; }
     right.appendChild(flow);
 
-    const { tbl, rows, texts } = songTable(pl, items, track);
+    const { tbl, rows, texts, songMeta } = songTable(pl, items, track);
+    currentSongRows = songMeta;
+    applyPlayingHighlight();
     const wrap = el('div', 'tbl-wrap tbl-wrap--tall pl__songs');
     wrap.appendChild(tbl);
     if (items.length > FILTER_SONGS) {
@@ -199,6 +222,76 @@ export function initPlaylists(root, api, con, notice, providers) {
     right.appendChild(wrap);
     if (keep) wrap.scrollTop = keep.top;
   }
+
+  function playableIds(items, track, p) {
+    const out = [];
+    for (const it of items) {
+      const id = mappingOf(track(it.cid), p).id;
+      if (p === 'spotify' && SPOTIFY_ID.test(id)) out.push(id);
+      else if (p === 'apple' && CATALOG_ID.test(id)) out.push(id);
+    }
+    return out;
+  }
+
+  // playBar:歌單頂部依序連播與記憶體隨機連播(走直達 POST /api/player,不掛 data-run、100% 不改動正本順序)。
+  function playBar(items, track) {
+    const playableProvs = ['spotify', 'apple'].filter((p) => providers.list.includes(p) && canPlay(p) && playableIds(items, track, p).length > 0);
+    if (!playableProvs.length) return null;
+    let curProv = playableProvs.includes(providers.current) ? providers.current : playableProvs[0];
+    const bar = el('div', 'pl__playbar');
+    if (playableProvs.length > 1) {
+      const sel = select(playableProvs.map((p) => ({ value: p, label: providerName(p) })), curProv);
+      sel.setAttribute('aria-label', t('webui.playlists.play_platform'));
+      sel.addEventListener('change', () => { curProv = sel.value; });
+      bar.appendChild(sel);
+    }
+    const playAll = el('button', 'btn', t('webui.playlists.play_all'));
+    playAll.type = 'button';
+    playAll.addEventListener('click', () => {
+      const ids = playableIds(items, track, curProv);
+      if (ids.length) postPlayerAction(api, notice, { action: 'play', provider: curProv, track_ids: ids, shuffle: false });
+    });
+    const shuf = el('button', 'btn btn--ghost', t('webui.playlists.shuffle_play'));
+    shuf.type = 'button';
+    shuf.title = t('webui.playlists.shuffle_note');
+    shuf.addEventListener('click', () => {
+      const ids = playableIds(items, track, curProv);
+      if (ids.length) postPlayerAction(api, notice, { action: 'play', provider: curProv, track_ids: ids, shuffle: true });
+    });
+    bar.append(playAll, shuf, el('span', 'pl__playbar-note', t('webui.playlists.shuffle_note')));
+    return bar;
+  }
+
+  function applyPlayingHighlight() {
+    const d = lastNow;
+    const nowTr = d && d.track;
+    for (const { tr, trk } of currentSongRows) {
+      let hit = false;
+      if (nowTr) {
+        if (d.provider && nowTr.id && mappingOf(trk, d.provider).id === nowTr.id) {
+          hit = true;
+        } else if (nowTr.isrc && Array.isArray(trk.isrc) && trk.isrc.includes(nowTr.isrc)) {
+          hit = true;
+        } else if (!nowTr.id && nowTr.title && trk.title &&
+          String(trk.title).trim().toLowerCase() === String(nowTr.title).trim().toLowerCase() &&
+          (trk.artists || [])[0] && (nowTr.artists || [])[0] &&
+          String(trk.artists[0]).trim().toLowerCase() === String(nowTr.artists[0]).trim().toLowerCase()) {
+          hit = true;
+        }
+      }
+      if (hit) {
+        tr.dataset.playing = 'true';
+        tr.setAttribute('aria-label', t('webui.playlists.playing_badge'));
+      } else {
+        delete tr.dataset.playing;
+        tr.removeAttribute('aria-label');
+      }
+    }
+  }
+  document.addEventListener('capy:now', (ev) => {
+    lastNow = ev && ev.detail;
+    applyPlayingHighlight();
+  });
 
   // songTable:這一頁自己的表(不是 TSV 的直譯,不用 renderTable):#、歌曲(曲名 + 歌手 · 專輯)、時長、每個平台一欄。
   // 窄的時候每首拆成多行(app.css 的容器查詢把表格元素改成 block / flex),所以每個元素都標上表格的 role,報讀才還是表格。
@@ -223,6 +316,7 @@ export function initPlaylists(root, api, con, notice, providers) {
     const tbody = el('tbody');
     const rows = [];
     const texts = [];
+    const songMeta = [];
     items.forEach((it, i) => {
       const trk = track(it.cid);
       const title = (trk.title || '').trim(); // 同 CLI 的 TrimSpace:只有空白的曲名當成沒有(不然 Wiki 會問到正在播的那首)
@@ -248,9 +342,10 @@ export function initPlaylists(root, api, con, notice, providers) {
       tbody.appendChild(tr);
       rows.push(tr);
       texts.push(`${title}\n${artists}\n${trk.album || ''}`.toLowerCase());
+      songMeta.push({ tr, trk });
     });
     tbl.append(cg, thead, tbody);
-    return { tbl, rows, texts };
+    return { tbl, rows, texts, songMeta };
   }
 
   // ── 連結面板(計畫 §3.5):Google Drive 正本 → 每個平台一列;本機只在連著時出現 ──
@@ -716,20 +811,12 @@ export function initPlaylists(root, api, con, notice, providers) {
     return td;
   }
 
-  // playButton:用 capy 在那個平台放這首(同搜尋頁的列動作,走 args 陣列)。Apple 的歌不在資料庫時只會在 Music.app 打開、
-  // 沒開始播:命令那句(不以 ▶ 開頭)照抄給 notice,不然它只進看不到的主控台(決策 52)。等 run() 整個收尾才說:
-  // 收尾時會叫醒排隊的自動讀取,它一開跑就清掉 notice。
+  // playButton:走直達端點 POST /api/player,不掛 data-run、不被背景 sync / wiki 鎖死;Apple 只打開未開始播時照印回傳訊息。
   function playButton(p, id, title) {
-    const b = btn('▶', 'btn--ghost btn--icon', async () => {
-      let said = '';
-      const [code] = await con.run('', { onStdout: (s) => { said += s; } }, {
-        args: ['play', '--id', id, '--provider', p],
-        label: p === 'apple' ? t('webui.search.open_music_label', { title }) : t('webui.search.play_label', { title }),
-      });
-      const line = said.trim();
-      if (code === 0 && line && !line.startsWith('▶')) notice(line);
-    });
+    const b = el('button', 'btn btn--ghost btn--icon', '▶');
+    b.type = 'button';
     b.setAttribute('aria-label', t('webui.playlists.play_on', { platform: providerName(p), title }));
+    b.addEventListener('click', () => postPlayerAction(api, notice, { action: 'play', provider: p, id }));
     return b;
   }
 
@@ -738,8 +825,10 @@ export function initPlaylists(root, api, con, notice, providers) {
     return Object.entries(pl.links || {}).filter(([, id]) => typeof id === 'string' && id);
   }
 
-  // 回到這一頁時重讀(app.js 的 route;別頁寫入之後這一頁不會過時)。有命令在跑就等它結束。
-  return { refresh: () => con.idle(load) };
+  document.addEventListener('capy:player-settled', () => load());
+
+  // 回到這一頁時直接讀唯讀 /api/library,瞬開不搶 runMu。
+  return { refresh: () => load() };
 }
 
 // same:兩個清單名算不算同名(不分大小寫,同 CLI 的 canonState.find 與 sameNamePlaylists 的 EqualFold)。

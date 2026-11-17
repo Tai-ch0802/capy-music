@@ -15,7 +15,7 @@ func TestWebShellTextsHaveEnglish(t *testing.T) {
 	call := regexp.MustCompile(`(?:^|[^\w$.])t\(\s*['"]([^'"]+)['"]`)
 	attr := regexp.MustCompile(`\sdata-i18n(?:-aria-label|-placeholder|-title)?="([^"]+)"`)
 	n := 0
-	for _, name := range []string{"index.html", "js/app.js", "js/console.js", "js/player.js"} {
+	for _, name := range []string{"index.html", "js/app.js", "js/console.js", "js/player.js", "js/collect.js", "js/theater.js"} {
 		b, err := webUI.ReadFile("webui/" + name)
 		if err != nil {
 			t.Fatal(err)

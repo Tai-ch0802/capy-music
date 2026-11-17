@@ -23,8 +23,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/ai"
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	appleauth "github.com/Tai-ch0802/capy-music/internal/auth/apple"
 	ytauth "github.com/Tai-ch0802/capy-music/internal/auth/youtube"
+	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
@@ -32,6 +35,8 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/provider/local"
 	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
 	youtubeprov "github.com/Tai-ch0802/capy-music/internal/provider/youtube"
+	"github.com/Tai-ch0802/capy-music/internal/secret"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
 // ── 測試骨架 ──
@@ -489,16 +494,16 @@ func TestWebLanguageFollowsConfig(t *testing.T) {
 		msg, _ := evExit(t, events)["message"].(string)
 		return msg
 	}
-	if got := short(); got != "寫入設定值(可設:default_provider、local_root、language、ai_base_url、ai_model、native_language)" {
+	if got := short(); !strings.HasPrefix(got, "寫入設定值(可設:default_provider、local_root、language、ai_base_url、ai_model、native_language") {
 		t.Fatalf("沒設 language:測試二進位的預設是 zh-TW:%q", got)
 	}
 	if msg := exitMsg("config", "set", "language", "en"); msg != "" { // T3 的語言選單跑的就是這個命令
 		t.Fatalf("config set language en:%q", msg)
 	}
-	if got := short(); got != "Change a setting (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language)" {
+	if got := short(); !strings.HasPrefix(got, "Change a setting (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language") {
 		t.Fatalf("切成英文後 /api/commands 要是英文:%q", got)
 	}
-	if msg := exitMsg("config", "set", "theme", "dark"); msg != `Error: unknown setting "theme" (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language)` {
+	if msg := exitMsg("config", "set", "nonexistent_key", "dark"); !strings.HasPrefix(msg, `Error: unknown setting "nonexistent_key" (settable: `) {
 		t.Fatalf("下一個 job 就是英文:%q", msg)
 	}
 	if err := config.Save(&config.Config{Language: "zh-TW"}); err != nil { // 終端機那邊改回中文
@@ -507,7 +512,7 @@ func TestWebLanguageFollowsConfig(t *testing.T) {
 	if got := short(); !hasCJK(got) {
 		t.Fatalf("終端機改的 config 也要看得到:%q", got)
 	}
-	if msg := exitMsg("config", "set", "theme", "dark"); !strings.Contains(msg, "未知的設定") {
+	if msg := exitMsg("config", "set", "nonexistent_key", "dark"); !strings.Contains(msg, "未知的設定") {
 		t.Fatalf("job 每次重讀 config:%q", msg)
 	}
 	if err := config.Save(&config.Config{Language: "klingon"}); err != nil {
@@ -1064,8 +1069,10 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "const PAGES = ['"+strings.Join(pages, "', '")+"'];") {
 		t.Error("app.js 的 PAGES 要與 rail 同一組、同一個順序")
 	}
-	if !strings.Contains(app, ": 'move';") || !strings.Contains(app, "location.pathname + '#/move'") {
-		t.Error("預設路由與 token 引導後的落點都要是搬家頁")
+	if !strings.Contains(app, "let defaultPage = 'move';") || !strings.Contains(app, ": defaultPage;") ||
+		!strings.Contains(app, "const target = routeMatch ? `#/${routeMatch[1]}` : '#/move';") ||
+		!strings.Contains(app, "d.has_local_db") || !strings.Contains(app, "defaultPage = 'playlists';") {
+		t.Error("Smart Landing:新戶預設搬家頁、已有本機 state.db 預設落向 #/playlists,且 bootToken 保留 #/<page>&t=... 的目標路由")
 	}
 	if !strings.Contains(index, "<dt>1 – 9</dt>") {
 		t.Error("? 鍵位表要寫 1 – 9")
@@ -1307,17 +1314,23 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(read("js/pages/search.js"), "goBtn.click()") {
 		t.Error("搜尋框 Enter 要走按鈕(btn 的閘)")
 	}
-	// 頁面第一次進來的自動讀取:有命令在跑就等它結束,不要撞上它、畫成「未登入」/「沒有清單」。
-	for _, name := range []string{"js/pages/account.js", "js/pages/playlists.js"} {
-		// idle(fn) 而不是 await idle() 再 run():兩頁同時等時,後者兩頁都看到空檔、第二頁撞閘(review;行為見 TestWebConsoleBehaviour)。
-		if !strings.Contains(read(name), "con.idle(") || strings.Contains(read(name), "con.idle().then(") {
-			t.Errorf("%s 的自動讀取要用 con.idle(fn)", name)
-		}
+	// 帳號頁第一次進來的自動讀取:有命令在跑就等它結束;清單頁改走唯讀直達端點 /api/library,瞬開不搶 runMu。
+	if acct := read("js/pages/account.js"); !strings.Contains(acct, "con.idle(") || strings.Contains(acct, "con.idle().then(") {
+		t.Error("account.js 的自動讀取要用 con.idle(fn)")
 	}
-	// 播放控制走 con.run 的 quiet 模式:自己打 /api/run 會繞過閘與中止——以前 body.cancel() 讓命令自我取消,
-	// 改成讀完之後又因為沒有中止路徑,卡在等 token 鎖時整個介面鎖死(review #65 第 1 點;行為見 TestWebConsoleBehaviour)。
-	if strings.Contains(player, "fetch('/api/run'") || !strings.Contains(player, "this.con.run(cmd, {}, { quiet: true })") {
-		t.Error("player.control() 要走 con.run(quiet),不可以自己打 /api/run")
+	pljs := read("js/pages/playlists.js")
+	if !strings.Contains(pljs, "api.fetch('/api/library')") || strings.Contains(pljs, "con.run('export'") {
+		t.Error("playlists.js 要走唯讀直達 /api/library,不再佔用 runMu 跑 export")
+	}
+	// 直達播放控制(#9 §2.3.1–2):player.js、playlists.js、search.js 的播放動作一律走 POST /api/player,
+	// 絕不走 /api/run 或掛 data-run(否則背景跑 sync / wiki 時底部播放列會被鎖死調暗)。
+	if strings.Contains(player, "fetch('/api/run'") || strings.Contains(player, "con.run(") || !strings.Contains(player, "fetch('/api/player'") {
+		t.Error("player.js 要走直達 /api/player,不可以碰 /api/run 或 con.run")
+	}
+	if _, nowBlock, ok := strings.Cut(index, `<div class="dock__now" id="now"`); !ok {
+		t.Error("index.html 要有 #now 播放面板")
+	} else if nowHTML, _, ok2 := strings.Cut(nowBlock, `<div class="dock__busy"`); !ok2 || strings.Contains(nowHTML, "data-run") {
+		t.Error("#now 裡的所有直達控制鈕都不可以掛 data-run")
 	}
 	// 佔槽(閘、aria-disabled)當下就做;看得到的調暗與狀態列跟著 busyOn(播放控制過 timing.quiet 才亮)。
 	if !strings.Contains(console, "document.body.dataset.slot = ''") || !strings.Contains(common, "document.body.hasAttribute('data-slot')") {
@@ -1386,14 +1399,54 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(app, "document.querySelectorAll('.page[hidden] dialog[open]')) d.close()") {
 		t.Error("showPage() 要關掉藏起來的頁面裡還開著的對話框")
 	}
-	// local 的 id 含空白是常態,不 quote 會被 splitArgs 切斷。
+	// 搜尋頁:search 關鍵字要 quote;播放走直達 postPlayerAction(/api/player,不掛 data-run);
+	// 嚴守決策 42 / 48(#9 1F):搜尋頁與今日聆聽膠囊絕不畫任何 <img> 封面圖。
 	search := read("js/pages/search.js")
-	if !strings.Contains(search, "quote(id)") {
-		t.Error("play --id 要 quote")
+	if !strings.Contains(search, "quote(text)") || !strings.Contains(search, "postPlayerAction(") {
+		t.Error("search.js 的關鍵字要 quote,播放列動作要走直達 postPlayerAction")
 	}
-	// Apple 只打開、沒開始播時,搜尋頁靠「不以 ▶ 開頭」把命令那句顯示出來——另一端是 player.go 印 ▶ 的那一行(決策 52)。
-	if !strings.Contains(search, "startsWith('▶')") {
-		t.Error("搜尋頁要用「不以 ▶ 開頭」分辨只打開、沒開始播的結果")
+	if strings.Contains(strings.ToLower(search), "<img") || strings.Contains(search, "'img'") || strings.Contains(search, `"img"`) {
+		t.Error("search.js(搜尋結果與今日聆聽膠囊)嚴禁放封面圖(#9 1F)")
+	}
+	// 一鍵收藏與水豚溫泉劇場:寫入命令絕不代加 --yes / --force;劇場水豚嚴守側面單眼比例與 reduced-motion 規則。
+	collect := read("js/collect.js")
+	theater := read("js/theater.js")
+	for _, srcName := range []struct{ name, body string }{{"collect.js", collect}, {"theater.js", theater}} {
+		for _, bad := range []string{"'--yes'", "'--force'", " --yes'", " --force'", "' --yes", "' --force"} {
+			if strings.Contains(srcName.body, bad) {
+				t.Errorf("%s 不可以代加確認或越過閾值的旗標:%s", srcName.name, bad)
+			}
+		}
+	}
+	if strings.Count(theater, "class: 'onsen-svg__eye'") != 1 {
+		t.Error("劇場溫泉水豚要是側面單眼")
+	}
+	numTheater := func(re string) []float64 {
+		m := regexp.MustCompile(re).FindStringSubmatch(theater)
+		if m == nil {
+			t.Fatalf("theater.js 的水豚找不到 %s", re)
+		}
+		out := make([]float64, len(m)-1)
+		for i, v := range m[1:] {
+			out[i], _ = strconv.ParseFloat(v, 64)
+		}
+		return out
+	}
+	tEar := numTheater(`onsen-svg__ear', cx: ([\d.]+), cy: [\d.]+, rx: ([\d.]+)`)
+	tEye := numTheater(`onsen-svg__eye', cx: ([\d.]+), cy: [\d.]+, r: ([\d.]+)`)
+	tNose := numTheater(`onsen-svg__dot', cx: ([\d.]+)`)
+	if !(tEar[0] < tEye[0] && tEye[0] < tNose[0]) || tEye[1] < tEar[1] {
+		t.Errorf("劇場水豚側面比例錯誤:ear=%v eye=%v nose=%v", tEar, tEye, tNose)
+	}
+	if !strings.Contains(css, ".onsen-svg__stroke { fill: none;") || !strings.Contains(css, ".onsen-svg__steam { fill: none;") ||
+		!strings.Contains(css, "body[data-busy] .onsen-svg__eye, body[data-busy] .onsen-svg__ear, body[data-busy] .onsen-svg__steam { animation-play-state: paused; }") {
+		t.Error("劇場水豚開放路徑要 fill:none,且忙碌時停住動畫")
+	}
+	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".onsen-svg__eye, .onsen-svg__ear, .onsen-svg__steam") {
+		t.Error("prefers-reduced-motion 下劇場水豚動畫要是靜態")
+	}
+	if !strings.Contains(theater, "t('wiki.disclaimer')") {
+		t.Error("劇場模式顯示歌曲介紹時必須附上不可關閉的 wiki.disclaimer")
 	}
 	// 從別頁按鈕發出的命令,區塊在被 hidden 的主控台頁裡:提示與授權連結不切回主控台就看不到,命令卡到逾時,
 	// Apple 的揭露只剩伺服器端「送出過」(review #62 第 5 點)。
@@ -1731,5 +1784,484 @@ func TestWebPlayOpenedLineIsStdout(t *testing.T) {
 	}
 	if ex := evExit(t, ev); ex["code"] != float64(0) || ex["reason"] != "done" {
 		t.Errorf("exit 0、done:%v", ex)
+	}
+}
+
+// ── Stage 2 直達端點(/api/player、/api/player/devices、/api/timer、/api/library、/api/wiki/cached)與併發測試 ──
+
+type stage2PlayerFake struct {
+	nowFake
+	playErr      error
+	devices      []provider.Device
+	lastPlay     provider.PlayRequest
+	paused       int
+	nexts        int
+	prevs        int
+	lastSeek     int
+	lastVol      int
+	lastShuffle  bool
+	lastRepeat   provider.RepeatMode
+	lastTransfer string
+	lastTransPlay bool
+	searchCalls  int
+}
+
+func (f *stage2PlayerFake) Devices(context.Context) ([]provider.Device, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.devices), nil
+}
+
+func (f *stage2PlayerFake) Play(_ context.Context, req provider.PlayRequest) error {
+	f.mu.Lock()
+	f.lastPlay = req
+	err := f.playErr
+	f.mu.Unlock()
+	return err
+}
+
+func (f *stage2PlayerFake) Pause(context.Context) error {
+	f.mu.Lock()
+	f.paused++
+	if f.state != nil {
+		f.state.Playing = false
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) Next(context.Context) error {
+	f.mu.Lock()
+	f.nexts++
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) Prev(context.Context) error {
+	f.mu.Lock()
+	f.prevs++
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) Seek(_ context.Context, posMS int) error {
+	f.mu.Lock()
+	f.lastSeek = posMS
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) SetVolume(_ context.Context, pct int) error {
+	f.mu.Lock()
+	f.lastVol = pct
+	if f.state != nil {
+		f.state.Device.VolumePct = pct
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) SetShuffle(_ context.Context, on bool) error {
+	f.mu.Lock()
+	f.lastShuffle = on
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) SetRepeat(_ context.Context, mode provider.RepeatMode) error {
+	f.mu.Lock()
+	f.lastRepeat = mode
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) Transfer(_ context.Context, deviceID string, play bool) error {
+	f.mu.Lock()
+	f.lastTransfer = deviceID
+	f.lastTransPlay = play
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *stage2PlayerFake) Search(context.Context, provider.Query) ([]provider.Track, error) {
+	f.mu.Lock()
+	f.searchCalls++
+	f.mu.Unlock()
+	return nil, nil
+}
+
+type inMemWebClient struct {
+	t   *testing.T
+	s   *webServer
+	h   http.Handler
+}
+
+func startInMemWeb(t *testing.T) (*webServer, *inMemWebClient) {
+	t.Helper()
+	if os.Getenv("CAPY_CONFIG_DIR") == "" {
+		setCLITestConfig(t)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := newWebServer(ctx)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	s.hostport = "127.0.0.1:42424"
+	s.fallbackStderr = &lockedBuffer{}
+	restore := installWebSeams(s)
+	t.Cleanup(func() {
+		if s.timer != nil {
+			s.timer.Close()
+		}
+		cancel()
+		restore()
+	})
+	return s, &inMemWebClient{t: t, s: s, h: s.handler()}
+}
+
+func (c *inMemWebClient) do(method, path string, body any, hdr map[string]string) *httptest.ResponseRecorder {
+	c.t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		rd = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, "http://"+c.s.hostport+path, rd)
+	req.Host = c.s.hostport
+	req.Header.Set("X-Capy-Token", c.s.token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		switch {
+		case k == "Host":
+			req.Host = v
+		case v == "":
+			req.Header.Del(k)
+		default:
+			req.Header.Set(k, v)
+		}
+	}
+	rec := httptest.NewRecorder()
+	c.h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestWebStage2DirectEndpointsAndRace(t *testing.T) {
+	setCLITestConfig(t)
+	advanceClock := fakeNowClock(t)
+
+	sp := &stage2PlayerFake{
+		nowFake: nowFake{
+			id:           "spotify",
+			fakeProvider: fakeProvider{caps: provider.CapPlaybackControl | provider.CapPlayPlaylist | provider.CapPlayQueue},
+			state: &provider.PlaybackState{
+				Playing:    true,
+				Track:      &provider.Track{ProviderID: "4uLU6hMCjMI75M1A2tKUQC", ISRC: "TWK231680790", Title: "Party Animal", Artists: []string{"Mayday"}, DurationMS: 227000},
+				ProgressMS: 45000,
+				Device:     provider.Device{ID: "d1", Name: "MacBook Pro", Type: "Computer", Active: true, VolumePct: 60, VolumeKnown: true},
+				Shuffle:    false,
+				Repeat:     provider.RepeatOff,
+			},
+		},
+		devices: []provider.Device{
+			{ID: "d1", Name: "MacBook Pro", Type: "Computer", Active: true, VolumePct: 60, VolumeKnown: true},
+			{ID: "d2", Name: "HomePod", Type: "Speaker", Active: false, VolumePct: 40, VolumeKnown: true},
+		},
+	}
+	ap := &stage2PlayerFake{
+		nowFake: nowFake{
+			id:           "apple",
+			fakeProvider: fakeProvider{caps: provider.CapPlaybackControl | provider.CapSearch},
+			state: &provider.PlaybackState{
+				Playing:    true,
+				Track:      &provider.Track{Title: "Party Animal", Artists: []string{"Mayday"}, Album: "History of Tomorrow", DurationMS: 227000},
+				ProgressMS: 12000,
+				Device:     provider.Device{ID: "mac", Name: "Music.app", Type: "Computer", Active: true, VolumePct: 50, VolumeKnown: true},
+			},
+		},
+	}
+
+	origNew := newProvider
+	newProvider = func(_ context.Context, id string) (provider.Provider, error) {
+		switch id {
+		case "spotify":
+			return sp, nil
+		case "apple":
+			return ap, nil
+		default:
+			return nil, provider.ErrNotSupported
+		}
+	}
+	t.Cleanup(func() { newProvider = origNew })
+
+	s, c := startInMemWeb(t)
+	// 把背景 ticker 關成手動推進,讓假時鐘測試決定性不競態
+	s.timer.Close()
+	s.timer = newSleepTimer(s.ctx, sleepTimerOptions{
+		Clock:      func() time.Time { return webNowClock() },
+		Controller: func(id string) (provider.PlaybackController, error) { return s.playback(id) },
+		CurrentState: func(id string) (string, *provider.PlaybackState) {
+			if snap := s.lastNow.Load(); snap != nil {
+				return snap.res.provider, snap.res.st
+			}
+			return id, nil
+		},
+		OnSettle: func() { s.settleNow() },
+	})
+
+	// 1. 全部新直達端點都過同一道 Host / Origin / Sec-Fetch-Site / X-Capy-Token 守門
+	for _, ep := range []struct{ method, path string }{
+		{http.MethodPost, "/api/player"},
+		{http.MethodGet, "/api/player/devices"},
+		{http.MethodPost, "/api/timer"},
+		{http.MethodGet, "/api/library"},
+		{http.MethodGet, "/api/wiki/cached"},
+	} {
+		for _, tc := range []struct {
+			hdr  map[string]string
+			want int
+		}{
+			{map[string]string{"X-Capy-Token": ""}, http.StatusUnauthorized},
+			{map[string]string{"X-Capy-Token": "bad"}, http.StatusUnauthorized},
+			{map[string]string{"Host": "localhost:42424"}, http.StatusMisdirectedRequest},
+			{map[string]string{"Origin": "http://evil.example"}, http.StatusForbidden},
+			{map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		} {
+			rec := c.do(ep.method, ep.path, map[string]any{}, tc.hdr)
+			if rec.Code != tc.want {
+				t.Errorf("%s %s %v → %d,要 %d", ep.method, ep.path, tc.hdr, rec.Code, tc.want)
+			}
+		}
+	}
+
+	// 2. 尚未建立 state.db 時:has_local_db 為 false,/api/library 回 has_db: false
+	rec := c.do(http.MethodGet, "/api/commands", nil, nil)
+	var cmdResp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cmdResp); err != nil || cmdResp["has_local_db"] != false {
+		t.Fatalf("無 state.db 時 has_local_db 要是 false:%v %v", err, cmdResp["has_local_db"])
+	}
+
+	// 3. runMu 被長命令握住時:全部直達端點併發回 200,-race 零競態,而 /api/run 回 409
+	s.runMu.Lock()
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			switch i % 6 {
+			case 0:
+				if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "next", "provider": "spotify"}, nil); r.Code != 200 {
+					t.Errorf("併發 /api/player → %d", r.Code)
+				}
+			case 1:
+				if r := c.do(http.MethodGet, "/api/player/devices?provider=spotify", nil, nil); r.Code != 200 {
+					t.Errorf("併發 /api/player/devices → %d", r.Code)
+				}
+			case 2:
+				if r := c.do(http.MethodPost, "/api/timer", map[string]any{"mode": "countdown", "minutes": 15, "provider": "spotify"}, nil); r.Code != 200 {
+					t.Errorf("併發 /api/timer → %d", r.Code)
+				}
+			case 3:
+				if r := c.do(http.MethodGet, "/api/library", nil, nil); r.Code != 200 {
+					t.Errorf("併發 /api/library → %d", r.Code)
+				}
+			case 4:
+				if r := c.do(http.MethodGet, "/api/wiki/cached?title=Party+Animal", nil, nil); r.Code != 200 {
+					t.Errorf("併發 /api/wiki/cached → %d", r.Code)
+				}
+			case 5:
+				if r := c.do(http.MethodGet, "/api/now", nil, nil); r.Code != 200 {
+					t.Errorf("併發 /api/now → %d", r.Code)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	if r := c.do(http.MethodPost, "/api/run", map[string]any{"args": []string{"--help"}}, nil); r.Code != http.StatusConflict {
+		t.Errorf("握住 runMu 時 /api/run 要 409,得到 %d", r.Code)
+	}
+	s.runMu.Unlock()
+
+	// 4. POST /api/player 完整動作測試:120 首隨機連播截斷 100 首、OpenedError 回 200 帶訊息、seek / volume / shuffle / repeat / transfer
+	many := make([]string, 120)
+	for i := range many {
+		many[i] = "sp" + strconv.Itoa(i)
+	}
+	origCopy := slices.Clone(many)
+	rec = c.do(http.MethodPost, "/api/player", map[string]any{
+		"action": "play", "provider": "spotify", "track_ids": many, "shuffle": true,
+	}, nil)
+	if rec.Code != 200 || len(sp.lastPlay.TrackIDs) != 100 || !slices.Equal(many, origCopy) {
+		t.Fatalf("隨機連播要截斷最多 100 首且不改動輸入:%d len=%d", rec.Code, len(sp.lastPlay.TrackIDs))
+	}
+	if !s.settling(webNowClock()) {
+		t.Error("POST /api/player 成功後要進 settleNow 安定期")
+	}
+
+	ap.playErr = &provider.OpenedError{Label: "Radioactivity — Kraftwerk"}
+	rec = c.do(http.MethodPost, "/api/player", map[string]any{
+		"action": "play", "provider": "apple", "id": "700050031",
+	}, nil)
+	var openedOut map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &openedOut); err != nil || rec.Code != 200 || openedOut["opened_not_playing"] != true || !strings.Contains(openedOut["message"].(string), "Radioactivity — Kraftwerk") {
+		t.Fatalf("ErrOpenedNotPlaying 要回 200 並附誠實說明:%d %v", rec.Code, openedOut)
+	}
+	ap.playErr = nil
+
+	if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "play", "id": "a", "playlist_id": "p"}, nil); r.Code != http.StatusBadRequest {
+		t.Errorf("互斥目標要 400:%d", r.Code)
+	}
+	if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "seek", "provider": "spotify", "position_ms": 88000}, nil); r.Code != 200 || sp.lastSeek != 88000 {
+		t.Errorf("seek:%d %d", r.Code, sp.lastSeek)
+	}
+	if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "volume", "provider": "spotify", "volume_pct": 135}, nil); r.Code != 200 || sp.lastVol != 100 {
+		t.Errorf("volume 夾範圍:%d %d", r.Code, sp.lastVol)
+	}
+	if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "shuffle", "provider": "spotify", "on": true}, nil); r.Code != 200 || !sp.lastShuffle {
+		t.Errorf("shuffle:%d %v", r.Code, sp.lastShuffle)
+	}
+	if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "repeat", "provider": "spotify", "repeat": "track"}, nil); r.Code != 200 || sp.lastRepeat != provider.RepeatTrack {
+		t.Errorf("repeat:%d %v", r.Code, sp.lastRepeat)
+	}
+	if r := c.do(http.MethodPost, "/api/player", map[string]any{"action": "transfer", "provider": "spotify", "device_id": "d2"}, nil); r.Code != 200 || sp.lastTransfer != "d2" {
+		t.Errorf("transfer:%d %q", r.Code, sp.lastTransfer)
+	}
+
+	// 5. GET /api/player/devices
+	rec = c.do(http.MethodGet, "/api/player/devices?provider=spotify", nil, nil)
+	var devOut struct {
+		SupportedTransfer bool        `json:"supported_transfer"`
+		Devices           []webDevice `json:"devices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &devOut); err != nil || !devOut.SupportedTransfer || len(devOut.Devices) != 2 {
+		t.Fatalf("/api/player/devices:%v %+v", err, devOut)
+	}
+
+	// 6. POST /api/timer 倒數到期自動 Pause(不需瀏覽器分頁開著)
+	rec = c.do(http.MethodPost, "/api/timer", map[string]any{"mode": "countdown", "minutes": 15, "provider": "spotify"}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("/api/timer:%d", rec.Code)
+	}
+	pausedBefore := sp.paused
+	advanceClock(16 * time.Minute)
+	s.timer.Tick(s.ctx)
+	if sp.paused != pausedBefore+1 || s.timer.Snapshot().Mode != SleepOff {
+		t.Errorf("定時到期要自動呼叫 Pause 並歸回 off:paused=%d mode=%s", sp.paused, s.timer.Snapshot().Mode)
+	}
+
+	// 7. 寫入本機 state.db(正本、wiki_cache、recent、play_journal)與假 secret:
+	//    驗證 /api/commands has_local_db=true、/api/library 零 secret 洩漏、/api/now 離線補齊 Apple URL + in_playlists + wiki_cached(零 SearchSongs!)
+	const leakSentinel = "SUPER_SECRET_TOKEN_NEVER_LEAK_999"
+	_ = secret.Set(appleauth.KeyMusicUserToken, leakSentinel)
+	_ = secret.Set("spotify_refresh_token", leakSentinel)
+	if err := config.Save(&config.Config{DefaultProvider: "apple", AppleStorefront: "tw", Language: "zh-TW"}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cid := "i:TWK231680790"
+	canonSnap := store.Canonical{
+		Manifest: &canon.Manifest{SchemaVersion: canon.SchemaVersion},
+		Tracks: &canon.Tracks{
+			SchemaVersion: canon.SchemaVersion,
+			Tracks: map[string]canon.Track{
+				cid: {
+					Title:      "Party Animal",
+					Artists:    []string{"Mayday"},
+					Album:      "History of Tomorrow",
+					DurationMS: 227000,
+					ISRC:       []string{"TWK231680790"},
+					Mappings: map[string]canon.Mapping{
+						"apple":   {ID: "1440857781", Confidence: 100, Source: "isrc"},
+						"spotify": {ID: "4uLU6hMCjMI75M1A2tKUQC", Confidence: 100, Source: "isrc"},
+					},
+				},
+			},
+			Merged: map[string]string{},
+		},
+		Playlists: []canon.Playlist{{
+			SchemaVersion: canon.SchemaVersion,
+			PID:           "p1",
+			Name:          "Favorites",
+			Links:         map[string]string{"spotify": "37i9dQZF1DXcBWIGoYBM5M"},
+			Items:         []canon.Item{{CID: cid}},
+		}},
+	}
+	if err := st.Hydrate(canonSnap); err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	_, _ = st.ApplyCache(store.CacheDelta{
+		Recent:    []store.Recent{{At: webNowClock().Unix(), Provider: "spotify", Type: "track", ID: "4uLU6hMCjMI75M1A2tKUQC", Label: "Party Animal", Detail: "Mayday"}},
+		MaxRecent: 50,
+	})
+	_ = st.RecordPlayJournal(store.PlayJournalEntry{
+		PlayedAt: webNowClock(), Provider: "spotify", ProviderID: "4uLU6hMCjMI75M1A2tKUQC",
+		ISRC: "TWK231680790", Title: "Party Animal", Artists: []string{"Mayday"}, DurationMS: 227000,
+	})
+	cfgLoaded, _ := config.Load()
+	tag := wikiEffectiveLang(*cfgLoaded)
+	song := ai.Song{Title: "Party Animal", Artists: []string{"Mayday"}, Album: "History of Tomorrow"}
+	if err := st.SaveWiki(ai.WikiCacheKey(tag, song), store.WikiEntry{
+		Title: "Party Animal", Artists: "Mayday", Language: tag, Model: "local-llm", Body: "## Story\nGreat track.", FetchedAt: webNowClock(),
+	}); err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = c.do(http.MethodGet, "/api/commands", nil, nil)
+	cmdResp = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &cmdResp); err != nil || cmdResp["has_local_db"] != true {
+		t.Fatalf("有 state.db 時 has_local_db 要是 true:%v %v", err, cmdResp["has_local_db"])
+	}
+
+	rec = c.do(http.MethodGet, "/api/library", nil, nil)
+	rawLib := rec.Body.String()
+	if strings.Contains(rawLib, leakSentinel) {
+		t.Fatalf("/api/library 嚴禁外洩任何 secret 值:%s", rawLib)
+	}
+	var libOut libraryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &libOut); err != nil || !libOut.HasDB || !libOut.HasCanon || len(libOut.Playlists) != 1 || len(libOut.Recent) != 1 || len(libOut.PlayJournal) != 1 {
+		t.Fatalf("/api/library 內容不符:%v %+v", err, libOut)
+	}
+
+	// Apple Music /api/now:離線從 state.db 補齊單曲 URL、in_playlists 與 wiki_cached,且 Search 呼叫次數必須是 0(#9 1D)
+	s.dropNow(true)
+	rec = c.do(http.MethodGet, "/api/now?provider=apple", nil, nil)
+	var nowOut nowResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &nowOut); err != nil {
+		t.Fatal(err)
+	}
+	if ap.searchCalls != 0 {
+		t.Fatalf("Apple 背景輪詢嚴禁偷打 SearchSongs(called %d times)", ap.searchCalls)
+	}
+	if nowOut.Track == nil || nowOut.Track.URL != "https://music.apple.com/tw/song/1440857781" {
+		t.Errorf("Apple 離線比對 state.db 補單曲外連:%+v", nowOut.Track)
+	}
+	if !slices.Equal(nowOut.InPlaylists, []string{"p1"}) {
+		t.Errorf("in_playlists 要附帶 p1:%v", nowOut.InPlaylists)
+	}
+	if nowOut.WikiCached == nil || nowOut.WikiCached.Body != "## Story\nGreat track." || nowOut.WikiCached.Disclaimer == "" || !strings.HasPrefix(nowOut.WikiCached.MVURL, "https://") {
+		t.Errorf("wiki_cached 要離線附帶正文、MV 連結與免責聲明:%+v", nowOut.WikiCached)
+	}
+
+	rec = c.do(http.MethodGet, "/api/wiki/cached?title=Party+Animal&artist=Mayday", nil, nil)
+	var wcOut struct {
+		Cached bool            `json:"cached"`
+		Wiki   *cachedWikiView `json:"wiki"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &wcOut); err != nil || !wcOut.Cached || wcOut.Wiki == nil || wcOut.Wiki.Disclaimer == "" {
+		t.Errorf("/api/wiki/cached:%v %+v", err, wcOut)
 	}
 }

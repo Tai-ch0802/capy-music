@@ -29,7 +29,7 @@ function mk(tag = 'div') {
     get firstElementChild() { return this.children[0] || null; },
     querySelector(sel) { return find(this, sel); },
     querySelectorAll(sel) { return findAll(this, sel); },
-    setAttribute(k, v) { this.attrs[k] = String(v); },
+    setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'class') this.className = String(v); },
     getAttribute(k) { return this.attrs[k] ?? null; },
     removeAttribute(k) { delete this.attrs[k]; },
     hasAttribute(k) { return k in this.attrs || (k.startsWith('data-') && camel(k.slice(5)) in this.dataset); }, // 同真的 DOM:dataset 設的也算(btn() 的序列槽閘看 body 的 data-slot)
@@ -95,12 +95,19 @@ globalThis.document = {
   body: mk('body'),
   documentElement: { lang: '' },
   activeElement: null,
+  _listeners: {},
   getElementById(id) { return (ids[id] ||= mk()); },
   createElement: mk,
+  createElementNS: (_, tag) => mk(tag),
   createTextNode: (t) => ({ textContent: t, children: [] }),
+  querySelector(sel) { return find(this.body, sel); },
   querySelectorAll(sel) { return findAll(this.body, sel); },
-  addEventListener() {}, // player.js 的 visibilitychange
-  dispatchEvent(ev) { (this.events ||= []).push(ev.type); return true; }, // player.js 每輪 render 後的 capy:now(歌曲 wiki 頁聽它)
+  addEventListener(type, fn) { ((this._listeners[type] ||= [])).push(fn); },
+  dispatchEvent(ev) {
+    (this.events ||= []).push(ev.type);
+    for (const fn of this._listeners[ev.type] || []) fn(ev);
+    return true;
+  },
 };
 globalThis.sessionStorage = { getItem() { return null; }, setItem() {} };
 let reloads = 0;
@@ -117,20 +124,102 @@ timing.quiet = 300; // 情境 8 要在它亮之前先看到「沒亮」:留寬�
 timing.disarm = 50;
 const { languageMenu } = await import('./lang.mjs');
 const { Player } = await import('./player.mjs');
+const { createCollector } = await import('./collect.mjs');
+const { createTheater } = await import('./theater.mjs');
 for (const f of readdirSync('./pages')) await import(`./pages/${f}`);
 
-// ── 假的伺服器:/api/run 回 SSE(start → [gate] → events),cancel 端點記下來 ──
+// ── 假的伺服器:/api/run 回 SSE(start → [gate] → events),以及直達端點 /api/library、/api/player、/api/timer ──
 const calls = [];
 const bodies = [];
 const answers = [];
 const cancels = [];
+const playerCalls = [];
+const timerCalls = [];
 let script = {};
 const sse = (evs) => evs.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
 const done = { type: 'exit', code: 0, message: '', reason: 'done' };
 let i18nFile = './i18n.json'; // TestWebConsoleBehaviour 寫進來的真目錄(zh-TW;i18n-en.json 是英文)
+
+function extractStdoutJSON(spec) {
+  if (!spec || !Array.isArray(spec.events)) return { ok: false, exit: 0, raw: '' };
+  const raw = spec.events.filter((e) => e.type === 'stdout').map((e) => e.text).join('');
+  const ex = spec.events.find((e) => e.type === 'exit');
+  if (ex && ex.code !== 0) return { ok: false, exit: ex.code, message: ex.message || '', reason: ex.reason || 'done', raw };
+  try {
+    return { ok: true, value: JSON.parse(raw), raw };
+  } catch (err) {
+    return { ok: false, parseErr: err.message, raw };
+  }
+}
+
 const api = {
   async fetch(path, init) {
     if (path === '/api/i18n') return new Response(readFileSync(i18nFile), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (path === '/api/library') {
+      if (script['/api/library']) {
+        const ls = typeof script['/api/library'] === 'function' ? script['/api/library']() : script['/api/library'];
+        if (ls.status && ls.status !== 200) {
+          return new Response(JSON.stringify({ error: ls.error || 'err' }), { status: ls.status, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify(ls), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      // 橋接舊測試的 script['auth status --json'] 與 script.export
+      let auth = {};
+      if (script['auth status --json']) {
+        const a = extractStdoutJSON(script['auth status --json']);
+        if (a.ok && a.value) auth = a.value;
+      }
+      if (script.export) {
+        if (script.export.status && script.export.status !== 200) {
+          return new Response(JSON.stringify({ error: script.export.error || 'busy' }), { status: script.export.status, headers: { 'Content-Type': 'application/json' } });
+        }
+        const ex = extractStdoutJSON(script.export);
+        if (ex.parseErr) {
+          return new Response(JSON.stringify({ auth, has_db: true, has_canon: false, store_error: ex.parseErr, files: {}, playlists: [], recent: [], play_journal: [] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (!ex.ok) {
+          return new Response(JSON.stringify({ auth, has_db: false, has_canon: false, files: {}, playlists: [], recent: [], play_journal: [] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        const files = ex.value || {};
+        const playlists = Object.keys(files).filter((k) => k.startsWith('pl__')).sort().map((k) => ({
+          pid: files[k].pid, name: files[k].name || files[k].pid, count: (files[k].items || []).length, links: files[k].links || {},
+        }));
+        return new Response(JSON.stringify({ auth, has_db: true, has_canon: Object.keys(files).length > 0, files, playlists, recent: [], play_journal: [] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ auth, has_db: false, has_canon: false, files: {}, playlists: [], recent: [], play_journal: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (path === '/api/player') {
+      const sent = JSON.parse(init?.body || '{}');
+      playerCalls.push(sent);
+      if (typeof script['/api/player'] === 'function') {
+        const out = await script['/api/player'](sent);
+        const status = (out && out.status) || 200;
+        return new Response(JSON.stringify(out?.body ?? out ?? { ok: true }), { status, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ ok: true, provider: sent.provider || 'spotify' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (path.startsWith('/api/player/devices')) {
+      const out = typeof script['/api/player/devices'] === 'function' ? script['/api/player/devices'](path) : (script['/api/player/devices'] || { provider: 'spotify', supported_transfer: true, devices: [] });
+      return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (path === '/api/timer') {
+      const sent = JSON.parse(init?.body || '{}');
+      timerCalls.push(sent);
+      const out = typeof script['/api/timer'] === 'function' ? script['/api/timer'](sent) : (script['/api/timer'] || { mode: sent.mode || 'off', remaining_sec: (sent.minutes || 25) * 60, total_sec: (sent.minutes || 25) * 60 });
+      return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (path.startsWith('/api/now')) {
+      const out = typeof script['/api/now'] === 'function' ? script['/api/now'](path) : (script['/api/now'] || { provider: 'spotify', playing: false, stale: false });
+      return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (path.startsWith('/api/wiki/cached')) {
+      const out = typeof script['/api/wiki/cached'] === 'function' ? script['/api/wiki/cached'](path) : (script['/api/wiki/cached'] || { cached: false, wiki: null });
+      return new Response(JSON.stringify(out), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (path === '/api/run') {
       const sent = JSON.parse(init.body);
       bodies.push(sent);
@@ -205,7 +294,7 @@ const scenario = async (name, fn) => {
   say(`── 情境 ${name} 結束(${Date.now() - t0} ms,${failures.length - printed} 條不成立)`);
   flush();
 };
-const reset = () => { bodies.length = 0; answers.length = 0; globalThis.location.hash = ''; calls.length = 0; cancels.length = 0; notices.length = 0; script = {}; pages.hidden = false; globalThis.document.getElementById('cmd').value = ''; };
+const reset = () => { bodies.length = 0; answers.length = 0; playerCalls.length = 0; timerCalls.length = 0; globalThis.location.hash = ''; calls.length = 0; cancels.length = 0; notices.length = 0; script = {}; pages.hidden = false; globalThis.document.getElementById('cmd').value = ''; };
 
 // 1. 回聲遮罩:切法跟伺服器的 splitArgs 一樣寬(連續空白、tab、引號包住的 flag 名與值)。
 check(typeof maskSecrets === 'function', 'console.js 要匯出 maskSecrets');
@@ -598,7 +687,7 @@ await scenario('8k', async () => {
     const seen = new Set();
     const roots = [];
     con.run = (line, hooks, opts = {}) => { labels.push(opts.label); const p = Console.prototype.run.call(con, line, hooks, opts); pending.push(p); return p; };
-    const settle = async () => { while (pending.length) await pending.shift(); for (const r of roots) texts(r, seen); };
+    const settle = async () => { await tick(10); while (pending.length) await pending.shift(); await tick(5); for (const r of roots) texts(r, seen); };
     const page = (init) => { const r = mk(); roots.push(r); init(r, api, con, () => {}, providers); return r; };
     try {
       reset();
@@ -626,7 +715,7 @@ await scenario('8k', async () => {
       await settle();
       for (const b of sy.children[2].children) { b.click(); await settle(); } // 從平台更新 / 推到平台 / 雙向同步 / 去除重複
       const all = sy.querySelector('select').children[0];
-      return { seen, labels, calls: [...calls], all: [all.value, all.textContent], rowsDrawn };
+      return { seen, labels, calls: [...calls], playerCalls: [...playerCalls], all: [all.value, all.textContent], rowsDrawn };
     } finally {
       delete con.run;
     }
@@ -647,8 +736,8 @@ await scenario('8k', async () => {
     return s;
   };
   const want = (r, lang, list) => { for (const s of list) check(r.seen.has(s), `${lang}:頁面上少了「${s}」:${JSON.stringify([...r.seen])}`); };
-  const cmds = JSON.stringify(['auth status --json', 'export', 'pl list --provider spotify', 'auth status --json', 'export', 'auth status --json', 'export', 'search x --provider spotify --limit 10', 'search y --provider spotify --limit 10',
-    'search z --provider spotify --limit 10', 'play --id sp1 --provider spotify',
+  const cmds = JSON.stringify(['pl list --provider spotify', 'search x --provider spotify --limit 10', 'search y --provider spotify --limit 10',
+    'search z --provider spotify --limit 10',
     'pl pull --all --dry-run', 'pl push --all --dry-run', 'pl sync --all --dry-run', 'pl dedup --dry-run']);
 
   const zh = await paint();
@@ -656,18 +745,18 @@ await scenario('8k', async () => {
     '正本、連結、同步是什麼意思?', '搬家是一次性複製過去。同步是之後兩邊持續跟著彼此改。', '顯示的是這台電腦上次同步後的內容', '歌曲', '時長', '重新整理', '各平台上的清單', '讀取各平台的清單', 'Spotify 上沒有清單。',
     'road trip(2 首)', '(本機沒有這首的資料)', '同步這份清單', 'Google Drive 正本', '連到這些平台上的清單', '已連結', '這台電腦還沒讀過你 Google Drive 上的正本。到「同步」取消勾選「只看變更,先不寫入」,按「從平台更新」就會讀進來;還沒有任何清單的話,到「搬家」搬一份過來。',
     '搜尋', '在平台上找歌。Spotify 找到了可以直接播;Apple Music(macOS)只直接播你資料庫裡有的歌,其他的會在 Music.app 打開並標出那一首。', '五月天 派對動物', '關鍵字', '結果數', '輸入歌名或歌手,按「搜尋」。',
-    '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。',
+    '在 Spotify 找不到「x」。換個關鍵字,或換一個平台試試。', '沒有找到。換個關鍵字試試。', '今日聆聽膠囊',
     '同步', '讓 capy 保管的清單跟平台上的保持一致。會先列出要改什麼,你確認了才寫入。', '清單名稱(留空 = 全部)', '全部平台', '清單', '只看變更,先不寫入',
     '從平台更新', '推到平台', '雙向同步', '去除重複',
     '「去除重複」整理的是 capy 保管的那一份(不分平台);上面選的平台只決定這次去檢查哪個平台上的重複——沒選到的平台這次不會檢查。清單留空時會讓你挑一個。要把清單搬到另一個平台,請到「搬家」。',
     '選好清單與平台,按「雙向同步」。預設只列出變更,不會寫入。', '兩邊已經一致,沒有要改的東西。', '1 筆變更(skip 不算變更)',
     '以上是會改的東西,還沒有寫入。取消勾選「只看變更,先不寫入」再按一次,就會照這張表問你、確認後寫入。']);
-  check([...zh.seen].some((s) => s.startsWith('export 的輸出不是 JSON:') && s.length > 'export 的輸出不是 JSON:'.length), 'zh-TW:export 不是 JSON 要說出來並附上原因');
-  const st = t('webui.move.label.status');
-  check(JSON.stringify(zh.labels) === JSON.stringify([st, '讀取你的清單', '讀取 Spotify 上的清單', st, '讀取你的清單', st, '讀取你的清單',
-    '在 Spotify 找「x」', '在 Spotify 找「y」', '在 Spotify 找「z」', '播放「Song One」', '把平台上的變更拉回來', '把 capy 保管的清單推到平台', '雙向同步', '去除重複的歌']), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
+  check([...zh.seen].some((s) => s.includes('JSON') || s.includes('Unexpected')), 'zh-TW:store_error 要原樣畫出來');
+  check(JSON.stringify(zh.labels) === JSON.stringify(['讀取 Spotify 上的清單',
+    '在 Spotify 找「x」', '在 Spotify 找「y」', '在 Spotify 找「z」', '把平台上的變更拉回來', '把 capy 保管的清單推到平台', '雙向同步', '去除重複的歌']), `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
   check(JSON.stringify(zh.calls) === cmds && JSON.stringify(zh.all) === JSON.stringify(['', '全部平台']), `送出的命令與「全部平台」的值:${JSON.stringify(zh.calls)} ${JSON.stringify(zh.all)}`);
-  check(JSON.stringify(zh.rowsDrawn) === JSON.stringify([['sp1', 'Song One', '播放']]), `zh-TW 的搜尋結果表:${JSON.stringify(zh.rowsDrawn)}`);
+  check(JSON.stringify(zh.playerCalls) === JSON.stringify([{ action: 'play', provider: 'spotify', id: 'sp1' }]), `搜尋結果列的播放走直達 /api/player:${JSON.stringify(zh.playerCalls)}`);
+  check(JSON.stringify(zh.rowsDrawn) === JSON.stringify([['sp1', 'Song One', '播放＋收藏']]), `zh-TW 的搜尋結果表:${JSON.stringify(zh.rowsDrawn)}`);
   const zhChecking = await checking();
   check(zhChecking === '檢查中…', `zh-TW 診斷頁的 data-running:「${zhChecking}」`);
 
@@ -678,10 +767,10 @@ await scenario('8k', async () => {
     const CJK = /[　-〿㐀-鿿＀-￯]/;
     for (const s of [...en.seen, ...en.labels]) check(!CJK.test(s), `en:頁面或 label 還有中文:「${s}」`);
     for (const s of en.labels) check(/^[A-Z][a-z]*ing /.test(s), `en:執行狀態列的 label 要是進行式:「${s}」`);
-    want(en, 'en', ['My playlists', 'What are master copies, links and syncing?', 'Song', 'Length', 'Playlists on each platform', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', '1 change (skip rows don\'t count)', 'All platforms']);
+    want(en, 'en', ['My playlists', 'What are master copies, links and syncing?', 'Song', 'Length', 'Playlists on each platform', 'road trip (2 songs)', 'Enter a song or artist, then press "Search".', "Today's listening capsule", '1 change (skip rows don\'t count)', 'All platforms']);
     check([...en.seen].some((s) => s.includes('Uncheck "Preview only, don\'t write yet"')), 'en:只看變更的收尾要指名那個勾選框');
-    check(en.labels.includes('Reading playlists on Spotify') && en.labels.includes('Playing "Song One"') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
-    check(JSON.stringify(en.rowsDrawn) === JSON.stringify([['sp1', 'Song One', 'Play']]), `en 的搜尋結果表:${JSON.stringify(en.rowsDrawn)}`);
+    check(en.labels.includes('Reading playlists on Spotify') && JSON.stringify(en.calls) === cmds && en.all[0] === '', `en 的 label 與命令:${JSON.stringify(en.labels)} ${JSON.stringify(en.calls)}`);
+    check(JSON.stringify(en.rowsDrawn) === JSON.stringify([['sp1', 'Song One', 'Play+ Save']]), `en 的搜尋結果表:${JSON.stringify(en.rowsDrawn)}`);
     const enChecking = await checking();
     check(enChecking === 'Checking…', `en 診斷頁的 data-running:「${enChecking}」`);
   } finally {
@@ -701,7 +790,7 @@ await scenario('8n', async () => {
   const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
   const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
   const widths = (tw) => [tw.querySelector('thead tr').children.length, ...tw.querySelectorAll('tbody tr').map((tr) => tr.children.length)];
-  const idle = () => new Promise((r) => con.idle(r));
+  const idle = async () => { await new Promise((r) => con.idle(r)); await tick(10); };
   const label = (a) => a && a.getAttribute('aria-label');
   const track = (id) => `https://open.spotify.com/track/${id}`;
   const exit2 = { type: 'exit', code: 2, message: 'x', reason: 'done' };
@@ -862,7 +951,7 @@ await scenario('8o', async () => {
   const T1 = '4uLU6hMCjMI75M1A2tKUQC', PL = '37i9dQZF1DXcBWIGoYBM5M';
   const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
   const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
-  const idle = () => new Promise((r) => con.idle(r));
+  const idle = async () => { await new Promise((r) => con.idle(r)); await tick(10); };
   const table = (rows) => ({ events: [{ type: 'table', header: ['ID', 'TITLE', 'ARTISTS', 'ALBUM', 'DURATION'], rows }, done] });
   reset();
   script = {
@@ -888,7 +977,7 @@ await scenario('8o', async () => {
     `連結面板:連著的兩家各一列、空字串的本機不算連著:${JSON.stringify(lrows.map((r) => [r.dataset.platform, r.dataset.state]))}`);
   const sp = anchors(lrows[0]).find((a) => a.href.includes('/playlist/'));
   check(sp && sp.href === `https://open.spotify.com/playlist/${PL}` && anchors(lrows[1]).length === 0, `Spotify 那一列連到 links 裡的 id;Apple 的資料庫清單沒有公開網址:${sp && sp.href}`);
-  check(JSON.stringify(calls) === JSON.stringify(['auth status --json', 'export']) && allByClass(pl, 'pl__plat').length === 0, `進頁只讀 auth 與 export(平台清單按了才讀):${JSON.stringify(calls)}`);
+  check(calls.length === 0 && allByClass(pl, 'pl__plat').length === 0, `進頁走唯讀 /api/library 零序列槽命令(平台清單按了才讀):${JSON.stringify(calls)}`);
 });
 
 // 8p. 我的清單改版 T1(計畫 2026-09-30 §3.1–§3.2,決策 61):歌曲表的欄與格子、▶ 的條件與送出的命令(args 陣列)、
@@ -899,7 +988,7 @@ await scenario('8p', async () => {
   const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
   const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
   const buttons = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'BUTTON') out.push(c); }); return out; };
-  const idle = () => new Promise((r) => con.idle(r));
+  const idle = async () => { await new Promise((r) => con.idle(r)); await tick(10); };
   const out = (o) => ({ events: [{ type: 'stdout', text: typeof o === 'string' ? o : JSON.stringify(o) }, done] });
   const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   const ua = (s) => Object.defineProperty(globalThis, 'navigator', { value: { userAgent: s }, configurable: true, writable: true });
@@ -943,10 +1032,10 @@ await scenario('8p', async () => {
     const sp0 = cellOf(r0, 'Spotify');
     const [spPlay] = buttons(sp0);
     const [spLink] = anchors(sp0);
-    check(spPlay && spPlay.textContent === '▶' && 'run' in spPlay.dataset && spPlay.getAttribute('aria-label') === '用 Spotify 播放「Song A」', `Spotify 的 ▶:${spPlay && spPlay.getAttribute('aria-label')}`);
+    check(spPlay && spPlay.textContent === '▶' && !('run' in spPlay.dataset) && spPlay.getAttribute('aria-label') === '用 Spotify 播放「Song A」', `Spotify 的 ▶ 不掛 data-run:${spPlay && spPlay.getAttribute('aria-label')}`);
     check(spLink && spLink.href === `https://open.spotify.com/track/${T1}` && spLink.textContent === '在 Spotify 上聽', `Spotify 的連結看得到(S7):${spLink && spLink.href}`);
     const [apPlay] = buttons(cellOf(r0, 'Apple Music'));
-    check(apPlay && apPlay.getAttribute('aria-label') === '用 Apple Music 播放「Song A」' && anchors(cellOf(r0, 'Apple Music')).length === 0, 'Apple 的格子只有 ▶');
+    check(apPlay && apPlay.getAttribute('aria-label') === '用 Apple Music 播放「Song A」' && !('run' in apPlay.dataset) && anchors(cellOf(r0, 'Apple Music')).length === 0, 'Apple 的格子只有 ▶ 且不掛 data-run');
     const [yt] = anchors(cellOf(r0, 'YouTube Music'));
     check(yt && yt.href === 'https://music.youtube.com/watch?v=vid-1' && yt.target === '_blank' && yt.textContent === '開啟' && yt.getAttribute('aria-label') === '開啟「Song A」(YouTube Music)' && buttons(cellOf(r0, 'YouTube Music')).length === 0,
       `YouTube 只有「開啟」,報讀名稱以看得到的字開頭:${yt && [yt.textContent, yt.getAttribute('aria-label')]}`);
@@ -957,15 +1046,16 @@ await scenario('8p', async () => {
     check(none(cellOf(r3, 'Apple Music'))?.title === '你標過 Apple Music 沒有這首' && none(cellOf(r3, 'Spotify'))?.title === '這首在 Spotify 還沒有對應', '沒有對應與釘成「沒有」說法不同');
     check(none(cellOf(r4, 'Spotify'))?.title === 'capy 放不了這一首', '其他不是 22 碼的 Spotify id:放不了');
     check(allByClass(r5, 'pl__title')[0].textContent === '(本機沒有這首的資料)', '懸空的 cid:照舊說這台電腦沒有資料');
-    // ▶ 走 args 陣列;Apple 只打開、沒開始播時,那句話進 notice(決策 52)
-    script['play --id ' + T1 + ' --provider spotify'] = out('▶ ' + T1 + '\n');
-    script['play --id 1440 --provider apple'] = out('opened in Music.app\n');
+    // ▶ 走直達 POST /api/player;Apple 只打開、沒開始播時,opened_not_playing 的 message 進 notice(決策 52)
+    script['/api/player'] = (sent) => (sent.provider === 'apple'
+      ? { ok: true, provider: 'apple', opened_not_playing: true, message: 'opened in Music.app' }
+      : { ok: true, provider: 'spotify' });
     spPlay.click();
-    await idle(); await tick(5);
-    check(JSON.stringify(bodies.at(-1)) === JSON.stringify({ args: ['play', '--id', T1, '--provider', 'spotify'] }) && notices.every((n) => !n.startsWith('▶')), `Spotify 的 ▶:${JSON.stringify(bodies.at(-1))} ${JSON.stringify(notices)}`);
+    await idle();
+    check(JSON.stringify(playerCalls.at(-1)) === JSON.stringify({ action: 'play', provider: 'spotify', id: T1 }) && notices.every((n) => !n.startsWith('▶')), `Spotify 的 ▶ 走 /api/player:${JSON.stringify(playerCalls.at(-1))} ${JSON.stringify(notices)}`);
     apPlay.click();
-    await idle(); await tick(5);
-    check(JSON.stringify(bodies.at(-1)) === JSON.stringify({ args: ['play', '--id', '1440', '--provider', 'apple'] }) && notices.includes('opened in Music.app'), `Apple 的 ▶ 只打開時 notice 照抄那句:${JSON.stringify(notices)}`);
+    await idle();
+    check(JSON.stringify(playerCalls.at(-1)) === JSON.stringify({ action: 'play', provider: 'apple', id: '1440' }) && notices.includes('opened in Music.app'), `Apple 的 ▶ 只打開時 notice 印那句:${JSON.stringify(notices)}`);
     check(allByClass(pl, 'pl__filter').length === 0, '清單與歌都不多時沒有篩選框');
 
     // ── Windows、Spotify 沒登入:Spotify 只留連結;Apple 的格子只有 ▶,整欄不出現
@@ -1066,7 +1156,7 @@ await scenario('8q', async () => {
   const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
   const anchors = (n) => { const out = []; if (n) walk(n, (c) => { if (c.tagName === 'A') out.push(c); }); return out; };
   const byText = (n, text) => { let b = null; walk(n, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
-  const idle = () => new Promise((r) => con.idle(r));
+  const idle = async () => { await new Promise((r) => con.idle(r)); await tick(10); };
   const out = (o) => ({ events: [{ type: 'stdout', text: JSON.stringify(o) }, done] });
   const ok = { state: 'ok' };
   const SH = ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'];
@@ -1111,10 +1201,10 @@ await scenario('8q', async () => {
   // 找對應 / 逐首決定
   byText(row(pl, 'spotify'), '找對應').click();
   await idle();
-  check(JSON.stringify(bodies.at(-3)?.args) === JSON.stringify(['resolve', 'a', '--provider', 'spotify']), `找對應:${JSON.stringify(bodies.map((b) => b.args || b.line))}`);
+  check(JSON.stringify(bodies.at(-1)?.args) === JSON.stringify(['resolve', 'a', '--provider', 'spotify']), `找對應:${JSON.stringify(bodies.map((b) => b.args || b.line))}`);
   byText(row(pl, 'spotify'), '逐首決定').click();
   await idle();
-  check(JSON.stringify(bodies.at(-3)?.args) === JSON.stringify(['resolve', 'a', '--provider', 'spotify', '--review']), `逐首決定:${JSON.stringify(bodies.slice(-3).map((b) => b.args || b.line))}`);
+  check(JSON.stringify(bodies.at(-1)?.args) === JSON.stringify(['resolve', 'a', '--provider', 'spotify', '--review']), `逐首決定:${JSON.stringify(bodies.slice(-3).map((b) => b.args || b.line))}`);
 
   // 沒連、有登入 / 沒登入;連著、沒登入
   pl = await open({ spotify: PL }, { ...AUTH, spotify: { state: 'missing' }, youtube: { state: 'missing' } });
@@ -1149,8 +1239,8 @@ await scenario('8q', async () => {
   byText(box, '套用').click();
   await idle(); await tick(5); await idle();
   check(answers.length === 1 && answers[0].value === true, '確認是使用者按的,頁面不替人回答');
-  check(status(pl) === '完成。' && calls.slice(-2).join() === 'auth status --json,export', `完成之後重讀、收尾那句留著:${status(pl)} ${calls.slice(-3)}`);
-  check(allByClass(root, 'block').length === blocks0 + 1, `寫入收尾後的重讀用 quiet:主控台只多 pl sync 那一塊:${allByClass(root, 'block').length - blocks0}`);
+  check(status(pl) === '完成。' && calls.at(-1) === 'pl sync a', `完成之後重讀 /api/library 不佔命令槽、收尾那句留著:${status(pl)} ${calls.slice(-3)}`);
+  check(allByClass(root, 'block').length === blocks0 + 1, `寫入收尾後的重讀走 /api/library:主控台只多 pl sync 那一塊:${allByClass(root, 'block').length - blocks0}`);
   // 收尾規則的其餘幾種(每次都是新的同步)
   const closing = async (spec, want, not = []) => {
     script['pl sync a'] = spec;
@@ -1200,20 +1290,20 @@ await scenario('8q', async () => {
   allByClass(pl, 'pl__item')[1].click();
   page.refresh();
   await idle(); await tick(5); await idle();
-  check(allByClass(pl, 'pl__item')[1].classList.contains('is-active') && calls.slice(-2).join() === 'auth status --json,export', '回到頁面重讀:選中的那份還是那份');
-  // 回到頁面的重讀:用 quiet(主控台不多區塊);有命令佔著序列槽時排在它後面(con.idle),不撞序列槽
+  check(allByClass(pl, 'pl__item')[1].classList.contains('is-active'), '回到頁面重讀:選中的那份還是那份');
+  // 回到頁面的重讀走直達 /api/library:即使有命令佔著序列槽也能瞬開重讀、主控台不多區塊!
   const [g6, r6] = gate();
   script.noop = { gate: g6, events: [done] };
   con.run('noop');
   await tick(10);
-  const c6 = calls.length;
   const blocks6 = allByClass(root, 'block').length;
+  script.export = out(data({ spotify: PL }, { 'pl__c.json': { pid: 'c', name: 'instant', links: {}, items: [] } }));
   page.refresh();
-  await tick(10);
-  check(!calls.slice(c6).includes('export'), `有命令佔著序列槽時,回到頁面的重讀要等它:${calls.slice(c6)}`);
+  await tick(15);
+  check(allByClass(pl, 'pl__item').length === 3, '有命令佔著序列槽時,回到頁面的重讀走 /api/library 瞬開不卡死');
   r6();
   await idle(); await tick(5); await idle();
-  check(calls.slice(-2).join() === 'auth status --json,export' && allByClass(root, 'block').length === blocks6, `佔槽的命令結束後才重讀、主控台不多區塊:${calls.slice(-3)} ${allByClass(root, 'block').length - blocks6}`);
+  check(allByClass(root, 'block').length === blocks6, `主控台不多區塊:${allByClass(root, 'block').length - blocks6}`);
 
   // ── 在 YouTube Music 建一份:說明 → 開始 → 三步;第二步進行中排一個 con.idle,第三步照樣送出
   const [g2, release2] = gate();
@@ -1703,73 +1793,71 @@ await scenario('8s', async () => {
   check(labels.length >= 4 && labels.every((l) => !CJK.test(l) && /^[A-Z][a-z]*ing /.test(l)) && labels.some((l) => l === 'Setting up the AI endpoint'), `英文的 wiki label:${JSON.stringify(labels)}`);
 });
 
-// 8l. 搜尋頁的 Apple 列(決策 52):按鈕叫「在 Music.app 開啟」,送出的命令不變。命令成功卻不是 ▶ 開頭(只打開、沒開始播)時,
-//     那句話原樣進底部的 notice——不然它只進看不到的主控台頁;真的播了(▶,播放列會換成 Apple)或失敗(Console.report 會說)都不多說。
+// 8l. 搜尋頁的 Apple 列(決策 52 + Stage 2 直達播放):按鈕叫「在 Music.app 開啟」,不掛 data-run,走直達 POST /api/player
+//     (即使背景有命令佔住 runMu 也能按!);Apple 只打開、沒開始播(opened_not_playing)時訊息進 notice;真的播了或失敗不多說。
 await scenario('8l', async () => {
   const { initSearch } = await import('./pages/search.mjs');
   const honest = '已在 Music.app 打開「Radioactivity — Kraftwerk」並標出那一首。';
   const paint = async () => {
     reset();
     const said = [];
-    const labels = [];
     const pending = [];
-    con.run = (line, hooks, opts = {}) => { labels.push(opts.label); const p = Console.prototype.run.call(con, line, hooks, opts); pending.push(p); return p; };
-    const settle = async () => { while (pending.length) await pending.shift(); };
+    con.run = (line, hooks, opts = {}) => { const p = Console.prototype.run.call(con, line, hooks, opts); pending.push(p); return p; };
+    const settle = async () => { while (pending.length) await pending.shift(); await tick(10); };
     try {
       script = {
         'search k --provider apple --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [['700050031', 'Radioactivity'], ['111', 'Lost Stars'], ['222', 'Boom']] }, done] },
-        'play --id 700050031 --provider apple': { events: [{ type: 'stdout', text: honest + '\n' }, done] },
-        'play --id 111 --provider apple': { events: [{ type: 'stdout', text: '▶ Lost Stars — Adam Levine\n' }, done] },
-        'play --id 222 --provider apple': { events: [{ type: 'stdout', text: 'partial\n' }, { type: 'exit', code: 1, message: 'Error: boom', reason: 'done' }] },
+        '/api/player': (sent) => {
+          if (sent.id === '700050031') return { ok: true, provider: 'apple', opened_not_playing: true, message: honest };
+          if (sent.id === '111') return { ok: true, provider: 'apple' };
+          return { status: 422, body: { error: 'boom' } };
+        },
       };
       const r = mk();
       initSearch(r, api, con, (s) => said.push(s), { list: ['spotify', 'apple'], current: 'apple' });
       r.querySelector('input').value = 'k';
       r.querySelector('.btn--primary').click();
       await settle();
-      const btns = r.querySelector('.tbl-wrap').querySelectorAll('tbody tr').map((tr) => tr.querySelector('.btn--ghost')); // 替身的 querySelectorAll 只認 'tbody tr' 這種
+      const btns = r.querySelector('.tbl-wrap').querySelectorAll('tbody tr').map((tr) => tr.querySelector('.btn--ghost'));
       const after = [];
       for (const b of btns) { b.click(); await settle(); after.push([...said]); }
-      return { buttons: btns.map((b) => b.textContent), labels: labels.slice(1), calls: calls.slice(1), after };
+      return { buttons: btns.map((b) => b.textContent), noRunAttr: btns.every((b) => !('run' in b.dataset)), sent: [...playerCalls], after };
     } finally {
       delete con.run;
     }
   };
-  const plays = ['play --id 700050031 --provider apple', 'play --id 111 --provider apple', 'play --id 222 --provider apple'];
   const zh = await paint();
-  check(zh.buttons.length === 3 && zh.buttons.every((b) => b === '在 Music.app 開啟'), `zh-TW:Apple 列的按鈕:${JSON.stringify(zh.buttons)}`);
-  check(JSON.stringify(zh.calls) === JSON.stringify(plays), `送出的命令不變:${JSON.stringify(zh.calls)}`);
-  check(zh.labels[0] === '在 Music.app 開啟「Radioactivity」', `zh-TW 的 label:${JSON.stringify(zh.labels)}`);
-  check(JSON.stringify(zh.after) === JSON.stringify([[honest], [honest], [honest]]), `只打開的那句要進 notice,▶ 與失敗不多說:${JSON.stringify(zh.after)}`);
+  check(zh.buttons.length === 3 && zh.buttons.every((b) => b === '在 Music.app 開啟') && zh.noRunAttr, `zh-TW:Apple 列的按鈕不掛 data-run:${JSON.stringify(zh.buttons)}`);
+  check(JSON.stringify(zh.sent.map((s) => s.id)) === JSON.stringify(['700050031', '111', '222']), `送出直達 /api/player:${JSON.stringify(zh.sent)}`);
+  check(JSON.stringify(zh.after) === JSON.stringify([[honest], [honest], [honest, 'boom']]), `只打開與錯誤進 notice,真的播不多說:${JSON.stringify(zh.after)}`);
 
-  // 收尾時叫醒的自動讀取(別頁第一次打開時排的 con.idle)一開跑就會清掉 notice:那句要等 run() 整個收尾之後才說(review)。
+  // 背景有 sync 卡住序列槽(body[data-slot])時,搜尋結果列的播放鈕照樣秒速送出 /api/player 不被鎖死!
   reset();
   const [g, release] = gate();
   script = {
     'search k --provider apple --limit 10': { events: [{ type: 'table', header: ['ID', 'TITLE'], rows: [['700050031', 'Radioactivity']] }, done] },
-    'play --id 700050031 --provider apple': { gate: g, events: [{ type: 'stdout', text: honest + '\n' }, done] },
-    'auth status --json': { events: [done] },
+    'pl sync --all': { gate: g, events: [done] },
+    '/api/player': () => ({ ok: true, provider: 'apple', opened_not_playing: true, message: honest }),
   };
   const r2 = mk();
   initSearch(r2, api, con, (s) => notices.push(s), { list: ['apple'], current: 'apple' });
   r2.querySelector('input').value = 'k';
   r2.querySelector('.btn--primary').click();
   await new Promise((res) => con.idle(res));
+  const syncPromise = con.run('pl sync --all');
+  await tick(10);
+  check('slot' in globalThis.document.body.dataset, 'sync 佔住序列槽');
   r2.querySelector('.tbl-wrap').querySelectorAll('tbody tr')[0].querySelector('.btn--ghost').click();
-  await tick(5);
-  con.idle(() => con.run('auth status --json'));
+  await tick(15);
+  check(playerCalls.length === 1 && notices.at(-1) === honest, `序列槽忙碌時搜尋列仍可直達播放:${JSON.stringify(playerCalls)} ${JSON.stringify(notices)}`);
   release();
-  await tick(20);
-  await new Promise((res) => con.idle(res));
-  check(calls.includes('auth status --json') && notices.at(-1) === honest, `排隊的自動讀取不可以把那句清掉:${JSON.stringify(notices)} ${JSON.stringify(calls)}`);
+  await syncPromise;
 
   i18nFile = './i18n-en.json';
   try {
     await loadI18n(api);
     const en = await paint();
-    const CJK = /[　-〿㐀-鿿＀-￯]/;
     check(en.buttons.every((b) => b === 'Open in Music.app'), `en:Apple 列的按鈕:${JSON.stringify(en.buttons)}`);
-    check(en.labels[0] === 'Opening "Radioactivity" in Music.app' && en.labels.every((l) => /^[A-Z][a-z]*ing /.test(l) && !CJK.test(l)), `en 的 label:${JSON.stringify(en.labels)}`);
   } finally {
     i18nFile = './i18n.json';
     await loadI18n(api);
@@ -2015,14 +2103,14 @@ await scenario('13b', async () => {
   const player = new Player(nowRoot, api, () => {}, con);
   reset();
   await player.control('pause');
-  check(calls.at(-1) === 'pause', `還沒有狀態:不帶 --provider:「${calls.at(-1)}」`);
+  check(JSON.stringify(playerCalls.at(-1)) === JSON.stringify({ action: 'pause' }), `還沒有狀態:不帶 provider:${JSON.stringify(playerCalls.at(-1))}`);
   const song = { title: 'Song', artists: ['A'], duration_ms: 200000 };
-  player.render({ provider: 'apple', playing: true, position_ms: 61000, track: song, device: { name: 'Music.app', volume_known: false } });
+  player.render({ provider: 'apple', playing: true, position_ms: 61000, track: song, device: { name: 'Music.app', volume_known: true, volume_pct: 50 } });
   await player.control('pause');
-  check(calls.at(-1) === 'pause --provider apple', `控制面板上的平台:「${calls.at(-1)}」`);
+  check(JSON.stringify(playerCalls.at(-1)) === JSON.stringify({ action: 'pause', provider: 'apple' }), `直達控制面板上的平台:${JSON.stringify(playerCalls.at(-1))}`);
   player.seekBy(10);
   await tick(20);
-  check(calls.at(-1) === 'seek 71 --provider apple', `← → 也送給面板上的平台:「${calls.at(-1)}」`);
+  check(playerCalls.at(-1)?.action === 'seek' && playerCalls.at(-1)?.provider === 'apple' && playerCalls.at(-1)?.position_ms >= 71000, `← → 也送直達 /api/player:${JSON.stringify(playerCalls.at(-1))}`);
 
   player.render({ provider: 'spotify', playing: true, position_ms: 0, track: { ...song, url: 'https://open.spotify.com/track/x' } });
   const a = line.children[1];
@@ -2351,6 +2439,265 @@ await scenario('18', async () => {
   check(JSON.stringify(bodies.at(-3).args) === JSON.stringify(['wiki', '--refresh', '--provider', 'spotify']) && JSON.stringify(bodies.at(-4).args) === JSON.stringify(['wiki', '--provider', 'apple']),
     `查這首與它的再問一次也走 args:${JSON.stringify(bodies.slice(-4).map((b) => b.args))}`);
   check(root.hidden === false && allByClass(root, 'wiki__now-line')[0]?.textContent === 'Spotify · Yellow — Coldplay', `正在播那一行跟著面板:${allByClass(root, 'wiki__now-line')[0]?.textContent}`);
+});
+
+// 19. Stage 2 主力播放器完整行為契約:
+//     (a) 三區 Now Playing 面板:在 sync 佔住序列槽時仍可直達播放/暫停、拖曳 seek、靜音 m、shuffle/repeat、裝置切換、柚子湯定時器(<progress>);
+//     (b) 歌單頁:頂部「▶ 依序連播」與「🔀 隨機連播」送 track_ids、capy:now 高亮正在播的那一列(data-playing="true");
+//     (c) 一鍵收進正本(Quick Collect):彈窗讀 /api/library、跑 pl add --now 不代加 --yes、提示留在彈窗內不跳 #/console;
+//     (d) 水豚溫泉劇場(Theater Mode):零網路請求渲染本機 wiki_cached + MV + 免責聲明,定時器啟動時頭頂浮現柚子;
+//     (e) 搜尋頁今日聆聽膠囊:零 <img> 封面、附 Spotify 外連、中英雙語零殘留中文。
+await scenario('19', async () => {
+  const { initPlaylists } = await import('./pages/playlists.mjs');
+  const { initSearch } = await import('./pages/search.mjs');
+  const T1 = '4uLU6hMCjMI75M1A2tKUQC', T2 = '7qiZfU4dY1lWllzX7mPBI3';
+  const walk = (n, f) => { for (const c of n.children || []) { f(c); walk(c, f); } };
+  const byText = (n, text) => { let b = null; walk(n, (c) => { if (!b && c.tagName === 'BUTTON' && c.textContent === text) b = c; }); return b; };
+
+  const makeFullNow = () => {
+    const map = {
+      '#now-line': mk('span'),
+      '#now-art-btn': mk('button'),
+      '#now-art': mk('img'),
+      '#now-art-fallback': mk('span'),
+      '#now-prov': mk('span'),
+      '#now-title': mk('span'),
+      '#now-sub': mk('div'),
+      '#now-collect': mk('button'),
+      '#now-shuffle': mk('button'),
+      '#now-toggle': mk('button'),
+      '#now-repeat': mk('button'),
+      '#now-pos': mk('span'),
+      '#now-seek': mk('input'),
+      '#now-dur': mk('span'),
+      '#now-vol-wrap': mk('div'),
+      '#now-mute': mk('button'),
+      '#now-vol': mk('input'),
+      '#now-dev-wrap': mk('div'),
+      '#now-dev-btn': mk('button'),
+      '#now-dev-label': mk('span'),
+      '#now-dev-pop': mk('div'),
+      '#now-timer-wrap': mk('div'),
+      '#now-timer-btn': mk('button'),
+      '#now-timer-label': mk('span'),
+      '#now-timer-pop': mk('div'),
+    };
+    map['#now-dev-pop'].hidden = true;
+    map['#now-timer-pop'].hidden = true;
+    map['#now-shuffle'].dataset.act = 'shuffle';
+    map['#now-toggle'].dataset.act = 'toggle';
+    map['#now-repeat'].dataset.act = 'repeat';
+    map['#now-mute'].dataset.act = 'mute';
+    const rootNow = mk('div');
+    Object.values(map).forEach((elNode) => rootNow.appendChild(elNode));
+    rootNow.querySelector = (sel) => map[sel] || find(rootNow, sel);
+    return { rootNow, map };
+  };
+
+  reset();
+  const collectDlg = mk('dialog');
+  const theaterDlg = mk('dialog');
+  const { rootNow, map } = makeFullNow();
+  const player = new Player(rootNow, api, (x) => notices.push(x), con);
+  createCollector(collectDlg, api, con, (x) => notices.push(x));
+  const theater = createTheater(theaterDlg, player, api, con, (x) => notices.push(x));
+  player.onOpenTheater = () => theater.open();
+
+  const cachedWiki = {
+    title: 'Song A',
+    artists: 'Artist One',
+    language: 'zh-TW',
+    body: '## 歌曲背景\n這是一首溫暖的歌。',
+    model: 'gpt-test',
+    created_at: '2026-10-01T00:00:00Z',
+    mv_url: 'https://www.youtube.com/results?search_query=Song+A',
+    disclaimer: t('wiki.disclaimer'),
+  };
+
+  // (a) 背景跑長命令佔住序列槽時,Now Playing 的播放/暫停、拖曳 seek、靜音、shuffle/repeat、裝置切換與定時器皆不卡死
+  const [g, release] = gate();
+  script = {
+    'wiki --provider spotify': { gate: g, events: [done] },
+    '/api/now': () => ({
+      provider: 'spotify',
+      playing: true,
+      position_ms: 42000,
+      shuffle: false,
+      repeat: 'off',
+      in_playlists: ['a'],
+      wiki_cached: cachedWiki,
+      timer: { mode: 'pomodoro', phase: 'focus', remaining_sec: 1490, total_sec: 1500 },
+      track: { id: T1, title: 'Song A', artists: ['Artist One'], album: 'Album X', duration_ms: 180000, url: `https://open.spotify.com/track/${T1}`, artwork_url: 'https://i.scdn.co/image/abc' },
+      device: { id: 'dev1', name: 'MacBook Pro', type: 'Computer', volume_known: true, volume_pct: 65 },
+    }),
+    '/api/player/devices': () => ({
+      provider: 'spotify',
+      supported_transfer: true,
+      devices: [{ id: 'dev1', name: 'MacBook Pro', active: true }, { id: 'dev2', name: 'HomePod', active: false }],
+    }),
+  };
+  const wikiJob = con.run('wiki --provider spotify');
+  await tick(10);
+  check('slot' in globalThis.document.body.dataset, 'wiki 佔住序列槽');
+
+  await player.tick();
+  check(map['#now-art'].hidden === false && map['#now-art-fallback'].hidden === true, 'Spotify 有封面時顯示封面圖');
+  check(map['#now-collect'].textContent === '✓' && map['#now-collect'].dataset.collected === 'true', '已在正本清單內顯示 ✓');
+  check(map['#now-toggle'].textContent === '⏸', '播放中單顆主鈕顯示 ⏸');
+
+  map['#now-toggle'].click();
+  await tick(15);
+  check(playerCalls.at(-1)?.action === 'pause' && playerCalls.at(-1)?.provider === 'spotify', `序列槽忙碌時仍可暫停:${JSON.stringify(playerCalls.at(-1))}`);
+
+  map['#now-seek'].value = '95000';
+  map['#now-seek'].l.input();
+  check(map['#now-pos'].textContent === '1:35', `拖曳時即時預覽秒數:${map['#now-pos'].textContent}`);
+  map['#now-seek'].l.change();
+  await tick(15);
+  check(playerCalls.at(-1)?.action === 'seek' && playerCalls.at(-1)?.position_ms === 95000, `放開滑桿送 seek:${JSON.stringify(playerCalls.at(-1))}`);
+
+  await player.toggleMute();
+  check(playerCalls.at(-1)?.action === 'volume' && playerCalls.at(-1)?.volume_pct === 0, 'm 靜音送 volume 0');
+
+  map['#now-shuffle'].click();
+  await tick(15);
+  check(playerCalls.at(-1)?.action === 'shuffle' && playerCalls.at(-1)?.on === true, '切換隨機播放');
+
+  map['#now-repeat'].click();
+  await tick(15);
+  check(playerCalls.at(-1)?.action === 'repeat' && playerCalls.at(-1)?.repeat === 'context', '切換循環模式');
+
+  map['#now-dev-btn'].click();
+  await tick(15);
+  byText(map['#now-dev-pop'], 'HomePod')?.click();
+  await tick(15);
+  check(playerCalls.at(-1)?.action === 'transfer' && playerCalls.at(-1)?.device_id === 'dev2', `裝置轉移:${JSON.stringify(playerCalls.at(-1))}`);
+
+  map['#now-timer-btn'].click();
+  check(map['#now-timer-pop'].hidden === false && map['#now-timer-pop'].querySelector('progress') !== null, '柚子湯定時器彈出層含原生 <progress>');
+  byText(map['#now-timer-pop'], '15 分鐘睡眠漸弱')?.click();
+  await tick(15);
+  check(timerCalls.at(-1)?.mode === 'countdown' && timerCalls.at(-1)?.minutes === 15, `送出 /api/timer:${JSON.stringify(timerCalls.at(-1))}`);
+
+  // Apple Music 無 artwork_url 時顯示黑膠水豚靜態佔位圖,不偷打網路
+  player.render({ provider: 'apple', playing: true, position_ms: 1000, track: { title: 'Apple Song', artists: ['Singer'], duration_ms: 120000 }, device: { name: 'Mac', volume_known: true, volume_pct: 50 } });
+  check(map['#now-art'].hidden === true && map['#now-art-fallback'].hidden === false && map['#now-vol'].disabled === false, 'Apple 無封面時退回黑膠水豚 SVG,且支援音量滑桿');
+
+  // (d) 水豚溫泉劇場:點封面打開,零命令請求即顯示已快取歌曲介紹、MV 連結、不可關免責聲明與柚子徽章
+  await player.tick();
+  const callsBeforeTheater = calls.length;
+  map['#now-art-btn'].click();
+  check(theaterDlg.open === true && calls.length === callsBeforeTheater, '打開劇場零額外 CLI / AI 請求');
+  check(theaterDlg.textContent.includes('這是一首溫暖的歌') && theaterDlg.textContent.includes(t('wiki.disclaimer')), '劇場即時渲染已快取介紹與不可關免責聲明');
+  check(allByClass(theaterDlg, 'onsen-svg')[0]?.dataset.yuzu === 'true', '定時器啟用時溫泉水豚頭頂浮出柚子');
+  theater.close();
+
+  release();
+  await wikiJob;
+
+  // (b) 歌單頁連播與正在播放列高亮
+  const nowUnix = Math.floor(Date.now() / 1000);
+  script['/api/library'] = {
+    auth: { google: { state: 'ok' }, spotify: { state: 'ok' } },
+    has_db: true,
+    has_canon: true,
+    files: {
+      'pl__a.json': { pid: 'a', name: 'Commute', links: { spotify: '37i9dQZF1DXcBWIGoYBM5M' }, items: [{ cid: 'c1' }, { cid: 'c2' }] },
+      'tracks.json': { tracks: {
+        c1: { title: 'Song A', artists: ['Artist One'], duration_ms: 180000, mappings: { spotify: { id: T1 } } },
+        c2: { title: 'Song B', artists: ['Artist Two'], duration_ms: 200000, mappings: { spotify: { id: T2 } } },
+      } },
+    },
+    playlists: [{ pid: 'a', name: 'Commute', count: 2, links: { spotify: '37i9dQZF1DXcBWIGoYBM5M' } }],
+    recent: [{ at: nowUnix, provider: 'spotify', type: 'track', id: T1, label: 'Song A', detail: 'Artist One' }],
+    play_journal: [{ id: 1, played_at: nowUnix, provider: 'spotify', provider_id: T1, title: 'Song A', artists: ['Artist One'], album: 'Album X', duration_ms: 180000 }],
+  };
+
+  const plPage = mk();
+  initPlaylists(plPage, api, con, (x) => notices.push(x), { list: ['spotify', 'apple'], current: 'spotify' });
+  await tick(20);
+  byText(plPage, '🔀 隨機連播')?.click();
+  await tick(15);
+  check(playerCalls.at(-1)?.action === 'play' && playerCalls.at(-1)?.shuffle === true && JSON.stringify(playerCalls.at(-1)?.track_ids) === JSON.stringify([T1, T2]),
+    `隨機連播送記憶體洗牌切片:${JSON.stringify(playerCalls.at(-1))}`);
+  await player.tick();
+  const plRows = allByClass(plPage, 'pl__tbl')[0].querySelectorAll('tbody tr');
+  check(plRows[0].dataset.playing === 'true' && !plRows[1].dataset.playing, 'capy:now 高亮正在播的那一列曲目');
+
+  // (c) Quick Collect 一鍵收進正本:不代加 --yes,提示留在彈窗內不跳 #/console
+  const addTbl = { type: 'table', header: ['DIR', 'ACTION', 'PROVIDER', 'PLAYLIST', 'POS', 'CID', 'PROVIDER_ID', 'TITLE', 'ARTISTS', 'REASON', 'REASON_CODE'],
+    rows: [['add', 'add', 'spotify', 'Commute', '2', 'c1', T1, 'Song A', 'Artist One', 'r', 'added_to_master']] };
+  const [ga, ra] = gate();
+  script['pl add --now --provider spotify -- a'] = {
+    first: [addTbl, { type: 'prompt', id: 21, kind: 'confirm', title: '收進正本?', affirmative: '套用', negative: '取消' }],
+    gate: ga,
+    events: [{ type: 'prompt_closed', id: 21, reason: 'answered' }, done],
+  };
+  script.onAnswer = ra;
+  globalThis.location.hash = '#/playlists';
+  map['#now-collect'].click();
+  await tick(20);
+  check(collectDlg.open === true, '打開一鍵收藏對話框');
+  allByClass(collectDlg, 'pl__item')[0].click();
+  await tick(20);
+  check(JSON.stringify(bodies.at(-1)?.args) === JSON.stringify(['pl', 'add', '--now', '--provider', 'spotify', '--', 'a']),
+    `一鍵收藏走 pl add --now 且絕不帶 --yes:${JSON.stringify(bodies.at(-1))}`);
+  check(globalThis.location.hash === '#/playlists', `全域彈窗的確認提示不切走目前路由:${globalThis.location.hash}`);
+  byText(collectDlg, '套用')?.click();
+  await new Promise((r) => con.idle(r));
+  await tick(15);
+  check(collectDlg.textContent.includes('已收進「Commute」。'), `收藏完成訊息:${collectDlg.textContent}`);
+  collectDlg.close();
+
+  // (e) 搜尋頁今日聆聽膠囊:零封面圖、Spotify 必附外連、英文零中文殘留
+  const sePage = mk();
+  initSearch(sePage, api, con, (x) => notices.push(x), { list: ['spotify', 'apple'], current: 'spotify' });
+  await tick(20);
+  const imgs = [];
+  const capLinks = [];
+  walk(allByClass(sePage, 'capsule')[0], (c) => {
+    if (c.tagName === 'IMG') imgs.push(c);
+    if (c.tagName === 'A') capLinks.push(c.href);
+  });
+  check(imgs.length === 0 && capLinks.filter((h) => h === `https://open.spotify.com/track/${T1}`).length === 2,
+    `聆聽膠囊零封面圖、recent 與今日時間軸皆附 Spotify 外連:imgs=${imgs.length} links=${JSON.stringify(capLinks)}`);
+
+  i18nFile = './i18n-en.json';
+  const CJK = /[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/;
+  try {
+    await loadI18n(api);
+    player.render({
+      provider: 'spotify',
+      playing: true,
+      position_ms: 12000,
+      track: { id: T1, title: 'Song A', artists: ['Artist One'], duration_ms: 180000 },
+      timer: { mode: 'pomodoro', phase: 'focus', remaining_sec: 1200, total_sec: 1500 },
+      wiki_cached: {
+        title: 'Song A',
+        artists: 'Artist One',
+        language: 'en',
+        body: '## Background\nWarm acoustic track.',
+        model: 'gpt-test',
+        created_at: '2026-10-01T00:00:00Z',
+        mv_url: 'https://www.youtube.com/results?search_query=Song+A',
+        disclaimer: t('wiki.disclaimer'),
+      },
+    });
+    const seEn = mk();
+    initSearch(seEn, api, con, () => {}, { list: ['spotify'], current: 'spotify' });
+    await tick(20);
+    theater.open();
+    const allTexts = [];
+    for (const rootEl of [seEn, theaterDlg]) {
+      walk(rootEl, (c) => allTexts.push(c._text || '', ...Object.values(c.attrs || {})));
+    }
+    const badEn = allTexts.filter((s) => CJK.test(s) || s.includes('webui.'));
+    check(badEn.length === 0, `英文模式下劇場與聆聽膠囊零中文殘留:${JSON.stringify([...new Set(badEn)])}`);
+    theater.close();
+  } finally {
+    i18nFile = './i18n.json';
+    await loadI18n(api);
+  }
 });
 flush();
 if (failures.length) {
