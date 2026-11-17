@@ -535,3 +535,81 @@ func TestRunWatchWiring(t *testing.T) {
 		t.Errorf("跟隨:pin=%q provID=%q now=%v timeout=%v", got.pin, got.provID, got.trk.now, got.trk.timeout)
 	}
 }
+
+func TestWatchMutedVolumeZeroAndModeBadges(t *testing.T) {
+	m := newTestWatch(t, &watchFake{}, "")
+	st := playingState()
+	st.Device.VolumePct = 0
+	st.Device.VolumeKnown = true
+	st.Shuffle = true
+	st.Repeat = provider.RepeatContext
+	m.st = st
+	v := ansi.Strip(m.View().Content)
+	if !strings.Contains(v, "MacBook Pro(Computer) · 音量 0 · [S] [R]") {
+		t.Errorf("VolumeKnown=true 靜音 0 與 [S] [R] 標記必須顯示:\n%s", v)
+	}
+
+	st.Shuffle = false
+	st.Repeat = provider.RepeatTrack
+	st.Device.VolumeKnown = false
+	v = ansi.Strip(m.View().Content)
+	if strings.Contains(v, "音量") || !strings.Contains(v, "MacBook Pro(Computer) · [R1]") {
+		t.Errorf("VolumeKnown=false 時不顯示音量,RepeatTrack 應顯示 [R1]:\n%s", v)
+	}
+}
+
+func TestWatchSeekAndVolumeKeys(t *testing.T) {
+	f := &watchFake{st: playingState()}
+	m := watchRound(t, newTestWatch(t, f, ""))
+
+	// ← / → : ±10 秒並夾在 [0, DurationMS]
+	f.calls = nil
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	runCmd(cmd)
+	if !slices.Equal(f.calls, []string{"seek:93000"}) {
+		t.Errorf("→ 應前進 10s:calls=%v", f.calls)
+	}
+	m = next.(watchModel)
+	m.st.ProgressMS = 4000
+	f.calls = nil
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	runCmd(cmd)
+	if !slices.Equal(f.calls, []string{"seek:0"}) {
+		t.Errorf("← 低於 0 應夾在 0:calls=%v", f.calls)
+	}
+	m.st.ProgressMS = 245000
+	f.calls = nil
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	runCmd(cmd)
+	if !slices.Equal(f.calls, []string{"seek:249000"}) {
+		t.Errorf("→ 超過曲長應夾在 DurationMS:calls=%v", f.calls)
+	}
+
+	// + / = / - : ±5% 音量,靜音 0(VolumeKnown=true)可被 + 拉回 5;VolumeKnown=false 不亂調
+	m.st.Device.VolumeKnown = true
+	m.st.Device.VolumePct = 0
+	for _, tc := range []struct {
+		key  tea.KeyPressMsg
+		pct  int
+		want string
+	}{
+		{tea.KeyPressMsg{Code: '+', Text: "+"}, 0, "vol:5"},
+		{tea.KeyPressMsg{Code: '=', Text: "="}, 98, "vol:100"},
+		{tea.KeyPressMsg{Code: '-', Text: "-"}, 3, "vol:0"},
+	} {
+		m.st.Device.VolumePct = tc.pct
+		f.calls = nil
+		_, cmd = m.Update(tc.key)
+		runCmd(cmd)
+		if !slices.Equal(f.calls, []string{tc.want}) {
+			t.Errorf("key=%s pct=%d:calls=%v, want [%s]", tc.key, tc.pct, f.calls, tc.want)
+		}
+	}
+
+	m.st.Device.VolumeKnown = false
+	m.st.Device.VolumePct = 50
+	f.calls = nil
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: '+', Text: "+"}); cmd != nil || len(f.calls) != 0 {
+		t.Errorf("VolumeKnown=false 時按 + 不得送出 SetVolume:cmd=%v calls=%v", cmd != nil, f.calls)
+	}
+}

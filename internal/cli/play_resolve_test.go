@@ -33,8 +33,11 @@ func TestParsePlayQuery(t *testing.T) {
 		{[]string{"五月天"}, "", "五月天", "", false},
 		{[]string{"artist:五月天"}, "", "五月天", cache.TypeArtist, false},
 		{[]string{"pl:", "通勤"}, "", "通勤", cache.TypePlaylist, false},
+		{[]string{"canon:通勤"}, "", "通勤", typeCanon, false},
+		{[]string{"canon:", "01JABC"}, "canon", "01JABC", typeCanon, false},
 		{[]string{"track:派對動物"}, "track", "派對動物", cache.TypeTrack, false},
 		{[]string{"artist:五月天"}, "track", "", "", true},
+		{[]string{"canon:通勤"}, "playlist", "", "", true},
 		{[]string{"x"}, "album", "", "", true},
 	}
 	for _, c := range cases {
@@ -126,5 +129,52 @@ func TestRememberRecentDropsNote(t *testing.T) {
 	rememberRecent("spotify", candidate{Type: cache.TypePlaylist, ID: "p1", Label: "通勤", Detail: "23 首", Note: "(Apple 暫不支援清單播放)"})
 	if r := cache.Load().Recent; len(r) != 1 || r[0].Detail != "23 首" {
 		t.Fatalf("Note 不得進快取:%+v", r)
+	}
+}
+
+func TestResolvePlayCanonicalPlaylists(t *testing.T) {
+	canons := []canonPlaylist{
+		{PID: "01PIDCOMMUTE", Name: "通勤", Total: 10, Mapped: 8, LinkID: "p1"},
+		{PID: "01PIDROAD", Name: "公路旅行", Total: 5, Mapped: 5},
+		{PID: "01PIDROAD2", Name: "公路旅行 2026", Total: 3, Mapped: 3},
+	}
+	noNet := playSources{
+		playlists:       func() []cache.Playlist { return []cache.Playlist{{ID: "p1", Name: "通勤", Total: 10}} },
+		canons:          func() []canonPlaylist { return canons },
+		canPlayPlaylist: true,
+		artists: func(context.Context, string, int) ([]provider.Artist, error) {
+			t.Fatal("本機正本精確命中不得打網路")
+			return nil, nil
+		},
+		tracks: func(context.Context, string, int) ([]provider.Track, error) {
+			t.Fatal("本機正本精確命中不得打網路")
+			return nil, nil
+		},
+	}
+
+	// 1. 未給前綴的一般統一搜尋納入未連結的正本清單(精確命中不打網路)
+	hit, _, err := resolvePlay(context.Background(), noNet, "公路旅行", "")
+	if err != nil || hit == nil || hit.Type != typeCanon || hit.ID != "01PIDROAD" {
+		t.Fatalf("正本名稱精確命中:err=%v hit=%+v", err, hit)
+	}
+
+	// 2. PID 精確命中
+	hit, _, err = resolvePlay(context.Background(), noNet, "01PIDROAD2", "")
+	if err != nil || hit == nil || hit.Type != typeCanon || hit.ID != "01PIDROAD2" {
+		t.Fatalf("正本 PID 精確命中:err=%v hit=%+v", err, hit)
+	}
+
+	// 3. --type canon 子字串多筆 → 歧義
+	hit, cands, err := resolvePlay(context.Background(), noNet, "公路", typeCanon)
+	if err != nil || hit != nil || len(cands) != 2 {
+		t.Fatalf("--type canon 歧義:err=%v hit=%+v cands=%+v", err, hit, cands)
+	}
+
+	// 4. 當平台不支援 CapPlayPlaylist(如 Apple Music)時,未加前綴優先選有對應曲目的正本清單
+	appleSrc := noNet
+	appleSrc.canPlayPlaylist = false
+	hit, _, err = resolvePlay(context.Background(), appleSrc, "通勤", "")
+	if err != nil || hit == nil || hit.Type != typeCanon || hit.ID != "01PIDCOMMUTE" {
+		t.Fatalf("無 CapPlayPlaylist 時應選可播的 canon:err=%v hit=%+v", err, hit)
 	}
 }

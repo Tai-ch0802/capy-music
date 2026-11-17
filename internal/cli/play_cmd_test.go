@@ -1,15 +1,21 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
+	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
 // playFake:Searcher + ArtistSearcher + PlaybackController,記錄 Play 請求。
@@ -285,5 +291,162 @@ func TestPlayOpenedNotPlayingIsHonest(t *testing.T) {
 	f.playErr = nil
 	if out, err := runCLI(t, "play", "--id", "t1"); err != nil || !strings.HasPrefix(out, "▶ ") {
 		t.Errorf("真的播了照舊印 ▶(web 搜尋頁靠這個分辨):%v %q", err, out)
+	}
+}
+
+type playFullFake struct {
+	*playFake
+	listRefs   []provider.PlaylistRef
+	listCalls  int
+	shuffleSet []bool
+}
+
+func (f *playFullFake) ListPlaylists(context.Context) ([]provider.PlaylistRef, error) {
+	f.listCalls++
+	return f.listRefs, nil
+}
+func (f *playFullFake) GetPlaylistItems(context.Context, string) ([]provider.Track, error) {
+	return nil, nil
+}
+func (f *playFullFake) SetShuffle(_ context.Context, on bool) error {
+	f.shuffleSet = append(f.shuffleSet, on)
+	return nil
+}
+func (f *playFullFake) SetRepeat(context.Context, provider.RepeatMode) error { return nil }
+
+func seedCanonForPlay(t *testing.T, pls []canon.Playlist, trs map[string]canon.Track) {
+	t.Helper()
+	st, err := store.Open(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := canon.NewManifest()
+	tracks := canon.NewTracks()
+	tracks.Tracks = trs
+	for _, pl := range pls {
+		m.AddPlaylist(pl.PID)
+	}
+	if err := st.Hydrate(store.Canonical{Manifest: m, Tracks: tracks, Playlists: pls}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlayCanonicalPlaylistLinkedTrackIDsAndShuffleZeroWrite(t *testing.T) {
+	base := newPlayFake(t)
+	f := &playFullFake{playFake: base}
+	swapProviderWith(t, f)
+
+	// 建立 120 首正本清單「最愛」(未 link spotify)、「通勤」(已 link spotify:p1)、「空映射」(僅 apple mapping)
+	trs := map[string]canon.Track{
+		"i:onlyap": {CID: "i:onlyap", Title: "Apple Only", Artists: []string{"A"}, Mappings: map[string]canon.Mapping{"apple": {ID: "ap1"}}},
+	}
+	var favItems []canon.Item
+	var origOrder []string
+	for i := range 120 {
+		cid := fmt.Sprintf("i:T%03d", i)
+		spID := fmt.Sprintf("sp-%03d", i)
+		origOrder = append(origOrder, spID)
+		trs[cid] = canon.Track{
+			CID:      cid,
+			Title:    fmt.Sprintf("Track %03d", i),
+			Artists:  []string{"Mayday"},
+			Mappings: map[string]canon.Mapping{"spotify": {ID: spID, Confidence: 100}},
+		}
+		favItems = append(favItems, canon.Item{IID: fmt.Sprintf("iid%03d", i), CID: cid, Rank: fmt.Sprintf("r%03d", i)})
+	}
+	pls := []canon.Playlist{
+		{PID: "01FAV", SchemaVersion: canon.SchemaVersion, Name: "最愛", Items: favItems, Links: map[string]string{}},
+		{PID: "01COM", SchemaVersion: canon.SchemaVersion, Name: "通勤", Items: favItems[:3], Links: map[string]string{"spotify": "p1"}},
+		{PID: "01UNM", SchemaVersion: canon.SchemaVersion, Name: "尚未解析", Items: []canon.Item{{IID: "u1", CID: "i:onlyap", Rank: "a"}}, Links: map[string]string{}},
+		{PID: "01UNM2", SchemaVersion: canon.SchemaVersion, Name: "尚未解析二號", Items: []canon.Item{{IID: "u2", CID: "i:onlyap", Rank: "a"}}, Links: map[string]string{}},
+	}
+	seedCanonForPlay(t, pls, trs)
+	dumpBefore := dumpBytes(t)
+
+	// 1. 已 link 且未帶 --shuffle → 優先走 PlayRequest{PlaylistID: "p1"}
+	f.played = nil
+	if out, err := runCLI(t, "play", "canon:通勤"); err != nil || len(f.played) != 1 || f.played[0].PlaylistID != "p1" || !strings.Contains(out, "正本清單:通勤") {
+		t.Fatalf("已連結正本未帶 --shuffle 應走 PlaylistID:err=%v played=%+v out=%q", err, f.played, out)
+	}
+
+	// 2. 已 link 但帶 --shuffle → 改走記憶體洗牌 TrackIDs,且不呼叫持久 SetShuffle
+	origRand := playRandIntn
+	playRandIntn = func(int) int { return 0 } // 確定性單循環位移(Sattolo:必改變順序)
+	t.Cleanup(func() { playRandIntn = origRand })
+
+	f.played, f.shuffleSet = nil, nil
+	if out, err := runCLI(t, "play", "canon:通勤", "--shuffle"); err != nil || len(f.played) != 1 || f.played[0].PlaylistID != "" ||
+		slices.Equal(f.played[0].TrackIDs, origOrder[:3]) || len(f.shuffleSet) != 0 || !strings.Contains(out, "正本清單(隨機):通勤") {
+		t.Fatalf("正本 --shuffle 應在記憶體洗牌 TrackIDs 且不碰 SetShuffle:err=%v played=%+v shuffleSet=%v out=%q", err, f.played, f.shuffleSet, out)
+	}
+
+	// 3. 未 link 正本(> 100 首):未帶 --shuffle 依原序截斷前 100 首;帶 --shuffle 先對全 120 首洗牌再取前 100 首
+	f.played = nil
+	if _, err := runCLI(t, "play", "最愛"); err != nil || len(f.played) != 1 || !slices.Equal(f.played[0].TrackIDs, origOrder[:100]) {
+		t.Fatalf("未給前綴應納入正本並依原序取前 100 首:err=%v got=%v", err, f.played)
+	}
+	f.played = nil
+	if _, err := runCLI(t, "play", "--type", "canon", "01FAV", "--shuffle"); err != nil || len(f.played) != 1 || len(f.played[0].TrackIDs) != 100 ||
+		!slices.Contains(f.played[0].TrackIDs, "sp-100") {
+		t.Fatalf("超過 100 首洗牌應涵蓋第 100 首之後的曲目再截斷 100 首:err=%v played=%v", err, f.played)
+	}
+
+	// 決策 38 硬約束:state.db canonical 表逐位元零改動!
+	if !bytes.Equal(dumpBefore, dumpBytes(t)) {
+		t.Fatal("play --shuffle 絕不可改動 state.db 的 canonical 資料(決策 38)")
+	}
+
+	// 4. 正本無當前平台對應曲目 → 清楚提示先跑 capy resolve
+	if _, err := runCLI(t, "play", "canon:尚未解析"); err == nil || !strings.Contains(err.Error(), "capy resolve --provider spotify") {
+		t.Fatalf("無對應曲目應提示跑 capy resolve:%v", err)
+	}
+
+	// 5. 非 TTY 歧義契約:維持 4 欄 TSV 與 exit 2
+	ambOut, ambErr := runCLI(t, "play", "--type", "canon", "尚未")
+	if code, _ := ExitCode(ambErr); code != 2 {
+		t.Fatalf("非 TTY 歧義應 exit 2:err=%v code=%d", ambErr, code)
+	}
+	for _, line := range strings.Split(strings.TrimRight(ambOut, "\n"), "\n") {
+		if cols := strings.Split(line, "\t"); len(cols) != 4 || cols[0] != "canon" {
+			t.Errorf("歧義 TSV 必須為 4 欄且首欄為 canon:%q", line)
+		}
+	}
+
+	// 6. 已快取平台清單帶 --shuffle → 開播後呼叫 SetShuffle(true)
+	f.played, f.shuffleSet = nil, nil
+	if _, err := runCLI(t, "play", "pl:通勤", "--shuffle"); err != nil || len(f.played) != 1 || f.played[0].PlaylistID != "p1" || !slices.Equal(f.shuffleSet, []bool{true}) {
+		t.Fatalf("平台清單 --shuffle 應呼叫 SetShuffle(true):err=%v played=%+v shuffleSet=%v", err, f.played, f.shuffleSet)
+	}
+}
+
+func TestPlayPickColdCacheFetchesPlaylistsOnce(t *testing.T) {
+	setCLITestConfig(t) // 冷快取:無 provider_playlists、無正本、無 recent
+	base := &playFake{
+		fakeProvider: fakeProvider{caps: provider.CapPlaybackControl | provider.CapPlaylistRead | provider.CapPlayPlaylist},
+	}
+	f := &playFullFake{
+		playFake: base,
+		listRefs: []provider.PlaylistRef{{ID: "pl-cold-1", Name: "深夜工作", Total: 12}},
+	}
+	swapProviderWith(t, f)
+
+	origTTY := isInteractive
+	isInteractive = func(*cobra.Command) bool { return true }
+	t.Cleanup(func() { isInteractive = origTTY })
+	origPicker := runPlayPicker
+	var offered []candidate
+	runPlayPicker = func(cs []candidate) (*candidate, error) { offered = cs; return &cs[0], nil }
+	t.Cleanup(func() { runPlayPicker = origPicker })
+
+	out, err := runCLI(t, "play", "--pick")
+	if err != nil {
+		t.Fatalf("冷快取 --pick 應自動拉取清單並播放:%v", err)
+	}
+	if f.listCalls != 1 || len(offered) != 1 || offered[0].ID != "pl-cold-1" || !strings.Contains(out, "深夜工作") {
+		t.Fatalf("應呼叫一次 ListPlaylists 並開啟挑選器:calls=%d offered=%+v out=%q", f.listCalls, offered, out)
+	}
+	if cached := cache.Load().Playlists["spotify"]; len(cached) != 1 || cached[0].ID != "pl-cold-1" {
+		t.Fatalf("拉到的清單應寫入本機快取:%+v", cached)
 	}
 }

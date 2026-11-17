@@ -1,11 +1,19 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
 func TestPlayByQuerySearchesThenPlays(t *testing.T) {
@@ -202,5 +210,181 @@ func TestDevicesTSV(t *testing.T) {
 	}
 	if out != "手機\tSmartphone\tactive\t50\td1\n" {
 		t.Errorf("devices TSV:%q", out)
+	}
+}
+
+type ctlModeFake struct {
+	*playFake
+	devices      []provider.Device
+	transferred  []string
+	transferPlay []bool
+	st           *provider.PlaybackState
+	shuffles     []bool
+	repeats      []provider.RepeatMode
+}
+
+func (f *ctlModeFake) Devices(context.Context) ([]provider.Device, error) { return f.devices, nil }
+func (f *ctlModeFake) State(context.Context) (*provider.PlaybackState, error) {
+	return f.st, nil
+}
+func (f *ctlModeFake) Transfer(_ context.Context, id string, play bool) error {
+	f.transferred = append(f.transferred, id)
+	f.transferPlay = append(f.transferPlay, play)
+	return nil
+}
+func (f *ctlModeFake) SetShuffle(_ context.Context, on bool) error {
+	f.shuffles = append(f.shuffles, on)
+	if f.st != nil {
+		f.st.Shuffle = on
+	}
+	return nil
+}
+func (f *ctlModeFake) SetRepeat(_ context.Context, mode provider.RepeatMode) error {
+	f.repeats = append(f.repeats, mode)
+	if f.st != nil {
+		f.st.Repeat = mode
+	}
+	return nil
+}
+
+func TestDevicesSwitchAndPickAndSeamRestore(t *testing.T) {
+	base := newPlayFake(t)
+	f := &ctlModeFake{
+		playFake: base,
+		devices: []provider.Device{
+			{ID: "dev-phone-1", Name: "My iPhone", Type: "Smartphone", Active: true, VolumePct: 45, VolumeKnown: true},
+			{ID: "dev-spk-2", Name: "Living Room Speaker", Type: "Speaker", Active: false, VolumePct: 70, VolumeKnown: true},
+		},
+	}
+	swapProviderWith(t, f)
+
+	// 1. 無參數維持既有 5 欄 TSV 契約 100% 不變
+	out, err := runCLI(t, "devices")
+	if err != nil || out != "My iPhone\tSmartphone\tactive\t45\tdev-phone-1\nLiving Room Speaker\tSpeaker\t-\t70\tdev-spk-2\n" {
+		t.Fatalf("無參數 devices 5 欄 TSV 契約不可變:err=%v out=%q", err, out)
+	}
+
+	// 2. --switch 不分大小寫比對名稱、或精確比對 ID,呼叫 Transfer(ctx, id, true)
+	out, err = runCLI(t, "devices", "--switch", "living room speaker")
+	if err != nil || !slices.Equal(f.transferred, []string{"dev-spk-2"}) || !slices.Equal(f.transferPlay, []bool{true}) || !strings.Contains(out, "Living Room Speaker") {
+		t.Fatalf("--switch 名稱比對:err=%v transferred=%v play=%v out=%q", err, f.transferred, f.transferPlay, out)
+	}
+	f.transferred, f.transferPlay = nil, nil
+	if _, err := runCLI(t, "devices", "--switch", "dev-phone-1"); err != nil || !slices.Equal(f.transferred, []string{"dev-phone-1"}) {
+		t.Fatalf("--switch 精確 ID 比對:err=%v transferred=%v", err, f.transferred)
+	}
+	if _, err := runCLI(t, "devices", "--switch", "Kitchen"); err == nil || !strings.Contains(err.Error(), `"Kitchen"`) {
+		t.Fatalf("--switch 找不到裝置應列出可用裝置:%v", err)
+	}
+
+	// 3. 平台不支援 DeviceTransferrer 時回傳清楚 i18n 錯誤(含 ErrNotSupported)
+	swapProviderWith(t, base) // playFake 未實作 DeviceTransferrer
+	if _, err := runCLI(t, "devices", "--switch", "My iPhone"); err == nil || !errors.Is(err, provider.ErrNotSupported) {
+		t.Fatalf("不支援 DeviceTransferrer 應回傳包裝 ErrNotSupported 的錯誤:%v", err)
+	}
+	swapProviderWith(t, f)
+
+	// 4. --pick 非 TTY 擋下;TTY 下走 pickDevice 接縫
+	if _, err := runCLI(t, "devices", "--pick"); err == nil || !strings.Contains(err.Error(), "--pick") {
+		t.Fatalf("非 TTY --pick 應擋下:%v", err)
+	}
+	origTTY := isInteractive
+	isInteractive = func(*cobra.Command) bool { return true }
+	t.Cleanup(func() { isInteractive = origTTY })
+	origPickDev := pickDevice
+	var pickedTitle string
+	pickDevice = func(ds []provider.Device, title string) (provider.Device, error) {
+		pickedTitle = title
+		return ds[1], nil
+	}
+	t.Cleanup(func() { pickDevice = origPickDev })
+	f.transferred = nil
+	out, err = runCLI(t, "devices", "--pick")
+	if err != nil || pickedTitle == "" || !slices.Equal(f.transferred, []string{"dev-spk-2"}) || !strings.Contains(out, "Living Room Speaker") {
+		t.Fatalf("TTY --pick 應走 pickDevice 接縫並切換:err=%v title=%q transferred=%v out=%q", err, pickedTitle, f.transferred, out)
+	}
+	pickDevice = origPickDev
+
+	// 5. installWebSeams 必須替換並完整還原 pickDevice 接縫
+	beforePtr := reflect.ValueOf(pickDevice).Pointer()
+	ws, err := newWebServer(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := installWebSeams(ws)
+	duringPtr := reflect.ValueOf(pickDevice).Pointer()
+	restore()
+	afterPtr := reflect.ValueOf(pickDevice).Pointer()
+	if duringPtr == beforePtr || afterPtr != beforePtr {
+		t.Fatalf("installWebSeams 必須替換並還原 pickDevice:before=%x during=%x after=%x", beforePtr, duringPtr, afterPtr)
+	}
+}
+
+func TestShuffleAndRepeatCommands(t *testing.T) {
+	base := newPlayFake(t)
+	f := &ctlModeFake{
+		playFake: base,
+		st:       &provider.PlaybackState{Playing: true, Shuffle: false, Repeat: provider.RepeatOff},
+	}
+	swapProviderWith(t, f)
+
+	// 非法參數在建構 provider 前就被擋下
+	origNew := newProvider
+	newProvider = func(context.Context, string) (provider.Provider, error) {
+		t.Fatal("非法參數不應呼叫 getProvider")
+		return nil, nil
+	}
+	if _, err := runCLI(t, "shuffle", "maybe"); err == nil {
+		t.Fatal("shuffle 非法參數應報錯")
+	}
+	if _, err := runCLI(t, "repeat", "forever"); err == nil {
+		t.Fatal("repeat 非法參數應報錯")
+	}
+	newProvider = origNew
+
+	// shuffle: on / off / toggle(預設無參數也是 toggle)
+	if out, err := runCLI(t, "shuffle", "on"); err != nil || !slices.Equal(f.shuffles, []bool{true}) || !strings.Contains(out, "開") {
+		t.Fatalf("shuffle on:err=%v shuffles=%v out=%q", err, f.shuffles, out)
+	}
+	f.shuffles = nil
+	if out, err := runCLI(t, "shuffle"); err != nil || !slices.Equal(f.shuffles, []bool{false}) || !strings.Contains(out, "關") {
+		t.Fatalf("shuffle 無參數應 toggle 為 off:err=%v shuffles=%v out=%q", err, f.shuffles, out)
+	}
+
+	// repeat: cycle(off → context → track → off)與明確指定
+	f.repeats = nil
+	for _, want := range []provider.RepeatMode{provider.RepeatContext, provider.RepeatTrack, provider.RepeatOff} {
+		if _, err := runCLI(t, "repeat"); err != nil {
+			t.Fatalf("repeat cycle:%v", err)
+		}
+		if f.repeats[len(f.repeats)-1] != want {
+			t.Fatalf("repeat cycle 順序錯誤:got %v, want %s", f.repeats, want)
+		}
+	}
+	f.repeats = nil
+	if out, err := runCLI(t, "repeat", "track"); err != nil || !slices.Equal(f.repeats, []provider.RepeatMode{provider.RepeatTrack}) || !strings.Contains(out, "單曲") {
+		t.Fatalf("repeat track:err=%v repeats=%v out=%q", err, f.repeats, out)
+	}
+
+	// 不支援 PlaybackModeController 的平台
+	swapProviderWith(t, base)
+	if _, err := runCLI(t, "shuffle", "on"); err == nil || !errors.Is(err, provider.ErrNotSupported) {
+		t.Fatalf("不支援 PlaybackModeController 應回 ErrNotSupported:%v", err)
+	}
+	swapProviderWith(t, f)
+
+	// 英文語系零 CJK 驗證
+	withLanguage(t, "en")
+	for _, args := range [][]string{
+		{"devices", "--help"},
+		{"shuffle", "--help"},
+		{"repeat", "--help"},
+		{"shuffle", "on"},
+		{"repeat", "context"},
+	} {
+		out, err := runCLI(t, args...)
+		if err != nil || hasCJK(out) {
+			t.Errorf("%v 英文模式不該有 CJK:err=%v out=%q", args, err, out)
+		}
 	}
 }

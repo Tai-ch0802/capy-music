@@ -393,6 +393,15 @@
   "dedup.unchecked": {
     "other": "{platforms} 這次沒檢查(--provider 沒選到、或讀不到),它上面有沒有重複不在這次的結論裡"
   },
+  "devices.err.no_devices": "{platform} 目前沒有可用的播放裝置 — 請先開啟播放器",
+  "devices.err.pick_needs_tty": "--pick 需要終端機;非互動環境請先用 capy devices 查看並以 --switch <名稱或ID> 指定",
+  "devices.err.transfer_not_supported": "{platform} 不支援切換播放裝置:{err}",
+  "devices.flag.pick": "在終端機開啟挑選器切換播放裝置",
+  "devices.flag.switch": "將播放輸出切換到指定裝置(依名稱或 ID)",
+  "devices.pick.active": " [作用中]",
+  "devices.pick.title": "切換到哪個播放裝置?",
+  "devices.pick.volume": " · 音量 {pct}",
+  "devices.switched": "🔊 已切換播放裝置至 {name}({type})",
   "doctor.all_passed": "全部通過 🎉",
   "doctor.api.err.failed": "API 呼叫失敗:{err}",
   "doctor.api.ok.apple": "API 可達、token 有效",
@@ -506,6 +515,9 @@
   "history.cleared": {
     "other": "已清空最近紀錄({count} 筆)"
   },
+  "history.err.bad_limit": "--limit 必須是正整數,得到 {value}",
+  "history.flag.limit": "最多顯示幾筆收聽紀錄",
+  "history.list.short": "列出本機收聽紀錄(非 TTY 為 TSV:played_at、provider、id、title、artists、album)",
   "lang.name": "繁體中文",
   "link.created_master": "建立 canonical 清單 {name}({pid})",
   "link.created_platform": "在 {platform} 建立清單 {name}({id})",
@@ -727,10 +739,16 @@
   "play.err.ambiguous": {
     "other": "有 {count} 個候選;用 --type track|artist|playlist 或前綴 artist: / pl: / track: 指定,或在終端機執行以開啟挑選器"
   },
+  "play.err.bad_repeat": "循環模式只能是 off、context、track 或 cycle,得到 {value}",
+  "play.err.bad_shuffle": "隨機播放模式只能是 on、off 或 toggle,得到 {value}",
   "play.err.bad_type": "--type 只能是 track、artist、playlist,得到 {value}",
+  "play.err.canon_empty": "正本清單 {name} 是空的",
+  "play.err.canon_no_mappings": "正本清單 {name} 尚未有任何對應到 {platform} 的曲目 — 請先執行 capy resolve --provider {platform}",
+  "play.err.canon_not_found": "本機快取找不到正本清單 {id} — 請先執行 capy pl pull",
   "play.err.device_not_found": "找不到裝置 {name};可用裝置:{devices}",
   "play.err.id_with_query": "--id 與搜尋詞擇一",
   "play.err.missing_query": "缺搜尋詞",
+  "play.err.mode_not_supported": "{platform} 不支援隨機或循環播放控制:{err}",
   "play.err.no_top_tracks": "在 {platform} 找不到 {artist} 的歌。試試直接搜歌名:capy play <歌名>",
   "play.err.no_top_tracks_namesakes": "在 {platform} 找不到這位 {artist} 的歌:{platform} 的 API 查不到藝人熱門歌曲,capy 是用名稱搜尋,結果全是名字相同或相近的其他藝人。試試直接搜歌名:capy play <歌名>",
   "play.err.not_found": "找不到:{query}",
@@ -740,16 +758,31 @@
   "play.err.prefix_type_conflict": "前綴 {prefix} 與 --type {type} 衝突",
   "play.err.type_without_query": "--type 只用在搜尋詞上(無參數是恢復播放;URI / track ID 不需要類型)",
   "play.err.unsupported_uri": "目前只支援 track URI/ID,不支援 {ref} — 用 capy pl show 取出曲目 ID 再播放",
+  "play.flag.shuffle": "當次隨機播放(正本清單僅在記憶體洗牌,絕不改動原清單順序)",
   "play.label.artist_first_only": "{artist}:{title}({platform} 不能排佇列,只取第一首熱門歌曲)",
   "play.label.artist_top": {
     "other": "{artist} 的熱門歌曲({count} 首)"
   },
+  "play.label.canon": "正本清單:{name}({detail})",
+  "play.label.canon_first_only": "正本清單:{name}({platform} 不能排佇列,只播第一首)",
+  "play.label.canon_shuffled": {
+    "other": "正本清單(隨機):{name}({count} 首)"
+  },
   "play.label.playlist": "清單:{name}({detail})",
   "play.label.resume": "恢復播放",
+  "play.note.canon_unmapped": "(尚未對應到 {platform},先跑 capy resolve)",
   "play.note.playlist_unplayable": "({platform} 暫不支援清單播放,用 capy pl show)",
   "play.opened_not_playing": "已在 Music.app 打開「{label}」並標出那一首。capy 只能替你播資料庫裡找得到的歌:請在 Music.app 對標出來的那一首點兩下。",
   "play.picker.title": "選一個播放",
+  "play.repeat.context": "🔁 循環播放:清單",
+  "play.repeat.off": "🔁 循環播放:關",
+  "play.repeat.short": "設定或切換循環播放模式(off、context、track 或 cycle)",
+  "play.repeat.track": "🔂 循環播放:單曲",
+  "play.shuffle.off": "🔀 隨機播放:關",
+  "play.shuffle.on": "🔀 隨機播放:開",
+  "play.shuffle.short": "設定或切換隨機播放(on、off 或 toggle)",
   "play.type.artist": "藝人",
+  "play.type.canon": "正本",
   "play.type.playlist": "清單",
   "play.type.track": "曲目",
   "player.device": "{name}({type})",
@@ -899,6 +932,7 @@
   "resolve.err.search_unsupported": "{provider} 不支援搜尋",
   "resolve.err.unknown_decision": "未知的裁決 {kind}",
   "resolve.err.unknown_provider": "不認得 provider {provider}({ids})",
+  "resolve.flag.refresh": "忽略本機 7 天負向快取,強制重新查詢平台",
   "resolve.hint.unmapped": {
     "other": "{count} 首尚未對應到 {provider},跑 capy resolve"
   },

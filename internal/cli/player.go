@@ -4,25 +4,86 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Tai-ch0802/capy-music/internal/cache"
+	"github.com/Tai-ch0802/capy-music/internal/canon"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
+)
+
+const (
+	playCanonBusy      = 200 * time.Millisecond
+	maxPlayCanonTracks = 100
 )
 
 var (
 	spotifyTrackURIRe = regexp.MustCompile(`^spotify:track:([0-9A-Za-z]{22})$`)
 	// spotifyBase62IDRe:22 碼 base62,track ID 與 playlist ID 共用此格式。
 	spotifyBase62IDRe = regexp.MustCompile(`^[0-9A-Za-z]{22}$`)
+
+	// playRandIntn:Fisher-Yates 洗牌隨機源(測試替換點)。
+	playRandIntn = rand.IntN
+
+	// pickDevice:TTY 下開播放裝置挑選器,回選中的裝置。
+	// 包成 package-level var 並註冊進 installWebPromptSeams(CLAUDE.md 與 seams_test.go 硬約束)。
+	pickDevice = runPickDevice
 )
 
-// resolveDeviceID:名稱不分大小寫精確比對,取第一個相符(重名取先;ponytail: 夠用)。
+func shuffleStrings(xs []string) {
+	for i := len(xs) - 1; i > 0; i-- {
+		j := playRandIntn(i + 1)
+		xs[i], xs[j] = xs[j], xs[i]
+	}
+}
+
+func matchDevice(ds []provider.Device, query string) (provider.Device, bool) {
+	trimmed := strings.TrimSpace(query)
+	for _, d := range ds {
+		if d.ID != "" && (d.ID == query || d.ID == trimmed) {
+			return d, true
+		}
+	}
+	for _, d := range ds {
+		if strings.EqualFold(d.Name, query) || strings.EqualFold(strings.TrimSpace(d.Name), trimmed) {
+			return d, true
+		}
+	}
+	return provider.Device{}, false
+}
+
+func devicePickerLabels(ds []provider.Device) []string {
+	labels := make([]string, len(ds))
+	for i, d := range ds {
+		label := i18n.T("player.device", "name", d.Name, "type", d.Type)
+		if d.VolumeKnown {
+			label += i18n.T("devices.pick.volume", "pct", d.VolumePct)
+		}
+		if d.Active {
+			label += i18n.T("devices.pick.active")
+		}
+		labels[i] = label
+	}
+	return labels
+}
+
+func runPickDevice(ds []provider.Device, title string) (provider.Device, error) {
+	idx, err := pickOne(title, devicePickerLabels(ds))
+	if err != nil {
+		return provider.Device{}, err
+	}
+	return ds[idx], nil
+}
+
+// resolveDeviceID:精確比對 ID 或不分大小寫比對名稱,取第一個相符(重名取先;ponytail: 夠用)。
 func resolveDeviceID(ctx context.Context, pc provider.PlaybackController, providerID, name string) (string, error) {
 	ds, err := pc.Devices(ctx)
 	if err != nil {
@@ -31,19 +92,19 @@ func resolveDeviceID(ctx context.Context, pc provider.PlaybackController, provid
 	if len(ds) == 0 {
 		return "", friendlyErr(providerID, provider.ErrNoActiveDevice)
 	}
+	if d, ok := matchDevice(ds, name); ok {
+		return d.ID, nil
+	}
 	names := make([]string, len(ds))
 	for i, d := range ds {
 		names[i] = d.Name
-		if strings.EqualFold(d.Name, name) {
-			return d.ID, nil
-		}
 	}
 	return "", i18n.Errorf("play.err.device_not_found", "name", strconv.Quote(name), "devices", strings.Join(names, i18n.T("sep.list")))
 }
 
 func newPlayCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "play [query...|artist:<name>|pl:<name>|track:<name>|spotify:track:URI|track ID]",
+		Use:   "play [query...|artist:<name>|pl:<name>|canon:<name|pid>|track:<name>|spotify:track:URI|track ID]",
 		Short: i18n.T("cmd.play.short"),
 		Long:  i18n.T("cmd.play.long"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -59,6 +120,7 @@ func newPlayCmd() *cobra.Command {
 			id, _ := cmd.Flags().GetString("id")
 			typ, _ := cmd.Flags().GetString("type")
 			pick, _ := cmd.Flags().GetBool("pick")
+			shuffle, _ := cmd.Flags().GetBool("shuffle")
 			interactive := isInteractive(cmd)
 			req := provider.PlayRequest{}
 			var label string
@@ -78,7 +140,26 @@ func newPlayCmd() *cobra.Command {
 					return i18n.Errorf("play.err.pick_needs_tty")
 				}
 				q := strings.TrimSpace(strings.Join(args, " ")) // --pick <query>:query 是快取候選的前置過濾
-				cands := markUnplayablePlaylists(p, cacheCandidates(cache.Load(), p.ID(), q))
+				cc := cache.Load()
+				canons := loadCanonPlaylists(p)
+				// 冷快取友善優化:清單快取與正本皆空且 provider 支援讀取清單時,自動抓一次清單寫入快取再開挑選器。
+				if len(cc.Playlists[p.ID()]) == 0 && len(canons) == 0 {
+					if r, rerr := asPlaylistReader(p); rerr == nil {
+						refs, lerr := r.ListPlaylists(ctx)
+						if lerr != nil && len(cc.Recent) == 0 {
+							return friendlyErr(p.ID(), lerr)
+						}
+						if lerr == nil && len(refs) > 0 {
+							pls := make([]cache.Playlist, len(refs))
+							for i, ref := range refs {
+								pls[i] = cache.Playlist{ID: ref.ID, Name: ref.Name, Total: ref.Total}
+							}
+							cc.SetPlaylists(p.ID(), pls)
+							_ = cc.Save()
+						}
+					}
+				}
+				cands := markUnplayablePlaylists(p, cacheCandidatesWithCanons(cc, canons, p.Caps().Has(provider.CapPlayPlaylist), p.ID(), q))
 				if len(cands) == 0 && q != "" {
 					return i18n.Errorf("play.err.pick_no_match", "query", strconv.Quote(q))
 				}
@@ -125,7 +206,7 @@ func newPlayCmd() *cobra.Command {
 				}
 			}
 			if chosen != nil {
-				if req, label, err = playRequestFor(ctx, p, *chosen); err != nil {
+				if req, label, err = playRequestForOpts(ctx, p, *chosen, shuffle); err != nil {
 					return friendlyErr(p.ID(), err)
 				}
 			}
@@ -138,6 +219,13 @@ func newPlayCmd() *cobra.Command {
 			opened := errors.Is(playErr, provider.ErrOpenedNotPlaying) // 只在播放器裡打開、沒開始播(Apple 目錄歌曲,決策 52)
 			if playErr != nil && !opened {
 				return friendlyErr(p.ID(), playErr)
+			}
+			if !opened && shuffle && (chosen == nil || chosen.Type == cache.TypePlaylist) && len(req.TrackIDs) == 0 {
+				if mc, ok := p.(provider.PlaybackModeController); ok {
+					if err := mc.SetShuffle(ctx, true); err != nil {
+						return friendlyErr(p.ID(), err)
+					}
+				}
 			}
 			if chosen != nil {
 				rememberRecent(p.ID(), *chosen)
@@ -160,11 +248,12 @@ func newPlayCmd() *cobra.Command {
 	cmd.Flags().String("id", "", i18n.T("cmd.play.flag.id"))
 	cmd.Flags().String("type", "", i18n.T("cmd.play.flag.type"))
 	cmd.Flags().Bool("pick", false, i18n.T("cmd.play.flag.pick"))
+	cmd.Flags().Bool("shuffle", false, i18n.T("play.flag.shuffle"))
 	providerFlag(cmd)
 	cmd.MarkFlagsMutuallyExclusive("id", "pick")
 	cmd.MarkFlagsMutuallyExclusive("id", "type")
 	cmd.ValidArgsFunction = playCompletion
-	_ = cmd.RegisterFlagCompletionFunc("type", cobra.FixedCompletions([]string{"track", "artist", "playlist"}, cobra.ShellCompDirectiveNoFileComp))
+	_ = cmd.RegisterFlagCompletionFunc("type", cobra.FixedCompletions([]string{"track", "artist", "playlist", "canon"}, cobra.ShellCompDirectiveNoFileComp))
 	return cmd
 }
 
@@ -175,9 +264,51 @@ var tsvCellEscaper = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ")
 
 func tsvCell(s string) string { return tsvCellEscaper.Replace(s) }
 
-// playSourcesFor:把 provider 的能力接成 resolvePlay 的資料來源;快取清單永遠可用(不打網路)。
+// loadCanonPlaylists:唯讀開啟 state.db(200ms),讀取本機 Canonical 正本清單候選;無 db 或失敗靜默回空(零寫入副作用)。
+func loadCanonPlaylists(p provider.Provider) []canonPlaylist {
+	st, err := store.OpenReadOnly(playCanonBusy)
+	if err != nil {
+		return nil
+	}
+	defer st.Close()
+	c, err := st.Dump()
+	if err != nil || len(c.Playlists) == 0 {
+		return nil
+	}
+	id := canon.NewIdentity(c.Tracks.Tracks, c.Tracks.Merged)
+	out := make([]canonPlaylist, 0, len(c.Playlists))
+	for _, pl := range c.Playlists {
+		mapped := 0
+		for _, it := range pl.Items {
+			cid := id.Redirect(it.CID)
+			if tr, ok := c.Tracks.Tracks[cid]; ok {
+				if m, has := tr.Mappings[p.ID()]; has && m.ID != "" {
+					mapped++
+				}
+			}
+		}
+		linkID := pl.Links[p.ID()]
+		if linkID != "" && foreignLink(p, linkID) {
+			linkID = ""
+		}
+		out = append(out, canonPlaylist{
+			PID:    pl.PID,
+			Name:   pl.Name,
+			Total:  len(pl.Items),
+			Mapped: mapped,
+			LinkID: linkID,
+		})
+	}
+	return out
+}
+
+// playSourcesFor:把 provider 的能力與本機快取(平台清單 + Canonical 正本清單)接成 resolvePlay 的資料來源。
 func playSourcesFor(p provider.Provider) playSources {
-	src := playSources{playlists: func() []cache.Playlist { return cache.Load().Playlists[p.ID()] }}
+	src := playSources{
+		playlists:       func() []cache.Playlist { return cache.Load().Playlists[p.ID()] },
+		canons:          func() []canonPlaylist { return loadCanonPlaylists(p) },
+		canPlayPlaylist: p.Caps().Has(provider.CapPlayPlaylist),
+	}
 	if s, ok := p.(provider.Searcher); ok && p.Caps().Has(provider.CapSearch) {
 		src.tracks = func(ctx context.Context, q string, limit int) ([]provider.Track, error) {
 			return s.Search(ctx, provider.Query{Text: q, Limit: limit})
@@ -191,11 +322,17 @@ func playSourcesFor(p provider.Provider) playSources {
 	return src
 }
 
-// playRequestFor:候選 → PlayRequest 與顯示標籤。藝人 = 熱門歌曲全部排進去(Apple 端只播第一首,見其 Play)。
+// playRequestFor:候選 → PlayRequest 與顯示標籤(預設不 shuffle)。
 func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (provider.PlayRequest, string, error) {
+	return playRequestForOpts(ctx, p, c, false)
+}
+
+func playRequestForOpts(ctx context.Context, p provider.Provider, c candidate, shuffle bool) (provider.PlayRequest, string, error) {
 	switch c.Type {
 	case cache.TypePlaylist:
 		return provider.PlayRequest{PlaylistID: c.ID}, i18n.T("play.label.playlist", "name", c.Label, "detail", c.Detail), nil
+	case typeCanon:
+		return playRequestForCanon(p, c.ID, shuffle)
 	case cache.TypeArtist:
 		a, ok := p.(provider.ArtistSearcher)
 		if !ok || !p.Caps().Has(provider.CapArtistSearch) {
@@ -215,8 +352,20 @@ func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (prov
 		for i, t := range tracks {
 			ids[i] = t.ProviderID
 		}
+		if shuffle && len(ids) > 1 {
+			shuffleStrings(ids)
+		}
 		if len(ids) > 1 && !p.Caps().Has(provider.CapPlayQueue) { // 不能排佇列的平台只播第一首,標籤別說謊
-			return provider.PlayRequest{TrackIDs: ids}, i18n.T("play.label.artist_first_only", "artist", c.Label, "title", tracks[0].Title, "platform", p.DisplayName()), nil
+			firstTitle := tracks[0].Title
+			if shuffle {
+				for _, t := range tracks {
+					if t.ProviderID == ids[0] {
+						firstTitle = t.Title
+						break
+					}
+				}
+			}
+			return provider.PlayRequest{TrackIDs: ids}, i18n.T("play.label.artist_first_only", "artist", c.Label, "title", firstTitle, "platform", p.DisplayName()), nil
 		}
 		return provider.PlayRequest{TrackIDs: ids}, i18n.T("play.label.artist_top", "artist", c.Label, "count", len(ids)), nil
 	default:
@@ -224,15 +373,84 @@ func playRequestFor(ctx context.Context, p provider.Provider, c candidate) (prov
 	}
 }
 
-// markUnplayablePlaylists:provider 沒有 CapPlayPlaylist(Apple,R4)時,挑選器與 TSV 裡的清單候選標明不可播,
-// 讓人在選之前就知道,而不是選了才吃錯誤。
-func markUnplayablePlaylists(p provider.Provider, cands []candidate) []candidate {
-	if p.Caps().Has(provider.CapPlayPlaylist) {
-		return cands
+// playRequestForCanon:正本清單直接連播與非破壞性隨機(決策 38)。
+//  1. 未帶 --shuffle、已 link 當前平台且平台具 CapPlayPlaylist → 走 PlayRequest{PlaylistID: linkID}。
+//  2. 否則依 playlist_items 原序(rank, iid)取出當前平台可播的 ProviderID 切片;若帶 --shuffle 僅在記憶體做 Fisher-Yates 洗牌,
+//     state.db 與 Drive 正本 0 寫入;超過 100 首乾淨截斷前 100 首。
+func playRequestForCanon(p provider.Provider, pid string, shuffle bool) (provider.PlayRequest, string, error) {
+	st, err := store.OpenReadOnly(playCanonBusy)
+	if err != nil {
+		return provider.PlayRequest{}, "", i18n.Errorf("play.err.canon_not_found", "id", pid)
 	}
+	defer st.Close()
+	c, err := st.Dump()
+	if err != nil {
+		return provider.PlayRequest{}, "", err
+	}
+	var pl *canon.Playlist
+	for i := range c.Playlists {
+		if c.Playlists[i].PID == pid {
+			pl = &c.Playlists[i]
+			break
+		}
+	}
+	if pl == nil {
+		return provider.PlayRequest{}, "", i18n.Errorf("play.err.canon_not_found", "id", pid)
+	}
+	linkID := pl.Links[p.ID()]
+	if linkID != "" && foreignLink(p, linkID) {
+		linkID = ""
+	}
+	if !shuffle && linkID != "" && p.Caps().Has(provider.CapPlayPlaylist) {
+		detail := i18n.T("play.candidate.tracks", "count", len(pl.Items))
+		return provider.PlayRequest{PlaylistID: linkID}, i18n.T("play.label.canon", "name", pl.Name, "detail", detail), nil
+	}
+	if len(pl.Items) == 0 {
+		return provider.PlayRequest{}, "", i18n.Errorf("play.err.canon_empty", "name", pl.Name)
+	}
+	id := canon.NewIdentity(c.Tracks.Tracks, c.Tracks.Merged)
+	ids := make([]string, 0, len(pl.Items))
+	for _, it := range pl.Items {
+		cid := id.Redirect(it.CID)
+		if tr, ok := c.Tracks.Tracks[cid]; ok {
+			if m, has := tr.Mappings[p.ID()]; has && m.ID != "" {
+				ids = append(ids, m.ID)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return provider.PlayRequest{}, "", i18n.Errorf("play.err.canon_no_mappings", "name", pl.Name, "platform", p.ID())
+	}
+	if shuffle {
+		shuffleStrings(ids)
+	}
+	if len(ids) > maxPlayCanonTracks {
+		ids = ids[:maxPlayCanonTracks]
+	}
+	if len(ids) > 1 && !p.Caps().Has(provider.CapPlayQueue) {
+		return provider.PlayRequest{TrackIDs: ids}, i18n.T("play.label.canon_first_only", "name", pl.Name, "platform", p.DisplayName()), nil
+	}
+	if shuffle {
+		return provider.PlayRequest{TrackIDs: ids}, i18n.T("play.label.canon_shuffled", "name", pl.Name, "count", len(ids)), nil
+	}
+	detail := i18n.T("play.candidate.tracks", "count", len(ids))
+	return provider.PlayRequest{TrackIDs: ids}, i18n.T("play.label.canon", "name", pl.Name, "detail", detail), nil
+}
+
+// markUnplayablePlaylists:provider 沒有 CapPlayPlaylist(Apple,R4)時,挑選器與 TSV 裡的清單候選標明不可播;
+// 正本清單若尚未有任何對應到該平台的曲目(且無可播 link)也一併標明,讓人在選之前就知道。
+func markUnplayablePlaylists(p provider.Provider, cands []candidate) []candidate {
+	canPl := p.Caps().Has(provider.CapPlayPlaylist)
 	for i := range cands {
-		if cands[i].Type == cache.TypePlaylist {
-			cands[i].Note = i18n.T("play.note.playlist_unplayable", "platform", p.DisplayName()) // Note 不進快取
+		switch cands[i].Type {
+		case cache.TypePlaylist:
+			if !canPl {
+				cands[i].Note = i18n.T("play.note.playlist_unplayable", "platform", p.DisplayName()) // Note 不進快取
+			}
+		case typeCanon:
+			if cands[i].Total > 0 && cands[i].Mapped == 0 && (cands[i].LinkID == "" || !canPl) {
+				cands[i].Note = i18n.T("play.note.canon_unmapped", "platform", p.ID())
+			}
 		}
 	}
 	return cands
@@ -344,6 +562,158 @@ func newVolCmd() *cobra.Command {
 		func(pct int) string { return i18n.T("cmd.vol.done", "pct", pct) })
 }
 
+func parseShuffleArg(args []string) (mode string, err error) {
+	if len(args) == 0 {
+		return "toggle", nil
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "on":
+		return "on", nil
+	case "off":
+		return "off", nil
+	case "toggle":
+		return "toggle", nil
+	default:
+		return "", i18n.Errorf("play.err.bad_shuffle", "value", strconv.Quote(args[0]))
+	}
+}
+
+func newShuffleCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "shuffle [on|off|toggle]",
+		Short:             i18n.T("play.shuffle.short"),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: cobra.FixedCompletions([]string{"on", "off", "toggle"}, cobra.ShellCompDirectiveNoFileComp),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode, err := parseShuffleArg(args)
+			if err != nil {
+				return err
+			}
+			p, err := getProvider(cmd)
+			if err != nil {
+				return err
+			}
+			pc, err := asPlayback(p)
+			if err != nil {
+				return err
+			}
+			mc, ok := p.(provider.PlaybackModeController)
+			if !ok {
+				return i18n.Errorf("play.err.mode_not_supported", "platform", p.DisplayName(), "err", provider.ErrNotSupported)
+			}
+			ctx := cmd.Context()
+			var target bool
+			switch mode {
+			case "on":
+				target = true
+			case "off":
+				target = false
+			case "toggle":
+				st, err := pc.State(ctx)
+				if err != nil {
+					return friendlyErr(p.ID(), err)
+				}
+				if st == nil {
+					return friendlyErr(p.ID(), provider.ErrNoActiveDevice)
+				}
+				target = !st.Shuffle
+			}
+			if err := mc.SetShuffle(ctx, target); err != nil {
+				return friendlyErr(p.ID(), err)
+			}
+			if target {
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("play.shuffle.on"))
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("play.shuffle.off"))
+			}
+			return nil
+		},
+	}
+	providerFlag(cmd)
+	return cmd
+}
+
+func parseRepeatArg(args []string) (mode provider.RepeatMode, cycle bool, err error) {
+	if len(args) == 0 {
+		return "", true, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "off":
+		return provider.RepeatOff, false, nil
+	case "context", "all":
+		return provider.RepeatContext, false, nil
+	case "track", "one":
+		return provider.RepeatTrack, false, nil
+	case "cycle":
+		return "", true, nil
+	default:
+		return "", false, i18n.Errorf("play.err.bad_repeat", "value", strconv.Quote(args[0]))
+	}
+}
+
+func nextRepeatMode(cur provider.RepeatMode) provider.RepeatMode {
+	switch cur {
+	case provider.RepeatContext:
+		return provider.RepeatTrack
+	case provider.RepeatTrack:
+		return provider.RepeatOff
+	default:
+		return provider.RepeatContext
+	}
+}
+
+func newRepeatCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "repeat [off|context|track|cycle]",
+		Short:             i18n.T("play.repeat.short"),
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: cobra.FixedCompletions([]string{"off", "context", "track", "cycle"}, cobra.ShellCompDirectiveNoFileComp),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, cycle, err := parseRepeatArg(args)
+			if err != nil {
+				return err
+			}
+			p, err := getProvider(cmd)
+			if err != nil {
+				return err
+			}
+			pc, err := asPlayback(p)
+			if err != nil {
+				return err
+			}
+			mc, ok := p.(provider.PlaybackModeController)
+			if !ok {
+				return i18n.Errorf("play.err.mode_not_supported", "platform", p.DisplayName(), "err", provider.ErrNotSupported)
+			}
+			ctx := cmd.Context()
+			if cycle {
+				st, err := pc.State(ctx)
+				if err != nil {
+					return friendlyErr(p.ID(), err)
+				}
+				if st == nil {
+					return friendlyErr(p.ID(), provider.ErrNoActiveDevice)
+				}
+				target = nextRepeatMode(st.Repeat)
+			}
+			if err := mc.SetRepeat(ctx, target); err != nil {
+				return friendlyErr(p.ID(), err)
+			}
+			switch target {
+			case provider.RepeatContext:
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("play.repeat.context"))
+			case provider.RepeatTrack:
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("play.repeat.track"))
+			default:
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("play.repeat.off"))
+			}
+			return nil
+		},
+	}
+	providerFlag(cmd)
+	return cmd
+}
+
 func newNowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "now", Short: i18n.T("cmd.now.short"), Args: cobra.NoArgs,
@@ -400,9 +770,14 @@ func newNowCmd() *cobra.Command {
 }
 
 func newDevicesCmd() *cobra.Command {
+	var switchArg string
+	var pick bool
 	cmd := &cobra.Command{
 		Use: "devices", Short: i18n.T("cmd.devices.short"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if pick && !isInteractive(cmd) {
+				return i18n.Errorf("devices.err.pick_needs_tty")
+			}
 			p, err := getProvider(cmd)
 			if err != nil {
 				return err
@@ -411,7 +786,43 @@ func newDevicesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ds, err := pc.Devices(cmd.Context())
+			ctx := cmd.Context()
+			if switchArg != "" || pick {
+				dt, ok := p.(provider.DeviceTransferrer)
+				if !ok {
+					return i18n.Errorf("devices.err.transfer_not_supported", "platform", p.DisplayName(), "err", provider.ErrNotSupported)
+				}
+				ds, err := pc.Devices(ctx)
+				if err != nil {
+					return friendlyErr(p.ID(), err)
+				}
+				if len(ds) == 0 {
+					return i18n.Errorf("devices.err.no_devices", "platform", p.DisplayName())
+				}
+				var target provider.Device
+				if pick {
+					target, err = pickDevice(ds, i18n.T("devices.pick.title"))
+					if err != nil {
+						return err
+					}
+				} else {
+					var matched bool
+					target, matched = matchDevice(ds, switchArg)
+					if !matched {
+						names := make([]string, len(ds))
+						for i, d := range ds {
+							names[i] = d.Name
+						}
+						return i18n.Errorf("play.err.device_not_found", "name", strconv.Quote(switchArg), "devices", strings.Join(names, i18n.T("sep.list")))
+					}
+				}
+				if err := dt.Transfer(ctx, target.ID, true); err != nil {
+					return friendlyErr(p.ID(), err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), i18n.T("devices.switched", "name", target.Name, "type", target.Type))
+				return nil
+			}
+			ds, err := pc.Devices(ctx)
 			if err != nil {
 				return friendlyErr(p.ID(), err)
 			}
@@ -426,6 +837,9 @@ func newDevicesCmd() *cobra.Command {
 			return ui.Table(cmd.OutOrStdout(), stdoutIsTTY(cmd), []string{"NAME", "TYPE", "STATUS", "VOLUME", "ID"}, rows)
 		},
 	}
+	cmd.Flags().StringVar(&switchArg, "switch", "", i18n.T("devices.flag.switch"))
+	cmd.Flags().BoolVar(&pick, "pick", false, i18n.T("devices.flag.pick"))
+	cmd.MarkFlagsMutuallyExclusive("switch", "pick")
 	providerFlag(cmd)
 	return cmd
 }

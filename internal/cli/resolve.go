@@ -6,6 +6,9 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
@@ -21,6 +25,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 	"github.com/Tai-ch0802/capy-music/internal/resolve"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -44,16 +49,18 @@ var resolveHeader = []string{"ACTION", "CID", "PROVIDER", "PROVIDER_ID", "CONFID
 
 // resolveItem 是佇列的一列:map(待自動寫入)/ review(要人裁決)/ conflict(來源 (c):conflicts 非空且 mapping 未 pinned)。
 type resolveItem struct {
-	action  string
-	cid     string
-	prov    string
-	track   canon.Track
-	cand    *provider.Track // map:要寫的候選;review:最佳候選(可能 nil)
-	score   int
-	source  string
-	reason  string        // 給人看,跟著語系
-	code    string        // REASON_CODE 欄:機器可讀,永不翻譯
-	current canon.Mapping // conflict:現有 mapping
+	action       string
+	cid          string
+	prov         string
+	track        canon.Track
+	cand         *provider.Track // map:要寫的候選;review:最佳候選(可能 nil)
+	score        int
+	source       string
+	reason       string        // 給人看,跟著語系
+	code         string        // REASON_CODE 欄:機器可讀,永不翻譯
+	current      canon.Mapping // conflict:現有 mapping
+	ownerCID     string        // candidate_taken 的擁有者 cid(寫負向快取用)
+	fromNegCache bool          // 由本機 7 天負向快取還原,零外部 API 呼叫
 }
 
 func (it resolveItem) row() []string {
@@ -151,16 +158,173 @@ func findCandidate(ctx context.Context, c *layerClients, tr canon.Track) (cand *
 	return nil, 0, "", calls, nil
 }
 
+type resolveNegData struct {
+	Source     string   `json:"source,omitempty"`
+	Title      string   `json:"title,omitempty"`
+	Artists    []string `json:"artists,omitempty"`
+	DurationMS int      `json:"duration_ms,omitempty"`
+	ISRC       string   `json:"isrc,omitempty"`
+	OwnerCID   string   `json:"owner_cid,omitempty"`
+}
+
+// resolveTrackSig:對曲目 Title / Artists / DurationMS / ISRC 做確定性正規化雜湊;曲目資料變動時負向快取自動失效。
+func resolveTrackSig(tr canon.Track) string {
+	title := strings.ToLower(strings.TrimSpace(tr.Title))
+	artists := make([]string, len(tr.Artists))
+	for i, a := range tr.Artists {
+		artists[i] = strings.ToLower(strings.TrimSpace(a))
+	}
+	var isrcs []string
+	for _, raw := range tr.ISRC {
+		if n := provider.NormalizeISRC(raw); n != "" {
+			isrcs = append(isrcs, n)
+		} else if s := strings.ToUpper(strings.TrimSpace(raw)); s != "" {
+			isrcs = append(isrcs, s)
+		}
+	}
+	slices.Sort(isrcs)
+	isrcs = slices.Compact(isrcs)
+	var b strings.Builder
+	b.WriteString("v1\x1f")
+	b.WriteString(title)
+	b.WriteByte('\x1f')
+	b.WriteString(strconv.Itoa(tr.DurationMS))
+	b.WriteByte('\x1f')
+	b.WriteString(strings.Join(artists, "\x00"))
+	b.WriteByte('\x1f')
+	b.WriteString(strings.Join(isrcs, "\x00"))
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+func restoreResolveNeg(s *canonState, id *canon.Identity, cid, prov string, tr canon.Track, now time.Time) (resolveItem, bool) {
+	if s.st == nil {
+		return resolveItem{}, false
+	}
+	neg, ok, err := s.st.LookupResolveNeg(cid, prov)
+	if err != nil || !ok {
+		return resolveItem{}, false
+	}
+	if neg.TrackSig != resolveTrackSig(tr) {
+		return resolveItem{}, false
+	}
+	age := now.Sub(neg.CheckedAt)
+	if neg.CheckedAt.IsZero() || age < -24*time.Hour || age >= store.ResolveNegCacheTTL {
+		return resolveItem{}, false
+	}
+	var data resolveNegData
+	if neg.ReasonData != "" {
+		if err := json.Unmarshal([]byte(neg.ReasonData), &data); err != nil {
+			return resolveItem{}, false
+		}
+	}
+	it := resolveItem{action: "review", cid: cid, prov: prov, track: tr, fromNegCache: true}
+	switch neg.ReasonCode {
+	case "no_candidate":
+		it.reason, it.code = i18n.T("resolve.reason.no_candidate"), "no_candidate"
+		return it, true
+	case "low_score":
+		if neg.CandID == "" {
+			return resolveItem{}, false
+		}
+		src := data.Source
+		if src == "" {
+			src = canon.SourceFuzzy
+		}
+		cand := &provider.Track{ProviderID: neg.CandID, Title: data.Title, Artists: data.Artists, DurationMS: data.DurationMS, ISRC: data.ISRC}
+		it.cand, it.score, it.source = cand, neg.Score, src
+		it.reason, it.code = i18n.T("resolve.reason.low_score", "score", it.score, "threshold", autoThreshold, "candidate", describe(*cand)), "low_score"
+		return it, true
+	case "candidate_taken":
+		if neg.CandID == "" {
+			return resolveItem{}, false
+		}
+		src := data.Source
+		if src == "" {
+			src = canon.SourceISRC
+		}
+		cand := &provider.Track{ProviderID: neg.CandID, Title: data.Title, Artists: data.Artists, DurationMS: data.DurationMS, ISRC: data.ISRC}
+		owner := ownedBy(s, id, cid, prov, *cand)
+		if owner == "" {
+			return resolveItem{}, false
+		}
+		it.cand, it.score, it.source, it.ownerCID = cand, neg.Score, src, owner
+		it.reason, it.code = i18n.T("resolve.reason.candidate_taken", "candidate", describe(*cand), "cid", owner), "candidate_taken"
+		return it, true
+	default:
+		return resolveItem{}, false
+	}
+}
+
+func deleteResolveNeg(s *canonState, cid, prov string) {
+	if s == nil || s.st == nil || cid == "" || prov == "" {
+		return
+	}
+	_ = s.st.DeleteResolveNeg(cid, prov)
+}
+
+func saveResolveNegItems(s *canonState, items []resolveItem) {
+	if s == nil || s.st == nil {
+		return
+	}
+	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
+	now := canon.Now()
+	for _, it := range items {
+		if it.fromNegCache {
+			continue
+		}
+		curCID := id.Redirect(it.cid)
+		if tr, ok := s.tracks.Tracks[curCID]; ok {
+			if _, mapped := tr.Mappings[it.prov]; mapped {
+				continue
+			}
+		}
+		switch it.code {
+		case "no_candidate", "low_score", "candidate_taken":
+		default:
+			continue
+		}
+		entry := store.ResolveNegEntry{
+			CID:        it.cid,
+			Provider:   it.prov,
+			TrackSig:   resolveTrackSig(it.track),
+			Score:      it.score,
+			ReasonCode: it.code,
+			CheckedAt:  now,
+		}
+		if it.cand != nil {
+			entry.CandID = it.cand.ProviderID
+			raw, err := json.Marshal(resolveNegData{
+				Source:     it.source,
+				Title:      it.cand.Title,
+				Artists:    it.cand.Artists,
+				DurationMS: it.cand.DurationMS,
+				ISRC:       it.cand.ISRC,
+				OwnerCID:   it.ownerCID,
+			})
+			if err == nil {
+				entry.ReasonData = string(raw)
+			}
+		}
+		_ = s.st.SaveResolveNeg(entry)
+	}
+}
+
 // planResolve:對 targets 裡缺 mapping 的 (cid, provider) 跑 Layer 1 → Layer 2,產出佇列;不寫任何東西、不合併。
 // 所有權(決策 21):候選 (provider, id) 或其 ISRC 已屬另一個 cid、或這一輪已配給別的 cid → review,自動絕不合併。
 // 失敗不是全有全無:provider 級(建不了 client、授權過期——Apple token 本來就會定期失效)只跳過該 provider、stderr 說一次,
 // 別的 provider 照解;單次查詢失敗(429 退避後仍失敗、5xx)只讓那筆列成 review、reason 放錯誤,前面幾百次呼叫不白打。
 func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, stderr io.Writer) ([]resolveItem, error) {
+	return planResolveOpts(ctx, s, targets, only, false, stderr)
+}
+
+func planResolveOpts(ctx context.Context, s *canonState, targets []*canon.Playlist, only string, refresh bool, stderr io.Writer) ([]resolveItem, error) {
 	pls := make([]canon.Playlist, 0, len(targets))
 	for _, pl := range targets {
 		pls = append(pls, *pl)
 	}
 	id := canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged)
+	now := canon.Now()
 	clients := map[string]*layerClients{}
 	claimed := map[string]string{} // provider\x00id → 這一輪配給的 cid
 	calls := 0
@@ -175,9 +339,17 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 		if failed[need.Provider] {
 			continue
 		}
+		tr := s.tracks.Tracks[need.CID]
+		if !refresh {
+			if cached, ok := restoreResolveNeg(s, id, need.CID, need.Provider, tr, now); ok {
+				done++
+				reportProgress("match", done, total)
+				items = append(items, cached)
+				continue
+			}
+		}
 		done++
 		reportProgress("match", done, total) // 最久的一段:每一首都是一到數次 API 呼叫
-		tr := s.tracks.Tracks[need.CID]
 		it := resolveItem{action: "review", cid: need.CID, prov: need.Provider, track: tr}
 		c, err := clientsFor(ctx, clients, need.Provider)
 		if err == nil {
@@ -212,6 +384,7 @@ func planResolve(ctx context.Context, s *canonState, targets []*canon.Playlist, 
 			key := need.Provider + "\x00" + it.cand.ProviderID
 			switch owner, prev := ownedBy(s, id, need.CID, need.Provider, *it.cand), claimed[key]; {
 			case owner != "":
+				it.ownerCID = owner
 				it.reason, it.code = i18n.T("resolve.reason.candidate_taken", "candidate", describe(*it.cand), "cid", owner), "candidate_taken"
 			case prev != "":
 				it.reason, it.code = i18n.T("resolve.reason.candidate_assigned", "candidate", describe(*it.cand), "cid", prev), "candidate_assigned"
@@ -281,6 +454,7 @@ func applyMappings(s *canonState, items []resolveItem) int {
 		tr := s.tracks.Tracks[it.cid]
 		tr.Mappings[it.prov] = canon.Mapping{ID: it.cand.ProviderID, Confidence: it.score, Source: it.source, UpdatedAt: now}
 		s.tracks.Tracks[it.cid] = tr
+		deleteResolveNeg(s, it.cid, it.prov)
 		n++
 	}
 	return n
@@ -483,6 +657,8 @@ func reviewLoop(ctx context.Context, s *canonState, items []resolveItem, yes boo
 			return n, err
 		}
 		if decided {
+			deleteResolveNeg(s, it.cid, it.prov)
+			deleteResolveNeg(s, canon.NewIdentity(s.tracks.Tracks, s.tracks.Merged).Redirect(it.cid), it.prov)
 			n++
 		}
 		fmt.Fprintln(stderr, i18n.T("resolve.review.progress", "pos", i+1, "total", len(queue), "title", it.track.Title, "result", msg))
@@ -517,7 +693,7 @@ func resolveHint(s *canonState, targets []*canon.Playlist, only string, stderr i
 
 func newResolveCmd() *cobra.Command {
 	var prov string
-	var dryRun, yes, review bool
+	var dryRun, yes, review, refresh bool
 	cmd := &cobra.Command{
 		Use:   i18n.T("cmd.resolve.use"),
 		Short: i18n.T("cmd.resolve.short"),
@@ -536,7 +712,8 @@ func newResolveCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				items, err := planResolve(ctx, s, targets, prov, stderr)
+				bypassNeg := refresh || (review && reviewIsTTY(cmd))
+				items, err := planResolveOpts(ctx, s, targets, prov, bypassNeg, stderr)
 				if err != nil {
 					return err
 				}
@@ -597,6 +774,7 @@ func newResolveCmd() *cobra.Command {
 				case queued > 0:
 					fmt.Fprintln(stderr, i18n.T("resolve.queued", "count", queued))
 				}
+				saveResolveNegItems(s, items)
 				if applied > 0 { // 只在真的要 COMMIT 時才說「寫入」:review 迴圈中途出錯上面已 return,不會留下說了謊的過去式
 					fmt.Fprintln(stderr, i18n.T("resolve.written", "count", applied))
 				}
@@ -608,6 +786,7 @@ func newResolveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("cmd.resolve.flag.dry_run"))
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, i18n.T("cmd.resolve.flag.yes"))
 	cmd.Flags().BoolVar(&review, "review", false, i18n.T("cmd.resolve.flag.review"))
+	cmd.Flags().BoolVar(&refresh, "refresh", false, i18n.T("resolve.flag.refresh"))
 	cmd.AddCommand(newResolvePinCmd())
 	return cmd
 }
@@ -632,9 +811,13 @@ func newResolvePinCmd() *cobra.Command {
 					return i18n.Errorf("resolve.err.no_cid_pull", "cid", args[0])
 				}
 				if ref == "none" {
-					if _, err := pinMapping(s, cid, prov, canon.Mapping{ID: "", Confidence: 100, Pinned: true, Source: canon.SourceReview, UpdatedAt: canon.Now().Unix()}); err != nil {
+					got, err := pinMapping(s, cid, prov, canon.Mapping{ID: "", Confidence: 100, Pinned: true, Source: canon.SourceReview, UpdatedAt: canon.Now().Unix()})
+					if err != nil {
 						return err
 					}
+					deleteResolveNeg(s, args[0], prov)
+					deleteResolveNeg(s, cid, prov)
+					deleteResolveNeg(s, got, prov)
 					fmt.Fprintln(stderr, i18n.T("resolve.pin.done_none", "cid", cid, "provider", prov))
 					return nil
 				}
@@ -664,6 +847,9 @@ func newResolvePinCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				deleteResolveNeg(s, args[0], prov)
+				deleteResolveNeg(s, cid, prov)
+				deleteResolveNeg(s, got, prov)
 				if merged {
 					fmt.Fprintln(stderr, i18n.T("resolve.pin.merged", "cid", got))
 				}

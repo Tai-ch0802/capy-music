@@ -11,7 +11,18 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/provider"
 )
 
-// candidate:play 的一個可播放目標。Type 用 cache 的常數(track / artist / playlist)。
+const typeCanon = "canon"
+
+// canonPlaylist:本機 state.db 裡的 Canonical 正本清單摘要(唯讀載入,不打網路)。
+type canonPlaylist struct {
+	PID    string
+	Name   string
+	Total  int
+	Mapped int
+	LinkID string // 已連結到當前平台且非 foreign 的清單 ID(空 = 未連結)
+}
+
+// candidate:play 的一個可播放目標。Type 用 cache 的常數(track / artist / playlist)或 typeCanon("canon")。
 type candidate struct {
 	Type   string
 	ID     string
@@ -19,6 +30,8 @@ type candidate struct {
 	Detail string // 曲目:藝人 · 專輯;藝人:熱門歌曲;清單:N 首
 	Note   string // 只給人看的附註(例如「暫不支援清單播放」);不進快取
 	Total  int
+	LinkID string // typeCanon 專用:已連結到當前平台的清單 ID(僅記憶體除重用)
+	Mapped int    // typeCanon 專用:已對應到當前平台的曲目數
 }
 
 // AmbiguousError:多個候選且無法互動(非 TTY)。候選已印在 stdout,main 以 exit 2 結束、不再印訊息。
@@ -28,9 +41,15 @@ func (e *AmbiguousError) Error() string {
 	return i18n.T("play.err.ambiguous", "count", len(e.Candidates))
 }
 
-var playPrefixes = map[string]string{"artist:": cache.TypeArtist, "pl:": cache.TypePlaylist, "playlist:": cache.TypePlaylist, "track:": cache.TypeTrack}
+var playPrefixes = map[string]string{
+	"artist:":   cache.TypeArtist,
+	"pl:":       cache.TypePlaylist,
+	"playlist:": cache.TypePlaylist,
+	"canon:":    typeCanon,
+	"track:":    cache.TypeTrack,
+}
 
-// parsePlayQuery:前綴(artist: / pl: / track:)是 --type 的簡寫;兩者同時給且不同 → 錯。
+// parsePlayQuery:前綴(artist: / pl: / canon: / track:)是 --type 的簡寫;兩者同時給且不同 → 錯。
 func parsePlayQuery(args []string, typ string) (string, string, error) {
 	q := strings.TrimSpace(strings.Join(args, " "))
 	for pre, t := range playPrefixes {
@@ -42,7 +61,7 @@ func parsePlayQuery(args []string, typ string) (string, string, error) {
 		}
 	}
 	switch typ {
-	case "", cache.TypeTrack, cache.TypeArtist, cache.TypePlaylist:
+	case "", cache.TypeTrack, cache.TypeArtist, cache.TypePlaylist, typeCanon:
 		return q, typ, nil
 	}
 	return "", "", i18n.Errorf("play.err.bad_type", "value", strconv.Quote(typ))
@@ -50,9 +69,11 @@ func parsePlayQuery(args []string, typ string) (string, string, error) {
 
 // playSources:解析用的資料來源,讓規則可以離線測。artists 為 nil = provider 不支援藝人搜尋。
 type playSources struct {
-	playlists func() []cache.Playlist
-	artists   func(ctx context.Context, q string, limit int) ([]provider.Artist, error)
-	tracks    func(ctx context.Context, q string, limit int) ([]provider.Track, error)
+	playlists       func() []cache.Playlist
+	canons          func() []canonPlaylist
+	canPlayPlaylist bool
+	artists         func(ctx context.Context, q string, limit int) ([]provider.Artist, error)
+	tracks          func(ctx context.Context, q string, limit int) ([]provider.Track, error)
 }
 
 const resolveLimit = 5
@@ -60,9 +81,23 @@ const resolveLimit = 5
 func plCandidate(p cache.Playlist) candidate {
 	return candidate{Type: cache.TypePlaylist, ID: p.ID, Label: p.Name, Detail: i18n.T("play.candidate.tracks", "count", p.Total), Total: p.Total}
 }
+
+func canonCandidate(cp canonPlaylist) candidate {
+	return candidate{
+		Type:   typeCanon,
+		ID:     cp.PID,
+		Label:  cp.Name,
+		Detail: i18n.T("play.candidate.tracks", "count", cp.Total),
+		Total:  cp.Total,
+		LinkID: cp.LinkID,
+		Mapped: cp.Mapped,
+	}
+}
+
 func artistCandidate(a provider.Artist) candidate {
 	return candidate{Type: cache.TypeArtist, ID: a.ProviderID, Label: a.Name, Detail: i18n.T("play.candidate.top_tracks")}
 }
+
 func trackCandidate(t provider.Track) candidate {
 	return candidate{Type: cache.TypeTrack, ID: t.ProviderID, Label: t.Title, Detail: strings.Join(t.Artists, ", ") + " · " + t.Album}
 }
@@ -83,6 +118,17 @@ func uniqueExact(cs []candidate, q string) *candidate {
 	return hit
 }
 
+// uniqueExactCanon:PID 精確相符直接唯一命中,否則退回名稱完全相符恰一個。
+func uniqueExactCanon(cs []candidate, q string) *candidate {
+	trimmed := strings.TrimSpace(q)
+	for i := range cs {
+		if cs[i].ID != "" && cs[i].ID == trimmed {
+			return &cs[i]
+		}
+	}
+	return uniqueExact(cs, q)
+}
+
 // relevant:候選的可搜尋文字含 query 的任一 token(小寫、trim)。平台的搜尋是模糊比對,「派對動物」會回一串
 // 無關藝人;不過濾的話規則 (d) 永遠不成立、挑選器塞滿雜訊。任一 token 命中而不是整串,才吃得下多字查詢。
 func relevant(text, q string) bool {
@@ -97,19 +143,20 @@ func relevant(text, q string) bool {
 
 // resolvePlay 依 UX 計畫 T5 的規則回傳唯一命中,否則回傳候選(len ≥ 2 = 歧義;0 = 找不到)。
 //
-//	指定類型:playlist → 名稱完全相符,否則子字串命中恰一;artist / track → 平台第一筆(平台排序即決定性,
+//	指定類型:playlist / canon → 名稱(或 PID)完全相符,否則子字串命中恰一;artist / track → 平台第一筆(平台排序即決定性,
 //	       腳本 `play --type track X` 才能像舊的 `play X`)。
-//	未指定:a. 快取清單名完全相符(不打網路)→ 藝人與曲目各搜 5 筆並過濾相關性(藝人:名稱相關、或出現在任一
+//	未指定:a. 快取清單或正本清單完全相符(不打網路)→ 藝人與曲目各搜 5 筆並過濾相關性(藝人:名稱相關、或出現在任一
 //	       回傳曲目的藝人欄——Spotify 對「五月天」回英文名 Mayday,靠曲目接得上;全部濾光就退回平台原始結果)
 //	       → b. 藝人名完全相符 → c. 曲名完全相符 → d. 全部候選恰一 → 否則歧義。
 func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidate, []candidate, error) {
 	if q == "" {
 		return nil, nil, i18n.Errorf("play.err.missing_query")
 	}
+	needle := strings.ToLower(strings.TrimSpace(q))
 	var pls []candidate
-	if typ == "" || typ == cache.TypePlaylist {
+	if (typ == "" || typ == cache.TypePlaylist) && src.playlists != nil {
 		for _, p := range src.playlists() {
-			if strings.Contains(strings.ToLower(p.Name), strings.ToLower(strings.TrimSpace(q))) {
+			if strings.Contains(strings.ToLower(p.Name), needle) {
 				pls = append(pls, plCandidate(p))
 			}
 		}
@@ -123,9 +170,38 @@ func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidat
 		}
 		return nil, pls, nil
 	}
-	if hit := uniqueExact(pls, q); hit != nil { // 3a:資料全在本機,確定命中就不付兩次網路來回(斷線也能播)
-		return hit, nil, nil
+
+	var canons []candidate
+	if (typ == "" || typ == typeCanon) && src.canons != nil {
+		trimmed := strings.TrimSpace(q)
+		for _, cp := range src.canons() {
+			if cp.PID == trimmed || strings.Contains(strings.ToLower(cp.Name), needle) {
+				canons = append(canons, canonCandidate(cp))
+			}
+		}
 	}
+	if typ == typeCanon {
+		if hit := uniqueExactCanon(canons, q); hit != nil {
+			return hit, nil, nil
+		}
+		if len(canons) == 1 {
+			return &canons[0], nil, nil
+		}
+		return nil, canons, nil
+	}
+
+	plHit := uniqueExact(pls, q)
+	cnHit := uniqueExactCanon(canons, q)
+	if plHit != nil { // 3a:資料全在本機,確定命中就不付兩次網路來回(斷線也能播)
+		if !src.canPlayPlaylist && cnHit != nil && cnHit.Mapped > 0 {
+			return cnHit, nil, nil
+		}
+		return plHit, nil, nil
+	}
+	if cnHit != nil {
+		return cnHit, nil, nil
+	}
+
 	var rawArtists []provider.Artist
 	if (typ == "" || typ == cache.TypeArtist) && src.artists != nil {
 		as, err := src.artists(ctx, q, resolveLimit)
@@ -167,7 +243,23 @@ func resolvePlay(ctx context.Context, src playSources, q, typ string) (*candidat
 	if hit := uniqueExact(tracks, q); hit != nil {
 		return hit, nil, nil
 	}
-	all := append(append(pls, artists...), tracks...)
+
+	plIDs := map[string]bool{}
+	if src.canPlayPlaylist {
+		for _, p := range pls {
+			plIDs[p.ID] = true
+		}
+	}
+	var all []candidate
+	all = append(all, pls...)
+	for _, c := range canons {
+		if c.LinkID != "" && plIDs[c.LinkID] {
+			continue
+		}
+		all = append(all, c)
+	}
+	all = append(all, artists...)
+	all = append(all, tracks...)
 	if len(all) == 1 {
 		return &all[0], nil, nil
 	}
@@ -203,11 +295,13 @@ func filterRelevant(rawArtists []provider.Artist, rawTracks []provider.Track, q 
 	return artists, tracks
 }
 
-// typeName:挑選器標籤的類型標記,用的時候才翻。挑選器只會拿到清單 / 藝人 / 曲目三種(cacheCandidates 跳過 query)。
+// typeName:挑選器標籤的類型標記,用的時候才翻。挑選器只會拿到清單 / 正本 / 藝人 / 曲目四種(cacheCandidates 跳過 query)。
 func typeName(t string) string {
 	switch t {
 	case cache.TypePlaylist:
 		return i18n.T("play.type.playlist")
+	case typeCanon:
+		return i18n.T("play.type.canon")
 	case cache.TypeArtist:
 		return i18n.T("play.type.artist")
 	}
@@ -234,18 +328,32 @@ var runPlayPicker = func(cands []candidate) (*candidate, error) {
 // cacheCandidates:--pick 用,全部來自本機快取(清單 + 最近項目),不打網路;q 非空時只留相關的。
 // 同 type+id 只列一次(播過的清單同時在 Playlists 與 Recent 裡),清單那份先,資料比較新。
 func cacheCandidates(c *cache.Cache, providerID, q string) []candidate {
+	return cacheCandidatesWithCanons(c, nil, true, providerID, q)
+}
+
+func cacheCandidatesWithCanons(c *cache.Cache, canons []canonPlaylist, canPlayPl bool, providerID, q string) []candidate {
 	var out []candidate
 	seen := map[string]bool{}
+	linked := map[string]bool{}
 	add := func(cand candidate) {
 		k := cand.Type + "\x00" + cand.ID
-		if seen[k] || (q != "" && !relevant(cand.Label+" "+cand.Detail, q)) {
+		if seen[k] || (q != "" && !relevant(cand.Label+" "+cand.Detail+" "+cand.ID, q)) {
 			return
 		}
 		seen[k] = true
 		out = append(out, cand)
 	}
 	for _, p := range c.Playlists[providerID] {
+		if canPlayPl {
+			linked[p.ID] = true
+		}
 		add(plCandidate(p))
+	}
+	for _, cp := range canons {
+		if cp.LinkID != "" && linked[cp.LinkID] {
+			continue
+		}
+		add(canonCandidate(cp))
 	}
 	for _, r := range c.Recent {
 		if r.Provider != providerID || r.Type == cache.TypeQuery {

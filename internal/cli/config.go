@@ -27,11 +27,12 @@ const (
 	keyAIBaseURL      = "ai_base_url"
 	keyAIModel        = "ai_model"
 	keyNativeLanguage = "native_language"
+	keyTheme          = "theme"
 )
 
 var (
-	configKeys   = []string{keyDefaultProvider, keyLocalRoot, "spotify_client_id", "apple_storefront", keyLanguage, keyAIBaseURL, keyAIModel, keyNativeLanguage}
-	settableKeys = []string{keyDefaultProvider, keyLocalRoot, keyLanguage, keyAIBaseURL, keyAIModel, keyNativeLanguage}
+	configKeys   = []string{keyDefaultProvider, keyLocalRoot, "spotify_client_id", "apple_storefront", keyLanguage, keyAIBaseURL, keyAIModel, keyNativeLanguage, keyTheme}
+	settableKeys = []string{keyDefaultProvider, keyLocalRoot, keyLanguage, keyAIBaseURL, keyAIModel, keyNativeLanguage, keyTheme}
 )
 
 func configGet(c *config.Config, key string) (string, error) {
@@ -52,8 +53,20 @@ func configGet(c *config.Config, key string) (string, error) {
 		return c.AIModel, nil
 	case keyNativeLanguage:
 		return c.NativeLanguage, nil
+	case keyTheme:
+		return c.Theme, nil
 	}
 	return "", i18n.Errorf("config.err.unknown_key", "key", strconv.Quote(key), "keys", strings.Join(configKeys, i18n.T("sep.list")))
+}
+
+func normalizeTheme(val string) (string, bool) {
+	want := strings.ToLower(strings.TrimSpace(val))
+	for _, name := range ui.ThemeNames() {
+		if strings.EqualFold(name, want) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // configSet:改一個可設的欄位。warn 是存了但值得提醒的事(ai_base_url 用明文 http 打到別台電腦),呼叫端印到 stderr。
@@ -113,6 +126,13 @@ func configSet(c *config.Config, key, val string) (warn string, err error) {
 		}
 		c.NativeLanguage = tag
 		return "", nil
+	case keyTheme:
+		theme, ok := normalizeTheme(val)
+		if !ok {
+			return "", i18n.Errorf("config.err.bad_value", "key", key, "valid", strings.Join(ui.ThemeNames(), i18n.T("sep.or")), "value", strconv.Quote(val))
+		}
+		c.Theme = theme
+		return "", nil
 	}
 	return "", i18n.Errorf("config.err.unknown_settable", "key", strconv.Quote(key), "keys", strings.Join(settableKeys, i18n.T("sep.list")))
 }
@@ -156,6 +176,9 @@ func newConfigCmd() *cobra.Command {
 				if args[0] == keyLanguage {
 					i18n.Set(c.Language) // 同上;網頁的語言選單跑的就是這個命令
 				}
+				if args[0] == keyTheme {
+					ui.ApplyTheme(c.Theme)
+				}
 				v, _ := configGet(c, args[0]) // 印存下去的值:language 正規化過、local_root 是絕對路徑
 				fmt.Fprintf(cmd.OutOrStdout(), "%s = %s\n", args[0], v)
 				return nil
@@ -182,6 +205,12 @@ func newConfigCmd() *cobra.Command {
 							v = i18n.T("config.list.unset", "default", i18n.Default())
 						case k == keyLanguage && !langOK:
 							v += i18n.T("config.list.invalid", "default", i18n.Default(), "valid", strings.Join(i18n.Supported(), "|"))
+						case k == keyTheme && v == "":
+							v = i18n.T("config.list.unset", "default", ui.DefaultThemeName)
+						case k == keyTheme:
+							if _, ok := ui.LookupTheme(v); !ok {
+								v += i18n.T("config.list.invalid", "default", ui.DefaultThemeName, "valid", strings.Join(ui.ThemeNames(), "|"))
+							}
 						}
 					}
 					rows = append(rows, []string{k, v})
@@ -215,6 +244,14 @@ func applyLanguage() (warn string) {
 		return ""
 	}
 	return i18n.T("config.language.unknown", "value", strconv.Quote(bad), "default", lang, "valid", strings.Join(i18n.Supported(), i18n.T("sep.list")))
+}
+
+// applyTheme:啟動時依 config.json 的 theme 套用主題(空值或未知值退回預設 geek-green)。
+func applyTheme() {
+	ui.ApplyTheme(ui.DefaultThemeName)
+	if c, err := config.Load(); err == nil && c.Theme != "" {
+		ui.ApplyTheme(c.Theme)
+	}
 }
 
 // defaultProviderHint:登入成功後,尚未設預設平台就提示一行(不自動設)。

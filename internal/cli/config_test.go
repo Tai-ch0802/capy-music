@@ -11,6 +11,7 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
 // recordProviderID:把 newProvider 換成只記錄被要求的 id 的假 provider。
@@ -55,10 +56,14 @@ func TestConfigSetRejectsUnknownKeyAndValue(t *testing.T) {
 		t.Fatalf("非法值應被拒且列出合法值:%v", err)
 	}
 	_, err = runCLI(t, "config", "set", "theme", "dark")
-	if err == nil || !strings.Contains(err.Error(), "default_provider") {
+	if err == nil || !strings.Contains(err.Error(), "geek-green") || !strings.Contains(err.Error(), "daylight-ink") {
+		t.Fatalf("theme 非法值應被拒且列出可用主題:%v", err)
+	}
+	_, err = runCLI(t, "config", "set", "unknown_key", "dark")
+	if err == nil || !strings.Contains(err.Error(), "default_provider") || !strings.Contains(err.Error(), "theme") {
 		t.Fatalf("未知 key 應被拒且列出可用 key:%v", err)
 	}
-	if c, _ := config.Load(); c.DefaultProvider != "" {
+	if c, _ := config.Load(); c.DefaultProvider != "" || c.Theme != "" {
 		t.Fatal("被拒的 set 不得落地")
 	}
 }
@@ -74,8 +79,8 @@ func TestConfigGetAndListPlainText(t *testing.T) {
 		t.Fatalf("get 非 TTY 應印裸值,得到 %q", out)
 	}
 	_ = config.Save(&config.Config{DefaultProvider: "apple", SpotifyClientID: "cid", AppleStorefront: "tw"})
-	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\nlanguage\t\nai_base_url\t\nai_model\t\nnative_language\t\n" {
-		t.Fatalf("list 非 TTY 應列出八個非機密欄位 key\\tvalue(language、再來 wiki 的三個都加在最後,既有的行位置不動),得到 %q", out)
+	if out, _ := runCLI(t, "config", "list"); out != "default_provider\tapple\nlocal_root\t\nspotify_client_id\tcid\napple_storefront\ttw\nlanguage\t\nai_base_url\t\nai_model\t\nnative_language\t\ntheme\t\n" {
+		t.Fatalf("list 非 TTY 應列出九個非機密欄位 key\\tvalue(theme 嚴格加在最尾端,既有的八行位置不動),得到 %q", out)
 	}
 	if out, _ := runCLI(t, "config", "get", "spotify_client_id"); out != "cid\n" {
 		t.Fatalf("get 應支援三個欄位,得到 %q", out)
@@ -242,9 +247,13 @@ func TestApplyLanguage(t *testing.T) {
 func TestConfigInEnglish(t *testing.T) {
 	setCLITestConfig(t)
 	withLanguage(t, "en")
-	_, err := runCLI(t, "config", "set", "theme", "dark")
-	if err == nil || err.Error() != `unknown setting "theme" (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language)` {
+	_, err := runCLI(t, "config", "set", "bogus", "dark")
+	if err == nil || err.Error() != `unknown setting "bogus" (settable: default_provider, local_root, language, ai_base_url, ai_model, native_language, theme)` {
 		t.Fatalf("英文的錯誤訊息:%v", err)
+	}
+	_, err = runCLI(t, "config", "set", "theme", "dark")
+	if err == nil || err.Error() != `theme must be geek-green or yuzu-onsen or vinyl-amber or night-sakura or daylight-ink, got "dark"` {
+		t.Fatalf("英文的主題驗證錯誤訊息:%v", err)
 	}
 	_, err = runCLI(t, "config", "set", "language", "fr")
 	if err == nil || err.Error() != `language must be en or zh-TW, got "fr"` {
@@ -254,5 +263,54 @@ func TestConfigInEnglish(t *testing.T) {
 		if out, err := runCLI(t, args...); err != nil || hasCJK(out) {
 			t.Errorf("capy %s 在英文模式下不該有中文:%v %q", strings.Join(args, " "), err, out)
 		}
+	}
+}
+
+func TestConfigSetThemeAndApplyTheme(t *testing.T) {
+	setCLITestConfig(t)
+	t.Cleanup(func() { ui.ApplyTheme(ui.DefaultThemeName) })
+
+	if out, err := runCLI(t, "config", "set", "theme", "  Daylight-Ink "); err != nil || out != "theme = daylight-ink\n" {
+		t.Fatalf("不分大小寫正規化並回印:%v %q", err, out)
+	}
+	if ui.DefaultTheme != ui.DaylightInk {
+		t.Fatal("config set theme 成功後要立即套用 DefaultTheme")
+	}
+	if out, _ := runCLI(t, "config", "get", "theme"); out != "daylight-ink\n" {
+		t.Fatalf("config get theme:%q", out)
+	}
+
+	// 非法值不改 config 也不動作用中主題
+	if _, err := runCLI(t, "config", "set", "theme", "neon-purple"); err == nil {
+		t.Fatal("非法主題應報錯")
+	}
+	if ui.DefaultTheme != ui.DaylightInk {
+		t.Fatal("被拒的 set 不得改動目前主題")
+	}
+
+	// applyTheme:啟動時依 config.json 套用;空值或未知值回到 geek-green
+	if err := config.Save(&config.Config{Theme: "night-sakura"}); err != nil {
+		t.Fatal(err)
+	}
+	applyTheme()
+	if ui.DefaultTheme != ui.NightSakura {
+		t.Fatal("applyTheme 應套用 config.json 的 night-sakura")
+	}
+
+	if err := config.Save(&config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	applyTheme()
+	if ui.DefaultTheme != ui.GeekGreen {
+		t.Fatal("config 未設 theme 時 applyTheme 應回到預設 geek-green")
+	}
+
+	if err := config.Save(&config.Config{Theme: "unknown-future-theme"}); err != nil {
+		t.Fatal(err)
+	}
+	ui.ApplyTheme("yuzu-onsen")
+	applyTheme()
+	if ui.DefaultTheme != ui.GeekGreen {
+		t.Fatal("未知 theme 時 applyTheme 應退回預設 geek-green")
 	}
 }

@@ -58,7 +58,7 @@ func newRootCmd() *cobra.Command {
 		simpleCtl("next", i18n.T("cmd.next.short"), i18n.T("cmd.next.done"), func(ctx context.Context, pc provider.PlaybackController) error { return pc.Next(ctx) }),
 		simpleCtl("prev", i18n.T("cmd.prev.short"), i18n.T("cmd.prev.done"), func(ctx context.Context, pc provider.PlaybackController) error { return pc.Prev(ctx) }),
 	)
-	cmd.AddCommand(newSeekCmd(), newVolCmd())
+	cmd.AddCommand(newSeekCmd(), newVolCmd(), newShuffleCmd(), newRepeatCmd())
 	cmd.AddCommand(newNowCmd(), newDevicesCmd())
 	cmd.AddCommand(newDoctorCmd())
 	cmd.AddCommand(newConfigCmd(), newHistoryCmd(), newUpdateCmd())
@@ -74,6 +74,7 @@ func Execute() error {
 	if warn := applyLanguage(); warn != "" {
 		fmt.Fprintln(os.Stderr, warn)
 	}
+	applyTheme()
 	return executeSignalled(newRootCmd())
 }
 

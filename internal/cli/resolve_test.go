@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/Tai-ch0802/capy-music/internal/drive"
 	"github.com/Tai-ch0802/capy-music/internal/drive/drivetest"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/provider/spotify"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
 func fakeISRC(id string) string { return strings.TrimPrefix(fakeCID(id), "i:") }
@@ -130,7 +133,7 @@ func TestResolveCandidateOwnedByOtherCidGoesToReview(t *testing.T) {
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
 	mustPull(t, "resolve", "--yes")
 	fs.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("b")}) // 平台把 b 的 ISRC 也對到 ap-a:候選已屬 a
-	out, _ := mustPull(t, "resolve", "--yes")
+	out, _ := mustPull(t, "resolve", "--yes", "--refresh")
 	if !strings.HasPrefix(out, "review\t"+fakeCID("b")+"\tapple\tap-a\t95\tisrc\tsong-b\tartist\t候選 song-a — artist(3:20) 已屬 cid "+fakeCID("a")) {
 		t.Fatalf("已屬另一 cid → review、不自動合併:%q", out)
 	}
@@ -698,5 +701,174 @@ func TestResolvePlanDegradesProviderAndCallFailures(t *testing.T) {
 	}
 	if strings.Count(out, "\tlookup_failed\n") != 2 {
 		t.Errorf("REASON_CODE 要是 lookup_failed:%s", out)
+	}
+}
+
+// resolveCountingWorld:純記憶體雙平台環境(不開 TCP socket),並計數 apple 端的搜尋 / ISRC 反查 HTTP 呼叫次數。
+func resolveCountingWorld(t *testing.T, items ...string) (sp, ap *fakeSpotify, dc *drive.Client, apCalls *atomic.Int64) {
+	t.Helper()
+	sp, dc = plAddWorld(t)
+	ap = newFakeSpotify()
+	ap.set("ap1", "通勤")
+	var cnt atomic.Int64
+	apHandler := ap.handler(t)
+	apClient := inMemClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/search" {
+			cnt.Add(1)
+		}
+		apHandler.ServeHTTP(w, r)
+	}))
+	orig := newProvider
+	newProvider = func(ctx context.Context, id string) (provider.Provider, error) {
+		if id == "apple" {
+			return spotify.New(apClient, "http://apple.test"), nil
+		}
+		return orig(ctx, id)
+	}
+	t.Cleanup(func() { newProvider = orig })
+
+	sp.set("p1", "通勤", items...)
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "pull", "通勤", "--yes")
+	mustPull(t, "pl", "link", "通勤", "apple:ap1")
+	cnt.Store(0)
+	return sp, ap, dc, &cnt
+}
+
+func TestResolveNegCacheZeroAPICallsAndExactTSV(t *testing.T) {
+	sp, ap, _, apCalls := resolveCountingWorld(t, "a")
+	baseNow := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	origNow := canon.Now
+	canon.Now = func() time.Time { return baseNow }
+	t.Cleanup(func() { canon.Now = origNow })
+
+	// 先把 a 自動對應到 ap-a,再拉進 b(無候選 no_candidate)、c(低分 low_score)、d(候選 ap-a 已屬 a → candidate_taken)
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
+	mustPull(t, "resolve", "--yes")
+
+	sp.set("p1", "通勤", "a", "b", "c", "d")
+	mustPull(t, "pl", "pull", "通勤", "--provider", "spotify", "--yes")
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-c-live", Name: "song-c (Live)", ISRC: "TW00000000ZY"})
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("d")})
+
+	apCalls.Store(0)
+	out1, _ := mustPull(t, "resolve", "--yes")
+	if apCalls.Load() == 0 {
+		t.Fatal("首輪應查詢外部平台 API")
+	}
+	lines1 := strings.Split(strings.TrimSpace(out1), "\n")
+	if len(lines1) != 3 {
+		t.Fatalf("首輪應有 3 列 review(no_candidate / low_score / candidate_taken):%q", out1)
+	}
+	wantReviewZH := out1
+
+	// 第二輪(不帶 --refresh):應完全命中 7 天負向快取,外部 API 呼叫數 = 0,TSV 與 exit 0 一字不差!
+	apCalls.Store(0)
+	canon.Now = func() time.Time { return baseNow.Add(2 * time.Hour) }
+	out2, errs2, err2 := runPull(t, "resolve", "--yes")
+	if exitOf(t, err2) != 0 {
+		t.Fatalf("負向快取命中仍應 exit 0:%v", err2)
+	}
+	if got := apCalls.Load(); got != 0 {
+		t.Fatalf("負向快取命中應為 0 次外部 API 呼叫,得到 %d 次", got)
+	}
+	if out2 != wantReviewZH || !strings.Contains(errs2, "3 筆待人工裁決") {
+		t.Fatalf("負向快取還原的 TSV 必須一字不差:\ngot:  %q\nwant: %q\nstderr: %s", out2, wantReviewZH, errs2)
+	}
+
+	// 切換成英文介面重跑:仍為 0 次 API 呼叫,且動態翻譯成純英文 TSV(無任何殘留中文)!
+	withLanguage(t, "en")
+	outEN, _, errEN := runPull(t, "resolve", "--yes")
+	if exitOf(t, errEN) != 0 || apCalls.Load() != 0 || hasCJK(outEN) {
+		t.Fatalf("英文介面下負向快取命中應零 API 且零 CJK:err=%v calls=%d out=%q", errEN, apCalls.Load(), outEN)
+	}
+	for _, code := range []string{"\tno_candidate\n", "\tlow_score\n", "\tcandidate_taken\n"} {
+		if !strings.Contains(outEN, code) {
+			t.Errorf("英文 TSV 缺 %q:%q", code, outEN)
+		}
+	}
+}
+
+func TestResolveNegCacheLookupFailedNotCached(t *testing.T) {
+	_, ap, _, apCalls := resolveCountingWorld(t, "a")
+	ap.setSearchStatus(http.StatusServiceUnavailable)
+
+	out1, _, err1 := runPull(t, "resolve", "--yes")
+	if exitOf(t, err1) != 0 || !strings.HasSuffix(out1, "\tlookup_failed\n") {
+		t.Fatalf("暫時性 503 應列 lookup_failed:%v %q", err1, out1)
+	}
+
+	// 恢復正常並上架候選:不帶 --refresh 重跑也必須重新打 API 並自動配對成功!
+	ap.setSearchStatus(0)
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
+	apCalls.Store(0)
+	out2, _ := mustPull(t, "resolve", "--yes")
+	if apCalls.Load() == 0 || !strings.HasPrefix(out2, "map\t"+fakeCID("a")+"\tapple\tap-a\t") {
+		t.Fatalf("lookup_failed 不得寫入負向快取,下次應自動重試成功:calls=%d out=%q", apCalls.Load(), out2)
+	}
+}
+
+func TestResolveNegCacheRefreshExpirySigChangeAndDelete(t *testing.T) {
+	_, ap, dc, apCalls := resolveCountingWorld(t, "a", "b", "c")
+	baseNow := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	origNow := canon.Now
+	canon.Now = func() time.Time { return baseNow }
+	t.Cleanup(func() { canon.Now = origNow })
+
+	// 1. 首輪全部無候選 → a, b, c 皆進負向快取
+	mustPull(t, "resolve", "--yes")
+	apCalls.Store(0)
+	mustPull(t, "resolve", "--yes")
+	if apCalls.Load() != 0 {
+		t.Fatalf("快取命中應 0 次呼叫,得 %d", apCalls.Load())
+	}
+
+	// 2. --refresh 強制略過負向快取重查;上架 a 後配對成功並從負向快取刪除 a
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-a", Name: "song-a", ISRC: fakeISRC("a")})
+	outRefresh, _ := mustPull(t, "resolve", "--yes", "--refresh")
+	if apCalls.Load() == 0 || !strings.Contains(outRefresh, "map\t"+fakeCID("a")+"\tapple\tap-a\t") {
+		t.Fatalf("--refresh 應重查並對應 a:calls=%d out=%q", apCalls.Load(), outRefresh)
+	}
+	st, err := store.OpenReadOnly(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.LookupResolveNeg(fakeCID("a"), "apple"); err != nil || ok {
+		st.Close()
+		t.Fatalf("自動配對成功後應刪除負向快取:ok=%v err=%v", ok, err)
+	}
+	st.Close()
+
+	// 3. 曲目資訊(Title)變動 → track_sig 自動失效,不需 --refresh 也會重查 b!
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-b", Name: "song-b remastered", ISRC: fakeISRC("b")})
+	tr := driveTracks(t, dc)
+	tb := tr.Tracks[fakeCID("b")]
+	tb.Title = "song-b remastered"
+	tr.Tracks[fakeCID("b")] = tb
+	putTracks(t, dc, tr)
+	apCalls.Store(0)
+	outSig, _ := mustPull(t, "resolve", "--yes")
+	if apCalls.Load() == 0 || !strings.Contains(outSig, "map\t"+fakeCID("b")+"\tapple\tap-b\t") {
+		t.Fatalf("曲目變動應使 track_sig 失效並重查 b:calls=%d out=%q", apCalls.Load(), outSig)
+	}
+
+	// 4. 超過 7 天 TTL → c 的負向快取自動過期重查
+	apCalls.Store(0)
+	canon.Now = func() time.Time { return baseNow.Add(7*24*time.Hour + time.Minute) }
+	mustPull(t, "resolve", "--yes")
+	if apCalls.Load() == 0 {
+		t.Fatal("超過 7 天負向快取應過期重查")
+	}
+
+	// 5. 人工 resolve pin 成功後應呼叫 DeleteResolveNeg
+	ap.addCatalog(fakeCatalogTrack{ID: "ap-c", Name: "song-c", ISRC: fakeISRC("c")})
+	mustPull(t, "resolve", "pin", fakeCID("c"), "apple:ap-c", "--yes")
+	st, err = store.OpenReadOnly(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, ok, err := st.LookupResolveNeg(fakeCID("c"), "apple"); err != nil || ok {
+		t.Fatalf("resolve pin 後應清除負向快取:ok=%v err=%v", ok, err)
 	}
 }

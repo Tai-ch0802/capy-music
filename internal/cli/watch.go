@@ -25,6 +25,8 @@ const (
 	watchMaxFails     = 5
 	watchPollSpotify  = 2 * time.Second // 畫面每 2 秒問一輪(每一家都一樣);真的打 Spotify 幾次看 tracker 的有效期(在播最多 10 s、閒置 15 s)
 	watchDefaultWidth = 80
+	watchSeekStep     = 10_000
+	watchVolStep      = 5
 )
 
 // watchTickMsg:帶著排它的那條鏈的世代號。控制鍵開新鏈(gen++),舊鏈的 tick 到了就丟——不然每按一次鍵就多一條
@@ -99,9 +101,66 @@ func (m watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.control(provider.PlaybackController.Next, true)
 		case "p":
 			return m.control(provider.PlaybackController.Prev, true)
+		case "left", "right":
+			pos, ok := m.seekTarget(msg.String() == "right")
+			if !ok {
+				return m, nil
+			}
+			return m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.Seek(ctx, pos) }, false)
+		case "+", "=", "-":
+			pct, ok := m.volTarget(msg.String() != "-")
+			if !ok {
+				return m, nil
+			}
+			return m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.SetVolume(ctx, pct) }, false)
 		}
 	}
 	return m, nil
+}
+
+func (m watchModel) seekTarget(forward bool) (int, bool) {
+	if m.st == nil || m.st.Track == nil {
+		return 0, false
+	}
+	pos := m.st.ProgressMS + watchSeekStep
+	if !forward {
+		pos = m.st.ProgressMS - watchSeekStep
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if d := m.st.Track.DurationMS; d > 0 && pos > d {
+		pos = d
+	}
+	return pos, true
+}
+
+func (m watchModel) volTarget(up bool) (int, bool) {
+	if m.st == nil || !m.st.Device.VolumeKnown {
+		return 0, false
+	}
+	pct := m.st.Device.VolumePct + watchVolStep
+	if !up {
+		pct = m.st.Device.VolumePct - watchVolStep
+	}
+	return min(100, max(0, pct)), true
+}
+
+func watchModeBadges(st *provider.PlaybackState) string {
+	if st == nil {
+		return ""
+	}
+	var badges []string
+	if st.Shuffle {
+		badges = append(badges, "[S]")
+	}
+	switch st.Repeat {
+	case provider.RepeatContext:
+		badges = append(badges, "[R]")
+	case provider.RepeatTrack:
+		badges = append(badges, "[R1]")
+	}
+	return strings.Join(badges, " ")
 }
 
 // applyState:順序同 TUI 的 applyState(決策 53)。差別:連續失敗到上限就離開(watch 沒有命令列可以留下來用),
@@ -190,12 +249,19 @@ func (m watchModel) View() tea.View {
 		bar := m.bar
 		bar.SetWidth(max(10, w-2-ansi.StringWidth(times)))
 		line("  " + bar.ViewAs(pct) + times)
-		if st.Device.Name != "" {
+		modes := watchModeBadges(st)
+		switch {
+		case st.Device.Name != "":
 			dev := "  " + i18n.T("player.device", "name", st.Device.Name, "type", st.Device.Type)
-			if st.Device.VolumePct > 0 {
+			if st.Device.VolumeKnown {
 				dev += i18n.T("watch.volume", "pct", st.Device.VolumePct)
 			}
+			if modes != "" {
+				dev += " · " + modes
+			}
 			line(dev)
+		case modes != "":
+			line("  " + modes)
 		}
 	}
 	switch {
