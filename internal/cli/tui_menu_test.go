@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Tai-ch0802/capy-music/internal/cache"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -388,5 +389,52 @@ func TestTUIMenuWindowFollowsSelection(t *testing.T) {
 	}
 	if lo, hi := tuiMenuWindow(3, 2); lo != 0 || hi != 3 {
 		t.Errorf("清單比可視列數短時不捲:[%d,%d)", lo, hi)
+	}
+}
+
+func TestTUISlashMenuSecondStageCompletionAndAutoQuoting(t *testing.T) {
+	m := newTestTUI(t, &watchFake{st: playingState()})
+	seedTestCanonicalDB(t) // 建立正本清單 "Late Night Focus" 與 "Alpha Acoustic"
+	cc := cache.Load()
+	cc.SetPlaylists("spotify", []cache.Playlist{
+		{ID: "sp_1", Name: "Chill Vibes", Total: 12},
+		{ID: "sp_2", Name: "NightDrive", Total: 8},
+	})
+	if err := cc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 驗證所有指定前綴都能展開第二階段補全清單
+	for _, prefix := range []string{"/play ", "/pl show ", "/pl pull ", "/pl push ", "/pl sync ", "/pl add "} {
+		m.typing = true
+		m.input.SetValue(prefix)
+		items, open := m.menu()
+		if !open || len(items) == 0 {
+			t.Fatalf("%q 應展開第二階段補全選單:open=%v items=%v", prefix, open, items)
+		}
+	}
+
+	// 打字過濾含空白的正本歌單 "Late Night Focus",按 Tab 自動包雙引號!
+	m.typing = false
+	m.input.SetValue("")
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "pl show late")
+	items, open := m.menu()
+	if !open || len(items) != 1 {
+		t.Fatalf("/pl show late 應過濾出唯一一筆 Late Night Focus:open=%v items=%v", open, items)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyTab}, false)
+	if want := `pl show "Late Night Focus" `; m.input.Value() != want {
+		t.Fatalf("含空白名稱按 Tab 應自動包雙引號:got %q, want %q", m.input.Value(), want)
+	}
+
+	// /play 同時列出正本與快取平台歌單;過濾不含空白名稱時不亂加引號
+	m.typing = false
+	m.input.SetValue("")
+	m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+	m = typeKeys(t, m, "play nightd")
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyTab}, false)
+	if want := `play NightDrive `; m.input.Value() != want {
+		t.Fatalf("不含空白的名稱不加引號:got %q, want %q", m.input.Value(), want)
 	}
 }

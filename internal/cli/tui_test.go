@@ -7,12 +7,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/ai"
+	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -131,10 +135,16 @@ func TestTUISeekAndVolumeKeys(t *testing.T) {
 	f := &watchFake{st: playingState()} // 進度 83000、時長 249000、音量 50
 	m := newTestTUI(t, f)
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyRight}, true)
+	if m.st.ProgressMS != 93000 {
+		t.Fatalf("樂觀預覽應立即推進至 93000,got %d", m.st.ProgressMS)
+	}
 	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyLeft}, true)
 	m = step(t, m, tea.KeyPressMsg{Code: '+'}, true)
+	if m.st.Device.VolumePct != 55 {
+		t.Fatalf("樂觀預覽音量應為 55,got %d", m.st.Device.VolumePct)
+	}
 	m = step(t, m, tea.KeyPressMsg{Code: '-'}, true)
-	want := []string{"seek:93000", "seek:73000", "vol:55", "vol:45"}
+	want := []string{"seek:93000", "seek:83000", "vol:55", "vol:50"}
 	if !slices.Equal(f.calls, want) {
 		t.Fatalf("鍵位送出的值:%v,要 %v", f.calls, want)
 	}
@@ -164,12 +174,15 @@ func TestTUIVolumeDistinguishesMuteFromUnknown(t *testing.T) {
 	muted := &watchFake{st: playingState()}
 	muted.st.Device.VolumePct = 0 // 真的靜音,平台有回報
 	m := newTestTUI(t, muted)
+	if got := m.View().Content; !strings.Contains(got, "音量 0") {
+		t.Errorf("靜音要顯示成「音量 0」而不是整行消失:%q", got)
+	}
 	m = step(t, m, tea.KeyPressMsg{Code: '+'}, true)
 	if !slices.Equal(muted.calls, []string{"vol:5"}) {
 		t.Fatalf("靜音之後 + 要解得開:%v", muted.calls)
 	}
-	if got := m.View().Content; !strings.Contains(got, "音量 0") {
-		t.Errorf("靜音要顯示成「音量 0」而不是整行消失:%q", got)
+	if got := m.View().Content; !strings.Contains(got, "音量 5") {
+		t.Errorf("+ 後樂觀預覽應顯示「音量 5」:%q", got)
 	}
 	unknown := &watchFake{st: playingState()}
 	unknown.st.Device.VolumeKnown = false // Apple 的 State 不帶音量
@@ -494,5 +507,245 @@ func TestRootNonTTYPrintsHelpAndTTYOpensTUI(t *testing.T) {
 	}
 	if !called {
 		t.Error("TTY 應開互動式介面")
+	}
+}
+
+func TestTUIShuffleRepeatAndOptimisticRollback(t *testing.T) {
+	fc := &deckFakeController{watchFake: watchFake{st: playingState()}}
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", testTracker(t, "spotify", fc), watchPollSpotify)
+	m.width = 100
+	m.st = fc.st
+	m.frozen = true
+	recordPrintln(t)
+
+	// s 切換隨機播放:樂觀預覽立即亮起 [S],失敗時回滾至 false。
+	m = step(t, m, tea.KeyPressMsg{Code: 's'}, true)
+	if !slices.Equal(fc.shuffles, []bool{true}) || !m.st.Shuffle || !strings.Contains(ansi.Strip(m.View().Content), "[S]") {
+		t.Fatalf("s 應送出 SetShuffle(true) 並顯示 [S]:shuffles=%v view=%q", fc.shuffles, ansi.Strip(m.View().Content))
+	}
+	m = step(t, m, tuiStateMsg{err: errors.New("裝置拒絕"), fromCtl: true, gen: m.gen}, false)
+	if m.st.Shuffle || strings.Contains(ansi.Strip(m.View().Content), "[S]") {
+		t.Fatalf("控制失敗後應回滾 Shuffle 樂觀狀態:shuffle=%v view=%q", m.st.Shuffle, ansi.Strip(m.View().Content))
+	}
+	m.errShort = "" // 清除錯誤後 r 進入循環模式切換
+
+	// r 循環切換 RepeatOff -> RepeatContext ([R]) -> RepeatTrack ([R1]) -> RepeatOff
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, true)
+	if !strings.Contains(ansi.Strip(m.View().Content), "[R]") {
+		t.Fatalf("第一次 r 應顯示 [R]:%q", ansi.Strip(m.View().Content))
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, true)
+	if !strings.Contains(ansi.Strip(m.View().Content), "[R1]") {
+		t.Fatalf("第二次 r 應顯示 [R1]:%q", ansi.Strip(m.View().Content))
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 'r'}, true)
+	if strings.Contains(ansi.Strip(m.View().Content), "[R") {
+		t.Fatalf("第三次 r 應關閉循環標記:%q", ansi.Strip(m.View().Content))
+	}
+	wantRepeats := []provider.RepeatMode{provider.RepeatContext, provider.RepeatTrack, provider.RepeatOff}
+	if !slices.Equal(fc.repeats, wantRepeats) {
+		t.Fatalf("SetRepeat 順序 = %v,要 %v", fc.repeats, wantRepeats)
+	}
+
+	// 進度與音量的樂觀預覽與回滾
+	m = step(t, m, tea.KeyPressMsg{Code: tea.KeyRight}, false)
+	if m.st.ProgressMS != 93000 {
+		t.Fatalf("Right 樂觀進度 = %d,要 93000", m.st.ProgressMS)
+	}
+	m = step(t, m, tuiStateMsg{err: errors.New("seek failed"), fromCtl: true, gen: m.gen}, false)
+	if m.st.ProgressMS != 83000 {
+		t.Fatalf("Seek 失敗應回滾至 83000,got %d", m.st.ProgressMS)
+	}
+
+	// R (Shift+R) 無論狀態如何都強制重連輪詢
+	beforeGen := m.gen
+	m = step(t, m, tea.KeyPressMsg{Code: 'R'}, false)
+	if m.gen == beforeGen || m.errShort != "" {
+		t.Fatalf("R 應推進世代並清除錯誤:gen %d->%d errShort=%q", beforeGen, m.gen, m.errShort)
+	}
+}
+
+func TestTUIInProcessFastPathAndCachedWiki(t *testing.T) {
+	fc := &deckFakeController{watchFake: watchFake{st: playingState()}}
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", testTracker(t, "spotify", fc), watchPollSpotify)
+	m = step(t, m, tea.WindowSizeMsg{Width: 100, Height: 40}, false) // 常駐水豚 (15 行)
+	m.st = fc.st
+	ran := recordExec(t)
+	got := recordPrintln(t)
+
+	// 1. 純播放控制命令走行程內 Fast Path:零 fork、常駐水豚保持 15 行不閃退縮高!
+	for _, cmdLine := range []string{"pause", "play", "next", "prev", "seek 1:30", "vol 65"} {
+		m = step(t, m, tea.KeyPressMsg{Code: '/'}, false)
+		m.input.SetValue(cmdLine)
+		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
+		if m.running {
+			t.Fatalf("%q 應走行程內 Fast Path,不該進入 running 縮高狀態", cmdLine)
+		}
+		if n := len(strings.Split(m.View().Content, "\n")); n != capyBlockRows+4 {
+			t.Fatalf("%q 後常駐水豚高度應維持 %d 行,got %d", cmdLine, capyBlockRows+4, n)
+		}
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("行程內命令不應 fork 子行程:%v", *ran)
+	}
+	wantCalls := []string{"pause", "play", "next", "prev", "seek:90000", "vol:65"}
+	if !slices.Equal(fc.calls, wantCalls) {
+		t.Fatalf("行程內控制呼叫 = %v,要 %v", fc.calls, wantCalls)
+	}
+
+	// 2. 快取未命中時按 w 仍走子行程執行 capy wiki(自動跟隨當前顯示平台)
+	m = step(t, m, tea.KeyPressMsg{Code: 'w'}, true)
+	if len(*ran) != 1 || !slices.Equal((*ran)[0], []string{"/bin/capy", "wiki", "--provider", "spotify"}) {
+		t.Fatalf("快取未命中時 w 應執行 capy wiki:%v", *ran)
+	}
+	m = step(t, m, tuiExecMsg{args: []string{"wiki"}}, false)
+
+	// 3. 寫入本機 wiki_cache 後,曲目狀態推進亮起 [wiki];按 w 行程內零延遲印出正文、MV、來源與免責行!
+	song := ai.Song{Title: "派對動物", Artists: []string{"五月天"}}
+	stDB, err := store.Open(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stDB.SaveWiki(ai.WikiCacheKey("zh-TW", song), store.WikiEntry{
+		Title:     song.Title,
+		Artists:   "五月天",
+		Language:  "zh-TW",
+		Model:     "capy-llm",
+		Body:      "## 創作背景\n水豚導聆內頁測試正文。",
+		FetchedAt: time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		stDB.Close()
+		t.Fatal(err)
+	}
+	if err := stDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.wikiKey = ""
+	next, _ := m.Update(tuiStateMsg{st: playingState(), gen: m.gen})
+	m = next.(tuiModel)
+	wikiMsg := lookupWikiAsyncCmd(m.wikiKey, song)()
+	m = step(t, m, wikiMsg, false)
+	if !strings.Contains(ansi.Strip(m.View().Content), "[wiki]") {
+		t.Fatalf("命中本機 wiki 快取時狀態列應亮起 [wiki]:%q", ansi.Strip(m.View().Content))
+	}
+
+	*ran = nil
+	*got = nil
+	m = step(t, m, tea.KeyPressMsg{Code: 'w'}, false)
+	if len(*ran) != 0 {
+		t.Fatalf("快取命中時按 w 絕不應 fork 子行程:%v", *ran)
+	}
+	if n := len(strings.Split(m.View().Content, "\n")); n != capyBlockRows+4 {
+		t.Fatalf("按 w 共讀內頁時常駐水豚不得閃退:%d 行", n)
+	}
+	printed := ansi.Strip(joined(got))
+	for _, wantSub := range []string{
+		"水豚導聆內頁測試正文",
+		"https://www.youtube.com/results?search_query=",
+		"capy-llm",
+		i18n.T("wiki.disclaimer"),
+	} {
+		if !strings.Contains(printed, wantSub) {
+			t.Errorf("行程內內頁導聆缺了 %q:\n%s", wantSub, printed)
+		}
+	}
+
+	// 4. 按 W (Shift+W) 強制走子行程執行 wiki --refresh
+	m = step(t, m, tea.KeyPressMsg{Code: 'W'}, true)
+	if len(*ran) != 1 || !slices.Equal((*ran)[0], []string{"/bin/capy", "wiki", "--refresh", "--provider", "spotify"}) {
+		t.Fatalf("W 應執行 capy wiki --refresh:%v", *ran)
+	}
+}
+
+func TestTUIHistoryPersistsAcrossSessionsAndFiltersSecrets(t *testing.T) {
+	orig := tuiExecProcess
+	tuiExecProcess = func(*exec.Cmd, tea.ExecCallback) tea.Cmd { return nil }
+	t.Cleanup(func() { tuiExecProcess = orig })
+	recordPrintln(t)
+
+	// Session 1:設定同一個 CAPY_CONFIG_DIR
+	m1 := newTestTUI(t, &watchFake{st: playingState()})
+	cfgDir := t.TempDir()
+	t.Setenv("CAPY_CONFIG_DIR", cfgDir)
+
+	runLine := func(m tuiModel, line string) tuiModel {
+		m = step(t, m, tea.KeyPressMsg{Code: ':'}, false)
+		m.input.SetValue(line)
+		return step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	}
+	m1 = runLine(m1, "pl list")
+	m1 = runLine(m1, "wiki setup --api-key sk-super-secret")
+	m1 = runLine(m1, "wiki setup --header Authorization:Bearer-xyz")
+	m1 = runLine(m1, "auth login --client-secret top-secret")
+	m1 = runLine(m1, "auth login --developer-token dev-tok --user-token usr-tok")
+	m1 = runLine(m1, "wiki --headers-file /tmp/h.txt")
+	m1 = runLine(m1, "search 派對動物")
+
+	// Session 2:共用同一個 CAPY_CONFIG_DIR 建立新 model(不呼叫 testTracker 以免重設 CAPY_CONFIG_DIR)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	trk2 := &nowTracker{ctx: ctx, now: map[string]provider.PlaybackController{"spotify": &watchFake{st: playingState()}}}
+	m2 := newTUIModel(ctx, ui.DefaultTheme, "/bin/capy", "spotify", "", trk2, watchPollSpotify)
+
+	wantPersisted := []string{"pl list", "search 派對動物"}
+	if !slices.Equal(m2.hist, wantPersisted) {
+		t.Fatalf("跨 session 載入的歷史 = %#v,要 %#v (含機密旗標的命令絕不可寫入 SQLite!)", m2.hist, wantPersisted)
+	}
+}
+
+func TestTUISleepTimerCycleAndInProcessCommand(t *testing.T) {
+	fc := &deckFakeController{watchFake: watchFake{st: playingState()}}
+	m := newTUIModel(context.Background(), ui.DefaultTheme, "/bin/capy", "spotify", "", testTracker(t, "spotify", fc), watchPollSpotify)
+	m = step(t, m, tea.WindowSizeMsg{Width: 100, Height: 40}, false) // alive 模式顯示招牌列
+	m.st = fc.st
+	got := recordPrintln(t)
+
+	// 按 t 六段循環:Off -> EndOfTrack -> 15m -> 30m -> 60m -> Yuzu -> Off
+	m = step(t, m, tea.KeyPressMsg{Code: 't'}, false)
+	if m.sleep.Snapshot().Mode != SleepEndOfTrack || !strings.Contains(ansi.Strip(m.View().Content), "(o) track") {
+		t.Fatalf("第 1 次 t 應為 EndOfTrack 並在招牌顯示 (o) track:%+v\n%s", m.sleep.Snapshot(), ansi.Strip(m.View().Content))
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 't'}, false)
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepCountdown || snap.TotalSec != 15*60 {
+		t.Fatalf("第 2 次 t 應為 15m:%+v", snap)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 't'}, false)
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepCountdown || snap.TotalSec != 30*60 {
+		t.Fatalf("第 3 次 t 應為 30m:%+v", snap)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 't'}, false)
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepCountdown || snap.TotalSec != 60*60 {
+		t.Fatalf("第 4 次 t 應為 60m:%+v", snap)
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 't'}, false)
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepYuzuPomodoro || !strings.Contains(ansi.Strip(m.View().Content), "(o) 2") {
+		t.Fatalf("第 5 次 t 應為柚子湯專注計時:%+v\n%s", snap, ansi.Strip(m.View().Content))
+	}
+	m = step(t, m, tea.KeyPressMsg{Code: 't'}, false)
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepOff || strings.Contains(ansi.Strip(m.View().Content), "(o)") {
+		t.Fatalf("第 6 次 t 應回到 Off:%+v", snap)
+	}
+
+	// 行程內 /sleep 命令
+	runSleep := func(line string) {
+		m = step(t, m, tea.KeyPressMsg{Code: ':'}, false)
+		m.input.SetValue(line)
+		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, false)
+	}
+	runSleep("sleep 20")
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepCountdown || snap.TotalSec != 20*60 {
+		t.Fatalf("/sleep 20 應設 20 分鐘倒數:%+v", snap)
+	}
+	runSleep("sleep yuzu")
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepYuzuPomodoro {
+		t.Fatalf("/sleep yuzu 應設柚子湯計時:%+v", snap)
+	}
+	runSleep("sleep off")
+	if snap := m.sleep.Snapshot(); snap.Mode != SleepOff {
+		t.Fatalf("/sleep off 應關閉定時器:%+v", snap)
+	}
+	if !strings.Contains(ansi.Strip(joined(got)), "20") {
+		t.Errorf("捲動區應印出定時設定回饋:%q", ansi.Strip(joined(got)))
 	}
 }

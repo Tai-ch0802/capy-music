@@ -1,5 +1,7 @@
 package cli
 
+import "fmt"
+
 // 水豚橫幅。設計約束(不是裝飾,是為了畫面不抖):
 //   - **只用 ASCII**。方框繪製字元(U+2500 區塊)與 ● ▬ ≋ 全都是 East Asian Ambiguous:
 //     在 CJK 語系的終端機(iTerm2 的 ambiguous-width = double、Windows Terminal 配 CJK 字型、
@@ -160,4 +162,52 @@ func capyTagline(prov string) string {
 		return "capy"
 	}
 	return "capy · " + prov
+}
+
+// capyTaglineWithTimer:招牌加上純 ASCII 睡眠/柚子湯倒數標記,例如 "capy · spotify · (o) 24:15"。
+func capyTaglineWithTimer(prov, timerBadge string) string {
+	base := capyTagline(prov)
+	if timerBadge == "" {
+		return base
+	}
+	return base + " · " + timerBadge
+}
+
+// tuiSleepBadge:把 sleepSnapshot 轉成純 ASCII (< 128) 的簡短標記,例如 "(o) 24:15"、"(o) track"。
+func tuiSleepBadge(snap sleepSnapshot) string {
+	switch snap.Mode {
+	case SleepEndOfTrack:
+		if snap.RemainingSec > 0 {
+			return fmt.Sprintf("(o) track %d:%02d", snap.RemainingSec/60, snap.RemainingSec%60)
+		}
+		return "(o) track"
+	case SleepCountdown:
+		return fmt.Sprintf("(o) %d:%02d", snap.RemainingSec/60, snap.RemainingSec%60)
+	case SleepYuzuPomodoro:
+		if snap.Phase == SleepPhaseBreak {
+			return fmt.Sprintf("(o) break %d:%02d", snap.RemainingSec/60, snap.RemainingSec%60)
+		}
+		return fmt.Sprintf("(o) %d:%02d", snap.RemainingSec/60, snap.RemainingSec%60)
+	default:
+		return ""
+	}
+}
+
+// capybaraLiveFrame:常駐水豚在正在播放音樂時的動態幀。
+// 嚴守 capybaraStill() 一字不動、9 行高度與 42 欄純 ASCII 矩形不變式:
+// 開場期間或未播放時原樣回傳 capybaraFrame(n);常駐且播放中時,偶爾在第 0 行口鼻上方空白處浮現純 ASCII 音符 '~' 或 'd'。
+func capybaraLiveFrame(n int, playing bool) []string {
+	lines := capybaraFrame(n)
+	if !playing || n < len(capyStory) || len(lines) == 0 {
+		return lines
+	}
+	k := (n - len(capyStory)) % 32
+	row := lines[0]
+	switch {
+	case k >= 4 && k <= 7 && len(row) > 34 && row[33] == ' ':
+		lines[0] = row[:33] + "~" + row[34:]
+	case k >= 20 && k <= 23 && len(row) > 35 && row[34] == ' ':
+		lines[0] = row[:34] + "d" + row[35:]
+	}
+	return lines
 }
