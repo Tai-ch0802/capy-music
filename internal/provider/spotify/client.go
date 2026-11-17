@@ -363,9 +363,25 @@ func mapPlayerErr(err error) error {
 			// 免費帳號:player 端點一律 403(計畫 2026-09-30 Q4)。在 provider 這層就換成可行動的說法,CLI、TUI、
 			// now --watch、網頁每個播放入口才都拿得到(同音量那一條,原始的 *apiError 也留在鏈上)。
 			return i18n.Errorf("spotify.err.premium_required", "premium", provider.ErrPremiumRequired, "err", err)
+		case ae.Status == http.StatusForbidden && ae.Reason == "RESTRICTION_VIOLATED":
+			// 情境限制(如單一曲目或無佇列時切 repeat、廣告中切歌):不是授權過期,包成 ErrRestricted 並保留原始 *apiError。
+			return fmt.Errorf("%w: %w", provider.ErrRestricted, err)
 		}
 	}
 	return err
+}
+
+func parseSpotifyRepeat(s string) provider.RepeatMode {
+	switch s {
+	case "off":
+		return provider.RepeatOff
+	case "context":
+		return provider.RepeatContext
+	case "track":
+		return provider.RepeatTrack
+	default:
+		return provider.RepeatUnknown
+	}
 }
 
 func (c *Client) Devices(ctx context.Context) ([]provider.Device, error) {
@@ -385,10 +401,12 @@ func (c *Client) Devices(ctx context.Context) ([]provider.Device, error) {
 // State 回傳目前播放狀態;204(無播放內容)回 (nil, nil)。
 func (c *Client) State(ctx context.Context) (*provider.PlaybackState, error) {
 	var resp struct {
-		IsPlaying  bool       `json:"is_playing"`
-		ProgressMS int        `json:"progress_ms"`
-		Item       *trackJSON `json:"item"`
-		Device     deviceJSON `json:"device"`
+		IsPlaying    bool       `json:"is_playing"`
+		ProgressMS   int        `json:"progress_ms"`
+		ShuffleState bool       `json:"shuffle_state"`
+		RepeatState  string     `json:"repeat_state"`
+		Item         *trackJSON `json:"item"`
+		Device       deviceJSON `json:"device"`
 	}
 	status, err := c.do(ctx, http.MethodGet, "/me/player", nil, nil, &resp)
 	if err != nil {
@@ -397,7 +415,13 @@ func (c *Client) State(ctx context.Context) (*provider.PlaybackState, error) {
 	if status == http.StatusNoContent {
 		return nil, nil
 	}
-	st := &provider.PlaybackState{Playing: resp.IsPlaying, ProgressMS: resp.ProgressMS, Device: resp.Device.toDevice()}
+	st := &provider.PlaybackState{
+		Playing:    resp.IsPlaying,
+		ProgressMS: resp.ProgressMS,
+		Device:     resp.Device.toDevice(),
+		Shuffle:    resp.ShuffleState,
+		Repeat:     parseSpotifyRepeat(resp.RepeatState),
+	}
 	if resp.Item != nil {
 		tr := resp.Item.toTrack()
 		st.Track = &tr
@@ -412,10 +436,16 @@ func deviceQuery(deviceID string) url.Values {
 	return url.Values{"device_id": {deviceID}}
 }
 
-// Play:uris 空 → 無 body(resume)。
+// maxPlayTracks:PUT /me/player/play 的 uris 單次安全上限(超過會觸發 400/413)。
+const maxPlayTracks = 100
+
+// Play:uris 空 → 無 body(resume);超過 maxPlayTracks 切片取前 100 首。
 func (c *Client) Play(ctx context.Context, uris []string, deviceID string) error {
 	var body any
 	if len(uris) > 0 {
+		if len(uris) > maxPlayTracks {
+			uris = uris[:maxPlayTracks]
+		}
 		body = map[string]any{"uris": uris}
 	}
 	_, err := c.do(ctx, http.MethodPut, "/me/player/play", deviceQuery(deviceID), body, nil)
@@ -451,6 +481,31 @@ func (c *Client) Seek(ctx context.Context, posMS int) error {
 
 func (c *Client) SetVolume(ctx context.Context, pct int) error {
 	_, err := c.do(ctx, http.MethodPut, "/me/player/volume", url.Values{"volume_percent": {strconv.Itoa(pct)}}, nil, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) Transfer(ctx context.Context, deviceID string, play bool) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return provider.ErrNotFound
+	}
+	body := map[string]any{"device_ids": []string{deviceID}, "play": play}
+	_, err := c.do(ctx, http.MethodPut, "/me/player", nil, body, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) SetShuffle(ctx context.Context, on bool) error {
+	_, err := c.do(ctx, http.MethodPut, "/me/player/shuffle", url.Values{"state": {strconv.FormatBool(on)}}, nil, nil)
+	return mapPlayerErr(err)
+}
+
+func (c *Client) SetRepeat(ctx context.Context, mode provider.RepeatMode) error {
+	switch mode {
+	case provider.RepeatOff, provider.RepeatContext, provider.RepeatTrack:
+	default:
+		return fmt.Errorf("%w: repeat mode %q", provider.ErrNotSupported, mode)
+	}
+	_, err := c.do(ctx, http.MethodPut, "/me/player/repeat", url.Values{"state": {string(mode)}}, nil, nil)
 	return mapPlayerErr(err)
 }
 

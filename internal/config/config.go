@@ -29,6 +29,7 @@ type Config struct {
 	// YouTube(決策 60):登入的 YouTube Music 帳號(非機密;顯示用,ChannelID 是清單 id 的前綴)。跟 GoogleEmail 是兩個帳號,
 	// 可以不同;cookie 在 keychain(youtube.headers)。
 	YouTube *YouTubeAccount `json:"youtube_account,omitempty"`
+	Theme   string          `json:"theme,omitempty"` // 互動式介面主題名(如 geek-green、daylight-ink);空 = 預設 geek-green
 }
 
 // YouTubeAccount:account_menu 回的帳號名、handle(@…)與頻道 id(UC…)。

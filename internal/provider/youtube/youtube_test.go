@@ -203,8 +203,8 @@ func TestGetPlaylistItems(t *testing.T) {
 	if tracks[5].Title != "Song 102" || tracks[5].DurationMS != 266000 {
 		t.Errorf("續頁:%+v", tracks[5])
 	}
-	if len(first.Raw) == 0 {
-		t.Error("Raw 要留 renderer")
+	if len(first.Raw) != 0 {
+		t.Error("Raw 不應保留無人讀取的 renderer JSON")
 	}
 	if _, err := p.GetPlaylistItems(context.Background(), "UCsomeoneelse/PLtest001"); err == nil || !strings.Contains(err.Error(), "UCsomeoneelse/PLtest001") {
 		t.Errorf("別的帳號的清單要拒絕並帶 id:%v", err)
@@ -417,5 +417,24 @@ func TestContinuationTokenNotReencoded(t *testing.T) {
 	}
 	if !strings.Contains(f.lastURL, "ctoken=CONTINUATION-TOKEN-") || strings.Contains(f.lastURL, "%25") {
 		t.Errorf("token 不可以再編碼:%s", f.lastURL)
+	}
+}
+
+func TestParseRowAndPanelOmitRaw(t *testing.T) {
+	var root any
+	if err := json.Unmarshal([]byte(`{"playlistItemData":{"videoId":"vid001"},"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song A"}]}}}]}`), &root); err != nil {
+		t.Fatal(err)
+	}
+	tr := toTrack(parseRow(node{root}))
+	if tr.ProviderID != "vid001" || tr.Title != "Song A" || len(tr.Raw) != 0 {
+		t.Fatalf("parseRow -> toTrack 應不含 Raw:%+v", tr)
+	}
+	var panel any
+	if err := json.Unmarshal([]byte(`{"videoId":"vid002","title":{"runs":[{"text":"Song B"}]}}`), &panel); err != nil {
+		t.Fatal(err)
+	}
+	tr2 := toTrack(parsePanelItem(node{panel}))
+	if tr2.ProviderID != "vid002" || tr2.Title != "Song B" || len(tr2.Raw) != 0 {
+		t.Fatalf("parsePanelItem -> toTrack 應不含 Raw:%+v", tr2)
 	}
 }

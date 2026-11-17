@@ -244,7 +244,15 @@ func TestPlayScriptsCompile(t *testing.T) {
 		}
 		t.Skip("沒有 osacompile")
 	}
-	for name, script := range map[string]string{"libraryMatchScript": libraryMatchScript, "playLibraryScript": playLibraryScript} {
+	for name, script := range map[string]string{
+		"libraryMatchScript": libraryMatchScript,
+		"playLibraryScript":  playLibraryScript,
+		"stateScript":        stateScript,
+		"devicesScript":      devicesScript,
+		"transferScript":     transferScript,
+		"setShuffleScript":   setShuffleScript,
+		"setRepeatScript":    setRepeatScript,
+	} {
 		out, err := exec.Command("osacompile", "-o", filepath.Join(t.TempDir(), name+".scpt"), "-e", script).CombinedOutput()
 		if err != nil {
 			t.Errorf("%s 編不過:%v %s", name, err, out)
@@ -369,13 +377,17 @@ func TestStateAndControlsPassCtx(t *testing.T) {
 	t.Cleanup(func() { runOSA = origOSA })
 	p := &Provider{}
 	_, _ = p.State(ctx)
+	_, _ = p.Devices(ctx)
 	_ = p.Play(ctx, provider.PlayRequest{})
 	_ = p.Pause(ctx)
 	_ = p.Next(ctx)
 	_ = p.Prev(ctx)
 	_ = p.Seek(ctx, 1000)
 	_ = p.SetVolume(ctx, 50)
-	if len(got) != 7 || slices.Contains(got, false) {
+	_ = p.Transfer(ctx, "music.app", false)
+	_ = p.SetShuffle(ctx, true)
+	_ = p.SetRepeat(ctx, provider.RepeatOff)
+	if len(got) != 11 || slices.Contains(got, false) {
 		t.Errorf("每一個都要帶呼叫端的 ctx:%v", got)
 	}
 }
@@ -393,5 +405,148 @@ func TestStateSaysNotRespondingOnTimeout(t *testing.T) {
 	_, err := (&Provider{}).State(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), i18n.T("apple.player.err.osascript_failed", "err", "")) {
 		t.Errorf("要說沒回應、保留逾時本身:%v", err)
+	}
+}
+
+func TestStateParsesNineFieldsAndVolumeZero(t *testing.T) {
+	p := &Provider{}
+	// 6 欄相容:VolumeKnown 仍為 false
+	stubOSA(t, "playing\t派對動物\t五月天\t自傳\t227500\t61200")
+	st6, err := p.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st6.Device.VolumeKnown || st6.Shuffle || st6.Repeat != provider.RepeatUnknown {
+		t.Errorf("6 欄過渡格式不該誤標 VolumeKnown:%+v", st6)
+	}
+
+	// 9 欄:音量 75 + shuffle true + repeat all -> RepeatContext
+	stubOSA(t, "playing\t派對動物\t五月天\t自傳\t227500\t61200\t75\ttrue\tall")
+	st, err := p.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Device.VolumeKnown || st.Device.VolumePct != 75 || !st.Shuffle || st.Repeat != provider.RepeatContext {
+		t.Errorf("9 欄狀態解析錯誤:%+v", st)
+	}
+
+	// 靜音 0 也要 VolumeKnown=true;repeat one -> RepeatTrack
+	stubOSA(t, "paused\t派對動物\t五月天\t自傳\t227500\t61200\t0\tfalse\tone")
+	st0, err := p.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st0.Playing || !st0.Device.VolumeKnown || st0.Device.VolumePct != 0 || st0.Shuffle || st0.Repeat != provider.RepeatTrack {
+		t.Errorf("音量 0 與單曲循環解析錯誤:%+v", st0)
+	}
+
+	// repeat off -> RepeatOff
+	stubOSA(t, "playing\t派對動物\t五月天\t自傳\t227500\t61200\t40\tfalse\toff")
+	stOff, err := p.State(context.Background())
+	if err != nil || stOff.Repeat != provider.RepeatOff {
+		t.Errorf("repeat off 解析錯誤:%+v %v", stOff, err)
+	}
+
+	// 壞掉的音量欄位要回錯
+	stubOSA(t, "playing\t派對動物\t五月天\t自傳\t227500\t61200\tbad\tfalse\toff")
+	if _, err := p.State(context.Background()); err == nil {
+		t.Error("音量欄位無法解析時應回錯")
+	}
+}
+
+func TestDevicesAirPlayAndFallback(t *testing.T) {
+	p := &Provider{}
+	stubOSA(t, "AP1\tMacBook Pro\tcomputer\ttrue\t65\nAP2\tLiving Room HomePod\tHomePod\tfalse\t40")
+	devs, err := p.Devices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devs) != 2 ||
+		devs[0] != (provider.Device{ID: "AP1", Name: "MacBook Pro", Type: "Computer", Active: true, VolumePct: 65, VolumeKnown: true}) ||
+		devs[1] != (provider.Device{ID: "AP2", Name: "Living Room HomePod", Type: "HomePod", Active: false, VolumePct: 40, VolumeKnown: true}) {
+		t.Fatalf("AirPlay 裝置解析錯誤:%+v", devs)
+	}
+
+	// 未啟動、空輸出或 osascript 失敗時一律靜默退回預設 Music.app 裝置
+	for _, out := range []string{"not running", "", "malformed"} {
+		stubOSA(t, out)
+		ds, err := p.Devices(context.Background())
+		if err != nil || len(ds) != 1 || ds[0].ID != musicDevice || !ds[0].Active {
+			t.Errorf("out=%q 應退回預設單一裝置:%+v %v", out, ds, err)
+		}
+	}
+	origOSA := runOSA
+	runOSA = func(context.Context, string, ...string) (string, error) { return "", errors.New("-1743") }
+	t.Cleanup(func() { runOSA = origOSA })
+	if ds, err := p.Devices(context.Background()); err != nil || len(ds) != 1 || ds[0].ID != musicDevice {
+		t.Errorf("osascript 失敗應靜默退回預設裝置:%+v %v", ds, err)
+	}
+}
+
+func TestTransferShuffleRepeatAndRunningGuards(t *testing.T) {
+	// 所有非 Play 的新腳本都必須在進 tell application "Music" 前先檢查 is running
+	for name, script := range map[string]string{
+		"stateScript":      stateScript,
+		"devicesScript":    devicesScript,
+		"transferScript":   transferScript,
+		"setShuffleScript": setShuffleScript,
+		"setRepeatScript":  setRepeatScript,
+	} {
+		i, j := strings.Index(script, `is running`), strings.Index(script, `tell application "Music"`)
+		if i < 0 || j < 0 || i > j {
+			t.Errorf("%s 必須在 tell 區塊外部先檢查 is running:%q", name, script)
+		}
+	}
+
+	p := &Provider{}
+	var calls []osaCall
+	origOSA, origOpen := runOSA, runOpen
+	outVal := "ok"
+	runOSA = func(_ context.Context, script string, args ...string) (string, error) {
+		calls = append(calls, osaCall{script: script, args: args})
+		return outVal, nil
+	}
+	runOpen = func(u string) error { t.Errorf("unexpected open %s", u); return nil }
+	t.Cleanup(func() { runOSA, runOpen = origOSA, origOpen })
+
+	if err := p.Transfer(context.Background(), "Living Room", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetShuffle(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetRepeat(context.Background(), provider.RepeatContext); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 3 ||
+		calls[0].script != transferScript || !slices.Equal(calls[0].args, []string{"Living Room", "1"}) ||
+		calls[1].script != setShuffleScript || !slices.Equal(calls[1].args, []string{"1"}) ||
+		calls[2].script != setRepeatScript || !slices.Equal(calls[2].args, []string{"context"}) {
+		t.Fatalf("argv 傳遞不符預期:%+v", calls)
+	}
+
+	// 無效裝置與無效循環模式
+	if err := p.Transfer(context.Background(), " ", false); !errors.Is(err, provider.ErrNotFound) {
+		t.Errorf("空 deviceID 應回 ErrNotFound:%v", err)
+	}
+	outVal = "not found"
+	if err := p.Transfer(context.Background(), "Ghost", false); !errors.Is(err, provider.ErrNotFound) {
+		t.Errorf("找不到 AirPlay 裝置應回 ErrNotFound:%v", err)
+	}
+	calls = nil
+	if err := p.SetRepeat(context.Background(), provider.RepeatMode("invalid")); !errors.Is(err, provider.ErrNotSupported) || len(calls) != 0 {
+		t.Errorf("無效 RepeatMode 應直接回 ErrNotSupported 且不跑 osascript:%v %+v", err, calls)
+	}
+
+	// Music.app 未啟動
+	outVal = "not running"
+	for name, fn := range map[string]func() error{
+		"transfer": func() error { return p.Transfer(context.Background(), "AP1", false) },
+		"shuffle":  func() error { return p.SetShuffle(context.Background(), false) },
+		"repeat":   func() error { return p.SetRepeat(context.Background(), provider.RepeatOff) },
+	} {
+		if err := fn(); !errors.Is(err, ErrNotRunning) || !errors.Is(err, provider.ErrPlayerNotRunning) {
+			t.Errorf("%s 在未啟動時應回 ErrNotRunning:%v", name, err)
+		}
 	}
 }

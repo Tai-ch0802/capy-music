@@ -14,3 +14,13 @@ func TestCapabilityHas(t *testing.T) {
 		t.Error("組合查詢缺一即 false")
 	}
 }
+
+func TestRepeatModeValues(t *testing.T) {
+	if RepeatUnknown != "" || RepeatOff != "off" || RepeatContext != "context" || RepeatTrack != "track" {
+		t.Fatalf("unexpected RepeatMode values: %q %q %q %q", RepeatUnknown, RepeatOff, RepeatContext, RepeatTrack)
+	}
+	var st PlaybackState
+	if st.Shuffle || st.Repeat != RepeatUnknown {
+		t.Fatalf("zero PlaybackState should default to Shuffle=false Repeat=RepeatUnknown: %+v", st)
+	}
+}

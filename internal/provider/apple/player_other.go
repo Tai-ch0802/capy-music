@@ -23,3 +23,8 @@ func (p *Provider) Next(context.Context) error                       { return pr
 func (p *Provider) Prev(context.Context) error                       { return provider.ErrNotSupported }
 func (p *Provider) Seek(context.Context, int) error                  { return provider.ErrNotSupported }
 func (p *Provider) SetVolume(context.Context, int) error             { return provider.ErrNotSupported }
+func (p *Provider) Transfer(context.Context, string, bool) error     { return provider.ErrNotSupported }
+func (p *Provider) SetShuffle(context.Context, bool) error           { return provider.ErrNotSupported }
+func (p *Provider) SetRepeat(context.Context, provider.RepeatMode) error {
+	return provider.ErrNotSupported
+}

@@ -170,8 +170,9 @@ type TokenSource struct {
 	// Google 用它把 invalid_grant 依 token 年齡解讀成「忘了 Publish app」等(T3)。
 	explain func(err error, issuedAt time.Time) error
 
-	mu  sync.Mutex
-	tok *oauth2.Token
+	mu     sync.Mutex // 只鎖記憶體 s.tok 的快路徑讀寫
+	slowMu sync.Mutex // 串行化同行程內的慢路徑(等檔案鎖 / keychain 讀寫 / OAuth refresh)
+	tok    *oauth2.Token
 }
 
 // NewTokenSource 先從 keychain 載入 key 底下的 token;沒有時原樣透傳 secret.ErrNotFound。
@@ -195,28 +196,44 @@ func fresh(tok *oauth2.Token) bool {
 	return tok != nil && tok.AccessToken != "" && time.Until(tok.Expiry) > tokenFreshMargin
 }
 
-// TODO: s.mu 橫跨整段等檔案鎖的期間,所以同一個 process 內的並行呼叫者會排隊,連 token 還新鮮的快
-// 路徑也一起卡。今天碰不到(CLI 一次跑一個命令、單 goroutine 走這條路),等真有並行呼叫者再拆成
-// 「快路徑只鎖 mu、慢路徑放掉 mu 再等檔案鎖」。
+// token:快路徑只鎖 s.mu 檢查 fresh(s.tok) 即回;慢路徑釋放 s.mu 後改取 s.slowMu 與跨程序 lockFile,
+// 完成重讀或換發後才重新鎖 s.mu 更新 s.tok,避免單一慢呼叫卡住同行程的快路徑讀取,同時避免同行程多 goroutine 重複讀 keychain。
 func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !force && fresh(s.tok) {
-		return s.tok, nil
+	if !force {
+		s.mu.Lock()
+		tok := s.tok
+		ok := fresh(tok)
+		s.mu.Unlock()
+		if ok {
+			return tok, nil
+		}
+	}
+	s.slowMu.Lock()
+	defer s.slowMu.Unlock()
+	if !force {
+		s.mu.Lock()
+		tok := s.tok
+		ok := fresh(tok)
+		s.mu.Unlock()
+		if ok {
+			return tok, nil
+		}
 	}
 	unlock, err := lockFile(s.ctx, s.key+".lock")
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	// 鎖內重讀:另一個 process 可能已經 refresh 並寫回,直接用它的、不再打 token 端點(issue #3)。
+	// 鎖內重讀:另一個 process(或同 process 先進鎖的 goroutine)可能已經 refresh 並寫回,直接用它的、不再打 token 端點(issue #3)。
 	st, err := loadStored(s.key)
 	if err != nil {
 		return nil, err
 	}
 	cur := &oauth2.Token{AccessToken: st.AccessToken, TokenType: st.TokenType, RefreshToken: st.RefreshToken, Expiry: st.Expiry}
 	if !force && fresh(cur) {
+		s.mu.Lock()
 		s.tok = cur
+		s.mu.Unlock()
 		return cur, nil
 	}
 	if cur.RefreshToken == "" {
@@ -270,6 +287,8 @@ func (s *TokenSource) token(force bool) (*oauth2.Token, error) {
 			return nil, i18n.Errorf("auth.err.refreshed_not_saved", "provider", providerOf(s.key), "err", err)
 		}
 	}
+	s.mu.Lock()
 	s.tok = tok
+	s.mu.Unlock()
 	return tok, nil
 }

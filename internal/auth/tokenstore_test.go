@@ -876,3 +876,126 @@ func TestAuthorizedAtSurvivesRefresh(t *testing.T) {
 		t.Errorf("authorized_at 要照抄登入那一刻,不是 refresh 的時間:%v", st.AuthorizedAt)
 	}
 }
+
+type memTokenRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f memTokenRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestTokenSourceFastPathNotBlockedBySlowLock:快慢鎖分離驗證。
+// 當一個 goroutine 走慢路徑(Refresh)卡在檔案鎖上時,其他並行呼叫 Token() 的 goroutine 只要記憶體 s.tok 仍新鮮,
+// 應只鎖 s.mu 即刻返回,不得被檔案鎖阻塞;同行程多個 goroutine 同時從過期狀態進慢路徑時,也只打 1 次 refresh。
+func TestTokenSourceFastPathNotBlockedBySlowLock(t *testing.T) {
+	setTokenTest(t)
+	var hits atomic.Int32
+	hc := &http.Client{Transport: memTokenRoundTripper(func(r *http.Request) (*http.Response, error) {
+		rec := httptest.NewRecorder()
+		n := hits.Add(1)
+		rec.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(rec, tokenJSON(fmt.Sprintf("at-refreshed-%d", n), fmt.Sprintf("rt-%d", n)))
+		return rec.Result(), nil
+	})}
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, hc)
+
+	if err := SaveToken(testKey, freshToken("rt0")); err != nil {
+		t.Fatal(err)
+	}
+	ts, err := NewTokenSource(ctx, testConf("https://oauth.test"), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 先由外部佔住檔案鎖,再讓一個 goroutine 呼叫 Refresh() 卡在慢路徑等鎖。
+	unlock, err := lockFile(context.Background(), testKey+".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, rerr := ts.Refresh()
+		refreshDone <- rerr
+	}()
+	// 給 Refresh goroutine 一點時間進入 lockFile 等待(若舊實作鎖著 s.mu 等鎖,下面的 Token() 就會卡死)。
+	time.Sleep(30 * time.Millisecond)
+
+	fastDone := make(chan error, 1)
+	go func() {
+		var wg sync.WaitGroup
+		errCh := make(chan error, 16)
+		for i := 0; i < 16; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tok, ferr := ts.Token()
+				if ferr != nil {
+					errCh <- ferr
+					return
+				}
+				if tok.AccessToken != "at-fresh" {
+					errCh <- fmt.Errorf("unexpected token %q", tok.AccessToken)
+				}
+			}()
+		}
+		wg.Wait()
+		close(errCh)
+		for ferr := range errCh {
+			fastDone <- ferr
+			return
+		}
+		fastDone <- nil
+	}()
+
+	select {
+	case ferr := <-fastDone:
+		if ferr != nil {
+			unlock()
+			t.Fatalf("快路徑並行讀取失敗:%v", ferr)
+		}
+	case <-time.After(time.Second):
+		unlock()
+		t.Fatal("快路徑被慢路徑的檔案鎖卡住:s.mu 未在 lockFile 前釋放")
+	}
+
+	unlock()
+	select {
+	case rerr := <-refreshDone:
+		if rerr != nil {
+			t.Fatalf("放鎖後 Refresh 應成功:%v", rerr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("放鎖後 Refresh 未完成")
+	}
+
+	// 同行程多個 goroutine 同時遇到過期 s.tok 時,透過檔案鎖重讀只打 1 次 refresh。
+	hits.Store(0)
+	if err := SaveToken(testKey, staleToken("rt-stale")); err != nil {
+		t.Fatal(err)
+	}
+	tsStale, err := NewTokenSource(ctx, testConf("https://oauth.test"), testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tok, serr := tsStale.Token()
+			if serr != nil {
+				errs <- serr
+				return
+			}
+			if tok.AccessToken != "at-refreshed-1" {
+				errs <- fmt.Errorf("got %q, want at-refreshed-1", tok.AccessToken)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for serr := range errs {
+		t.Fatalf("並行慢路徑失敗:%v", serr)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("並行慢路徑應只換發 1 次,實際 %d 次", n)
+	}
+}

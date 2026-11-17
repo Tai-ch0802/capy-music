@@ -15,15 +15,17 @@ type Provider struct {
 
 // 介面契約以 compile-time 釘住(P6 的 SPI 通用性驗證前提)。
 var (
-	_ provider.Provider           = (*Provider)(nil)
-	_ provider.Searcher           = (*Provider)(nil)
-	_ provider.ArtistSearcher     = (*Provider)(nil)
-	_ provider.PlaylistReader     = (*Provider)(nil)
-	_ provider.PlaybackController = (*Provider)(nil)
-	_ provider.ISRCLookup         = (*Provider)(nil)
-	_ provider.TrackGetter        = (*Provider)(nil)
-	_ provider.PlaylistWriter     = (*Provider)(nil)
-	_ provider.PlaylistCreator    = (*Provider)(nil)
+	_ provider.Provider               = (*Provider)(nil)
+	_ provider.Searcher               = (*Provider)(nil)
+	_ provider.ArtistSearcher         = (*Provider)(nil)
+	_ provider.PlaylistReader         = (*Provider)(nil)
+	_ provider.PlaybackController     = (*Provider)(nil)
+	_ provider.DeviceTransferrer      = (*Provider)(nil)
+	_ provider.PlaybackModeController = (*Provider)(nil)
+	_ provider.ISRCLookup             = (*Provider)(nil)
+	_ provider.TrackGetter            = (*Provider)(nil)
+	_ provider.PlaylistWriter         = (*Provider)(nil)
+	_ provider.PlaylistCreator        = (*Provider)(nil)
 )
 
 func New(hc *http.Client, base string) *Provider {
@@ -96,8 +98,12 @@ func (p *Provider) Play(ctx context.Context, req provider.PlayRequest) error {
 		}
 		return p.c.PlayContext(ctx, "spotify:playlist:"+req.PlaylistID, req.DeviceID)
 	}
-	uris := make([]string, len(req.TrackIDs))
-	for i, id := range req.TrackIDs {
+	ids := req.TrackIDs
+	if len(ids) > maxPlayTracks {
+		ids = ids[:maxPlayTracks]
+	}
+	uris := make([]string, len(ids))
+	for i, id := range ids {
 		uris[i] = "spotify:track:" + id
 	}
 	return p.c.Play(ctx, uris, req.DeviceID)
@@ -109,3 +115,15 @@ func (p *Provider) Prev(ctx context.Context) error  { return p.c.Prev(ctx) }
 
 func (p *Provider) Seek(ctx context.Context, posMS int) error    { return p.c.Seek(ctx, posMS) }
 func (p *Provider) SetVolume(ctx context.Context, pct int) error { return p.c.SetVolume(ctx, pct) }
+
+func (p *Provider) Transfer(ctx context.Context, deviceID string, play bool) error {
+	return p.c.Transfer(ctx, deviceID, play)
+}
+
+func (p *Provider) SetShuffle(ctx context.Context, on bool) error {
+	return p.c.SetShuffle(ctx, on)
+}
+
+func (p *Provider) SetRepeat(ctx context.Context, mode provider.RepeatMode) error {
+	return p.c.SetRepeat(ctx, mode)
+}

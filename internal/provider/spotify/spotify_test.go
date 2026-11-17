@@ -118,3 +118,67 @@ func TestProviderDeclaresISRCLookup(t *testing.T) {
 		t.Fatal("P4 T1:Spotify 要宣告 CapISRCLookup(LookupISRC / GetTrack 已實作)")
 	}
 }
+
+type memRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f memRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func memSpotifyClient(h http.HandlerFunc) *http.Client {
+	return &http.Client{Transport: memRoundTripper(func(r *http.Request) (*http.Response, error) {
+		rec := httptest.NewRecorder()
+		h(rec, r)
+		return rec.Result(), nil
+	})}
+}
+
+func TestProviderPlaySlicesOver100Tracks(t *testing.T) {
+	var gotURIs []string
+	hc := memSpotifyClient(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			URIs []string `json:"uris"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotURIs = body.URIs
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	ids := make([]string, 135)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("track-%03d", i)
+	}
+	if err := New(hc, "https://spotify.test").Play(context.Background(), provider.PlayRequest{TrackIDs: ids}); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotURIs) != 100 || gotURIs[0] != "spotify:track:track-000" || gotURIs[99] != "spotify:track:track-099" {
+		t.Fatalf("超過 100 首應切片前 100 首送出:len=%d first=%q last=%q", len(gotURIs), gotURIs[0], gotURIs[len(gotURIs)-1])
+	}
+}
+
+func TestStateParsesShuffleAndRepeat(t *testing.T) {
+	mode := "context"
+	shuf := true
+	hc := memSpotifyClient(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"is_playing":true,"progress_ms":12000,"shuffle_state":%v,"repeat_state":%q,"device":{"id":"d1","name":"Desk","type":"Computer","is_active":true,"volume_percent":60,"supports_volume":true}}`, shuf, mode)
+	})
+
+	p := New(hc, "https://spotify.test")
+	st, err := p.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Shuffle || st.Repeat != provider.RepeatContext || st.Device.VolumePct != 60 || !st.Device.VolumeKnown {
+		t.Fatalf("State 解析不符預期:%+v", st)
+	}
+
+	shuf, mode = false, "track"
+	st, err = p.State(context.Background())
+	if err != nil || st.Shuffle || st.Repeat != provider.RepeatTrack {
+		t.Fatalf("repeat=track 解析不符預期:%+v %v", st, err)
+	}
+
+	mode = "off"
+	st, err = p.State(context.Background())
+	if err != nil || st.Repeat != provider.RepeatOff {
+		t.Fatalf("repeat=off 解析不符預期:%+v %v", st, err)
+	}
+}

@@ -108,7 +108,6 @@ type row struct {
 	artists                                            []string
 	durationMS                                         int
 	explicit, grey                                     bool
-	raw                                                any
 }
 
 const (
@@ -167,7 +166,7 @@ func hasBrowse(runs []node) bool {
 // parseRow:musicResponsiveListItemRenderer(清單列與搜尋結果共用同一個 renderer)。videoId 在 playlistItemData(清單列與歌曲
 // 搜尋結果都有),沒有就看標題的 watchEndpoint、再看播放鈕;setVideoId 只有清單列有(同一首兩列各自不同)。
 func parseRow(n node) row {
-	out := row{raw: n.v}
+	var out row
 	out.videoID = n.get("playlistItemData", "videoId").str()
 	out.setVideoID = n.get("playlistItemData", "playlistSetVideoId").str()
 	title := n.get("flexColumns", 0, "musicResponsiveListItemFlexColumnRenderer", "text", "runs", 0)
@@ -206,7 +205,7 @@ func parseRow(n node) row {
 
 // parsePanelItem:playlistPanelVideoRenderer(next 端點的 watch 清單項目;GetTrack 用)。
 func parsePanelItem(n node) row {
-	out := row{raw: n.v, videoID: n.get("videoId").str(), title: strings.TrimSpace(n.get("title").text())}
+	out := row{videoID: n.get("videoId").str(), title: strings.TrimSpace(n.get("title").text())}
 	runs := n.get("longBylineText", "runs").arr()
 	nav := hasBrowse(runs)
 	for i, r := range runs {

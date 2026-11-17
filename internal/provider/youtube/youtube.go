@@ -2,7 +2,6 @@ package youtube
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -67,10 +66,9 @@ func (p *Provider) own(id string) (string, error) {
 func trackURL(videoID string) string { return "https://music.youtube.com/watch?v=" + videoID }
 
 func toTrack(r row) provider.Track {
-	raw, _ := json.Marshal(r.raw)
 	return provider.Track{
 		ProviderID: r.videoID, Title: r.title, Artists: r.artists, Album: r.album, DurationMS: r.durationMS, Explicit: r.explicit,
-		URL: trackURL(r.videoID), ReleaseDate: r.year, Raw: raw,
+		URL: trackURL(r.videoID), ReleaseDate: r.year,
 	}
 }
 

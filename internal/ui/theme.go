@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image/color"
+	"slices"
+	"strings"
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
@@ -16,7 +18,7 @@ type Theme struct {
 	Muted  color.Color // 次要文字:提示列、單位、時間、錯誤
 }
 
-// GeekGreen:冷冽的 geek 綠。刻意不用螢光綠(#00FF00 那種在深色終端機上會糊成一片、看久了刺眼),
+// GeekGreen:冷冽的 geek 綠(預設主題)。刻意不用螢光綠(#00FF00 那種在深色終端機上會糊成一片、看久了刺眼),
 // 取偏青、飽和度收斂的中綠當主色,配冷灰的文字階層。
 var GeekGreen = Theme{
 	Accent: lipgloss.Color("#3FB27F"),
@@ -24,8 +26,75 @@ var GeekGreen = Theme{
 	Muted:  lipgloss.Color("#6E7681"),
 }
 
-// DefaultTheme:目前唯一的主題。
+// YuzuOnsen:柚子溫泉——暖金柑橘主色配溫潤米白與暖岩灰。
+var YuzuOnsen = Theme{
+	Accent: lipgloss.Color("#E5A93C"),
+	Text:   lipgloss.Color("#EDE6D6"),
+	Muted:  lipgloss.Color("#8C8275"),
+}
+
+// VinylAmber:黑膠琥珀——真空管暖銅橘主色配羊皮紙暖白與胡桃灰。
+var VinylAmber = Theme{
+	Accent: lipgloss.Color("#D97742"),
+	Text:   lipgloss.Color("#E6DBD0"),
+	Muted:  lipgloss.Color("#8A7968"),
+}
+
+// NightSakura:夜櫻——暮色櫻粉主色配冷月白與藍灰次要字。
+var NightSakura = Theme{
+	Accent: lipgloss.Color("#D48FB0"),
+	Text:   lipgloss.Color("#D8DEE9"),
+	Muted:  lipgloss.Color("#7B88A1"),
+}
+
+// DaylightInk:白晝墨綠——專為淺色背景終端機設計的高對比深墨綠配深炭字與中灰。
+var DaylightInk = Theme{
+	Accent: lipgloss.Color("#1A7F5A"),
+	Text:   lipgloss.Color("#1F2328"),
+	Muted:  lipgloss.Color("#57606A"),
+}
+
+const DefaultThemeName = "geek-green"
+
+var themeOrder = []string{
+	"geek-green",
+	"yuzu-onsen",
+	"vinyl-amber",
+	"night-sakura",
+	"daylight-ink",
+}
+
+var themesByName = map[string]Theme{
+	"geek-green":   GeekGreen,
+	"yuzu-onsen":   YuzuOnsen,
+	"vinyl-amber":  VinylAmber,
+	"night-sakura": NightSakura,
+	"daylight-ink": DaylightInk,
+}
+
+// DefaultTheme:目前作用中的主題(預設 GeekGreen,可由 ApplyTheme 切換)。
 var DefaultTheme = GeekGreen
+
+// ThemeNames 回傳所有內建主題名稱(固定順序、回傳複本以防外部改動)。
+func ThemeNames() []string {
+	return slices.Clone(themeOrder)
+}
+
+// LookupTheme 依名稱(忽略前後空白與大小寫)查找內建主題。
+func LookupTheme(name string) (Theme, bool) {
+	t, ok := themesByName[strings.ToLower(strings.TrimSpace(name))]
+	return t, ok
+}
+
+// ApplyTheme 將 DefaultTheme 切換為指定內建主題;名稱未知時不改動並回 false。
+func ApplyTheme(name string) bool {
+	t, ok := LookupTheme(name)
+	if !ok {
+		return false
+	}
+	DefaultTheme = t
+	return true
+}
 
 func (t Theme) accentStyle() lipgloss.Style { return lipgloss.NewStyle().Foreground(t.Accent) }
 func (t Theme) mutedStyle() lipgloss.Style  { return lipgloss.NewStyle().Foreground(t.Muted) }
@@ -65,9 +134,15 @@ func HuhStyles(bool) *huh.Styles {
 	s.Focused.SelectedOption = accent
 	s.Focused.SelectedPrefix = accent.SetString("✓ ")
 	s.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(t.Muted).SetString("• ")
-	s.Focused.FocusedButton = s.Focused.FocusedButton.Foreground(lipgloss.Color("#0D1117")).Background(t.Accent)
+	btnFg := lipgloss.Color("#0D1117")
+	blurFg := t.Text
+	if t == DaylightInk {
+		btnFg = lipgloss.Color("#F6F8FA")
+		blurFg = lipgloss.Color("#F6F8FA")
+	}
+	s.Focused.FocusedButton = s.Focused.FocusedButton.Foreground(btnFg).Background(t.Accent)
 	s.Focused.Next = s.Focused.FocusedButton
-	s.Focused.BlurredButton = s.Focused.BlurredButton.Foreground(t.Text).Background(t.Muted)
+	s.Focused.BlurredButton = s.Focused.BlurredButton.Foreground(blurFg).Background(t.Muted)
 	s.Focused.TextInput.Cursor = s.Focused.TextInput.Cursor.Foreground(t.Accent)
 	s.Focused.TextInput.Prompt = s.Focused.TextInput.Prompt.Foreground(t.Accent)
 	s.Focused.TextInput.Placeholder = s.Focused.TextInput.Placeholder.Foreground(t.Muted)

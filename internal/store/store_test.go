@@ -542,3 +542,334 @@ func TestDumpIsConsistentUnderConcurrentHydrate(t *testing.T) {
 		t.Fatalf("只讀了 %d 次,測不到並行", n)
 	}
 }
+
+func TestV7InvariantsAndLegacyUpgradeWithoutRetire(t *testing.T) {
+	if schemaVersion != 7 {
+		t.Fatalf("schemaVersion 必須維持 7,目前為 %d", schemaVersion)
+	}
+	path := filepath.Join(t.TempDir(), "state.db")
+	// 模擬尚未補上三張新表的舊 v7 資料庫
+	legacy, err := open(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.db.Exec(schema + "PRAGMA user_version = 7;"); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Hydrate(fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	var jm string
+	if err := legacy.db.QueryRow("PRAGMA journal_mode").Scan(&jm); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(jm, "delete") {
+		t.Fatalf("journal_mode 必須維持 delete(禁開 WAL):%q", jm)
+	}
+	legacy.Close()
+
+	beforeBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// OpenReadOnlyAt 遇缺表的舊 v7 庫:不改動檔案、查詢三張新表視同空結果回 nil, nil
+	ro, err := OpenReadOnlyAt(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ro.LookupResolveNeg("c1", "spotify"); err != nil || ok {
+		t.Errorf("舊 v7 唯讀查詢 resolve_neg_cache 應回空:%v %v", ok, err)
+	}
+	if hist, err := ro.LoadTUIHistory(); err != nil || hist != nil {
+		t.Errorf("舊 v7 唯讀查詢 tui_history 應回 nil, nil:%v %v", hist, err)
+	}
+	if j, err := ro.ListPlayJournal(10); err != nil || j != nil {
+		t.Errorf("舊 v7 唯讀查詢 play_journal 應回 nil, nil:%v %v", j, err)
+	}
+	ro.Close()
+	if afterBytes, _ := os.ReadFile(path); !bytes.Equal(beforeBytes, afterBytes) {
+		t.Fatal("OpenReadOnlyAt 不得改動舊 v7 檔案任何位元組")
+	}
+
+	// OpenAt 開啟舊 v7 庫:不退役 .v7、既有 canonical 資料完好、自動補齊三張新表
+	s, err := OpenAt(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := os.Stat(path + ".v7"); err == nil {
+		t.Fatal("OpenAt 對既有 v7 庫不得觸發 retire 產生 .v7")
+	}
+	if c, err := s.Dump(); err != nil || len(c.Playlists) != 2 {
+		t.Fatalf("既有 v7 庫的 canonical 資料應完好:%v %+v", err, c)
+	}
+	if err := s.AppendTUIHistory("now", time.Unix(100, 0)); err != nil {
+		t.Fatalf("補表後應可正常寫入 tui_history:%v", err)
+	}
+}
+
+func TestResolveNegCacheRoundTripAndExpiry(t *testing.T) {
+	s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	t0 := time.Unix(1_790_000_000, 0)
+	old := ResolveNegEntry{
+		CID: "c_old", Provider: "spotify", TrackSig: "sig1", CandID: "sp1",
+		Score: 68, ReasonCode: "below_threshold", ReasonData: `{"score":68}`, CheckedAt: t0,
+	}
+	keep := ResolveNegEntry{
+		CID: "c_keep", Provider: "apple", TrackSig: "sig2", CandID: "",
+		Score: 0, ReasonCode: "no_candidate", ReasonData: "", CheckedAt: t0.Add(5 * 24 * time.Hour),
+	}
+	if err := s.SaveResolveNeg(old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveResolveNeg(keep); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := s.LookupResolveNeg("c_old", "spotify")
+	if err != nil || !ok || got != old {
+		t.Fatalf("LookupResolveNeg round-trip:%+v %v %v", got, ok, err)
+	}
+
+	// 8 天後寫入新紀錄,順手清掉超過 7 天的 old,保留 3 天前的 keep
+	fresh := ResolveNegEntry{
+		CID: "c_new", Provider: "spotify", TrackSig: "sig3", CandID: "sp3",
+		Score: 71, ReasonCode: "ambiguous", ReasonData: "{}", CheckedAt: t0.Add(8 * 24 * time.Hour),
+	}
+	if err := s.SaveResolveNeg(fresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.LookupResolveNeg("c_old", "spotify"); err != nil || ok {
+		t.Errorf("超過 7 天的負向快取應被順手清除:%v %v", ok, err)
+	}
+	if _, ok, err := s.LookupResolveNeg("c_keep", "apple"); err != nil || !ok {
+		t.Errorf("未滿 7 天的負向快取應保留:%v %v", ok, err)
+	}
+	if err := s.DeleteResolveNeg("c_new", "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.LookupResolveNeg("c_new", "spotify"); ok {
+		t.Error("DeleteResolveNeg 後不應再查到")
+	}
+}
+
+func TestTUIHistoryDedupAndCap(t *testing.T) {
+	s, err := OpenAt(filepath.Join(t.TempDir(), "state.db"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	t0 := time.Unix(1_790_000_000, 0)
+	for _, cmd := range []string{"", "  ", "play a", "play a", "pause", "play a"} {
+		if err := s.AppendTUIHistory(cmd, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.LoadTUIHistory()
+	if err != nil || !slices.Equal(got, []string{"play a", "pause", "play a"}) {
+		t.Fatalf("連續重複應去重、非連續應保留:%v %v", got, err)
+	}
+
+	// 灌超過 100 筆,只保留最新 100 筆(依舊→新順序)
+	for i := 0; i < 120; i++ {
+		if err := s.AppendTUIHistory(fmt.Sprintf("cmd-%03d", i), t0.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err = s.LoadTUIHistory()
+	if err != nil || len(got) != TUIHistoryMax || got[0] != "cmd-020" || got[99] != "cmd-119" {
+		t.Fatalf("應保留最新 100 筆:len=%d first=%q last=%q err=%v", len(got), got[0], got[len(got)-1], err)
+	}
+}
+
+func TestPlayJournalDedupCapAndBusyWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := OpenAt(path, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	t0 := time.Unix(1_790_000_000, 0)
+	// 10 分鐘內同 (provider, provider_id) 去重更新時間;超過 10 分鐘保留兩筆
+	if err := s.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0, Provider: "spotify", ProviderID: "sp1", ISRC: "TWA472400123",
+		Title: "Song 1", Artists: []string{"Artist A"}, Album: "Album 1", DurationMS: 200000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0.Add(5 * time.Minute), Provider: "spotify", ProviderID: "sp1", ISRC: "TWA472400123",
+		Title: "Song 1", Artists: []string{"Artist A"}, Album: "Album 1", DurationMS: 200000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Apple Music State 沒有 provider_id:不同歌曲在 10 分鐘內不得互刪,同首歌在 10 分鐘內會去重
+	if err := s.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0.Add(6 * time.Minute), Provider: "apple", Title: "Lost Stars", Artists: []string{"Adam Levine"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0.Add(7 * time.Minute), Provider: "apple", Title: "Sugar", Artists: []string{"Maroon 5"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0.Add(8 * time.Minute), Provider: "apple", Title: "Lost Stars", Artists: []string{"Adam Levine"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 15 分鐘後再聽 sp1:超過 10 分鐘視窗,應保留舊紀錄與新紀錄共 2 筆 sp1
+	if err := s.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0.Add(20 * time.Minute), Provider: "spotify", ProviderID: "sp1", Title: "Song 1", Artists: []string{"Artist A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := s.ListPlayJournal(0)
+	if err != nil || len(list) != 4 {
+		t.Fatalf("應為 4 筆(sp1 兩筆 + Apple 兩首各一筆):len=%d %+v err=%v", len(list), list, err)
+	}
+	if list[0].ProviderID != "sp1" || !list[0].PlayedAt.Equal(t0.Add(20*time.Minute)) || list[1].Title != "Lost Stars" || list[2].Title != "Sugar" {
+		t.Errorf("排序或去重結果不符預期:%+v", list)
+	}
+
+	// 併發寫鎖下 RecordPlayJournal 的第一句是 DELETE,必須照 busy_timeout 等待而非回 SQLITE_BUSY
+	other, err := OpenAt(path, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("DELETE FROM recent"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	time.AfterFunc(120*time.Millisecond, func() { done <- tx.Commit() })
+	if err := other.RecordPlayJournal(PlayJournalEntry{
+		PlayedAt: t0.Add(30 * time.Minute), Provider: "spotify", ProviderID: "sp-busy", Title: "Busy",
+	}); err != nil {
+		t.Fatalf("併發寫入應等待鎖釋放而非 SQLITE_BUSY:%v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	// 上限 1000 筆裁剪
+	for i := 0; i < 1010; i++ {
+		if err := s.RecordPlayJournal(PlayJournalEntry{
+			PlayedAt: t0.Add(time.Hour + time.Duration(i)*time.Second), Provider: "spotify",
+			ProviderID: fmt.Sprintf("cap-%04d", i), Title: "Cap",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	capped, err := s.ListPlayJournal(0)
+	if err != nil || len(capped) != PlayJournalMax || capped[0].ProviderID != "cap-1009" {
+		t.Fatalf("應裁剪至 1000 筆:len=%d err=%v", len(capped), err)
+	}
+}
+
+func TestAuxTablesIsolatedFromDumpAndClearedByForgetAndHistoryClear(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_CONFIG_DIR", dir)
+	path := filepath.Join(dir, "state.db")
+	s, err := OpenAt(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	in := fixture(t)
+	want := encodeAll(t, in)
+	if err := s.Hydrate(in); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_790_000_000, 0)
+	if err := s.SaveResolveNeg(ResolveNegEntry{CID: "c1", Provider: "spotify", ReasonData: "SECRET_SPOTIFY_NEG_TOKEN", CheckedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveResolveNeg(ResolveNegEntry{CID: "c1", Provider: "apple", ReasonData: "KEEP_APPLE_NEG", CheckedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendTUIHistory("play secret-query", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPlayJournal(PlayJournalEntry{PlayedAt: now, Provider: "spotify", ProviderID: "sp1", Title: "SECRET_SPOTIFY_JOURNAL_SONG"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPlayJournal(PlayJournalEntry{PlayedAt: now, Provider: "apple", ProviderID: "ap1", Title: "KEEP_APPLE_SONG"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 三張純本機表絕不進 Dump,Hydrate 也不會抹掉它們
+	out, err := s.Dump()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustEqual(t, want, encodeAll(t, out), "純本機表不得污染 Dump")
+	if err := s.Hydrate(in); err != nil {
+		t.Fatal(err)
+	}
+	if hist, _ := s.LoadTUIHistory(); len(hist) != 1 {
+		t.Fatalf("Hydrate 不得清空純本機表:%v", hist)
+	}
+
+	// 建立一份退役檔 .v6 驗證 ForgetProviderInRetired 同步清除新表
+	retiredPath := path + ".v6"
+	rawCopy, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(retiredPath, rawCopy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// ForgetProvider("spotify") 搭配 secure_delete 徹底抹除該 provider 在 resolve_neg_cache 與 play_journal 的列
+	if err := s.ForgetProvider("spotify"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ForgetProviderInRetired("spotify", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.LookupResolveNeg("c1", "spotify"); ok {
+		t.Error("ForgetProvider 應刪除 spotify 的 resolve_neg_cache")
+	}
+	if _, ok, _ := s.LookupResolveNeg("c1", "apple"); !ok {
+		t.Error("ForgetProvider 不應刪除其他 provider 的 resolve_neg_cache")
+	}
+	if j, _ := s.ListPlayJournal(0); len(j) != 1 || j[0].Provider != "apple" {
+		t.Errorf("ForgetProvider 應只刪除 spotify 的 play_journal:%+v", j)
+	}
+	for _, f := range []string{path, retiredPath} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(b, []byte("SECRET_SPOTIFY_NEG_TOKEN")) || bytes.Contains(b, []byte("SECRET_SPOTIFY_JOURNAL_SONG")) {
+			t.Errorf("%s 應以 secure_delete 覆寫抹除已刪除的字串", f)
+		}
+	}
+
+	// ClearPlayerHistory 清空 tui_history 與 play_journal
+	if err := s.ClearPlayerHistory(); err != nil {
+		t.Fatal(err)
+	}
+	if hist, _ := s.LoadTUIHistory(); len(hist) != 0 {
+		t.Errorf("ClearPlayerHistory 後 tui_history 應為空:%v", hist)
+	}
+	if j, _ := s.ListPlayJournal(0); len(j) != 0 {
+		t.Errorf("ClearPlayerHistory 後 play_journal 應為空:%+v", j)
+	}
+}

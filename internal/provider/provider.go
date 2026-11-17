@@ -114,11 +114,22 @@ type Device struct {
 	VolumeKnown bool
 }
 
+type RepeatMode string
+
+const (
+	RepeatUnknown RepeatMode = ""
+	RepeatOff     RepeatMode = "off"
+	RepeatContext RepeatMode = "context"
+	RepeatTrack   RepeatMode = "track"
+)
+
 type PlaybackState struct {
 	Playing    bool
 	Track      *Track // nil = 無播放內容
 	ProgressMS int
 	Device     Device
+	Shuffle    bool
+	Repeat     RepeatMode
 }
 
 type PlayRequest struct {
@@ -205,6 +216,17 @@ type PlaybackController interface {
 	Seek(ctx context.Context, posMS int) error
 	// SetVolume:0-100。呼叫端負責夾範圍;手機與部分喇叭會拒絕(Spotify 403 VOLUME_CONTROL_DISALLOW)。
 	SetVolume(ctx context.Context, pct int) error
+}
+
+// DeviceTransferrer:選用擴充介面,把播放輸出切換到指定裝置(Spotify Connect / Apple Music AirPlay)。
+type DeviceTransferrer interface {
+	Transfer(ctx context.Context, deviceID string, play bool) error
+}
+
+// PlaybackModeController:選用擴充介面,切換隨機播放與循環模式。
+type PlaybackModeController interface {
+	SetShuffle(ctx context.Context, on bool) error
+	SetRepeat(ctx context.Context, mode RepeatMode) error
 }
 
 // PlaylistOp:pl push 的一筆操作(spec §3、§6.5.2)。位置語意:依序套用,Pos / From 指的是前面 ops 套完後的狀態;

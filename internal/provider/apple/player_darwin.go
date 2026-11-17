@@ -50,22 +50,92 @@ func StubOSAForTest(t interface{ Cleanup(func()) }) *[]string {
 	return &calls
 }
 
-func (p *Provider) Devices(context.Context) ([]provider.Device, error) {
-	return []provider.Device{{ID: musicDevice, Name: "Music.app", Type: "Computer", Active: true}}, nil
+const devicesScript = `if not (application "Music" is running) then return "not running"
+tell application "Music"
+	set out to {}
+	repeat with d in (every AirPlay device)
+		set pidStr to ""
+		try
+			set pidVal to persistent ID of d
+			if pidVal is not missing value then set pidStr to (pidVal as text)
+		end try
+		set end of out to pidStr & tab & (name of d) & tab & (kind of d as text) & tab & (selected of d as text) & tab & ((sound volume of d) as integer)
+	end repeat
+end tell
+set AppleScript's text item delimiters to linefeed
+return out as text`
+
+func defaultMusicDevices() []provider.Device {
+	return []provider.Device{{ID: musicDevice, Name: "Music.app", Type: "Computer", Active: true}}
+}
+
+// Devices:Music.app 執行中時列舉 AirPlay 裝置;未啟動、無權限或無有效列時靜默退回預設單一 Music.app 裝置。
+func (p *Provider) Devices(ctx context.Context) ([]provider.Device, error) {
+	out, err := runOSA(ctx, devicesScript)
+	if err != nil || out == "" || out == "not running" {
+		return defaultMusicDevices(), nil
+	}
+	var devs []provider.Device
+	for _, line := range strings.Split(out, "\n") {
+		cols := strings.Split(line, "\t")
+		if len(cols) < 5 {
+			continue
+		}
+		name := strings.TrimSpace(cols[1])
+		if name == "" {
+			continue
+		}
+		id := strings.TrimSpace(cols[0])
+		if id == "" {
+			id = name
+		}
+		kind := strings.TrimSpace(cols[2])
+		if kind == "computer" {
+			kind = "Computer"
+		}
+		active := strings.TrimSpace(cols[3]) == "true"
+		vol, verr := strconv.Atoi(strings.TrimSpace(cols[4]))
+		devs = append(devs, provider.Device{
+			ID:          id,
+			Name:        name,
+			Type:        kind,
+			Active:      active,
+			VolumePct:   vol,
+			VolumeKnown: verr == nil,
+		})
+	}
+	if len(devs) == 0 {
+		return defaultMusicDevices(), nil
+	}
+	return devs, nil
 }
 
 // stateScript:一行 tab 分隔輸出;stopped 時只回 "stopped"。
-// 時長/進度在 AppleScript 端先算成整數毫秒(而非 "as text" 後在 Go 端乘 1000)——
+// 時長/進度/音量在 AppleScript 端先算成整數(而非 "as text" 後在 Go 端乘 1000)——
 // 避開 macOS 非 en-US locale(如 de/fr)把小數點印成 "," 導致 Go 端解析失敗的問題
 // (review finding 1;"," 不是合法 Go float,且原本錯誤被 "_" 吞掉,靜默變 0)。
+// 尾端同趟順帶讀回 sound volume、shuffle enabled 與 song repeat,零額外 AppleEvent 往返。
 // 先用 `application "Music" is running` 判斷(不進 tell 區塊就不會把沒開的 Music.app 啟動起來;
-// now --watch 每 2 秒輪詢一次,若每次都啟動 app 會很糟)。
+// now --watch 輪詢時若每次都啟動 app 會很糟)。
 const stateScript = `if not (application "Music" is running) then return "not running"
 tell application "Music"
 	if player state is stopped then return "stopped"
 	set t to current track
-	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer)
+	return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (((duration of t) * 1000) as integer) & tab & (((player position) * 1000) as integer) & tab & (sound volume as integer) & tab & (shuffle enabled as text) & tab & (song repeat as text)
 end tell`
+
+func parseAppleRepeat(s string) provider.RepeatMode {
+	switch strings.TrimSpace(s) {
+	case "off":
+		return provider.RepeatOff
+	case "all":
+		return provider.RepeatContext
+	case "one":
+		return provider.RepeatTrack
+	default:
+		return provider.RepeatUnknown
+	}
+}
 
 func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
 	out, err := runOSA(ctx, stateScript)
@@ -90,12 +160,27 @@ func (p *Provider) State(ctx context.Context) (*provider.PlaybackState, error) {
 	if err1 != nil || err2 != nil {
 		return nil, i18n.Errorf("apple.player.err.bad_number", "output", strconv.Quote(out))
 	}
+	dev := provider.Device{ID: musicDevice, Name: "Music.app", Type: "Computer", Active: true}
+	var shuffle bool
+	repeat := provider.RepeatUnknown
+	if len(f) >= 9 {
+		vol, verr := strconv.Atoi(f[6])
+		if verr != nil {
+			return nil, i18n.Errorf("apple.player.err.bad_number", "output", strconv.Quote(out))
+		}
+		dev.VolumePct = vol
+		dev.VolumeKnown = true
+		shuffle = f[7] == "true"
+		repeat = parseAppleRepeat(f[8])
+	}
 	tr := provider.Track{Title: f[1], Artists: []string{f[2]}, Album: f[3], DurationMS: dur}
 	return &provider.PlaybackState{
 		Playing:    f[0] == "playing",
 		Track:      &tr,
 		ProgressMS: pos,
-		Device:     provider.Device{ID: musicDevice, Name: "Music.app", Type: "Computer", Active: true},
+		Device:     dev,
+		Shuffle:    shuffle,
+		Repeat:     repeat,
 	}, nil
 }
 
@@ -251,4 +336,111 @@ func (p *Provider) Seek(ctx context.Context, posMS int) error {
 func (p *Provider) SetVolume(ctx context.Context, pct int) error {
 	_, err := runOSA(ctx, fmt.Sprintf(`tell application "Music" to set sound volume to %d`, pct))
 	return err
+}
+
+// transferScript / setShuffleScript / setRepeatScript:非 Play 控制腳本一律在 tell 外部先檢查 is running(決策 16);
+// 變數避開 Music.app 保留字(如 matched、st),腳本字串內不寫註解。
+const transferScript = `on run argv
+	if not (application "Music" is running) then return "not running"
+	set wantID to item 1 of argv
+	set wantPlay to item 2 of argv
+	tell application "Music"
+		set chosenDev to missing value
+		repeat with d in (every AirPlay device)
+			set pidStr to ""
+			try
+				set pidVal to persistent ID of d
+				if pidVal is not missing value then set pidStr to (pidVal as text)
+			end try
+			if pidStr is wantID or (name of d) is wantID then
+				set chosenDev to contents of d
+				exit repeat
+			end if
+		end repeat
+		if chosenDev is missing value and (wantID is "music.app" or wantID is "computer") then
+			repeat with d in (every AirPlay device)
+				if (kind of d) is computer then
+					set chosenDev to contents of d
+					exit repeat
+				end if
+			end repeat
+		end if
+		if chosenDev is missing value then return "not found"
+		set current AirPlay devices to {chosenDev}
+		if wantPlay is "1" then play
+		return "ok"
+	end tell
+end run`
+
+const setShuffleScript = `on run argv
+	if not (application "Music" is running) then return "not running"
+	set wantOn to item 1 of argv
+	tell application "Music"
+		set shuffle enabled to (wantOn is "1")
+	end tell
+	return "ok"
+end run`
+
+const setRepeatScript = `on run argv
+	if not (application "Music" is running) then return "not running"
+	set wantMode to item 1 of argv
+	tell application "Music"
+		if wantMode is "off" then
+			set song repeat to off
+		else if wantMode is "context" then
+			set song repeat to all
+		else if wantMode is "track" then
+			set song repeat to one
+		end if
+	end tell
+	return "ok"
+end run`
+
+func osaControlResult(ctx context.Context, out string, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return i18n.Errorf("apple.player.err.not_responding", "err", err)
+	}
+	if err != nil {
+		return i18n.Errorf("apple.player.err.osascript_failed", "err", err)
+	}
+	switch out {
+	case "not running":
+		return ErrNotRunning
+	case "not found":
+		return provider.ErrNotFound
+	default:
+		return nil
+	}
+}
+
+func (p *Provider) Transfer(ctx context.Context, deviceID string, play bool) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return provider.ErrNotFound
+	}
+	wantPlay := "0"
+	if play {
+		wantPlay = "1"
+	}
+	out, err := runOSA(ctx, transferScript, deviceID, wantPlay)
+	return osaControlResult(ctx, out, err)
+}
+
+func (p *Provider) SetShuffle(ctx context.Context, on bool) error {
+	wantOn := "0"
+	if on {
+		wantOn = "1"
+	}
+	out, err := runOSA(ctx, setShuffleScript, wantOn)
+	return osaControlResult(ctx, out, err)
+}
+
+func (p *Provider) SetRepeat(ctx context.Context, mode provider.RepeatMode) error {
+	switch mode {
+	case provider.RepeatOff, provider.RepeatContext, provider.RepeatTrack:
+	default:
+		return fmt.Errorf("%w: repeat mode %q", provider.ErrNotSupported, mode)
+	}
+	out, err := runOSA(ctx, setRepeatScript, string(mode))
+	return osaControlResult(ctx, out, err)
 }

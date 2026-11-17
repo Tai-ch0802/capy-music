@@ -378,3 +378,40 @@ func TestTableWriterBypassesTSV(t *testing.T) {
 		t.Errorf("WriteTable 的 error 要原樣回傳,得到 %v", err)
 	}
 }
+
+func TestThemesLookupAndApply(t *testing.T) {
+	orig := DefaultTheme
+	t.Cleanup(func() { DefaultTheme = orig })
+
+	names := ThemeNames()
+	wantNames := []string{"geek-green", "yuzu-onsen", "vinyl-amber", "night-sakura", "daylight-ink"}
+	if !slices.Equal(names, wantNames) {
+		t.Fatalf("ThemeNames() = %v, want %v", names, wantNames)
+	}
+	// 修改回傳切片不得影響內部註冊順序
+	names[0] = "mutated"
+	if !slices.Equal(ThemeNames(), wantNames) {
+		t.Fatal("ThemeNames() 必須回傳複本")
+	}
+
+	for _, name := range wantNames {
+		th, ok := LookupTheme("  " + strings.ToUpper(name) + " ")
+		if !ok || th.Accent == nil || th.Text == nil || th.Muted == nil {
+			t.Fatalf("LookupTheme(%q) 失敗:%+v %v", name, th, ok)
+		}
+		if !ApplyTheme(name) || DefaultTheme != th {
+			t.Fatalf("ApplyTheme(%q) 未更新 DefaultTheme", name)
+		}
+		if st := HuhStyles(true); st == nil {
+			t.Fatalf("HuhStyles 在主題 %q 下回 nil", name)
+		}
+	}
+
+	if _, ok := LookupTheme("unknown-theme"); ok {
+		t.Error("未知主題 LookupTheme 應回 false")
+	}
+	DefaultTheme = YuzuOnsen
+	if ApplyTheme("unknown-theme") || ApplyTheme("") || DefaultTheme != YuzuOnsen {
+		t.Error("無效主題名 ApplyTheme 應回 false 且保留原 DefaultTheme")
+	}
+}

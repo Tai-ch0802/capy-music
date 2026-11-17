@@ -120,3 +120,25 @@ func TestGoogleFieldsAndDeviceIDRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip:%+v %v", c, err)
 	}
 }
+
+func TestThemeFieldRoundTripAndOmitEmpty(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CAPY_CONFIG_DIR", dir)
+	if err := Save(&Config{SpotifyClientID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"theme"`) {
+		t.Errorf("空 Theme 應 omitempty:%s", raw)
+	}
+	if err := Save(&Config{Theme: "daylight-ink"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil || got.Theme != "daylight-ink" {
+		t.Fatalf("Theme round-trip 失敗:%+v %v", got, err)
+	}
+}

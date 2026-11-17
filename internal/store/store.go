@@ -45,6 +45,14 @@ CREATE TABLE playlist_items_cache (provider TEXT NOT NULL, playlist_id TEXT NOT 
 CREATE TABLE wiki_cache (key TEXT PRIMARY KEY, title TEXT NOT NULL, artists TEXT NOT NULL, language TEXT NOT NULL, model TEXT NOT NULL, body TEXT NOT NULL, fetched_at INTEGER NOT NULL);
 `
 
+// auxSchema:不升 schemaVersion(維持 v7、不觸發舊檔退役、不開 WAL)的冪等純本機輔助表。
+// 絕不進 Dump / Hydrate;OpenAt 開啟既有 v7 或新建資料庫時都會補齊,OpenReadOnlyAt 絕不執行任何 DDL。
+const auxSchema = `
+CREATE TABLE IF NOT EXISTS resolve_neg_cache (cid TEXT NOT NULL, provider TEXT NOT NULL, track_sig TEXT NOT NULL, cand_id TEXT NOT NULL, score INTEGER NOT NULL, reason_code TEXT NOT NULL, reason_data TEXT NOT NULL, checked_at INTEGER NOT NULL, PRIMARY KEY (cid, provider));
+CREATE TABLE IF NOT EXISTS tui_history (id INTEGER PRIMARY KEY AUTOINCREMENT, cmd TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS play_journal (id INTEGER PRIMARY KEY AUTOINCREMENT, played_at INTEGER NOT NULL, provider TEXT NOT NULL, provider_id TEXT NOT NULL, isrc TEXT NOT NULL, title TEXT NOT NULL, artists TEXT NOT NULL, album TEXT NOT NULL, duration_ms INTEGER NOT NULL);
+`
+
 type Store struct {
 	db   *sql.DB
 	path string
@@ -128,18 +136,28 @@ func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 	if err == nil {
 		var v int
 		if err = s.db.QueryRow("PRAGMA user_version").Scan(&v); err == nil && v == schemaVersion {
-			return s, nil
-		}
-		if err != nil && !corrupt(err) {
-			s.Close()
-			return nil, err
-		}
-		if err == nil && v > 0 { // 版本不符:留舊檔
-			if err := s.retire(v); err != nil {
+			if _, err = s.db.Exec(auxSchema); err == nil {
+				return s, nil
+			}
+			if !corrupt(err) {
+				s.Close()
 				return nil, err
 			}
-		} else if err := s.Remove(); err != nil { // 壞檔或全新的 0
-			return nil, err
+			if err := s.Remove(); err != nil {
+				return nil, err
+			}
+		} else {
+			if err != nil && !corrupt(err) {
+				s.Close()
+				return nil, err
+			}
+			if err == nil && v > 0 { // 版本不符:留舊檔
+				if err := s.retire(v); err != nil {
+					return nil, err
+				}
+			} else if err := s.Remove(); err != nil { // 壞檔或全新的 0
+				return nil, err
+			}
 		}
 	} else {
 		if !corrupt(err) {
@@ -152,7 +170,7 @@ func OpenAt(path string, busyTimeout time.Duration) (*Store, error) {
 	if s, err = open(path, busyTimeout); err != nil {
 		return nil, err
 	}
-	if _, err := s.db.Exec(schema + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion)); err != nil {
+	if _, err := s.db.Exec(schema + auxSchema + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion)); err != nil {
 		s.Close()
 		return nil, i18n.Errorf("store.err.create_schema", "err", err)
 	}

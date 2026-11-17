@@ -18,15 +18,17 @@ type Provider struct {
 }
 
 var (
-	_ provider.Provider           = (*Provider)(nil)
-	_ provider.Searcher           = (*Provider)(nil)
-	_ provider.ArtistSearcher     = (*Provider)(nil)
-	_ provider.PlaylistReader     = (*Provider)(nil)
-	_ provider.PlaybackController = (*Provider)(nil)
-	_ provider.ISRCLookup         = (*Provider)(nil)
-	_ provider.TrackGetter        = (*Provider)(nil)
-	_ provider.PlaylistWriter     = (*Provider)(nil)
-	_ provider.PlaylistCreator    = (*Provider)(nil)
+	_ provider.Provider               = (*Provider)(nil)
+	_ provider.Searcher               = (*Provider)(nil)
+	_ provider.ArtistSearcher         = (*Provider)(nil)
+	_ provider.PlaylistReader         = (*Provider)(nil)
+	_ provider.PlaybackController     = (*Provider)(nil)
+	_ provider.DeviceTransferrer      = (*Provider)(nil)
+	_ provider.PlaybackModeController = (*Provider)(nil)
+	_ provider.ISRCLookup             = (*Provider)(nil)
+	_ provider.TrackGetter            = (*Provider)(nil)
+	_ provider.PlaylistWriter         = (*Provider)(nil)
+	_ provider.PlaylistCreator        = (*Provider)(nil)
 )
 
 // ErrNotRunning:Music.app 沒開。State 不會替使用者把它啟動起來(Play 會)。

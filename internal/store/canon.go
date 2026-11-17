@@ -17,8 +17,7 @@ type Canonical struct {
 	Devices   []canon.DeviceState
 }
 
-// Hydrate 用 c 取代所有 canonical 鏡像表(一筆交易)。沒有 upsert,T8 需要再加;個人曲庫的量整批寫也只是毫秒級
-// (真的上萬列時 tx.Prepare 一次、迴圈重用會差很多)。
+// Hydrate 用 c 取代所有 canonical 鏡像表(一筆交易);迴圈內全面使用 tx.Prepare 預編譯重用 statement 以降低大量曲目的解析開銷。
 func (s *Store) Hydrate(c Canonical) (err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -34,66 +33,132 @@ func (s *Store) Hydrate(c Canonical) (err error) {
 			return err
 		}
 	}
-	if c.Manifest != nil {
+	if c.Manifest != nil && len(c.Manifest.Devices) > 0 {
+		stmtDev, err := tx.Prepare(`INSERT INTO devices (device_id, name, last_seen, registered, has_state) VALUES (?, ?, ?, 1, 0)
+			ON CONFLICT(device_id) DO UPDATE SET name = excluded.name, last_seen = excluded.last_seen, registered = 1`)
+		if err != nil {
+			return err
+		}
+		defer stmtDev.Close()
 		for _, d := range c.Manifest.Devices {
-			if _, err = tx.Exec(`INSERT INTO devices (device_id, name, last_seen, registered, has_state) VALUES (?, ?, ?, 1, 0)
-				ON CONFLICT(device_id) DO UPDATE SET name = excluded.name, last_seen = excluded.last_seen, registered = 1`, d.ID, d.Name, d.LastSeen); err != nil {
+			if _, err = stmtDev.Exec(d.ID, d.Name, d.LastSeen); err != nil {
 				return err
 			}
 		}
+		_ = stmtDev.Close()
 	}
 	if c.Tracks != nil {
-		for cid, t := range c.Tracks.Tracks {
-			artists, conflicts := mustJSON(nonNil(t.Artists)), mustJSON(nonNilConflicts(t.Conflicts))
-			if _, err = tx.Exec("INSERT INTO tracks (cid, title, artists, album, duration_ms, conflicts) VALUES (?, ?, ?, ?, ?, ?)", cid, t.Title, artists, t.Album, t.DurationMS, conflicts); err != nil {
+		if len(c.Tracks.Tracks) > 0 {
+			stmtTrack, err := tx.Prepare("INSERT INTO tracks (cid, title, artists, album, duration_ms, conflicts) VALUES (?, ?, ?, ?, ?, ?)")
+			if err != nil {
 				return err
 			}
-			for _, isrc := range t.ISRC {
-				if _, err = tx.Exec("INSERT INTO isrcs (cid, isrc) VALUES (?, ?)", cid, isrc); err != nil {
+			defer stmtTrack.Close()
+			stmtISRC, err := tx.Prepare("INSERT INTO isrcs (cid, isrc) VALUES (?, ?)")
+			if err != nil {
+				return err
+			}
+			defer stmtISRC.Close()
+			stmtMap, err := tx.Prepare("INSERT INTO mappings (cid, provider, provider_id, confidence, pinned, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+			if err != nil {
+				return err
+			}
+			defer stmtMap.Close()
+			for cid, t := range c.Tracks.Tracks {
+				artists, conflicts := mustJSON(nonNil(t.Artists)), mustJSON(nonNilConflicts(t.Conflicts))
+				if _, err = stmtTrack.Exec(cid, t.Title, artists, t.Album, t.DurationMS, conflicts); err != nil {
 					return err
 				}
-			}
-			for prov, m := range t.Mappings {
-				if _, err = tx.Exec("INSERT INTO mappings (cid, provider, provider_id, confidence, pinned, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-					cid, prov, m.ID, m.Confidence, m.Pinned, m.Source, m.UpdatedAt); err != nil {
-					return err
+				for _, isrc := range t.ISRC {
+					if _, err = stmtISRC.Exec(cid, isrc); err != nil {
+						return err
+					}
+				}
+				for prov, m := range t.Mappings {
+					if _, err = stmtMap.Exec(cid, prov, m.ID, m.Confidence, m.Pinned, m.Source, m.UpdatedAt); err != nil {
+						return err
+					}
 				}
 			}
+			_ = stmtTrack.Close()
+			_ = stmtISRC.Close()
+			_ = stmtMap.Close()
 		}
-		for loser, survivor := range c.Tracks.Merged {
-			if _, err = tx.Exec("INSERT INTO merged (cid, into_cid) VALUES (?, ?)", loser, survivor); err != nil {
+		if len(c.Tracks.Merged) > 0 {
+			stmtMerged, err := tx.Prepare("INSERT INTO merged (cid, into_cid) VALUES (?, ?)")
+			if err != nil {
 				return err
 			}
+			defer stmtMerged.Close()
+			for loser, survivor := range c.Tracks.Merged {
+				if _, err = stmtMerged.Exec(loser, survivor); err != nil {
+					return err
+				}
+			}
+			_ = stmtMerged.Close()
 		}
 	}
-	for _, p := range c.Playlists {
-		if _, err = tx.Exec("INSERT INTO playlists (pid, name, description, updated_at) VALUES (?, ?, ?, ?)", p.PID, p.Name, p.Description, p.UpdatedAt); err != nil {
+	if len(c.Playlists) > 0 {
+		stmtPl, err := tx.Prepare("INSERT INTO playlists (pid, name, description, updated_at) VALUES (?, ?, ?, ?)")
+		if err != nil {
 			return err
 		}
-		for _, it := range p.Items {
-			if _, err = tx.Exec("INSERT INTO playlist_items (pid, iid, cid, rank, added_at) VALUES (?, ?, ?, ?, ?)", p.PID, it.IID, it.CID, it.Rank, it.AddedAt); err != nil {
-				return err
-			}
-		}
-		for prov, id := range p.Links {
-			if _, err = tx.Exec("INSERT INTO playlist_links (pid, provider, provider_id) VALUES (?, ?, ?)", p.PID, prov, id); err != nil {
-				return err
-			}
-		}
-	}
-	for _, d := range c.Devices {
-		if _, err = tx.Exec(`INSERT INTO devices (device_id, name, last_seen, registered, has_state) VALUES (?, '', 0, 0, 1)
-			ON CONFLICT(device_id) DO UPDATE SET has_state = 1`, d.DeviceID); err != nil {
+		defer stmtPl.Close()
+		stmtItem, err := tx.Prepare("INSERT INTO playlist_items (pid, iid, cid, rank, added_at) VALUES (?, ?, ?, ?, ?)")
+		if err != nil {
 			return err
 		}
-		for pid, byProv := range d.Base {
-			for prov, b := range byProv {
-				if _, err = tx.Exec("INSERT INTO device_base (device_id, pid, provider, playlist_id, name, items, cids, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-					d.DeviceID, pid, prov, b.Snapshot.ID, b.Snapshot.Name, mustJSON(nonNil(b.Snapshot.Items)), mustJSON(nonNil(b.Snapshot.CIDs)), b.ObservedAt); err != nil {
+		defer stmtItem.Close()
+		stmtLink, err := tx.Prepare("INSERT INTO playlist_links (pid, provider, provider_id) VALUES (?, ?, ?)")
+		if err != nil {
+			return err
+		}
+		defer stmtLink.Close()
+		for _, p := range c.Playlists {
+			if _, err = stmtPl.Exec(p.PID, p.Name, p.Description, p.UpdatedAt); err != nil {
+				return err
+			}
+			for _, it := range p.Items {
+				if _, err = stmtItem.Exec(p.PID, it.IID, it.CID, it.Rank, it.AddedAt); err != nil {
+					return err
+				}
+			}
+			for prov, id := range p.Links {
+				if _, err = stmtLink.Exec(p.PID, prov, id); err != nil {
 					return err
 				}
 			}
 		}
+		_ = stmtPl.Close()
+		_ = stmtItem.Close()
+		_ = stmtLink.Close()
+	}
+	if len(c.Devices) > 0 {
+		stmtDevState, err := tx.Prepare(`INSERT INTO devices (device_id, name, last_seen, registered, has_state) VALUES (?, '', 0, 0, 1)
+			ON CONFLICT(device_id) DO UPDATE SET has_state = 1`)
+		if err != nil {
+			return err
+		}
+		defer stmtDevState.Close()
+		stmtBase, err := tx.Prepare("INSERT INTO device_base (device_id, pid, provider, playlist_id, name, items, cids, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+		if err != nil {
+			return err
+		}
+		defer stmtBase.Close()
+		for _, d := range c.Devices {
+			if _, err = stmtDevState.Exec(d.DeviceID); err != nil {
+				return err
+			}
+			for pid, byProv := range d.Base {
+				for prov, b := range byProv {
+					if _, err = stmtBase.Exec(d.DeviceID, pid, prov, b.Snapshot.ID, b.Snapshot.Name, mustJSON(nonNil(b.Snapshot.Items)), mustJSON(nonNil(b.Snapshot.CIDs)), b.ObservedAt); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		_ = stmtDevState.Close()
+		_ = stmtBase.Close()
 	}
 	return tx.Commit()
 }

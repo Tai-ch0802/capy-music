@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -74,13 +75,16 @@ func TestPremiumRequiredOnEveryPlayerCall(t *testing.T) {
 	c := NewClient(srv.Client(), srv.URL)
 	ctx := context.Background()
 	for name, call := range map[string]func() error{
-		"play":    func() error { return c.Play(ctx, []string{"spotify:track:4uLU6hMCjMI75M1A2tKUQC"}, "") },
-		"context": func() error { return c.PlayContext(ctx, "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", "") },
-		"pause":   func() error { return c.Pause(ctx) },
-		"next":    func() error { return c.Next(ctx) },
-		"prev":    func() error { return c.Prev(ctx) },
-		"seek":    func() error { return c.Seek(ctx, 1000) },
-		"volume":  func() error { return c.SetVolume(ctx, 40) },
+		"play":     func() error { return c.Play(ctx, []string{"spotify:track:4uLU6hMCjMI75M1A2tKUQC"}, "") },
+		"context":  func() error { return c.PlayContext(ctx, "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", "") },
+		"pause":    func() error { return c.Pause(ctx) },
+		"next":     func() error { return c.Next(ctx) },
+		"prev":     func() error { return c.Prev(ctx) },
+		"seek":     func() error { return c.Seek(ctx, 1000) },
+		"volume":   func() error { return c.SetVolume(ctx, 40) },
+		"transfer": func() error { return c.Transfer(ctx, "d1", true) },
+		"shuffle":  func() error { return c.SetShuffle(ctx, true) },
+		"repeat":   func() error { return c.SetRepeat(ctx, provider.RepeatOff) },
 	} {
 		err := call()
 		var ae *apiError
@@ -107,5 +111,76 @@ func TestSeekNoActiveDevice(t *testing.T) {
 	defer srv.Close()
 	if err := NewClient(srv.Client(), srv.URL).Seek(context.Background(), 1000); !errors.Is(err, provider.ErrNoActiveDevice) {
 		t.Fatalf("404 NO_ACTIVE_DEVICE 要映射:%v", err)
+	}
+}
+
+func TestTransferShuffleRepeatRequestShape(t *testing.T) {
+	var got []string
+	var transferBody map[string]any
+	hc := memSpotifyClient(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		if r.URL.Path == "/me/player" {
+			_ = json.NewDecoder(r.Body).Decode(&transferBody)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	p := New(hc, "https://spotify.test")
+	ctx := context.Background()
+	if err := p.Transfer(ctx, "dev-123", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetShuffle(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetShuffle(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetRepeat(ctx, provider.RepeatContext); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetRepeat(ctx, provider.RepeatTrack); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetRepeat(ctx, provider.RepeatOff); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"PUT /me/player?",
+		"PUT /me/player/shuffle?state=true",
+		"PUT /me/player/shuffle?state=false",
+		"PUT /me/player/repeat?state=context",
+		"PUT /me/player/repeat?state=track",
+		"PUT /me/player/repeat?state=off",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("請求數 %d != %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	ids, _ := transferBody["device_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "dev-123" || transferBody["play"] != true {
+		t.Errorf("Transfer body 不符預期:%+v", transferBody)
+	}
+	if err := p.Transfer(ctx, "", false); !errors.Is(err, provider.ErrNotFound) {
+		t.Errorf("空 deviceID 應回 ErrNotFound:%v", err)
+	}
+	if err := p.SetRepeat(ctx, provider.RepeatMode("bad")); !errors.Is(err, provider.ErrNotSupported) {
+		t.Errorf("無效 RepeatMode 應回 ErrNotSupported:%v", err)
+	}
+}
+
+func TestRestrictionViolatedMapsToRestrictedNotAuthExpired(t *testing.T) {
+	hc := memSpotifyClient(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"status":403,"reason":"RESTRICTION_VIOLATED","message":"Player command failed: Restriction violated"}}`))
+	})
+	err := New(hc, "https://spotify.test").SetRepeat(context.Background(), provider.RepeatTrack)
+	var ae *apiError
+	if !errors.Is(err, provider.ErrRestricted) || errors.Is(err, provider.ErrAuthExpired) || errors.Is(err, provider.ErrPremiumRequired) || !errors.As(err, &ae) {
+		t.Fatalf("403 RESTRICTION_VIOLATED 應映射為 ErrRestricted(非授權過期)並保留 *apiError:%v", err)
 	}
 }
