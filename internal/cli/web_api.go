@@ -275,12 +275,23 @@ func (s *webServer) handleNow(w http.ResponseWriter, r *http.Request) {
 	}
 	done := make(chan *nowResponse, 1)
 	go func() {
-		defer s.pollMu.Unlock()
-		gen := s.nowGen.Load()
-		res := s.pollRound(pin)
-		resp := toNowResponse(res)
-		if !s.setNow(res, pin == "", gen) { // 問的期間 dropNow 過(登出、換帳號):舊帳號的結果不記、也不送
-			resp = s.staleNow(pin)
+		var (
+			resp  *nowResponse
+			entry *store.PlayJournalEntry
+		)
+		func() {
+			defer s.pollMu.Unlock()
+			gen := s.nowGen.Load()
+			res := s.pollRound(pin)
+			resp = toNowResponse(res)
+			var ok bool
+			ok, entry = s.commitNow(res, pin == "", gen)
+			if !ok { // 問的期間 dropNow 過(登出、換帳號):舊帳號的結果不記、也不送
+				resp = s.staleNow(pin)
+			}
+		}()
+		if entry != nil {
+			s.recordPlayJournal(*entry)
 		}
 		done <- resp
 	}()

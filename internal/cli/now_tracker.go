@@ -7,11 +7,18 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
+	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 )
 
 // 有效期(決策 51;計畫 docs/superpowers/plans/2026-09-24-web-player-follow-apple-play.md §1.2)。畫面照樣每 2–2.5 秒問一輪——
@@ -20,16 +27,21 @@ const (
 	webNowFailTTL = time.Minute      // 建不起來(沒登入)、token 失效:一分鐘後再試;沒登入 Apple 的人不會每 2.5 秒讀 keychain
 	webNowIdleTTL = 15 * time.Second // Spotify 閒置或暫停(Q65):手機上開始播,最慢 15 秒出現;5xx、網路斷一下也是 15 秒後再問
 	// webNowUnsupportedTTL:平台不支援播放(local、Windows 上的 apple)——這個行程裡不會變,dropNow(換帳號、改設定)時才重來。
-	webNowUnsupportedTTL = 24 * time.Hour
-	webNowPlayTTL        = 10 * time.Second // Spotify 正在播:手機上暫停或換歌,最慢 10 秒出現;這首結束時提早重問
-	webNowAppleErrTTL    = 4 * time.Second  // Apple State 回錯(如 Music.app 沒開):4 秒節流,避免背景每 2 秒狂開 osascript 子行程
-	webNowAppleIdleTTL   = 3 * time.Second  // Apple 閒置或暫停:3 秒節流
-	webNowApplePlayTTL   = 2 * time.Second  // Apple 播放中:2 秒節流(期間由 advance 線性推進進度,settleNow 立即失效)
-	webNowSettle         = 3 * time.Second  // 播放命令後的安定期:Spotify 的播放器寫入是最終一致,剛按完可能讀到舊狀態
+	webNowUnsupportedTTL    = 24 * time.Hour
+	webNowPlayTTL           = 10 * time.Second // Spotify 正在播:手機上暫停或換歌,最慢 10 秒出現;這首結束時提早重問
+	webNowAppleErrTTL       = 4 * time.Second  // Apple State 回錯(如 Music.app 沒開):4 秒節流,避免背景每 2 秒狂開 osascript 子行程
+	webNowAppleIdleTTL      = 3 * time.Second  // Apple 閒置或暫停:3 秒節流
+	webNowApplePlayTTL      = 2 * time.Second  // Apple 播放中:2 秒節流(期間由 advance 線性推進進度,settleNow 立即失效)
+	webNowSettle            = 3 * time.Second  // 播放命令後的安定期:Spotify 的播放器寫入是最終一致,剛按完可能讀到舊狀態
+	nowPlayJournalThreshold = 30 * time.Second // 同一首歌實際累計播放滿 30 秒才寫入一筆本機 play_journal
+	nowPlayJournalBusy      = 100 * time.Millisecond
 )
 
 // webNowClock:有效期、安定期、stale_ms 都看它。測試替換點。
 var webNowClock = time.Now
+
+// nowWritePlayJournal:跨過 30 秒播放門檻後在 pollMu 鎖外寫入本機 play_journal 的接縫(測試可替換驗證)。
+var nowWritePlayJournal = writePlayJournalToStore
 
 // nowResult:一家的播放狀態。st 為 nil = 沒有播放內容(或出錯);err 是原始錯誤(TUI 要分辨 Music.app 沒開、限流,
 // web 在邊界才轉成給人看的字);retryAt:限流冷卻中,冷卻結束的時間(TUI 說「幾點再試」);fresh:這一次真的問了平台,
@@ -83,6 +95,12 @@ type nowTracker struct {
 	nowGen      atomic.Uint64
 	settleUntil atomic.Pointer[time.Time]
 	settleSeq   atomic.Uint64
+
+	// 當前曲目累計播放計時(由 nowMu 保護;實際寫入 state.db 在 pollMu 鎖外執行)。
+	playKey    string
+	playAccum  time.Duration
+	playLastAt time.Time
+	playLogged bool
 }
 
 // pollRound:一輪。釘住就只問那一家。否則照跟隨規則(決策 51):只有「正在播」能把顯示拉走。
@@ -314,6 +332,7 @@ func (t *nowTracker) dropNow(resetShown bool) {
 	}
 	t.nowCache = kept
 	t.lastNow.Store(nil) // 快照一起丟:否則 auth logout 之後,已登出帳號的那首歌還會被端出來一次
+	t.resetPlayJournalLocked()
 	if resetShown {
 		t.shown.Store(nil)
 	}
@@ -323,17 +342,132 @@ func (t *nowTracker) dropNow(resetShown bool) {
 // 碰上 15 秒的有效期,一次 TryLock 失敗就會超過 STALE_DEAD_MS,面板誤判失聯。follow:自動模式才記 shown(釘住的那一輪不算)。
 // gen 是這一輪開始時的世代:問的期間 dropNow 過就不記,回 false(已登出帳號的那首歌不能回到快照裡)。
 func (t *nowTracker) setNow(res nowResult, follow bool, gen uint64) bool {
+	ok, _ := t.commitNow(res, follow, gen)
+	return ok
+}
+
+// commitNow:同 setNow,並回傳本輪是否剛好跨過 30 秒累計播放門檻而需在 pollMu 鎖外寫入 play_journal。
+func (t *nowTracker) commitNow(res nowResult, follow bool, gen uint64) (bool, *store.PlayJournalEntry) {
 	t.nowMu.Lock()
 	defer t.nowMu.Unlock()
 	if t.nowGen.Load() != gen {
-		return false
+		return false, nil
 	}
-	t.lastNow.Store(&nowSnapshot{res: res, at: webNowClock()})
+	at := webNowClock()
+	t.lastNow.Store(&nowSnapshot{res: res, at: at})
 	if follow {
 		p := res.provider
 		t.shown.Store(&p)
 	}
-	return true
+	return true, t.observePlayJournalLocked(res, follow, at)
+}
+
+// stepRound:拿 pollMu 跑一輪輪詢並更新快照,解開 pollMu 後若跨過 30 秒播放門檻則寫入本機 play_journal。
+func (t *nowTracker) stepRound(pin string) (nowResult, bool) {
+	var (
+		res   nowResult
+		entry *store.PlayJournalEntry
+		ok    bool
+	)
+	func() {
+		t.pollMu.Lock()
+		defer t.pollMu.Unlock()
+		if t.ctx != nil && t.ctx.Err() != nil {
+			return
+		}
+		g := t.nowGen.Load()
+		res = t.pollRound(pin)
+		ok, entry = t.commitNow(res, pin == "", g)
+	}()
+	if !ok {
+		return nowResult{}, false
+	}
+	if entry != nil {
+		t.recordPlayJournal(*entry)
+	}
+	return res, true
+}
+
+func (t *nowTracker) resetPlayJournalLocked() {
+	t.playKey = ""
+	t.playAccum = 0
+	t.playLastAt = time.Time{}
+	t.playLogged = false
+}
+
+func (t *nowTracker) observePlayJournalLocked(res nowResult, follow bool, at time.Time) *store.PlayJournalEntry {
+	if res.err != nil || res.st == nil || !res.st.Playing || res.st.Track == nil {
+		// 釘住單一平台的臨時查詢(?provider=...)若閒置,不應洗掉另一家正在追蹤中的累計秒數。
+		if !follow && t.playKey != "" && res.provider != "" && !strings.HasPrefix(t.playKey, res.provider+"\x00") {
+			return nil
+		}
+		t.resetPlayJournalLocked()
+		return nil
+	}
+	tr := res.st.Track
+	if tr.Title == "" && tr.ProviderID == "" {
+		t.resetPlayJournalLocked()
+		return nil
+	}
+	key := res.provider + "\x00" + sleepTrackKey(tr)
+	if key != t.playKey {
+		t.playKey = key
+		t.playAccum = 0
+		t.playLastAt = at
+		t.playLogged = false
+		return nil
+	}
+	if !t.playLastAt.IsZero() && at.After(t.playLastAt) {
+		t.playAccum += at.Sub(t.playLastAt)
+	}
+	t.playLastAt = at
+	if t.playLogged || t.playAccum < nowPlayJournalThreshold {
+		return nil
+	}
+	t.playLogged = true
+	return &store.PlayJournalEntry{
+		PlayedAt:   at,
+		Provider:   res.provider,
+		ProviderID: tr.ProviderID,
+		ISRC:       tr.ISRC,
+		Title:      tr.Title,
+		Artists:    slices.Clone(tr.Artists),
+		Album:      tr.Album,
+		DurationMS: tr.DurationMS,
+	}
+}
+
+// recordPlayJournal:必須在 pollMu 與 nowMu 鎖外呼叫;靜默忽略任何 I/O 錯誤,不阻塞輪詢。
+func (t *nowTracker) recordPlayJournal(entry store.PlayJournalEntry) {
+	if t.ctx != nil && t.ctx.Err() != nil {
+		return
+	}
+	nowWritePlayJournal(entry)
+}
+
+func writePlayJournalToStore(entry store.PlayJournalEntry) {
+	dir, err := config.Dir()
+	if err != nil || dir == "" {
+		return
+	}
+	if testing.Testing() {
+		if os.Getenv("CAPY_CONFIG_DIR") == "" {
+			return
+		}
+		if real, err := os.UserConfigDir(); err == nil && real != "" {
+			realCapy := filepath.Clean(filepath.Join(real, "capy-music"))
+			cleanDir := filepath.Clean(dir)
+			if cleanDir == realCapy || strings.HasPrefix(cleanDir, realCapy+string(filepath.Separator)) {
+				return
+			}
+		}
+	}
+	s, err := store.Open(nowPlayJournalBusy)
+	if err != nil {
+		return
+	}
+	defer s.Close()
+	_ = s.RecordPlayJournal(entry)
 }
 
 // settleNow:進安定期,並讓命令之前讀到的快取立刻過期——不然這幾秒剛好沒有一輪的話,安定期一過,命令之前的「在播」

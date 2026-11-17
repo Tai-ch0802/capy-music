@@ -211,18 +211,12 @@ func nowPoll(trk *nowTracker, pin string, gen int) tea.Cmd {
 	return func() tea.Msg { return tuiAwait(gen, wait, round) }
 }
 
-// nowRound:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖)。卡住的那一輪期間按鍵起的輪詢會排在這裡——
-// 一輪是冪等的(問、寫快取),排隊的那幾輪做完各自依世代號丟棄,不會重播任何控制指令。
+// nowRound:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖),解鎖後若有滿 30 秒播放紀錄則寫入本機 play_journal。
+// 卡住的那一輪期間按鍵起的輪詢會排在這裡——一輪是冪等的(問、寫快取),排隊的那幾輪做完各自依世代號丟棄,不會重播任何控制指令。
 func nowRound(trk *nowTracker, pin string, gen int) func() tuiStateMsg {
 	return func() tuiStateMsg {
-		trk.pollMu.Lock()
-		defer trk.pollMu.Unlock()
-		if trk.ctx.Err() != nil { // 收到訊號結束了(按 q 離開不取消 ctx,行程接著就結束):bubbletea 不等 Cmd,排在鎖後面的那幾輪還會跑——不再建 provider(keychain 對話框)或打 API
-			return tuiStateMsg{gen: gen, dropped: true}
-		}
-		g := trk.nowGen.Load()
-		res := trk.pollRound(pin)
-		if !trk.setNow(res, pin == "", g) {
+		res, ok := trk.stepRound(pin)
+		if !ok {
 			return tuiStateMsg{gen: gen, dropped: true}
 		}
 		return tuiStateMsg{provider: res.provider, st: res.st, err: res.err, retryAt: res.retryAt, cached: !res.fresh, gen: gen}
