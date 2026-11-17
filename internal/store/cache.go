@@ -46,6 +46,13 @@ type CacheDelta struct {
 // 立刻回 SQLITE_BUSY(量過:4–7 µs),busy_timeout 形同虛設;第一句就寫,才會照 busy_timeout 等對方寫完。
 // 所以順序是:清空 → 換清單 → 逐筆加最近項目(每筆先 DELETE 重複的那一列)→ 修剪到上限。
 func (s *Store) ApplyCache(d CacheDelta) (cleared int64, err error) {
+	if d.ClearRecent {
+		// 連線級 PRAGMA(MaxOpenConns=1)在 Begin 前設定,不啟動讀交易、維持交易首句為 DELETE 寫入(守 busy_timeout),
+		// 並確保刪除的 recent / tui_history / play_journal 磁碟頁內容即時覆寫歸零(#102 / #9 2B)。
+		if _, err := s.db.Exec("PRAGMA secure_delete = ON"); err != nil {
+			return 0, err
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -62,9 +69,15 @@ func (s *Store) ApplyCache(d CacheDelta) (cleared int64, err error) {
 		}
 		cleared, _ = res.RowsAffected()
 		for _, tbl := range []string{"tui_history", "play_journal"} {
-			if _, err := tx.Exec("DELETE FROM " + tbl); err != nil && !isMissingTable(err) {
+			r, err := tx.Exec("DELETE FROM " + tbl)
+			if err != nil {
+				if isMissingTable(err) {
+					continue
+				}
 				return 0, err
 			}
+			n, _ := r.RowsAffected()
+			cleared += n
 		}
 	}
 	for _, prov := range slices.Sorted(maps.Keys(d.Playlists)) {

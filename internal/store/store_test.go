@@ -862,14 +862,25 @@ func TestAuxTablesIsolatedFromDumpAndClearedByForgetAndHistoryClear(t *testing.T
 		}
 	}
 
-	// ClearPlayerHistory 清空 tui_history 與 play_journal
-	if err := s.ClearPlayerHistory(); err != nil {
+	// 真實 capy history clear 路徑(ApplyCache ClearRecent: true)計入新表筆數並以 secure_delete 覆寫抹除磁碟頁
+	cleared, err := s.ApplyCache(CacheDelta{ClearRecent: true})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if cleared != 2 {
+		t.Errorf("ApplyCache(ClearRecent) 應回報刪除 2 筆(tui_history 1 + play_journal 1),得 %d", cleared)
+	}
 	if hist, _ := s.LoadTUIHistory(); len(hist) != 0 {
-		t.Errorf("ClearPlayerHistory 後 tui_history 應為空:%v", hist)
+		t.Errorf("ApplyCache(ClearRecent) 後 tui_history 應為空:%v", hist)
 	}
 	if j, _ := s.ListPlayJournal(0); len(j) != 0 {
-		t.Errorf("ClearPlayerHistory 後 play_journal 應為空:%+v", j)
+		t.Errorf("ApplyCache(ClearRecent) 後 play_journal 應為空:%+v", j)
+	}
+	afterClear, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(afterClear, []byte("play secret-query")) || bytes.Contains(afterClear, []byte("KEEP_APPLE_SONG")) {
+		t.Errorf("%s 在 ApplyCache(ClearRecent) 後應以 secure_delete 覆寫抹除 tui_history 與 play_journal 字串", path)
 	}
 }
