@@ -340,6 +340,10 @@ func TestDevicesDecodes(t *testing.T) {
 func TestMyPlaylistsPaginatesAndDualKey(t *testing.T) {
 	var offsets []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/me" {
+			w.Write([]byte(`{"id":"tai"}`))
+			return
+		}
 		if r.URL.Path != "/me/playlists" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
@@ -367,6 +371,44 @@ func TestMyPlaylistsPaginatesAndDualKey(t *testing.T) {
 	}
 	if pls[0].Total != 3 || pls[50].Total != 7 || pls[50].Name != "通勤" || pls[50].Owner != "tai" {
 		t.Errorf("欄位映射(含雙鍵)錯誤:%+v %+v", pls[0], pls[50])
+	}
+}
+
+// 別人的、沒開放協作的清單:光看列表就標 Unwritable(push 在 plan 階段列 refused,不必等寫入吃 403);
+// 自己的與協作的維持空。目前使用者 id 從 GET /me 拿,一次列表只打一次(不是每頁一次)。
+func TestMyPlaylistsMarksNotOwnedUnwritable(t *testing.T) {
+	var meCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me":
+			meCalls++
+			w.Write([]byte(`{"id":"tai","display_name":"Tai"}`))
+		case "/me/playlists":
+			w.Write([]byte(`{"items":[
+{"id":"mine","name":"通勤","collaborative":false,"owner":{"id":"tai","display_name":"Tai"},"items":{"total":1}},
+{"id":"theirs","name":"別人的","collaborative":false,"owner":{"id":"amy","display_name":"Amy"},"items":{"total":1}},
+{"id":"collab","name":"一起編","collaborative":true,"owner":{"id":"amy","display_name":"Amy"},"items":{"total":1}}],"total":3}`))
+		default:
+			t.Errorf("非預期路徑:%s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	pls, err := NewClient(srv.Client(), srv.URL).MyPlaylists(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range pls {
+		got[p.ID] = p.Unwritable
+	}
+	if got["mine"] != "" || got["collab"] != "" {
+		t.Errorf("自己的與協作的清單不該標 Unwritable:%q", got)
+	}
+	if !strings.Contains(got["theirs"], "Amy") {
+		t.Errorf("別人的非協作清單要標 Unwritable 並點名擁有者:%q", got["theirs"])
+	}
+	if meCalls != 1 {
+		t.Errorf("GET /me 一次列表只該打一次,實際 %d 次", meCalls)
 	}
 }
 

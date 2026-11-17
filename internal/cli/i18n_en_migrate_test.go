@@ -89,7 +89,7 @@ func TestEnglishMigrateNewPlaylist(t *testing.T) {
 		"Created the playlist road trip (new1) on spotify",
 		"Pushed 3 changes",
 		"Added 3 tracks from apple:q1 to the master copy road trip (" + pid + ", now 3 in total) and pushed 3 to spotify:new1",
-		`The source isn't linked (a one-time copy). To follow later changes on apple: capy pl link "road trip" apple:q1, then capy pl sync "road trip"`,
+		`The source isn't linked (a one-time copy). To follow later changes on apple: capy pl link --merge "road trip" apple:q1 (the source is arranged like the master copy; you see the table and confirm first), then capy pl sync "road trip"`,
 	} {
 		wantLine(t, errs, line)
 	}

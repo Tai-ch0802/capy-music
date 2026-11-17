@@ -116,6 +116,7 @@ const ready = new Set();
 let isrcPage = null;
 let playlistsPage = null;
 let searchPage = null;
+let syncPage = null;
 
 function showPage(name) {
   document.body.dataset.page = name;
@@ -140,8 +141,8 @@ function route() {
     const args = [root, api, con, notice, providers];
     if (name === 'move') initMove(...args);
     else if (name === 'search') searchPage = initSearch(...args);
-    else if (name === 'playlists') playlistsPage = initPlaylists(...args);
-    else if (name === 'sync') initSync(...args);
+    else if (name === 'playlists') playlistsPage = initPlaylists(...args, arg); // #/playlists/<pid>:打開那一份
+    else if (name === 'sync') syncPage = initSync(...args, arg); // #/sync/<平台>:預選那個平台
     else if (name === 'wiki') initWiki(...args, player);
     else if (name === 'account') initAccount(...args);
     else if (name === 'doctor') initDoctor(...args);
@@ -149,7 +150,9 @@ function route() {
   } else if (name === 'isrc' && arg) {
     isrcPage?.show(arg);
   } else if (name === 'playlists') {
-    playlistsPage?.refresh();
+    playlistsPage?.refresh(arg); // 別頁寫入之後回到這一頁:重讀 /api/library,不留過時的畫面(計畫 2026-09-30 Q7);帶 pid 就打開那一份
+  } else if (name === 'sync') {
+    syncPage?.refresh?.(arg); // 同上(計畫 2026-10-01 §3.6);帶平台就預選它
   } else if (name === 'search') {
     searchPage?.refresh?.();
   }

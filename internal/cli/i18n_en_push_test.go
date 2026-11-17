@@ -79,6 +79,28 @@ func TestPushSyncPickerTitles(t *testing.T) {
 	}
 }
 
+// 繁中的推送說明說「正本」,不說英文的 canonical(同步頁改版計畫 2026-10-01 §3.7:精簡變更表的「說明」欄照 REASON 原樣顯示)。
+func TestChinesePushReasonsSayMasterCopy(t *testing.T) {
+	_, dc := enPushWorld(t, "a", "b", "c")
+	withLanguage(t, "zh-TW")
+	editCanonical(t, dc, drivePlaylist(t, dc), []string{"c", "a", "d"}, nil, "Commute2")
+	out, _ := mustPull(t, "pl", "push", "Commute2", "--yes")
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.Split(line, "\t")
+		got = append(got, f[0]+"|"+f[8]+"|"+f[9])
+	}
+	want := []string{
+		"remove|正本已移除|removed_in_master",
+		"move|照正本的順序|moved_in_master",
+		"add|推到平台|push",
+		"rename|照正本的名字:Commute → Commute2|renamed_in_master",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("列:%q", got)
+	}
+}
+
 // 主流程:四種列的 REASON 英文(REASON_CODE 不變)、推送與無變更的收尾句。
 func TestEnglishPushFlowReasonsAndCounts(t *testing.T) {
 	fs, dc := enPushWorld(t, "a", "b", "c")
@@ -91,9 +113,9 @@ func TestEnglishPushFlowReasonsAndCounts(t *testing.T) {
 	}
 	want := []string{
 		"remove|removed from the master copy|removed_in_master",
-		"move|reordered in the master copy|moved_in_master",
+		"move|following the master copy's order|moved_in_master",
 		"add|push to the platform|push",
-		"rename|renamed in the master copy: Commute → Commute2|renamed_in_master",
+		"rename|following the master copy's name: Commute → Commute2|renamed_in_master",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("列:%q", got)
@@ -194,7 +216,7 @@ func TestEnglishPushStaleBetweenPlanAndApply(t *testing.T) {
 	editCanonical(t, dc, drivePlaylist(t, dc), []string{"a", "b"}, nil, "")
 	reads := 0
 	fs.setHook(func() {
-		if reads++; reads == 3 { // 1 = /me/playlists、2 = 計畫的 GET items、3 = 套用前的重讀
+		if reads++; reads == 4 { // 1 = /me、2 = /me/playlists、3 = 計畫的 GET items、4 = 套用前的重讀
 			fs.items["p1"] = []string{"a", "b", "c", "z"}
 		}
 	})

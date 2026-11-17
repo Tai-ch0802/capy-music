@@ -1349,17 +1349,21 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	if !strings.Contains(css, ".pl__left .pl__item[hidden] { display: none; }") || !strings.Contains(css, ".pl__tbl tr[hidden] { display: none; }") {
 		t.Error("清單頁的篩選:display:grid / flex 會蓋掉 [hidden],要各有一條 display:none")
 	}
-	if !strings.Contains(css, ".pl__list > .pl__item:focus-visible { outline-offset: -4px; }") {
+	// 同步頁的清單列是單選卡(label 裡藏著 radio):焦點落在 input 上,也要畫在項目裡面
+	if !strings.Contains(css, ".pl__list > .pl__item:focus-visible, .pl__list .pl__item:has(input:focus-visible) { outline-offset: -4px; }") {
 		t.Error("左欄清單是捲動容器:焦點環要畫在項目裡面")
 	}
 	// 回到清單頁要重讀(計畫 2026-09-30 §3.6 / Q7):別頁寫入之後這一頁不可以停在過時的畫面。
-	if !strings.Contains(app, "playlistsPage = initPlaylists(") || !strings.Contains(app, "playlistsPage?.refresh()") {
+	if !strings.Contains(app, "playlistsPage = initPlaylists(") || !strings.Contains(app, "playlistsPage?.refresh(arg)") {
 		t.Error("route 要留住 initPlaylists 的回傳值,並在已初始化的 playlists 分支呼叫 refresh()")
 	}
-	// 清單頁的寫入(同步、在 X 建一份、找對應)一律走 CLI 自己的變更表與確認:頁面絕不代加 --yes / --force(決策 46;計畫 §3.5)。
-	for _, bad := range []string{"'--yes'", "'--force'", " --yes'", " --force'", "' --yes", "' --force"} {
-		if strings.Contains(read("js/pages/playlists.js"), bad) {
-			t.Errorf("清單頁不可以代加確認或越過閾值的旗標:%s", bad)
+	// 寫入(同步、在 X 建一份、找對應、納入、搬家)一律走 CLI 自己的變更表與確認:頁面絕不代加 --yes / -y / --force
+	// (決策 46;計畫 2026-09-30 §3.5、2026-10-01 §3.8)。寫入流程搬到 plflow.js 之後,每個會送寫入命令的頁面都要看。
+	for _, f := range []string{"js/pages/playlists.js", "js/pages/plflow.js", "js/pages/sync.js", "js/pages/move.js", "js/collect.js"} {
+		for _, bad := range []string{"'--yes'", "'--force'", "'-y'", " --yes'", " --force'", "' --yes", "' --force", " -y'"} {
+			if strings.Contains(read(f), bad) {
+				t.Errorf("%s 不可以代加確認或越過閾值的旗標:%s", f, bad)
+			}
 		}
 	}
 	if reduced := css[strings.Index(css, "prefers-reduced-motion"):]; !strings.Contains(reduced, ".dock__busy-dot") {
@@ -1380,7 +1384,7 @@ func TestWebStaticFrontendContracts(t *testing.T) {
 	}
 	// pl dedup 沒有 --all:清單留空時不可以送它。
 	sync := read("js/pages/sync.js")
-	if !strings.Contains(sync, `verb === 'dedup' ? '' : ' --all'`) {
+	if !strings.Contains(sync, `verb === 'dedup' ? [] : ['--all']`) {
 		t.Error("dedup 不可以帶 --all(cobra 會直接退回)")
 	}
 	// doctor 會彈系統對話框,不可以由切頁動作觸發。

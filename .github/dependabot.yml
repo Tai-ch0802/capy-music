@@ -1,0 +1,25 @@
+# Dependabot 版本更新(安全性更新另由 repo 設定的 Dependabot security updates 負責,不受 cooldown 影響)。
+# cooldown:新版本發布滿 7 天才開 PR —— 2025–2026 年多起套件被盜發惡意版本的事件
+# (npm Shai-Hulud 等)都在幾天內被下架,等一週能避開大部分「剛發布就中毒」的版本。
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # workflow 裡的 action 已釘 commit SHA,Dependabot 會連同行尾的版本註解一起升級
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -11,6 +11,8 @@ func plFixtureHandler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/me":
+			w.Write([]byte(`{"id":"tai"}`))
 		case "/me/playlists":
 			w.Write([]byte(`{"items":[
 {"id":"p1","name":"通勤","owner":{"display_name":"tai"},"items":{"total":2}},

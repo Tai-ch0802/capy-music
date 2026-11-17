@@ -33,6 +33,12 @@ Releases 的 binary 內建專案自己的 Google OAuth client:`capy auth login g
 go install github.com/Tai-ch0802/capy-music/cmd/capy@latest
 ```
 
+`go install` 會把 `capy` 放在 `$(go env GOPATH)/bin`(預設是 `~/go/bin`;設了 `GOBIN` 就改放那裡),Windows 的 Go 官方安裝程式已經把 `%USERPROFILE%\go\bin` 加進使用者的 PATH。shell 找不到 `capy` 的話,這個目錄就得加進 PATH;以 macOS 的 zsh 為例,跑一次下面這行,再開一個新的終端機:
+
+```bash
+echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zprofile
+```
+
 從原始碼建的 binary(`go install`、自己 `go build`、`capy update --dev`)**沒有內建 Google client**:`capy auth login google` 會用精靈引導你建自己的 OAuth client(見下方 Google 一節)。Homebrew / Scoop / winget 不在計畫內。
 
 ### 更新
@@ -181,6 +187,7 @@ capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl link 通勤 spotify --create          # 在 Spotify / Apple Music / YouTube Music 建一個跟 canonical 同名的私人空清單再連上(local 不行);複製清單見下方
 capy pl link --new-only …                  # 只建新的:名稱已經是某份 canonical 清單時擋下(不分大小寫),也絕不接管既有的連結(包括別台裝置或別的帳號的);擋下來一律零寫入。web 介面發出的 pl link 都帶它
+capy pl link --merge 通勤 apple:<清單 ID 或名稱> [--dry-run] [--yes] [--force]   # 把已經存在的正本(這裡不會建新的)連到一份已經有歌的平台清單:那份清單有、正本沒有的歌照它的順序接在正本最後面(正本原有的歌不動),再把那份清單排成正本的樣子(歌、份數、順序、名字);一張表、一次確認,確認之前什麼都不寫、也不連上
 capy pl unlink 通勤 spotify
 capy pl show / link / unlink / pull / push / sync / dedup   # 不帶清單名且在終端機裡 = 開挑選器(link 三段,第二段也能選在 Spotify / Apple Music / YouTube Music 建新的空清單;unlink 兩段);pipe / cron 維持原本的參數錯誤
 capy pl pull 通勤 [--dry-run] [--yes] [--force] / capy pl pull --all [--provider spotify]   # 平台 → canonical → Drive;變更先列出、確認後才寫(需先 capy auth login google)
@@ -236,11 +243,11 @@ capy update [--dev]                      # 見上方「更新」
 
 `capy pl pull` 的 exit code 是對外契約(cron 靠它):`0` 無變更或已成功套用、`1` 錯誤、`2` 有待套用的變更(`--dry-run`、非 TTY 沒給 `--yes`、在終端機取消)、`3` 安全閥擋下(Drive appdata 不完整;或單一清單要刪 >10 首、或 >30% 且 >3 首)。`--yes` 只跳過確認、`--force` 只越過刪除閾值且只能配單一清單(`capy pl pull <名稱> --force`,不能配 `--all`:安全閥一次只解除一個清單),兩者都不放行「Drive 不完整」——那條的出口是 `capy drive init --from-local`。變更集在非 TTY 下是無標題 TSV:`action provider playlist pos cid provider_id title artists reason reason_code`(`reason` 給人看、跟著語系;腳本請看 `reason_code`,它是固定的代碼,例如 `added_on_platform`、`removed_on_platform`,完整的表見[下方](#reason_code-代碼表));「這次動了幾筆」看行數,不佔 exit code。寫入順序固定 Drive 先、本機 `state.db` 後;`state.db` 只是快取,刪掉後下一次 pull 會從 Drive 重建。
 
-`capy pl push` 是反方向(canonical → 平台),形狀與 exit code 同 `pl pull`,多兩個 `--yes` / `--force` 都不放行的前提:這台裝置對那個平台清單 pull 過(不然會把平台清單刪光),而且平台上沒有還沒 pull 的變更(不然會蓋掉你剛在平台改的)——先 `capy pl pull`。變更集的 `action` 多了 `skip`(canonical 有、平台沒有、又沒有這個平台的 id:先 `capy resolve`),它不是變更,數行數時要扣掉。寫入 Spotify 是整批取代(前 100 首一次、其後每批 100),所以平台端的「加入時間」會重設;含 local file 的 Spotify 清單暫不支援 push(local file 加不回去)。寫到一半失敗會以 exit 1 結束並講明已寫幾首,重跑一次補回其餘;確認之後寫入之前平台又變了(手機同時在加歌)那份不寫、exit 3。寫入 Apple Music:只加歌走 Apple 文件化的新增端點(每批 100、接在尾端);有移除或換序時是整批取代(網頁播放器自己用的端點,Apple 沒有正式承諾);改名只改名字、描述保留。只有你自己建的清單能寫——Apple 精選、喜好歌曲、已購買的音樂會擋下、零寫入;**協作播放清單**目前 capy 完全不寫(Apple 對它的整批取代回 500):push / sync 在列變更時就跳過那一格並說明,明說 `--provider apple` 要推它是 exit 3;請在 app 裡手動,或先複製成一般清單再連結(未實測,通常可以);加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定。移除與換序同樣是整批取代:清單順序一定照正本;Mac 的 Music app 能顯示每首歌加進清單的「加入日期」,它會不會因此被重設還沒驗證(Spotify 的加入時間會,見上)。Apple 商店裡已經下架的歌,加歌請求照樣成功但實際上不會加入;capy 寫完會重讀,內容和預期不同時會警告。
+`capy pl push` 是反方向(canonical → 平台),形狀與 exit code 同 `pl pull`,多兩個 `--yes` / `--force` 都不放行的前提:這台裝置對那個平台清單 pull 過(不然會把平台清單刪光),而且平台上沒有還沒 pull 的變更(不然會蓋掉你剛在平台改的)——先 `capy pl pull`。變更集的 `action` 多了 `skip`(canonical 有、平台沒有、又沒有這個平台的 id:先 `capy resolve`),它不是變更,數行數時要扣掉。寫入 Spotify 是整批取代(前 100 首一次、其後每批 100),所以平台端的「加入時間」會重設;含 local file 的 Spotify 清單暫不支援 push(local file 加不回去)。Spotify 只能寫你自己的或協作的清單:別人的清單在列變更時就擋下——`pl push` 以 exit 3 結束、什麼都不寫,`pl sync` 只跳過那一格並說明。寫到一半失敗會以 exit 1 結束並講明已寫幾首,重跑一次補回其餘;確認之後寫入之前平台又變了(手機同時在加歌)那份不寫、exit 3。寫入 Apple Music:只加歌走 Apple 文件化的新增端點(每批 100、接在尾端);有移除或換序時是整批取代(網頁播放器自己用的端點,Apple 沒有正式承諾);改名只改名字、描述保留。只有你自己建的清單能寫——Apple 精選、喜好歌曲、已購買的音樂會擋下、零寫入;**協作播放清單**目前 capy 完全不寫(Apple 對它的整批取代回 500):push / sync 在列變更時就跳過那一格並說明,明說 `--provider apple` 要推它是 exit 3;請在 app 裡手動,或先複製成一般清單再連結(未實測,通常可以);加進清單的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定。移除與換序同樣是整批取代:清單順序一定照正本;Mac 的 Music app 能顯示每首歌加進清單的「加入日期」,它會不會因此被重設還沒驗證(Spotify 的加入時間會,見上)。Apple 商店裡已經下架的歌,加歌請求照樣成功但實際上不會加入;capy 寫完會重讀,內容和預期不同時會警告。
 
 `capy pl sync` 是同一把鎖裡「每個清單先 pull 各平台、再 push 各平台」的一輪(provider 依字典序),一張表、一次確認,exit code 同上;push 的兩個前提由「先 pull 後 push」自動滿足,push 半邊直接用 pull 半邊剛讀到的平台清單、不再讀一次。TSV 比 pull / push 多一欄在最前面:`dir`(`pull` / `push`)。`--dry-run` 的 push 半邊是用 pull 套用後的 canonical 算的,所以看得到完整一輪;`--provider spotify` 只走一個平台;指到寫不了的平台(例如別台裝置的本機清單)時只做 pull 半邊(stderr 會說)。刪除閾值對每個 (清單, 平台) 各算,任一個擋下整輪就零寫入(`--force` 放行的話,pull 吸收進來的刪除會在同一個指令裡推到這個清單連結的每一個平台——先跑 `--dry-run`);但某個清單的某個平台推不了(例如含 local file)只會跳過那一格的 push 半邊(stderr 會說),其餘照常——cron 放 `capy pl sync --all --yes` 不會被一個清單綁死,exit 2 / 3 時再到終端機看。
 
-`capy pl dedup` 去掉清單裡重複的曲目。重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首);保留第一次出現的那份、拿掉後面的,**剩下的相對順序一個都不動——清單順序是你加歌的記憶,capy 沒有任何路徑會排序或打亂它**(去重只拿掉後出現的份;同步只在平台自己重排時才跟著動)。`capy pl dedup apple:冬日暖調` 這種寫法直接讀平台清單、只印報告(非 TTY 是 TSV:`pos id title artists reason reason_code`,`pos` 從 0 起、是重複的那份(該拿掉的)的位置,保留的那份寫在 `reason` 裡,`reason_code` 是 `dup_id` 或 `dup_isrc`;有沒有重複 exit code 都是 0),不碰 Drive、不需要連結——要由 capy 去掉,就把清單連到正本再用下一種寫法;這種寫法配 `--yes` / `--force` / `--dry-run` / `--provider` 是錯誤(它們是 canonical 那條路的 flag)。給 canonical 清單名(`capy pl dedup 通勤`)則是 `pl sync` 的一輪中間多一步:先 pull、正本去重、再 push 把多出來的份從可寫的平台拿掉;一張表(`dir` 多一種 `dedup`,那些列的 `pos` 是正本裡的位置)、一次確認,exit code 同 `pl sync`;正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 `pl sync`,stderr 會說;`--provider` 沒選到或讀不到的平台這次沒檢查,stderr 也會說,不會被算成「沒重複」)。刪除閾值去重與 push 各算,`--force` 越過(去掉的份會在同一個指令裡推到清單連結的每個可寫平台)。寫不了的平台上還留著的份會列在 stderr 請你手動刪,下一次 pull 不會把它們加回正本。同 ISRC 不同 id 時正本記第一份,平台上留下哪個 id 由配對決定(相鄰兩份時留後面那個)。
+`capy pl dedup` 去掉清單裡重複的曲目。重複 = 同平台 id、或同 ISRC(單曲版 / 專輯版算同一首);保留第一次出現的那份、拿掉後面的,**剩下的相對順序一個都不動——清單順序是你加歌的記憶,capy 沒有任何路徑會排序或打亂它**(去重只拿掉後出現的份;同步只在平台自己重排時才跟著動)。唯一的例外是你在 `capy pl link --merge` 確認過的那一張表:要連上的那份平台清單會在那裡排成正本的順序;正本原有的歌不動,之後任何同步都不會因為合併而重排。`capy pl dedup apple:冬日暖調` 這種寫法直接讀平台清單、只印報告(非 TTY 是 TSV:`pos id title artists reason reason_code`,`pos` 從 0 起、是重複的那份(該拿掉的)的位置,保留的那份寫在 `reason` 裡,`reason_code` 是 `dup_id` 或 `dup_isrc`;有沒有重複 exit code 都是 0),不碰 Drive、不需要連結——要由 capy 去掉,就把清單連到正本再用下一種寫法;這種寫法配 `--yes` / `--force` / `--dry-run` / `--provider` 是錯誤(它們是 canonical 那條路的 flag)。給 canonical 清單名(`capy pl dedup 通勤`)則是 `pl sync` 的一輪中間多一步:先 pull、正本去重、再 push 把多出來的份從可寫的平台拿掉;一張表(`dir` 多一種 `dedup`,那些列的 `pos` 是正本裡的位置)、一次確認,exit code 同 `pl sync`;正本與這次檢查的平台都沒有重複時零寫入(pull 半邊看到的其他變更留給 `pl sync`,stderr 會說;`--provider` 沒選到或讀不到的平台這次沒檢查,stderr 也會說,不會被算成「沒重複」)。刪除閾值去重與 push 各算,`--force` 越過(去掉的份會在同一個指令裡推到清單連結的每個可寫平台)。寫不了的平台上還留著的份會列在 stderr 請你手動刪,下一次 pull 不會把它們加回正本。同 ISRC 不同 id 時正本記第一份,平台上留下哪個 id 由配對決定(相鄰兩份時留後面那個)。
 
 `capy pl add` 把一首曲目(`<provider>:<id>` 或 `--now`)嚴格加在 Drive 正本清單的最尾端(既有項目順序不動;在終端機裡不給清單名會開挑選器)。`--now` 取目前正在播的那首(有 `--provider` 釘住該家,否則優先找正在播放的平台、再退回 `default_provider`;macOS Apple Music 因 `Music.app` 腳本介面不提供目錄 ID,會用你登入的 Apple 網頁 token 以歌名、歌手與時長 ±2 秒反查目錄補齊 ID 與 ISRC)。正本已有同一首(同 `cid`)且未帶 `--allow-dup` 時零寫入、exit 0。預設只更新 Drive 正本與本機快取;`--push` 比照 `pl dedup` 雙半邊模式(先對已連結平台 pull 對齊 → 正本尾端新增 → 對可寫且有 base 的平台推播;無 base 或推不了的平台印 stderr 跳過 push 半邊,不阻斷正本寫入)。
 
@@ -250,7 +257,7 @@ capy update [--dev]                      # 見上方「更新」
 
 ### reason_code 代碼表
 
-`pl pull` / `push` / `sync` / `migrate` / `dedup` / `add` / `resolve` 的 TSV 最後一欄都是 `reason_code`:固定的英文代碼,**永不翻譯、只增不改**;前一欄 `reason` 是同一件事給人看的說法,跟著語系。腳本判斷原因請看這一欄。同一個代碼可以出現在不同命令(例如 `push`)。`pl sync` / `migrate` / `pl dedup` / `pl add` 的 TSV 最前面多一欄 `dir`,每一列照它的 `dir` 對下表:`dir=pull` 同 `pl pull`、`dir=push` 同 `pl push`。新增代碼時同一個 PR 補這張表與英文 [README](README.md#reason_code-table) 的同一張表(`internal/cli/reason_code_test.go` 兩份都比)。
+`pl pull` / `push` / `sync` / `migrate` / `dedup` / `add` / `resolve` / `pl link --merge` 的 TSV 最後一欄都是 `reason_code`:固定的英文代碼,**永不翻譯、只增不改**;前一欄 `reason` 是同一件事給人看的說法,跟著語系。腳本判斷原因請看這一欄。同一個代碼可以出現在不同命令(例如 `push`)。`pl sync` / `migrate` / `pl dedup` / `pl add` / `pl link --merge` 的 TSV 最前面多一欄 `dir`,每一列照它的 `dir` 對下表:`dir=pull` 同 `pl pull`、`dir=push` 同 `pl push`。新增代碼時同一個 PR 補這張表與英文 [README](README.md#reason_code-table) 的同一張表(`internal/cli/reason_code_test.go` 兩份都比)。
 
 | 命令(列) | action | reason_code | 意思 |
 |---|---|---|---|
@@ -260,9 +267,9 @@ capy update [--dev]                      # 見上方「更新」
 | | `rename` | `renamed_on_platform` | 平台上的清單改了名 |
 | | `unlink` | `playlist_gone` | 平台上的清單不見了,取消連結 |
 | `pl push`(與 `dir=push` 列) | `add` | `push` | 正本有、平台沒有,推上去 |
-| | `remove` | `removed_in_master` | 正本拿掉了,從平台移除 |
-| | `move` | `moved_in_master` | 正本換了位置 |
-| | `rename` | `renamed_in_master` | 正本改了名 |
+| | `remove` | `removed_in_master` | 正本拿掉了,或是平台上多出來的那一份(正本的份數比較少),從平台移除 |
+| | `move` | `moved_in_master` | 照正本的順序在平台上換位置 |
+| | `rename` | `renamed_in_master` | 平台上的清單改成正本的名字 |
 | | `skip` | `no_mapping` | 沒有這個平台的 id,這次不推:先 `capy resolve` |
 | | `skip` | `unpushable` | 有 id 但推不上去(local file、只在資料庫裡、檔案不在這台電腦),請在平台手動加 |
 | `migrate` 的 `dir=migrate` 列(`action` 一律是 `add`,搬不搬得過去看代碼) | `add` | `push` | 搬得過去(網頁的搬家精靈靠它認) |
@@ -272,6 +279,11 @@ capy update [--dev]                      # 見上方「更新」
 | `pl dedup <平台>:<清單>`(只報告,沒有 action 欄) | | `dup_id` | 同平台 id |
 | | | `dup_isrc` | 同 ISRC |
 | `pl add` 的 `dir=add` 列 | `add` | `added_to_master` | 加進正本尾端 |
+| `pl link --merge` 的 `dir=resolve` 列 | `map` | `isrc` | 要連上的那份清單裡的歌,用 ISRC 認成正本的這一首;確認後才寫入對應 |
+| | `map` | `fuzzy` | 用歌名、歌手、長度認成同一首(≥85);確認後才寫入 |
+| `pl link --merge` 的 `dir=pull` 列 | `add` | `added_on_platform` | 那份清單有、正本沒有,接在正本最後面 |
+| | `skip` | `dup_id` | 那份清單裡多出來的同一首(同平台 id),不接進正本(`pos` 是它在那份清單裡的位置;正本的份數比較少時,`dir=push` 會多一列 remove,拿掉哪一份看那一列) |
+| | `skip` | `dup_isrc` | 那份清單裡多出來的同一首(同 ISRC),不接進正本;平台上留下的可能是同一首的另一個版本 |
 | `resolve` | `map` | `isrc` | ISRC 反查到,自動寫入 |
 | | `map` | `fuzzy` | 模糊比對 ≥85,自動寫入 |
 | | `review` | `no_candidate` | 找不到候選 |
@@ -293,7 +305,7 @@ capy --web
 
 先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify、Apple Music 與 YouTube Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token、YouTube Music 要自己複製登入 cookie,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify、Apple Music 或 YouTube Music。
 
-其他頁面:**我的清單**(你存在 Google Drive 的清單正本:整份清單可按 `▶` 依序連播或按 `🔀` 在記憶體隨機連播(絕不改動正本順序),單曲有那個平台對應的可以直接用 Spotify 或 Apple Music(macOS;只在你資料庫裡、Apple Music 目錄查不到的歌標「只在資料庫」,不能從這裡播)播放、或在 YouTube Music 開啟、高亮目前正在播的那首、看它連到哪些平台的清單並就地同步、把平台上的清單納入 capy、問那一首的歌曲 wiki)、**同步**、**搜尋**(附最近項目快速續播卡與本機今日聆聽膠囊,並可按 `＋` 收進正本清單)、**歌曲 wiki**(正在播那首歌背後的故事,由你自己的 AI 端點用你的母語寫;見[歌曲 wiki](#歌曲-wiki選用接上你自己的-ai-端點)——這一頁跑的是 `capy wiki`,「設定 AI 端點」鈕就地開設定精靈)、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**:專輯封面(缺省時顯示內建黑膠水豚 SVG)、曲名外連、`+` 收藏鈕(或按 `a`,執行 `capy pl add` 並走標準確認提示)、隨機 / 上一首 / 播放暫停 / 下一首 / 循環、可拖曳預覽進度條與音量滑桿、輸出裝置切換、**水豚柚子湯定時器**彈窗(播完這首停、15–60 分鐘溫柔漸弱、25m/5m 專注泡湯,關掉分頁仍由本機伺服器準時執行)、`navigator.mediaSession` 系統媒體鍵,以及 **`z` 水豚溫泉劇場**(大封面、泡湯水豚動畫,並離線即時共讀已快取的歌曲介紹、MV 搜尋連結與固定免責提醒)。它跟著真正在播的平台走(只有正在播的平台會把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),控制鈕作用在它顯示的那個平台上;`capy --web --provider X` 可以把它釘在一個平台。跨頁快捷鍵(`/` 主控台、`s` 搜尋/找歌、`m` 靜音、`a` 收藏、`z` 劇場、`?` 快捷鍵表)隨時可用;凡涉及寫入清單或設定的操作背後都是一條 capy 命令,主控台留著完整紀錄,要確認的事一律由命令自己問,頁面絕不替你代按。側欄最下面還有語言選單(見上方「介面語言」)。
+其他頁面:**我的清單**(你存在 Google Drive 的清單正本:整份清單可按 `▶` 依序連播或按 `🔀` 在記憶體隨機連播(絕不改動正本順序),單曲有那個平台對應的可以直接用 Spotify 或 Apple Music(macOS;只在你資料庫裡、Apple Music 目錄查不到的歌標「只在資料庫」,不能從這裡播)播放、或在 YouTube Music 開啟、高亮目前正在播的那首、看它連到哪些平台的清單、就地同步、在其他平台建一份或連到那邊已經有的清單、把平台上的清單納入 capy、問那一首的歌曲 wiki)、**同步**(從任一平台的任一份清單開始:挑平台、挑清單,納入 capy、在其他平台建一份或連到那邊已經有的清單(合併,`pl link --merge`),同步一份或全部;第二台電腦也在這裡讀回正本)、**搜尋**(附最近項目快速續播卡與本機今日聆聽膠囊,並可按 `＋` 收進正本清單)、**歌曲 wiki**(正在播那首歌背後的故事,由你自己的 AI 端點用你的母語寫;見[歌曲 wiki](#歌曲-wiki選用接上你自己的-ai-端點)——這一頁跑的是 `capy wiki`,「設定 AI 端點」鈕就地開設定精靈)、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**:專輯封面(缺省時顯示內建黑膠水豚 SVG)、曲名外連、`+` 收藏鈕(或按 `a`,執行 `capy pl add` 並走標準確認提示)、隨機 / 上一首 / 播放暫停 / 下一首 / 循環、可拖曳預覽進度條與音量滑桿、輸出裝置切換、**水豚柚子湯定時器**彈窗(播完這首停、15–60 分鐘溫柔漸弱、25m/5m 專注泡湯,關掉分頁仍由本機伺服器準時執行)、`navigator.mediaSession` 系統媒體鍵,以及 **`z` 水豚溫泉劇場**(大封面、泡湯水豚動畫,並離線即時共讀已快取的歌曲介紹、MV 搜尋連結與固定免責提醒)。它跟著真正在播的平台走(只有正在播的平台會把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),控制鈕作用在它顯示的那個平台上;`capy --web --provider X` 可以把它釘在一個平台。跨頁快捷鍵(`/` 主控台、`s` 搜尋/找歌、`m` 靜音、`a` 收藏、`z` 劇場、`?` 快捷鍵表)隨時可用;凡涉及寫入清單或設定的操作背後都是一條 capy 命令,主控台留著完整紀錄,要確認的事一律由命令自己問,頁面絕不替你代按。側欄最下面還有語言選單(見上方「介面語言」)。
 
 ```bash
 capy --web --port 43117   # 指定 port(預設隨機;不可用 8888、80、443)
@@ -320,7 +332,7 @@ capy migrate 公路旅行 --from spotify --to apple                # 反方向:�
 capy migrate                                                # 終端機裡不帶參數:逐段挑選來源平台、清單、目標平台、既有清單或建新的
 ```
 
-它把下面手動流程的七步一次做完:讀來源(不連結、不動它)→ 決定正本與目標(既有的目標先拉進正本)→ 來源裡目標還沒有的依來源順序接在尾端(同平台 id 或同 ISRC 的略過,來源自己的重複也只留一份)→ 替每一首找目標平台的 id(ISRC 反查 → 模糊比對;沒對到的在終端機可以當場逐筆裁決)→ 一張表(`dir` 有 `pull` / `migrate` / `push` 三種)、一次確認 → 需要時才在目標建清單 → 推。先看不做用 `--dry-run`;腳本裡要 `--yes`(非 TTY 沒給以 exit 2 結束、不建清單)。**順序**:目標原本的順序是前綴,來源的曲目依來源的順序接在後面。**只新增**:永遠不動來源,對目標也不移除;目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 `capy pl sync`。沒對到的曲目這次不推,表裡會說,結尾給你 `capy resolve --review` 與 `capy pl sync` 的命令補上。完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要之後跟著來源的變動,結尾也會給 `capy pl link` + `capy pl sync` 的命令。例外:正本本來就連著來源(下面的手動流程做到一半)時,來源那半也一起拉進正本、以正本為準,結尾會說兩邊都連著。local 只能加進既有檔(`--to local:<檔名>`);搬進 Apple Music 的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定(Apple 的行為),而且只能搬進你自己建的清單(Apple 精選不行);Apple 商店裡已經下架的歌搬不過去:表裡可能照樣列出,寫完重讀時 capy 會警告。
+它把下面手動流程的七步一次做完:讀來源(不連結、不動它)→ 決定正本與目標(既有的目標先拉進正本)→ 來源裡目標還沒有的依來源順序接在尾端(同平台 id 或同 ISRC 的略過,來源自己的重複也只留一份)→ 替每一首找目標平台的 id(ISRC 反查 → 模糊比對;沒對到的在終端機可以當場逐筆裁決)→ 一張表(`dir` 有 `pull` / `migrate` / `push` 三種)、一次確認 → 需要時才在目標建清單 → 推。先看不做用 `--dry-run`;腳本裡要 `--yes`(非 TTY 沒給以 exit 2 結束、不建清單)。**順序**:目標原本的順序是前綴,來源的曲目依來源的順序接在後面。**只新增**:永遠不動來源,對目標也不移除;目標有還沒同步的移除 / 換序 / 改名時以 exit 3 擋下,先 `capy pl sync`。沒對到的曲目這次不推,表裡會說,結尾給你 `capy resolve --review` 與 `capy pl sync` 的命令補上。完成後只有目標連著 capy 的正本(來源不連結,一次性複製);要之後跟著來源的變動,結尾也會給 `capy pl link` + `capy pl sync` 的命令。例外:正本本來就連著來源(下面的手動流程做到一半)時,來源那半也一起拉進正本、以正本為準,結尾會說兩邊都連著。目標還沒連、capy 已經有一份跟目標同名而且有歌的正本、又沒 pull 過這個目標時,會以 exit 1 擋下、什麼都不寫:加進去會照目標的順序重排那份正本。請先在平台上把清單改名,capy 才會建一份新的正本(原本那份不會跟它同步)。local 只能加進既有檔(`--to local:<檔名>`);搬進 Apple Music 的曲目會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定(Apple 的行為),而且只能搬進你自己建的清單(Apple 精選不行);Apple 商店裡已經下架的歌搬不過去:表裡可能照樣列出,寫完重讀時 capy 會警告。
 
 > ⚠️ 建清單(`POST /me/playlists`)與推曲目(`PUT /playlists/{id}/items`)是照 Spotify 2026-02 的官方文件實作,**還沒在真帳號上驗證過**。遇到 404,或建出來的清單在 app 裡是公開的,請回報。
 

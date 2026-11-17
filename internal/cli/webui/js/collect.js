@@ -2,7 +2,7 @@
 // 清單挑選器直接讀唯讀直達端點 GET /api/library(零序列槽競爭);實際寫入走 capy pl add,由 CLI 印變更表並以 confirmWrite 確認,
 // 頁面絕不代加 --yes 或 --force(決策 46)。
 import { el, providerName, emptyState } from './pages/common.js';
-import { changeTable } from './pages/sync.js';
+import { changeTable } from './pages/plflow.js';
 import { t } from './i18n.js';
 
 let activeCollector = null;

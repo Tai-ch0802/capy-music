@@ -191,6 +191,45 @@ func TestPlLocalForeignSkippedAndRelinkTakesOver(t *testing.T) {
 	}
 }
 
+// 回歸測試:這台沒設 local_root(local provider 建不起來)、正本連著別台裝置的本機清單——sync / pull --all 照常同步 Spotify,
+// 別台的 local 只跳過、exit 0(之前 pf.provider 在 foreign 判斷之前就回錯,整輪 exit 1)。本機自己的 link 照舊要求設 local_root。
+func TestPlLocalForeignSkippedWithoutLocalRoot(t *testing.T) {
+	fs, dc, _ := localWorld(t)
+	fs.set("p1", "通勤", "a", "b")
+	mustPull(t, "pl", "link", "通勤", "spotify:p1")
+	mustPull(t, "pl", "link", "通勤", "local:通勤.m3u8")
+	mustPull(t, "pl", "sync", "通勤", "--yes")
+	n := len(drivePlaylist(t, dc).Items)
+	setDevice(t, devB)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.LocalRoot = ""
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	fs.set("p1", "通勤", "a", "b", "c")
+	out, errs, err := runPull(t, "pl", "sync", "--all", "--yes")
+	if err != nil {
+		t.Fatalf("B 沒設 local_root:sync --all 照常、exit 0:%v\n%s%s", err, out, errs)
+	}
+	if !strings.Contains(errs, "跳過 通勤 的 local:"+devA+"/通勤.m3u8 屬於裝置") || strings.Count(errs, "跳過 通勤 的 local") != 1 {
+		t.Fatalf("foreign 只跳過、說一次:%s", errs)
+	}
+	pl := drivePlaylist(t, dc)
+	if len(pl.Items) != n+1 || pl.Links["local"] != devA+"/通勤.m3u8" {
+		t.Fatalf("Spotify 的 c 要進正本、A 的連結不動:%d→%d %v", n, len(pl.Items), pl.Links)
+	}
+	if _, errs, err := runPull(t, "pl", "pull", "--all", "--yes"); err != nil || !strings.Contains(errs, "屬於裝置") {
+		t.Fatalf("pull --all 同樣只跳過:%v %s", err, errs)
+	}
+	setDevice(t, devA)
+	if _, _, err := runPull(t, "pl", "sync", "--all", "--yes"); exitOf(t, err) != 1 || !strings.Contains(err.Error(), "local_root") {
+		t.Fatalf("本機自己的 link 沒設 local_root 照舊 exit 1 並指路:%v", err)
+	}
+}
+
 // A13 的回歸測試(advisor):Spotify 改名 → C 改名 → push 到不支援 rename 的 local 不能排 rename,local 的 base 也不能記成新名字,
 // 不然下一輪 pull 看 local 的 Live.Name ≠ Base.Name 就把 C(與 Spotify)改回舊名——使用者的改名一輪後自己撤銷。
 func TestPlLocalRenameDoesNotFlipBack(t *testing.T) {

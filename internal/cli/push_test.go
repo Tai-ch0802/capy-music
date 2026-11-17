@@ -120,6 +120,16 @@ func (f *fakeSpotify) setWriteStatus(code int) {
 	f.writeStatus = code
 }
 
+// setOwner:清單 id 改成別人(owner)擁有、非協作(Spotify 只讓擁有者與協作者寫)。
+func (f *fakeSpotify) setOwner(id, owner string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.owners == nil {
+		f.owners = map[string]string{}
+	}
+	f.owners[id] = owner
+}
+
 func (f *fakeSpotify) setLocal(ids ...string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -490,7 +500,7 @@ func TestPlPushDetectsChangeBetweenPlanAndApply(t *testing.T) {
 	reads := 0
 	fs.setHook(func() {
 		reads++
-		if reads == 3 { // 第 3 個請求 = 套用前的重讀(1 = /me/playlists、2 = 計畫的 GET items):hook 在回應前改,重讀就看到
+		if reads == 4 { // 第 4 個請求 = 套用前的重讀(1 = /me、2 = /me/playlists、3 = 計畫的 GET items):hook 在回應前改,重讀就看到
 			fs.items["p1"] = []string{"a", "b", "c", "z"}
 		}
 	})
@@ -557,6 +567,21 @@ func TestPlPushForbidden(t *testing.T) {
 	}
 	if b := baseOf(t, dc); !slices.Equal(b.Items, []string{"a", "b", "c"}) {
 		t.Fatalf("平台沒動、base 不變:%v", b.Items)
+	}
+}
+
+// 別人的、沒開放協作的 Spotify 清單:列表就標 Unwritable,plan 階段 refused(exit 3、零寫入),不必等寫入吃 403。
+func TestPlPushRefusesNotOwnedSpotifyPlaylist(t *testing.T) {
+	fs, dc, _, pl := pushWorld(t)
+	editCanonical(t, dc, pl, []string{"a", "b"}, nil, "")
+	fs.setOwner("p1", "amy")
+	fs.setWriteStatus(http.StatusForbidden) // 真的寫下去,平台會回 403
+	_, _, err := runPull(t, "pl", "push", "通勤", "--yes")
+	if exitOf(t, err) != 3 || !strings.Contains(err.Error(), "寫不了") || !strings.Contains(err.Error(), "amy") {
+		t.Fatalf("別人的清單要在 plan 階段 refused(exit 3)並點名擁有者:%v", err)
+	}
+	if w := fs.written(); len(w) != 0 {
+		t.Fatalf("plan 階段就擋下、零寫入:%+v", w)
 	}
 }
 

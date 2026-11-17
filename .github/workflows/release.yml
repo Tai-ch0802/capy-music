@@ -8,12 +8,16 @@ jobs:
   goreleaser:
     runs-on: macos-latest # 與 ci.yml 同平台;CGO 關閉,四個目標都在這台交叉編譯
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # changelog 要看得到上一個 tag
-      - uses: actions/setup-go@v7
+          persist-credentials: false # GoReleaser 走 GITHUB_TOKEN 環境變數建 Release,不需要 git 憑證
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
+          # 發版不吃快取:快取是跨 workflow 共用的,被污染的 module / build cache
+          # 會直接進到要發出去的 binary(cache poisoning);發版慢一點換乾淨的建置。
+          cache: false
       - name: repo secrets 齊了才發(決策 9:內建 Google client 只從這裡進 binary)
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
@@ -26,7 +30,8 @@ jobs:
             fi
           done
       - run: go vet ./... && go test -race ./... # ci.yml 不吃 tag:tag 打在沒跑過 CI 的 commit 上時,這是發版前唯一的把關(單一平台,當作絆線就好)
-      - uses: goreleaser/goreleaser-action@v7
+      # 第三方 action 拿得到 contents: write 與 GOOGLE_CLIENT_SECRET,一定要釘 SHA
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: "~> v2"
