@@ -120,10 +120,10 @@ func TestTUIRateLimitCooldownIsTheTrackers(t *testing.T) {
 	}
 }
 
-// TestTUIExecSettlesAndInvalidates:命令列跑完的子命令跟 web 的 /api/run 一樣收尾——play 之後進安定期(狀態列不必等 Spotify
-// 閒置的 15 秒有效期),auth logout 之後丟掉快取的 controller(不然會一直用已登出帳號的那一個)。
+// TestTUIExecSettlesAndInvalidates:命令列跑完的子命令跟 web 的 /api/run 一樣收尾——play / shuffle / repeat / devices --switch|--pick
+// 之後進安定期(狀態列不必等 Spotify 閒置的 15 秒有效期;純唯讀 devices 不動快取),auth logout 之後丟掉快取的 controller。
 func TestTUIExecSettlesAndInvalidates(t *testing.T) {
-	fakeNowClock(t)
+	advance := fakeNowClock(t)
 	f := newNowFake()
 	f.set(nil, nil) // 閒置:有效期 15 秒
 	m := newTestTUI(t, &watchFake{})
@@ -133,10 +133,35 @@ func TestTUIExecSettlesAndInvalidates(t *testing.T) {
 	if n := f.calls.Load(); n != 1 {
 		t.Fatalf("前提:閒置的結果有快取:%d", n)
 	}
-	m = step(t, m, tuiExecMsg{args: []string{"play", "派對動物"}}, false)
+	// 純唯讀 devices 不應觸發 settleNow 使快取失效。
+	m = step(t, m, tuiExecMsg{args: []string{"devices"}}, false)
 	m = pollOnce(t, m)
-	if n := f.calls.Load(); n != 2 {
-		t.Errorf("play 之後要馬上重問:%d", n)
+	if n := f.calls.Load(); n != 1 {
+		t.Errorf("純唯讀 devices 不該使快取過期:%d", n)
+	}
+	wantCalls := int32(1)
+	for _, cmdArgs := range [][]string{
+		{"play", "派對動物"},
+		{"shuffle", "on"},
+		{"repeat", "track"},
+		{"devices", "--switch", "MacBook"},
+		{"devices", "--switch=MacBook"},
+		{"devices", "--pick"},
+	} {
+		m = step(t, m, tuiExecMsg{args: cmdArgs}, false)
+		m = pollOnce(t, m)
+		wantCalls++
+		if n := f.calls.Load(); n != wantCalls {
+			t.Fatalf("%v 之後要馬上重問:calls=%d want=%d", cmdArgs, n, wantCalls)
+		}
+		// 推進過安定期並重問一次建立新的 15s 閒置快取,驗證下一個命令確實靠 settleNow 破快取。
+		advance(webNowSettle + time.Second)
+		m = pollOnce(t, m)
+		wantCalls++
+		m = pollOnce(t, m)
+		if n := f.calls.Load(); n != wantCalls {
+			t.Fatalf("過安定期後應重新快取 15s:calls=%d want=%d", n, wantCalls)
+		}
 	}
 	m = step(t, m, tuiExecMsg{args: []string{"auth", "logout", "spotify"}}, false)
 	if m = pollOnce(t, m); m.pcErr == nil {
@@ -253,7 +278,7 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	recordPrintln(t)
 	got := recordExec(t)
 	m, sp, ap := followingApple(t)
-	for _, line := range []string{"pause", "seek 1:00", "now", "now --watch", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
+	for _, line := range []string{"pause", "seek 1:00", "now", "now --watch", "shuffle on", "repeat track", "devices", "devices --switch AirPods", "devices --pick", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "devices --provider spotify", "pl list"} {
 		m.typing = true
 		m.input.SetValue(line)
 		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
@@ -266,10 +291,16 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	want := [][]string{
 		{"/bin/capy", "now", "--provider", "apple"},
 		{"/bin/capy", "now", "--watch", "--provider", "apple"}, // 看狀態列上的那一家(決策 58),不從 default_provider 起算
+		{"/bin/capy", "shuffle", "on", "--provider", "apple"},
+		{"/bin/capy", "repeat", "track", "--provider", "apple"},
+		{"/bin/capy", "devices", "--provider", "apple"},
+		{"/bin/capy", "devices", "--switch", "AirPods", "--provider", "apple"},
+		{"/bin/capy", "devices", "--pick", "--provider", "apple"},
 		{"/bin/capy", "play", "派對動物"},
 		{"/bin/capy", "play", "--id", "1422652341"},
 		{"/bin/capy", "play", "--pick"},
 		{"/bin/capy", "pause", "--provider", "spotify"},
+		{"/bin/capy", "devices", "--provider", "spotify"},
 		{"/bin/capy", "pl", "list"},
 	}
 	if !slices.EqualFunc(*got, want, slices.Equal[[]string]) {

@@ -273,7 +273,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	if webNowInvalidatedBy(path) { // 帳號 / 預設平台變了:快取的 PlaybackController 不再有效
 		s.dropNow(webNowResetsShown(path, args))
 	}
-	if webNowSettledBy(path) { // 播放狀態剛被改:接下來幾秒面板不用快取(決策 51 的安定期)
+	if webNowSettledByRun(path, args) { // 播放狀態或輸出裝置剛被改:接下來幾秒面板不用快取(決策 51 的安定期)
 		s.settleNow()
 	}
 	reason := webExitReason(jobCtx, err)

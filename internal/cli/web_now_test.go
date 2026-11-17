@@ -981,9 +981,9 @@ func TestWebNowLogoutResetsShown(t *testing.T) {
 	}
 }
 
-// TestWebNowSettledByPlaybackCommands:改變播放狀態的六個命令都要進安定期(搜尋頁的 play --id 也是)。
+// TestWebNowSettledByPlaybackCommands:改變播放狀態的命令(含 shuffle / repeat 與 devices --switch|--pick)都要進安定期。
 func TestWebNowSettledByPlaybackCommands(t *testing.T) {
-	for _, p := range []string{"capy play", "capy pause", "capy next", "capy prev", "capy seek", "capy vol"} {
+	for _, p := range []string{"capy play", "capy pause", "capy next", "capy prev", "capy seek", "capy vol", "capy shuffle", "capy repeat"} {
 		if !webNowSettledBy(p) {
 			t.Errorf("%s 要進安定期", p)
 		}
@@ -991,6 +991,18 @@ func TestWebNowSettledByPlaybackCommands(t *testing.T) {
 	for _, p := range []string{"capy now", "capy search", "capy devices", "capy auth status"} {
 		if webNowSettledBy(p) {
 			t.Errorf("%s 不改播放狀態", p)
+		}
+	}
+	if webNowSettledByRun("capy devices", []string{"devices"}) {
+		t.Error("純唯讀 capy devices 不應進安定期")
+	}
+	for _, args := range [][]string{
+		{"devices", "--switch", "Mac"},
+		{"devices", "--switch=Mac"},
+		{"devices", "--pick"},
+	} {
+		if !webNowSettledByRun("capy devices", args) {
+			t.Errorf("capy %v 應進安定期", args)
 		}
 	}
 }

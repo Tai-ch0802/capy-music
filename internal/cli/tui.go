@@ -400,7 +400,7 @@ func (m *tuiModel) afterExec(args []string) {
 			}
 		}
 	}
-	if webNowSettledBy(path) {
+	if webNowSettledByRun(path, args) {
 		m.trk.settleNow()
 	}
 	if path == "capy history clear" {
@@ -534,7 +534,7 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 	id := m.provFlag
 	if id == "" {
 		path := c.CommandPath()
-		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
+		follows := (webNowSettledBy(path) || path == "capy now" || path == "capy devices") && !(path == "capy play" && len(rest) > 0)
 		if path == "capy wiki" {
 			_ = c.Flags().Parse(rest)
 			follows = len(c.Flags().Args()) == 0 && !c.Flags().Changed("title")

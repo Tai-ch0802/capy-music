@@ -1066,8 +1066,21 @@ func webNowResetsShown(path string, args []string) bool {
 // webNowSettledBy:這個命令會改變播放狀態——跑完後進安定期(播放列按鈕、快捷鍵、搜尋頁的 play --id、主控台都經過這裡)。
 func webNowSettledBy(path string) bool {
 	switch path {
-	case "capy play", "capy pause", "capy next", "capy prev", "capy seek", "capy vol":
+	case "capy play", "capy pause", "capy next", "capy prev", "capy seek", "capy vol", "capy shuffle", "capy repeat":
 		return true
+	}
+	return false
+}
+
+// webNowSettledByRun:除 webNowSettledBy 外,devices 帶 --switch / --pick 切換輸出裝置後也進安定期(純唯讀無旗標 devices 不進)。
+func webNowSettledByRun(path string, args []string) bool {
+	if webNowSettledBy(path) {
+		return true
+	}
+	if path == "capy devices" {
+		return slices.ContainsFunc(args, func(a string) bool {
+			return a == "--switch" || strings.HasPrefix(a, "--switch=") || a == "--pick" || strings.HasPrefix(a, "--pick=")
+		})
 	}
 	return false
 }
