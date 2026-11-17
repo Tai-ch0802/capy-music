@@ -16,7 +16,7 @@ import (
 
 func newPlCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pl", Short: i18n.T("cmd.pl.short")}
-	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd(), newPlSyncCmd(), newPlDedupCmd())
+	cmd.AddCommand(newPlListCmd(), newPlShowCmd(), newPlLinkCmd(), newPlUnlinkCmd(), newPlPullCmd(), newPlPushCmd(), newPlSyncCmd(), newPlDedupCmd(), newPlAddCmd())
 	return cmd
 }
 

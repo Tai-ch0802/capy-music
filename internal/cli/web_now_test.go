@@ -444,7 +444,7 @@ func TestWebNowFollowsPlayingProvider(t *testing.T) {
 		t.Errorf("Spotify 變 204 不可以讓 Apple 暫停中的歌把面板搶回去:%v", m)
 	}
 	apple.set(nowTrack(true, "昨天那首", 31000, 200000), nil)
-	advance(2500 * time.Millisecond)
+	advance(3500 * time.Millisecond)
 	if m := c.now(""); m["provider"] != "apple" || m["playing"] != true {
 		t.Errorf("Music.app 真的開始播了:要切回 Apple:%v", m)
 	}
@@ -499,8 +499,8 @@ func TestWebNowSpotifyIdleTTL(t *testing.T) {
 	if n := sp.calls.Load(); n != 2 {
 		t.Errorf("滿 15 秒就要問:%d 次", n)
 	}
-	if n := apple.calls.Load(); n != 8 {
-		t.Errorf("Apple 每輪都問:%d 次", n)
+	if n := apple.calls.Load(); n != 4 {
+		t.Errorf("Apple 閒置 3 秒節流:15 秒內問 4 次(0/5/10/14.999s),得到 %d 次", n)
 	}
 }
 
@@ -516,11 +516,11 @@ func TestWebNowBaseStopTriggersProbe(t *testing.T) {
 	_, c := startWeb(t)
 	c.now("") // 兩家都問過:Spotify 的 204 快取到 15 秒
 	apple.set(nowTrack(true, "a", 0, 200000), nil)
-	advance(2500 * time.Millisecond)
+	advance(3 * time.Second)
 	c.now("")
 	apple.set(nowTrack(false, "a", 2500, 200000), nil)
 	sp.set(nowTrack(true, "s", 0, 200000), nil)
-	advance(2500 * time.Millisecond) // 5 秒:Spotify 的快取還沒過期
+	advance(2500 * time.Millisecond) // 5.5 秒:Spotify 的快取還沒過期,Apple 播放 2s 快取已過期
 	if m := c.now(""); m["provider"] != "spotify" {
 		t.Errorf("Apple 剛停、Spotify 在播:這一輪就要切過去:%v", m)
 	}
@@ -658,8 +658,8 @@ func TestWebNowNotRunningKeepsController(t *testing.T) {
 	if n := built["apple"].Load(); n != 1 {
 		t.Errorf("Music.app 沒開不重建:建構 %d 次", n)
 	}
-	if n := apple.calls.Load(); n != 5 {
-		t.Errorf("Music.app 一打開下一輪就要看得到:每輪都問,%d 次", n)
+	if n := apple.calls.Load(); n != 3 {
+		t.Errorf("Music.app 沒開以 4 秒節流:5 輪(0/5/10s)問 3 次,得到 %d 次", n)
 	}
 }
 
@@ -941,9 +941,9 @@ func TestWebNowAppleStateErrorRetriedNextRound(t *testing.T) {
 	_, c := startWeb(t)
 	c.now("")
 	apple.set(nowTrack(true, "a", 0, 200000), nil)
-	advance(2500 * time.Millisecond)
+	advance(4500 * time.Millisecond) // 滿 4 秒錯誤節流即重試,不等一分鐘(一分鐘只給建不起來的)
 	if m := c.now(""); m["provider"] != "apple" || m["playing"] != true {
-		t.Errorf("Apple 回錯後下一輪就要再問:%v", m)
+		t.Errorf("Apple 回錯滿 4 秒後就要再問:%v", m)
 	}
 }
 

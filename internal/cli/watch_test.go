@@ -211,7 +211,7 @@ func TestWatchCachedErrorsDoNotCount(t *testing.T) {
 // TestWatchFollowsThePlayingPlatform:【決策 58】沒釘住:預設平台閒置、Apple 在播 → 畫面換到 Apple(上一家的曲目與失敗次數
 // 不留);Apple 暫停了也不會被閒置的預設平台拉回去(只有正在播的能把畫面拉走,同決策 51)。
 func TestWatchFollowsThePlayingPlatform(t *testing.T) {
-	fakeNowClock(t)
+	advance := fakeNowClock(t)
 	sp := newNowFake()
 	sp.set(nil, nil) // Spotify 閒置
 	ap := newNowFakeAs("apple", &provider.PlaybackState{Playing: true, Track: &provider.Track{Title: "Sugar", DurationMS: 235000}})
@@ -223,6 +223,7 @@ func TestWatchFollowsThePlayingPlatform(t *testing.T) {
 		t.Fatalf("要換到正在播的 Apple、失敗次數歸零:%s %#v fails=%d", m.provID, m.st, m.fails)
 	}
 	ap.set(&provider.PlaybackState{Playing: false, Track: &provider.Track{Title: "Sugar", DurationMS: 235000}}, nil)
+	advance(3 * time.Second)
 	m = watchRound(t, m)
 	if m.provID != "apple" || m.st == nil || m.st.Playing {
 		t.Fatalf("暫停的 Apple 留在畫面上,不被閒置的 Spotify 拉回去:%s %#v", m.provID, m.st)
