@@ -127,7 +127,7 @@ capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);�
 - **任何 OpenAI 相容端點**(`/chat/completions`):OpenAI 本身、LiteLLM 或 OpenRouter 這類 gateway、或這台電腦上的 Ollama(`http://localhost:11434/v1`,不用金鑰)。設定時會列出端點的模型(`GET /models`);沒有這個清單的端點改用一個 token 的測試請求確認。
 - **端點在 Cloudflare Access 之類的門後面?** 把它要求的標頭加上去,一行一個 `Name: value`(例如 `CF-Access-Client-Id` / `CF-Access-Client-Secret`);每個請求都會帶,包括設定時的檢查。你自己寫的標頭優先,所以寫一行 `Authorization:` 就會取代 Bearer 金鑰。
 - **送出什麼,而且只在你執行 `capy wiki` 時**:那首歌的歌名、歌手、專輯、發行日期、曲風,以及你設定的母語(只用來指定回答的語言)。其他都不送——沒有帳號、沒有清單。端點是你自己選的服務,適用它自己的政策;見[隱私權政策](https://capy.taislife.work/privacy)。
-- **你會拿到什麼**:回答邊寫邊一行一行印出來(Ctrl-C 可以停),結尾是 MV 連結、哪個模型什麼時候寫的,以及一行固定的提醒:由 AI 產生、可能有錯。回答留在這台電腦上(`state.db` 裡的快取),同一首再問一次是瞬間;`--refresh` 會再問端點,換了 `native_language` 也會用新語言再問。互動式介面裡按 `w` 就問狀態列上那首。
+- **你會拿到什麼**:回答邊寫邊一行一行印出來(Ctrl-C 可以停),結尾是 MV 連結、哪個模型什麼時候寫的,以及一行固定的提醒:由 AI 產生、可能有錯。回答留在這台電腦上(`state.db` 裡的快取),同一首再問一次是瞬間;`--refresh` 會再問端點,換了 `native_language` 也會用新語言再問。互動式介面裡狀態列亮起 `[wiki]` 時,按 `w` 會在行程內直接把快取介紹印進捲動區(水豚不閃退);按 `W`(或未快取時按 `w`)才會呼叫端點。
 - **東西放哪**:base URL、模型、母語在 `config.json`(`capy config set ai_base_url` / `ai_model` / `native_language`);API key 與自訂標頭只在 OS keychain(標頭最多 2 KB)。明文 `http:` 打到別台電腦會警告(金鑰會不加密地走網路);`localhost` 不會。在網頁裡 `capy wiki setup` 是一張表單,金鑰與標頭欄位不會出現在事件或 log 裡,`--api-key` / `--header` 在網頁一律拒絕。
 
 ## 登入狀態給腳本讀:`capy auth status --json`
@@ -163,15 +163,20 @@ capy config set native_language ja                # BCP 47(ja、zh-TW、pt-BR);�
 
 ```
 capy search 派對動物 [--provider apple]
-capy play 派對動物                      # 統一搜尋:曲目、藝人熱門歌曲、我的播放清單;歧義時開挑選器
-capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify 在 2026-02 移除了 top-tracks,改用 artist: 搜尋的結果近似);清單名完全相符 = 播清單(先 capy pl list 一次)
-capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / track: 同義
-capy play --pick                        # 直接開挑選器(本機快取的清單與最近項目)
+capy play 派對動物                      # 統一搜尋:曲目、藝人熱門歌曲、平台清單與本機正本清單;歧義時開挑選器
+capy play 五月天 / capy play 通勤        # 藝人 = 播熱門歌曲(Spotify 在 2026-02 移除了 top-tracks,改用 artist: 搜尋的結果近似);清單名完全相符 = 播清單
+capy play canon:通勤 [--shuffle]        # 直接播正本清單(已 link 且支援時走清單 context,否則取最多 100 首對應曲目;--shuffle 僅在記憶體洗牌當次播放,絕不改動正本順序)
+capy play --type track 派對動物          # 腳本用:確定性,永遠播第一筆;前綴 artist: / pl: / canon: / track: 同義
+capy play --pick [--shuffle]            # 直接開挑選器(清單與最近項目;清單快取全空時自動先拉一次)
 capy                    # 直接打 capy(在終端機裡)= 互動式介面;pipe / cron 下仍是印 help
 capy --web              # 在瀏覽器操作:只綁 127.0.0.1、啟動時印一次性網址;所有命令都能在頁面上跑
-capy pause / next / prev / now / devices
+capy pause / next / prev / now [--watch]
+capy devices [--switch <名稱|ID> | --pick]   # 列出播放裝置、直接依名稱/ID 切換輸出,或開挑選器切換
+capy shuffle [on|off|toggle]            # 切換或設定隨機播放
+capy repeat [off|context|track|cycle]   # 循環切換或設定重複模式(關閉 / 清單循環 / 單曲循環)
 capy seek 1:23          # 跳到曲目內的位置;也吃 h:mm:ss(1:05:30)與純秒數(83)
 capy vol 40             # 音量 0-100
+capy history [list] [--limit 20] / capy history clear   # 檢視本機收聽紀錄(播滿 30 秒記下)或清除搜尋、播放、收聽與互動指令紀錄
 capy pl list / capy pl show <名稱|ID>
 capy pl link 通勤 spotify:<清單 ID 或名稱>   # 把 canonical 清單(不存在就建立)連結到平台清單;只認明確 link,不自動配名
 capy pl link 通勤 spotify --create          # 在 Spotify / Apple Music / YouTube Music 建一個跟 canonical 同名的私人空清單再連上(local 不行);複製清單見下方
@@ -185,7 +190,7 @@ capy pl dedup 通勤 [--dry-run] [--yes] [--force]   # 去掉正本裡重複的�
 capy pl dedup apple:冬日暖調                     # 直接讀平台清單、只報告哪幾首重複(不碰 Drive、不需要連結);要由 capy 去掉就用上一行的寫法
 capy pl add [通勤] [<provider>:<曲目 ID> | --now] [--provider apple] [--push] [--allow-dup] [--dry-run] [--yes]   # 把曲目(或正在播的歌)加在正本尾端;--push 同一輪推到可寫的已連結平台
 capy migrate 公路旅行 --from spotify --to apple[:既有清單] [--dry-run] [--yes]   # 把清單搬到另一個平台(兩個方向都行;新建或加進既有;順序不動、只新增、不動來源);見下方「跨平台複製清單」
-capy resolve [通勤] [--provider apple] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列
+capy resolve [通勤] [--provider apple] [--refresh] [--dry-run] [--yes]   # 把曲目對應到各平台 id:ISRC 反查 → 模糊比對;≥85 自動寫入、其餘列成 review 佇列(--refresh 強制重查未對上快取)
 capy resolve --review                     # 終端機逐筆裁決佇列(接受 / 略過 / 手動搜尋 / 釘成不可得 / 釘住現有)
 capy resolve pin <cid> apple:<id|none> [--yes]   # 腳本用釘選;none = 這個平台沒有這首;id 已屬另一 cid 時合併(非 TTY 要 --yes)
 capy export > backup.json                 # 逃生口:本機 canonical 資料(Drive 檔的合併形式),不依賴 Drive
@@ -194,40 +199,35 @@ capy doctor [--provider apple]
 capy wiki [<歌名> --artist <歌手>] [--refresh] [--json]   # 用你自己的 AI 端點、你的母語介紹這首歌(先 capy wiki setup);不給歌名 = 正在播的那首;見上方「歌曲 wiki」
 capy config set default_provider apple   # 之後不必每次帶 --provider;config get / list
 capy config set language zh-TW           # 介面語言(預設 en);見上方「介面語言」
+capy config set theme yuzu-onsen         # 終端機主題:geek-green(預設)、yuzu-onsen、vinyl-amber、night-sakura、daylight-ink
 capy update [--dev]                      # 見上方「更新」
 ```
 
 ### 互動式介面
 
-在終端機直接執行 `capy`(不帶任何參數)會開互動式介面。終端機夠大(至少 30 行高)時水豚常駐在畫面底部、一直動(偶爾眨眼、撥耳朵,隔一陣子吃一根牧草;打 `/` 開選單時牠先讓位);終端機比較小的話,牠開場動個三秒左右(按任何鍵可以跳過)就定格印進捲動區。不想要任何動畫(螢幕閱讀器、SSH 連線很慢、要錄畫面)就設 `CAPY_MOTION=never`:水豚直接定格,之後一格都不動。
-除了水豚,TUI 只管**底部四行**:分隔線、現在在播什麼、輸入行、按鍵提示。
-「現在在播什麼」那一行跟網頁的正在播放列一樣,跟著真正在播的平台走(只有正在播的平台能把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),播放鍵與命令列打的播放命令(`pause`、`next`、`prev`、`seek`、`vol`、不帶參數的 `play`、`now`)都送給它顯示的那個平台;`capy --provider X` 把它釘在一個平台。`capy now --watch` 也一樣跟著走(`--provider` 釘住);單次的 `capy now` 照舊問 `default_provider`。
+在終端機直接執行 `capy`(不帶任何參數)會開互動式介面。終端機夠大(至少 30 行高)時水豚常駐在畫面底部、一直動(偶爾眨眼、撥耳朵,隔一陣子吃一根牧草;打 `/` 開選單或按 `o` / `d` / `f` / `C` 開抽屜時牠先讓位);終端機比較小的話,牠開場動個三秒左右(按任何鍵可以跳過)就定格印進捲動區。不想要任何動畫(螢幕閱讀器、SSH 連線很慢、要錄畫面)就設 `CAPY_MOTION=never`:水豚直接定格,之後一格都不動。
+除了水豚,TUI 只管**底部四行**:進度分隔線(有曲長時顯示 `===o---` 純文字進度軸,無曲目時維持 `---`)、現在在播什麼、輸入行、按鍵提示。
+「現在在播什麼」那一行跟網頁的正在播放列一樣,跟著真正在播的平台走(只有正在播的平台能把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台)。它會顯示 `曲名 - 歌手`、跟隨平台、`[S]` / `[R]` / `[R1]` 隨機與循環標記、本機已有快取介紹時的 `[wiki]` 標記、每秒本地平滑讀秒、音量(含 macOS Apple Music)與輸出裝置——並先保留右側欄寬預算,確保限流提示與時間不會被超長歌名切掉。播放鍵(`space` 播放/暫停、`n`/`p` 上下首、`←`/`→` ±10 秒、`+`/`-` ±5% 音量、`s` 隨機、`r` 循環切換或停擺重試、`R` 強制重連)與命令列打的播放命令(`pause`、`next`、`prev`、`seek`、`vol`、不帶參數的 `play`、`now`)都送給它顯示的那個平台;`capy --provider X` 把它釘在一個平台。`capy now --watch` 也一樣跟著走(`--provider` 釘住,支援 `space`、`n`/`p`、`←`/`→` 與 `+`/`-`);單次的 `capy now` 照舊問 `default_provider`。
 
 ```
--------------------------------------------------------------------------------
-  ▶ 派對動物 · 1:23 / 4:09 · MacBook Pro · 音量 60
+=====================o---------------------------------------------------------
+  ▶ 派對動物 - 五月天 · [spotify] · [S] [wiki] · 1:23 / 4:09 · 音量 60 · MacBook Pro
 > pl sync 冬日暖調
-  space 播放/暫停 · ←→ ±10 秒 · / 命令 · ? 按鍵 · q 離開
+  space 播放/暫停 · ←→ ±10 秒 · o 抽屜 · f 收藏 · t 定時 · / 命令 · ? 按鍵 · q 離開
 ```
 
-命令的回音、錯誤與非零結束碼都推進**捲動區**,永久留著、可以往回捲、可以複製——上面那一大片
-全部是終端機自己的捲動區,TUI 不會重繪它。按 `?` 把完整鍵位也印進去。
+命令的回音、錯誤與非零結束碼都推進**捲動區**,永久留著、可以往回捲、可以複製——上面那一大片全部是終端機自己的捲動區,TUI 不會重繪它。按 `?` 把完整鍵位也印進去。
 
-按 `/` 開命令選單:打字即時過濾,`↑↓` 選,`Tab` 或 `⏎` 把命令**帶進輸入行**讓你補參數,`Esc` 收起。
-打到完整命令(例如 `/pl show 冬日暖調`)選單就收起,`⏎` 直接執行——開頭的 `/` 會自動拿掉。
-選單向上長、壓在捲動區前面,不插進歷程。清單直接來自 cobra 的命令樹,不會跟實作走鏢。
-`↑↓` 在選單沒開時翻這次 session 打過的命令(只在記憶體裡,離開就沒了)。
+- **任意門抽屜與一鍵收藏(`o` / `d` / `f` / `F`)**:按 `o` 借用水豚的 11 行空間展開抽屜(總高度零閃爍):`Tab` 切換 `[1:Playlists]`(正本清單嚴格依原序送播、絕不打亂正本,亦可點播快取平台清單)、`[2:Recent]`(最近播放續播)與 `[3:Devices]`(按 `d` 直達切換輸出裝置),打字即時過濾、`↑↓` 選取、`⏎` 執行、`Esc` 收起。按 `f` 開啟「把正在播的歌收進正本清單」抽屜(`F` 一鍵收進上次選的清單)。
+- **已快取 Wiki 零延遲內頁共讀(`w` / `W`)**:當狀態列顯示 `[wiki]` 時,按 `w` 直接在行程內把快取介紹、MV 搜尋連結與固定免責提醒印進捲動區(水豚不閃退);按 `W`(或未快取時按 `w`)才執行子行程問你的 AI 端點。
+- **水豚柚子湯睡眠/專注定時器(`t` 或 `/sleep`)**:按 `t` 循環切換 `關閉 → 播完這首停 → 15m → 30m → 60m → 柚子湯 25m/5m`(或打 `/sleep <分鐘|track|yuzu|off>`);啟用時水豚招牌列顯示 `(o)` 倒數標記,已知音量時在最後 30 秒內最多分 5 階溫柔降音並在暫停後設回原音量。
+- **斜線選單第二層補全與跨 session 命令歷史(`/` 與 `↑↓`)**:按 `/` 開命令選單(打字過濾、`↑↓` 選、`Tab` 或 `⏎` 帶進輸入行——對 `/play `、`/pl show `、`/pl pull `、`/pl push `、`/pl sync `、`/pl add ` 支援第二層清單補全並為含空白名稱自動加雙引號——`Esc` 收起)。選單沒開時,`↑↓` 可翻閱保存在本機 `state.db` 裡最近 100 筆跨 session 命令歷史(含 secret/token/header 旗標的命令絕不寫入;`capy history clear` 一併清除)。
 
-輸入的命令**不是在同一個行程裡跑**,而是重新執行 `capy` 自己——所以每個子命令完整保有它原本的行為
-(表格、挑選器、確認提示)。清單名有空白時用雙引號:`pl show "上班 通勤"`。
+純播放控制(`pause`、無參數 `play`、`next`、`prev`、`seek <位置>`、`vol <0-100>`)與 `/sleep` 走行程內快速路徑,常駐水豚保持不動;其餘命令則**重新執行 `capy` 自己**,完整保有每個子命令原本的表格、挑選器與確認提示。清單名有空白時用雙引號:`pl show "上班 通勤"`。
 
-還沒登入也可以開:狀態區會說明原因,你可以直接在那行輸入 `auth login spotify`。
+還沒登入也可以開:狀態區會說明原因,你可以直接在那行輸入 `auth login spotify`。`capy --provider apple` 開的介面會把 `--provider` 一起帶給你在那行輸入的子命令(只對吃這個參數的命令加),所以整個畫面是同一個平台。
 
-`capy --provider apple` 開的介面會把 `--provider` 一起帶給你在那行輸入的子命令(只對吃這個參數的命令加),
-所以整個畫面是同一個平台。
-
-顏色是冷冽的 geek 綠(`internal/ui/theme.go` 的 `GeekGreen`);換色的接縫就是那個 `Theme` struct,
-之後開放切換時從那裡加。
+按 `C`(Shift+C)可即時預覽並套用內建 5 款主題(`geek-green` 預設、`yuzu-onsen`、`vinyl-amber`、`night-sakura`,以及淺色終端機適用的 `daylight-ink`;`⏎` 寫入 `config.json`、`Esc` 還原,也可直接用 `capy config set theme <名稱>` 設定)。
 
 
 所有命令在非 TTY(pipe / cron)下輸出純文字 TSV,可直接 `cut -f`;`play` 在非 TTY 遇到歧義會以 exit 2 結束並印出候選(`type\tid\tlabel\tdetail`),不會播、也不會問——腳本請用 `--type` 或前綴。終端機下表格依顯示寬度對齊,放不下時儲存格**換行、不截斷**(ID 欄永遠完整,曲名最後才縮);比終端機還寬時會先開一個**檢視窗格**(每列一行,`←→` 橫向、`↑↓` 上下、`g`/`G` 頭尾、`q` 離開;`Ctrl-C` 是中止,命令以 exit 130 結束、不再往下問),離開後表格以換行的形式留在捲動區。帶 `--yes` 的命令不開窗格;`CAPY_PAGER=never` 一律不開(script / expect、CI 給了 pty 那種「有 TTY 但沒有人」的情況)。設定目錄可用 `CAPY_CONFIG_DIR` 覆寫。
@@ -244,7 +244,7 @@ capy update [--dev]                      # 見上方「更新」
 
 `capy pl add` 把一首曲目(`<provider>:<id>` 或 `--now`)嚴格加在 Drive 正本清單的最尾端(既有項目順序不動;在終端機裡不給清單名會開挑選器)。`--now` 取目前正在播的那首(有 `--provider` 釘住該家,否則優先找正在播放的平台、再退回 `default_provider`;macOS Apple Music 因 `Music.app` 腳本介面不提供目錄 ID,會用你登入的 Apple 網頁 token 以歌名、歌手與時長 ±2 秒反查目錄補齊 ID 與 ISRC)。正本已有同一首(同 `cid`)且未帶 `--allow-dup` 時零寫入、exit 0。預設只更新 Drive 正本與本機快取;`--push` 比照 `pl dedup` 雙半邊模式(先對已連結平台 pull 對齊 → 正本尾端新增 → 對可寫且有 base 的平台推播;無 base 或推不了的平台印 stderr 跳過 push 半邊,不阻斷正本寫入)。
 
-`capy resolve` 補 `pl pull` 不做的事:清單連結了兩個平台、曲目只從其中一邊 pull 進來時,另一邊的 id 由它找——先用 ISRC 反查(信心 95),沒有再用標題 + 藝人 + 時長模糊比對(0–100;標題一邊有 live / remix / acoustic / cover 之類、或時長差 >3 秒,上限 84)。≥85 自動寫入,走 `pl pull` 同一套鎖、閘與寫入順序;其餘印成 review 佇列——候選已屬另一首的一律進佇列,**合併只由人決定**。exit code:`0` 無事可寫或已寫入(佇列有東西仍是 0,cron 放 `capy resolve --yes` 不會因為永遠有幾首解不開而報錯)、`1` 錯誤、`2` 有可自動寫入的 mapping 但沒確認(`--dry-run`、非 TTY 沒 `--yes`、取消)。非 TTY 的 TSV:`action cid provider provider_id confidence source title artists reason reason_code`(`action` ∈ `map` 待寫入 / `review` 要人裁決 / `conflict` 同 ISRC 觀測到不同 id)。`--review` 在終端機逐筆裁決,決定寫成釘選(之後自動程序不再改);非 TTY 只印佇列並以 exit 2 結束——腳本用 `capy resolve pin`。單次 resolve 打超過 200 次 API 會在 stderr 提醒(未解開的曲目每次都會重查,目前沒有 negative cache)。某個平台授權失效時只跳過那個平台(stderr 會說),別的平台照解;單次查詢失敗的那首列成 `review` 並在 reason 寫明,下次再查。`pl pull` 結尾會提示「N 首尚未對應到 <provider>」。
+`capy resolve` 補 `pl pull` 不做的事:清單連結了兩個平台、曲目只從其中一邊 pull 進來時,另一邊的 id 由它找——先用 ISRC 反查(信心 95),沒有再用標題 + 藝人 + 時長模糊比對(0–100;標題一邊有 live / remix / acoustic / cover 之類、或時長差 >3 秒,上限 84)。≥85 自動寫入,走 `pl pull` 同一套鎖、閘與寫入順序;其餘印成 review 佇列——候選已屬另一首的一律進佇列,**合併只由人決定**。exit code:`0` 無事可寫或已寫入(佇列有東西仍是 0,cron 放 `capy resolve --yes` 不會因為永遠有幾首解不開而報錯)、`1` 錯誤、`2` 有可自動寫入的 mapping 但沒確認(`--dry-run`、非 TTY 沒 `--yes`、取消)。非 TTY 的 TSV:`action cid provider provider_id confidence source title artists reason reason_code`(`action` ∈ `map` 待寫入 / `review` 要人裁決 / `conflict` 同 ISRC 觀測到不同 id)。`--review` 在終端機逐筆裁決,決定寫成釘選(之後自動程序不再改);非 TTY 只印佇列並以 exit 2 結束——腳本用 `capy resolve pin`。未自動對上的結果(`no_candidate`、`low_score`、`candidate_taken`)會依曲目特徵簽章在本機 `state.db` 暫存最多 7 天,避免重複執行時重打外部 API;`--refresh` 強制重查,`lookup_failed` 絕不快取、下次照常重試。單次 resolve 打超過 200 次 API 會在 stderr 提醒。某個平台授權失效時只跳過那個平台(stderr 會說),別的平台照解。`pl pull` 結尾會提示「N 首尚未對應到 <provider>」。
 
 兩個逃生口:`capy export` 只讀本機 `state.db`(不碰 Drive、網路、keychain),把 Drive 檔的合併形式輸出到 stdout——鍵是檔名(`manifest.json`、`tracks.json`、`pl__<pid>.json`、`dev__<device_id>.json`)、值是該檔內容的縮排形式(壓回 compact 後與 Drive 上逐位元相同);本機沒資料時 exit 1 且不印東西。它用唯讀方式開 `state.db`:壞檔不刪、版本不符不改名、全新機器不建檔,而且整份匯出是一個一致的快照(與 cron 的 `pl pull` 同時跑也不會撕裂)。`capy drive init --from-local` 是 `pl pull` 以 exit 3 擋下「Drive 不完整」之後的出口:只建 Drive 缺的檔、不覆寫還在的檔、不動本機快取,別台裝置的 `dev__` 檔不代為上傳;先列出要建的檔(非 TTY 是 TSV `action file`),`--yes` 或在終端機確認後才上傳,`--dry-run` 只列不傳。確認訊息會帶目前登入的 Google 帳號:登錯帳號會把整個曲庫傳到別人的 appdata。
 
@@ -289,11 +289,11 @@ capy --web
 
 在你這台電腦上起一個只綁 `127.0.0.1` 的網頁介面,啟動時印一行網址(帶一次性 token),在終端機裡會順便替你開瀏覽器;放進管線或背景執行時只印網址。
 
-**打開就是「搬家」:把一個平台的播放清單搬到另一個平台,三步做完。** 選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度(「比對歌曲 37 / 120」),搬不過去的歌會逐首列出來。它不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。
+**初次使用打開是「搬家」(本機 `state.db` 已有清單資料後則預設落到「我的清單」,深連結 `#/<頁面>` 原樣保留):把一個平台的播放清單搬到另一個平台,三步做完。** 選來源與目的地(每個平台的連接狀態一眼看得到,沒連的可以當場連)→ 挑一個清單、決定建新的還是加進既有的 → 看過要搬哪些歌、確認了才寫入。比對每一首歌的時候有真的進度(「比對歌曲 37 / 120」),搬不過去的歌會逐首列出來。它不刪來源、只新增、順序不動;不用付費、沒有曲數上限,因為它在你自己的電腦上用你自己的帳號跑。
 
 先說限制:搬進本機曲庫只能加進既有的 M3U 檔(Spotify、Apple Music 與 YouTube Music 都能在目的地**建新清單**);搬進 Apple Music 的歌會不會同時加進你的 Apple Music 資料庫,看你的 Apple Music 設定,而且只能搬進你自己建的清單;Spotify 要用你自己建的 app、Apple 要自己從網頁播放器複製 token、YouTube Music 要自己複製登入 cookie,所以第一次連接帳號要花幾分鐘——換來的是沒有人替你代管憑證。硬碟裡的 M3U 播放清單也可以搬到 Spotify、Apple Music 或 YouTube Music。
 
-其他頁面:**我的清單**(你存在 Google Drive 的清單正本:有那個平台對應的歌可以直接用 Spotify 或 Apple Music(macOS;只在你資料庫裡、Apple Music 目錄查不到的歌標「只在資料庫」,不能從這裡播)播放、或在 YouTube Music 開啟、看它連到哪些平台的清單並就地同步、把平台上的清單納入 capy、問那一首的歌曲 wiki)、**同步**、**搜尋**、**歌曲 wiki**(正在播那首歌背後的故事,由你自己的 AI 端點用你的母語寫;見[歌曲 wiki](#歌曲-wiki選用接上你自己的-ai-端點)——這一頁跑的是 `capy wiki`,「設定 AI 端點」鈕就地開設定精靈)、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**(播放狀態面板):現在放什麼、進度、播放控制,`capy now` 的內容都在那裡。它跟著真正在播的平台走(只有正在播的平台會把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),控制鈕作用在它顯示的那個平台上;`capy --web --provider X` 可以把它釘在一個平台。頁面上的每一個動作背後都是一條 capy 命令,主控台留著完整紀錄;要確認的事一律由命令自己問,頁面不會替你按。側欄最下面還有語言選單(見上方「介面語言」)。
+其他頁面:**我的清單**(你存在 Google Drive 的清單正本:整份清單可按 `▶` 依序連播或按 `🔀` 在記憶體隨機連播(絕不改動正本順序),單曲有那個平台對應的可以直接用 Spotify 或 Apple Music(macOS;只在你資料庫裡、Apple Music 目錄查不到的歌標「只在資料庫」,不能從這裡播)播放、或在 YouTube Music 開啟、高亮目前正在播的那首、看它連到哪些平台的清單並就地同步、把平台上的清單納入 capy、問那一首的歌曲 wiki)、**同步**、**搜尋**(附最近項目快速續播卡與本機今日聆聽膠囊,並可按 `＋` 收進正本清單)、**歌曲 wiki**(正在播那首歌背後的故事,由你自己的 AI 端點用你的母語寫;見[歌曲 wiki](#歌曲-wiki選用接上你自己的-ai-端點)——這一頁跑的是 `capy wiki`,「設定 AI 端點」鈕就地開設定精靈)、**帳號**;「進階」裡是**主控台**(跟終端機一樣可以打任何子命令)、**ISRC 查詢**(一次問三個平台)與**診斷**。每一頁的底部一直有**正在播放列**:專輯封面(缺省時顯示內建黑膠水豚 SVG)、曲名外連、`+` 收藏鈕(或按 `a`,執行 `capy pl add` 並走標準確認提示)、隨機 / 上一首 / 播放暫停 / 下一首 / 循環、可拖曳預覽進度條與音量滑桿、輸出裝置切換、**水豚柚子湯定時器**彈窗(播完這首停、15–60 分鐘溫柔漸弱、25m/5m 專注泡湯,關掉分頁仍由本機伺服器準時執行)、`navigator.mediaSession` 系統媒體鍵,以及 **`z` 水豚溫泉劇場**(大封面、泡湯水豚動畫,並離線即時共讀已快取的歌曲介紹、MV 搜尋連結與固定免責提醒)。它跟著真正在播的平台走(只有正在播的平台會把它拉走,暫停中的不會;預設平台沒登入或這台電腦不支援播放時,改顯示第一個能用的平台),控制鈕作用在它顯示的那個平台上;`capy --web --provider X` 可以把它釘在一個平台。跨頁快捷鍵(`/` 主控台、`s` 搜尋/找歌、`m` 靜音、`a` 收藏、`z` 劇場、`?` 快捷鍵表)隨時可用;凡涉及寫入清單或設定的操作背後都是一條 capy 命令,主控台留著完整紀錄,要確認的事一律由命令自己問,頁面絕不替你代按。側欄最下面還有語言選單(見上方「介面語言」)。
 
 ```bash
 capy --web --port 43117   # 指定 port(預設隨機;不可用 8888、80、443)
@@ -302,7 +302,7 @@ capy --web --port 43117   # 指定 port(預設隨機;不可用 8888、80、443)
 幾件先知道的事:
 
 - **只在你這台電腦上。** 只綁 `127.0.0.1`,不是區網服務;每次啟動產生一次性 token,行程結束網址就失效。頁面不用 cookie。
-- **一次跑一個命令。** 第二個命令會被擋(頁面會說「另一個命令執行中」),因為它跟終端機一樣共用同一份 Drive 與本機資料。跑著的時候,底部會多一列執行狀態:現在在做什麼、跑了多久、它最新印的那一行(比對歌曲時是做到第幾首),旁邊的 **中止** 隨時可以停(在主控台的命令列按 Ctrl-C 也行)。停下來的時機跟終端機按 Ctrl-C 一樣;已經答應寫入的命令要按兩次,因為停在一半可能只寫了一部分。
+- **CLI 命令一次跑一個,播放控制直達不鎖死。** 資料與 CLI 命令共用同一份 Drive 與本機資料,同時只跑一個(第二個命令會顯示「另一個命令執行中」);但底部播放控制(`POST /api/player`)、睡眠定時器與唯讀曲庫/快取介紹檢視走輕量直達端點,背景在跑 `sync` 或 `wiki` 時仍可隨時暫停、切歌與調音量。命令跑著的時候,底部會多一列執行狀態:現在在做什麼、跑了多久、它最新印的那一行(比對歌曲時是做到第幾首),旁邊的 **中止** 隨時可以停(在主控台的命令列按 Ctrl-C 也行)。停下來的時機跟終端機按 Ctrl-C 一樣;已經答應寫入的命令要按兩次,因為停在一半可能只寫了一部分。
 - **憑證不會經過頁面。** 精靈輸入的 secret 只從瀏覽器送進行程再進 keychain,不會出現在事件、log 或網址裡;命令回聲裡的 token 值一律遮成 `***`。
 - **有幾個命令在網頁上不提供**:`debug` 群組、`--client-secret` / `--developer-token` / `--user-token`(請走精靈)、`now --watch`(看面板就好)。`capy update` 可以跑,但更新完這個網頁行程還是舊版,會要你重啟。
 - **Windows 第一次啟動**可能跳防火牆提示。它只聽 `127.0.0.1`,選「取消」也不影響本機連線。
@@ -356,7 +356,7 @@ capy completion fish | source
 capy completion powershell | Out-String | Invoke-Expression
 ```
 
-候選只來自本機快取(`state.db`,不打網路):先跑過 `capy pl list` 才有清單名;`capy search` / `capy play` 會累積最近項目,`capy history clear` 清空。補全不會打網路、不會碰 keychain,所以按 TAB 不會卡。
+候選只來自本機快取(`state.db`,不打網路):先跑過 `capy pl list` 才有清單名;`capy search` / `capy play` 會累積最近項目(`capy history` 可列出本機收聽紀錄,`capy history clear` 清空最近搜尋/項目、收聽紀錄與互動指令紀錄)。補全不會打網路、不會碰 keychain,所以按 TAB 不會卡。
 
 ## 憑證與資料
 
