@@ -250,19 +250,22 @@ func followingApple(t *testing.T) (tuiModel, *watchFake, *watchFake) {
 // 不然按鍵停的是 Apple、打 /pause 停的卻是 Spotify,同一個畫面兩個平台。搜尋類(play <查詢>、play --pick)與 play --id
 // (id 是預設平台的 id 空間)照舊用預設平台,自己打了 --provider 不動(#97 review 第 4 點)。
 func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
+	recordPrintln(t)
 	got := recordExec(t)
-	m, _, _ := followingApple(t)
+	m, sp, ap := followingApple(t)
 	for _, line := range []string{"pause", "seek 1:00", "now", "now --watch", "play", "play 派對動物", "play --id 1422652341", "play --pick", "pause --provider spotify", "pl list"} {
 		m.typing = true
 		m.input.SetValue(line)
 		m = step(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}, true)
 	}
+	// 純播放控制(pause / seek 1:00 / 無參 play)在行程內直接送給狀態列顯示中的 Apple,不 fork 子行程、不誤送 Spotify。
+	if !slices.Equal(ap.calls, []string{"pause", "seek:60000", "play"}) || len(sp.calls) != 0 {
+		t.Errorf("行程內播放控制應送往顯示中的 Apple:apple=%v spotify=%v", ap.calls, sp.calls)
+	}
+	// 需要子行程的命令照舊走 tuiExecProcess 並依規則附加(或不附加)--provider。
 	want := [][]string{
-		{"/bin/capy", "pause", "--provider", "apple"},
-		{"/bin/capy", "seek", "1:00", "--provider", "apple"},
 		{"/bin/capy", "now", "--provider", "apple"},
 		{"/bin/capy", "now", "--watch", "--provider", "apple"}, // 看狀態列上的那一家(決策 58),不從 default_provider 起算
-		{"/bin/capy", "play", "--provider", "apple"},
 		{"/bin/capy", "play", "派對動物"},
 		{"/bin/capy", "play", "--id", "1422652341"},
 		{"/bin/capy", "play", "--pick"},
@@ -271,6 +274,10 @@ func TestTUITypedPlaybackCommandsFollowTheShownPlatform(t *testing.T) {
 	}
 	if !slices.EqualFunc(*got, want, slices.Equal[[]string]) {
 		t.Errorf("執行的參數:\n got %q\nwant %q", *got, want)
+	}
+	// withProviderFlag 對 pl add --now 也跟著狀態列上的平台走。
+	if gotAdd := m.withProviderFlag([]string{"pl", "add", "通勤", "--now"}); !slices.Equal(gotAdd, []string{"pl", "add", "通勤", "--now", "--provider", "apple"}) {
+		t.Errorf("pl add --now 應跟著顯示中的平台:%q", gotAdd)
 	}
 }
 

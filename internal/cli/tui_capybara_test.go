@@ -229,3 +229,60 @@ func TestCapyTagline(t *testing.T) {
 		t.Errorf("沒有 provider 時只印 capy,得到 %q", got)
 	}
 }
+
+func TestCapybaraLiveFrameAndTimerTaglineInvariants(t *testing.T) {
+	still := capybaraStill()
+	wantW := capybaraWidth()
+
+	// 未播放時 capybaraLiveFrame(n, false) 與 capybaraFrame(n) 逐字相同
+	for n := len(capyStory); n < len(capyStory)+12; n++ {
+		if !slices.Equal(capybaraLiveFrame(n, false), capybaraFrame(n)) {
+			t.Fatalf("未播放時第 %d 幀不應加音符", n)
+		}
+	}
+
+	// 播放中偶爾浮現純 ASCII 音符 '~' / 'd',嚴守 9x42 純 ASCII 矩形且身體行不變
+	sawNote := false
+	for n := len(capyStory); n < len(capyStory)+24; n++ {
+		f := capybaraLiveFrame(n, true)
+		if len(f) != len(still) {
+			t.Fatalf("第 %d 幀行數 %d != %d", n, len(f), len(still))
+		}
+		for i, line := range f {
+			if len(line) != wantW {
+				t.Fatalf("第 %d 幀第 %d 行寬 %d != %d:%q", n, i, len(line), wantW, line)
+			}
+			for _, r := range line {
+				if r > 127 {
+					t.Fatalf("第 %d 幀第 %d 行含非 ASCII 字元 %q:%q", n, i, r, line)
+				}
+			}
+		}
+		for _, bodyRow := range []int{3, 6, 7, 8} {
+			if f[bodyRow] != still[bodyRow] {
+				t.Fatalf("第 %d 幀第 %d 行身體不得晃動:%q vs %q", n, bodyRow, f[bodyRow], still[bodyRow])
+			}
+		}
+		if strings.Contains(f[0], "~") || strings.Contains(f[0], "d") {
+			sawNote = true
+		}
+	}
+	if !sawNote {
+		t.Error("播放中動態幀耳旁應偶爾浮現純 ASCII 音符 '~' 或 'd'")
+	}
+
+	// 招牌列計時標記純 ASCII 檢查
+	tag := capyTaglineWithTimer("spotify", "(o) 24:15")
+	if tag != "capy · spotify · (o) 24:15" {
+		t.Errorf("capyTaglineWithTimer = %q", tag)
+	}
+	badge := tuiSleepBadge(sleepSnapshot{Mode: SleepCountdown, RemainingSec: 24*60 + 15})
+	for _, r := range badge {
+		if r > 127 {
+			t.Errorf("tuiSleepBadge 含非 ASCII 字元 %q:%q", r, badge)
+		}
+	}
+	if badge != "(o) 24:15" {
+		t.Errorf("tuiSleepBadge = %q, want (o) 24:15", badge)
+	}
+}

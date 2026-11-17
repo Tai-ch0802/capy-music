@@ -90,3 +90,54 @@ func tuiJoin(w int, segs ...tuiSeg) string {
 	}
 	return b.String()
 }
+
+// tuiWrap:將純文字依 tuiWidth 保守寬度斷行(不截斷丟字),供長段文字(如快取命中之歌曲 wiki)推進捲動區前折行。
+// 優先在 ASCII 空白斷開,單一超長連續字串(如 URL)則在欄寬上限硬斷,確保每一行都不超過 w 欄。
+func tuiWrap(s string, w int) []string {
+	if w < 2 {
+		w = 2
+	}
+	rawLines := strings.Split(s, "\n")
+	var out []string
+	for _, line := range rawLines {
+		if line == "" || tuiWidth(line) <= w {
+			out = append(out, line)
+			continue
+		}
+		runes := []rune(line)
+		for len(runes) > 0 {
+			used := 0
+			lastSpace := -1
+			cut := 0
+			for cut < len(runes) {
+				rw := 1
+				if runes[cut] >= 128 {
+					rw = 2
+				}
+				if used+rw > w {
+					break
+				}
+				if runes[cut] == ' ' {
+					lastSpace = cut
+				}
+				used += rw
+				cut++
+			}
+			if cut == len(runes) {
+				out = append(out, string(runes))
+				break
+			}
+			if cut == 0 {
+				cut = 1
+			}
+			if lastSpace > 0 {
+				out = append(out, strings.TrimRight(string(runes[:lastSpace]), " "))
+				runes = []rune(strings.TrimLeft(string(runes[lastSpace+1:]), " "))
+			} else {
+				out = append(out, string(runes[:cut]))
+				runes = runes[cut:]
+			}
+		}
+	}
+	return out
+}

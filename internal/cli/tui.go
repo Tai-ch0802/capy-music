@@ -9,16 +9,21 @@ import (
 	"os/exec"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/Tai-ch0802/capy-music/internal/ai"
 	"github.com/Tai-ch0802/capy-music/internal/auth"
+	"github.com/Tai-ch0802/capy-music/internal/config"
 	"github.com/Tai-ch0802/capy-music/internal/i18n"
 	"github.com/Tai-ch0802/capy-music/internal/provider"
+	"github.com/Tai-ch0802/capy-music/internal/store"
 	"github.com/Tai-ch0802/capy-music/internal/ui"
 )
 
@@ -27,25 +32,19 @@ import (
 //
 //   - 終端機夠高(tuiAliveMinHeight)時水豚常駐在底部區的上方、一直動(2026-09-21;使用者:「希望 CLI 的水豚
 //     也能像 web 一樣一直動」;計畫 docs/superpowers/plans/2026-09-21-capybara-alive.md)。牠**只活在 View 裡、
-//     永遠不印進捲動區**,而且那一塊的高度是固定的(選單打開時借牠的位置)——下面講的災難全是「畫面變矮」造成的。
+//     永遠不印進捲動區**,而且那一塊的高度是固定的(選單或抽屜打開時借牠的位置)——下面講的災難全是「畫面變矮」造成的。
 //   - 終端機不夠高或不夠寬:照舊,開場水豚照劇本演一遍(約三秒)就定格印進捲動區,之後永不重繪。
-//   - 除此之外 TUI 只管底部四行(分隔線 / 狀態 / 輸入 / 提示),其餘全部是終端機自己的捲動區。
+//   - 除此之外 TUI 只管底部四行(進度分隔線 / 狀態 / 輸入 / 提示),其餘全部是終端機自己的捲動區。
 //   - 命令的回音、錯誤、結束碼都用 tea.Println 推進捲動區:永久、可往回捲、可複製。
 //
-// 前一版把 19 行(其中 8 行是水豚)每 350 毫秒整塊重繪,視窗放不下時游標上移被頂端截斷,
-// 舊畫面留在上面 —— 使用者看到的是水豚頭重複三次、歷程完全不可讀。核心錯誤是重繪面積,
-// 所以這一版把 TUI 管的區域壓到四行(計畫 docs/superpowers/plans/2026-09-09-tui-redesign.md)。
-//
-// 命令**不在行程內跑**,而是用 tea.ExecProcess 重新執行 capy 自己(os.Executable)。理由:行程內跑的話
-// stdout 不是 TTY,每個命令都會退成 TSV,而 huh 的確認提示會搶 stdin 直接卡死。重新執行 = 每個子命令
-// 完整保有它原本的行為(表格、挑選器、確認提示),輸出也自然留在上方的捲動區(所以刻意不進 alt screen,
-// 與 now --watch 的既有決定一致)。
+// 純播放控制(pause / next / prev / 無參 play / seek / vol / sleep)與本機已快取的歌曲 wiki 直接在行程內完成,
+// 常駐水豚不閃縮、不重讀 keychain;需要真 TTY 互動(huh 表單、檢視窗格)的子命令仍以 tea.ExecProcess 重新執行 capy。
 //
 // Update 是純函式(tea.Msg 進、model 出),測試不需要 TTY。
 
 const (
 	tuiFrameInterval = 250 * time.Millisecond // 水豚的動作
-	// 劇本(capyStory)演完一遍就定格,約三秒;任何按鍵都會提早定格。不是「動到第一個命令」:那會讓重繪延續到不確定的時間點
+	// 劇本(capyStory)演完一遍就定格,約三秒;任何按鍵都會提早定格。
 	tuiIntro    = time.Duration(len(capyStory)) * tuiFrameInterval
 	tuiSeekStep = 10000 // ←/→ 一次 10 秒
 	tuiVolStep  = 5     // +/- 一次 5
@@ -61,17 +60,10 @@ const (
 
 type (
 	tuiFrameMsg  time.Time
-	tuiFreezeMsg struct{} // 開場結束:水豚定格進捲動區
-	// tuiPollMsg / tuiStateMsg 帶 gen:輪詢是一條「tick → 讀狀態 → 再排一個 tick」的鏈,而控制鍵
-	// 為了讓畫面立刻跟上會另外起一次讀取。沒有世代編號的話那次讀取會長出第二條鏈,而舊鏈沒人取消——
-	// 方向鍵會自動重複,按住兩秒就是三十幾條鏈同時打 /me/player,穩定觸發 429(PR #41 review)。
-	// 控制鍵讓 gen 前進,舊鏈的 tick 到期時發現世代不符就停下來。
-	tuiPollMsg struct{ gen int }
-	// provider / retryAt / cached 來自 nowTracker:provider 是這一輪顯示的平台(跟隨規則,決策 51;空 = 不換),
-	// retryAt 是限流冷卻結束的時間,cached = 這份是快取、不是這一次真的問到的(不計入 fails)。
-	// dropped:問的期間 dropNow 過(命令列跑了 auth / config set),這一輪作廢。slow:等了 tuiRoundWait 還沒回來,
-	// 結果之後從 pending 送到。panicked:run 裡的 panic,由 repanic 在 Cmd 的 goroutine 裡再丟。
-	tuiStateMsg struct {
+	tuiFreezeMsg struct{} // 開場結束:水豚定格印進捲動區
+	tuiSecondMsg struct{ seq int }
+	tuiPollMsg   struct{ gen int }
+	tuiStateMsg  struct {
 		st       *provider.PlaybackState
 		err      error
 		fromCtl  bool // 控制指令的錯:顯示但不計入 fails(那個預算是給「連不上」用的)
@@ -88,48 +80,86 @@ type (
 		args []string
 		err  error
 	}
+	tuiWikiCachedMsg struct {
+		key  string
+		view *cachedWikiView
+	}
 )
 
 type tuiModel struct {
 	ctx       context.Context
 	theme     ui.Theme
-	exe       string // 重新執行自己用;空 = 取不到,命令列停用
+	themeName string
+	exe       string // 重新執行自己用;空 = 取不到,子行程命令停用
 	provID    string // 狀態列顯示的平台:明指就是它,否則跟著正在播的那一家走(決策 51;Q64)。控制鍵送給它
 	provFlag  string // 使用者在 capy --provider X 明指的平台:釘住狀態列,命令列也要把它一起帶給子命令
 	trk       *nowTracker
+	sleep     *sleepTimer
 	pcErr     error // provID 沒有播放遙控的原因(沒登入、平台不支援):顯示,不致命
 	interval  time.Duration
 	width     int
 	height    int  // 0 = 還沒收到 WindowSizeMsg:當作不夠高(不常駐),等知道了再說
-	motion    bool // CAPY_MOTION=never 時是 false:不演開場、不常駐,水豚直接定格印進捲動區(終端機沒有 prefers-reduced-motion,只能給開關)
+	motion    bool // CAPY_MOTION=never 時是 false:不演開場、不常駐,水豚直接定格印進捲動區
 	frame     int
 	input     textinput.Model
 	typing    bool
-	st        *provider.PlaybackState
-	errShort  string // 狀態列用的短版。完整那段在發生當下就進捲動區了,model 不留
-	lastErr   string // 上一則交代過的錯誤:同一則每兩秒印一次會把捲動區洗掉
-	fails     int
-	gen       int  // 目前的輪詢世代
-	stalled   bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
-	ctrlC     bool // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
-	frozen    bool // 水豚已定格印進捲動區,View 只剩底部四行。單向:印過就不再常駐,不然捲動區一隻、View 一隻
-	running   bool // 子命令執行中:底部區縮成一行空白(原因見 View)
-	menuHigh  int  // 上次推東西進捲動區之後選單佔過的最多列數;View 補空行撐到這個高度(原因見 View)
+
+	st           *provider.PlaybackState
+	stAt         time.Time               // 收到目前 st 的單調時間(0 = 測試直接塞入,不做本地秒數插值)
+	optBase      *provider.PlaybackState // 樂觀預覽前的真實狀態,控制失敗時回滾
+	optAt        time.Time
+	clockRunning bool
+	clockSeq     int
+
+	wikiKey  string
+	wikiView *cachedWikiView
+
+	errShort string // 狀態列用的短版。完整那段在發生當下就進捲動區了,model 不留
+	lastErr  string // 上一則交代過的錯誤:同一則每兩秒印一次會把捲動區洗掉
+	fails    int
+	gen      int  // 目前的輪詢世代
+	stalled  bool // 連續讀不到狀態,輪詢先停下來(按 r 重試);介面不關
+	ctrlC    bool // 是按 Ctrl-C 離開的:exit 130(見 runProgram)
+	frozen   bool // 水豚已定格印進捲動區,View 只剩底部四行。單向不變式:印過就不再常駐
+	running  bool // 子命令執行中:底部區縮成一行空白(原因見 View)
+	menuHigh int  // 上次推東西進捲動區之後選單或抽屜佔過的最多列數;View 補空行撐到這個高度
+
 	cmds      []tuiCmdItem
 	menuSel   int      // 斜線選單選到第幾列(選單開著才有意義)
-	hist      []string // 這次 session 打過的命令,↑↓ 翻;只在記憶體裡,離開就沒了
+	hist      []string // 命令歷史(跨 session 由 state.db 載入與追加,↑↓ 翻)
 	histAt    int      // 翻到哪:len(hist) = 還沒開始翻
-	histDraft string   // 開始翻之前打到一半的那行,翻回最新時要拿回來(shell 的行為)
+	histDraft string   // 開始翻之前打到一半的那行,翻回最新時要拿回來
+
+	drawer         tuiDrawerState
+	lastCollectPID string
+	lastCollectArg string
 }
 
 func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag string, trk *nowTracker, interval time.Duration) tuiModel {
 	in := textinput.New()
 	// 提示符刻意用 ASCII:textinput 會把整行填滿到它自己算的 w-1,而 › 是 East Asian Ambiguous,
-	// 在 CJK 終端機多佔一欄 = 剛好寫滿最後一欄 = 多換一行,底部就變五行(設計文件 §1 的第四個問題)。
+	// 在 CJK 終端機多佔一欄 = 剛好寫滿最後一欄 = 多換一行,底部就變五行。
 	in.Prompt = "> "
 	in.CharLimit = 240
-	in.Placeholder = tuiPlaceholder(80) // WindowSizeMsg 進來前的預設,與下面的 width 一致
+	in.Placeholder = tuiPlaceholder(80)
 	in.SetWidth(76)
+	applyInputTheme(&in, theme)
+
+	timerCtx := ctx
+	if trk != nil && trk.ctx != nil {
+		timerCtx = trk.ctx
+	}
+	hist := tuiLoadHistory()
+	return tuiModel{
+		ctx: ctx, theme: theme, themeName: tuiResolveThemeName(theme),
+		exe: exe, provID: provID, provFlag: provFlag, trk: trk,
+		sleep: newTrackerSleepTimer(timerCtx, trk),
+		interval: interval, width: 80, input: in, motion: os.Getenv("CAPY_MOTION") != "never",
+		hist: hist, histAt: len(hist),
+	}
+}
+
+func applyInputTheme(in *textinput.Model, theme ui.Theme) {
 	st := textinput.DefaultDarkStyles()
 	st.Focused.Prompt = st.Focused.Prompt.Foreground(theme.Accent)
 	st.Blurred.Prompt = st.Blurred.Prompt.Foreground(theme.Muted)
@@ -137,9 +167,79 @@ func newTUIModel(ctx context.Context, theme ui.Theme, exe, provID, provFlag stri
 	st.Blurred.Placeholder = st.Blurred.Placeholder.Foreground(theme.Muted)
 	st.Cursor.Color = theme.Accent
 	in.SetStyles(st)
-	return tuiModel{
-		ctx: ctx, theme: theme, exe: exe, provID: provID, provFlag: provFlag, trk: trk,
-		interval: interval, width: 80, input: in, motion: os.Getenv("CAPY_MOTION") != "never",
+}
+
+func (m *tuiModel) setTheme(theme ui.Theme) {
+	m.theme = theme
+	applyInputTheme(&m.input, theme)
+}
+
+func tuiResolveThemeName(theme ui.Theme) string {
+	for _, name := range ui.ThemeNames() {
+		if cand, ok := ui.LookupTheme(name); ok && cand == theme {
+			return name
+		}
+	}
+	return ui.DefaultThemeName
+}
+
+func tuiLoadHistory() []string {
+	if !tuiStoreAllowed() {
+		return nil
+	}
+	s, err := store.OpenReadOnly(tuiMenuStoreBusy)
+	if err != nil {
+		return nil
+	}
+	defer s.Close()
+	hist, err := s.LoadTUIHistory()
+	if err != nil {
+		return nil
+	}
+	return hist
+}
+
+// tuiHistoryDenied:凡含 webDenyTokens 列管的機密或禁止旗標(--api-key / --header / --client-secret / --developer-token /
+// --user-token / --headers-file 等),一律不寫入記憶體歷史與本機 SQLite。
+func tuiHistoryDenied(args []string) bool {
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		if _, bad := webDenyTokens[name]; bad {
+			return true
+		}
+	}
+	return false
+}
+
+func tuiAppendHistoryToStore(cmd string) {
+	if !tuiStoreAllowed() {
+		return
+	}
+	s, err := store.Open(tuiMenuStoreBusy)
+	if err != nil {
+		return
+	}
+	defer s.Close()
+	_ = s.AppendTUIHistory(cmd, webNowClock())
+}
+
+func (m *tuiModel) recordHistory(raw string, args []string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || tuiHistoryDenied(args) {
+		m.histAt, m.histDraft = len(m.hist), ""
+		return
+	}
+	if len(m.hist) == 0 || m.hist[len(m.hist)-1] != raw {
+		m.hist = append(m.hist, raw)
+		if len(m.hist) > store.TUIHistoryMax {
+			m.hist = m.hist[len(m.hist)-store.TUIHistoryMax:]
+		}
+	}
+	m.histAt, m.histDraft = len(m.hist), ""
+	if testing.Testing() {
+		tuiAppendHistoryToStore(raw)
+	} else {
+		go tuiAppendHistoryToStore(raw)
 	}
 }
 
@@ -159,14 +259,29 @@ func (m tuiModel) pollTick() tea.Cmd {
 	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tuiPollMsg{gen: gen} })
 }
 
-// tuiRoundWait:畫面等一輪(或一個控制鍵)的上限。建 provider 要等 <key>.token.lock,沒有上限(持有者可能停在 keychain
-// 授權對話框),而那個 ctx 得留給 TokenSource 之後每次換發用,不能給它期限——所以只限「等」(同 web 的 webNowWait):
-// 超過就先說「等待平台回應」,結果回來照常套用(失敗照算)。測試替換點。
+func (m tuiModel) needSecondTick() bool {
+	if m.st != nil && m.st.Playing && !m.stalled {
+		return true
+	}
+	if m.sleep != nil && m.sleep.Snapshot().Mode != SleepOff {
+		return true
+	}
+	return false
+}
+
+func (m tuiModel) ensureSecondTick() (tuiModel, tea.Cmd) {
+	if !m.needSecondTick() || m.clockRunning {
+		return m, nil
+	}
+	m.clockRunning = true
+	m.clockSeq++
+	seq := m.clockSeq
+	return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return tuiSecondMsg{seq: seq} })
+}
+
+// tuiRoundWait:畫面等一輪(或一個控制鍵)的上限。測試替換點。
 var tuiRoundWait = 3 * time.Second
 
-// tuiAwait:在 wait(= 建 Cmd 當下的 tuiRoundWait)內等 run 的結果;等不到就先回 slow,帶著 pending 讓 applyState 接著等。
-// run 在自己的 goroutine 裡跑,它的 panic 帶回呼叫端再丟——Cmd 的 goroutine 裡丟,bubbletea 才會還原終端機。
-// wait 由呼叫端在 Update 裡讀好傳進來:bubbletea 不等 Cmd,程式結束後才跑的 Cmd 不該再碰全域變數。
 func tuiAwait(gen int, wait time.Duration, run func() tuiStateMsg) tuiStateMsg {
 	done := make(chan tuiStateMsg, 1)
 	go func() {
@@ -194,8 +309,6 @@ func (msg tuiStateMsg) repanic() tuiStateMsg {
 	return msg
 }
 
-// poll:問一輪(nowTracker:跟隨規則與節流跟 web 的播放面板同一套,決策 51)。Spotify 真的被打幾次由 tracker 的有效期決定,
-// 不是由這裡每 2 秒一次決定——限流時也照常每 2 秒問,冷卻期內 tracker 只端出快取。
 func (m tuiModel) poll() tea.Cmd { return nowPoll(m.trk, m.provFlag, m.gen) }
 
 func (m tuiModel) round() func() tuiStateMsg { return nowRound(m.trk, m.provFlag, m.gen) }
@@ -204,15 +317,25 @@ func (m tuiModel) control(f func(provider.PlaybackController, context.Context) e
 	return nowControl(m.ctx, m.trk, m.provID, m.provFlag, m.gen, f, once)
 }
 
-// nowPoll / nowRound / nowControl:TUI 與 now --watch 共用的一輪與控制鍵(決策 53、58)。都在呼叫端的 Update 裡建好,
-// wait(tuiRoundWait)也在這裡讀——bubbletea 不等 Cmd,程式結束後才跑的 Cmd 不該再碰全域變數。
+func (m tuiModel) controlOn(prov string, f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
+	if prov == "" {
+		prov = m.provID
+	}
+	return nowControl(m.ctx, m.trk, prov, m.provFlag, m.gen, f, once)
+}
+
+func tuiIgnoreOpenedErr(err error) error {
+	if errors.Is(err, provider.ErrOpenedNotPlaying) {
+		return err
+	}
+	return err
+}
+
 func nowPoll(trk *nowTracker, pin string, gen int) tea.Cmd {
 	round, wait := nowRound(trk, pin, gen), tuiRoundWait
 	return func() tea.Msg { return tuiAwait(gen, wait, round) }
 }
 
-// nowRound:一輪本身。拿 pollMu:同時只有一輪在問平台(web 的 /api/now 用同一把鎖),解鎖後若有滿 30 秒播放紀錄則寫入本機 play_journal。
-// 卡住的那一輪期間按鍵起的輪詢會排在這裡——一輪是冪等的(問、寫快取),排隊的那幾輪做完各自依世代號丟棄,不會重播任何控制指令。
 func nowRound(trk *nowTracker, pin string, gen int) func() tuiStateMsg {
 	return func() tuiStateMsg {
 		res, ok := trk.stepRound(pin)
@@ -223,20 +346,11 @@ func nowRound(trk *nowTracker, pin string, gen int) func() tuiStateMsg {
 	}
 }
 
-// nowControl:把控制指令送給畫面上的那個平台(id = 套用結果時記下的 provID,不是按鍵當下才去問 tracker——
-// 那時 tracker 可能已經換到畫面還沒顯示的另一家),送完進安定期、立刻重新輪詢,畫面才會跟上。
-// 呼叫端要先把 gen 推進(newChain),這次讀取才會取代舊鏈而不是疊上去。
-// once:晚到就會多生效一次的鍵(n / p:每一下跳一首)。這種鍵從按下起最多等 tuiRoundWait——controller 等超過才建好
-// 就不送;送出本身也帶同一個截止時間(token 換發卡在鎖上的請求送出前就被擋下、Music.app 卡住時 osascript 被殺掉),
-// 到期照實說。連按五次 n,不該在鎖放開或 Music.app 回神那一刻一口氣跳五首(#97 review)。
-// 其他鍵(播放 / 暫停、±10 秒、音量)是冪等的:目標在按下時就算好了,晚到也是同一個結果,照樣等——而且 Music.app 沒開時
-// 的播放要等它啟動完(冷啟動可能超過三秒,那時殺掉 osascript,app 開了卻沒播)。
-// 所有鍵都帶 WithoutWait:429 不睡在 Retry-After 裡(睡醒才送也是晚到的),照實說被限流,冷卻交給 tracker。
 func nowControl(ctx context.Context, trk *nowTracker, id, pin string, gen int, f func(provider.PlaybackController, context.Context) error, once bool) tea.Cmd {
 	round, wait := nowRound(trk, pin, gen), tuiRoundWait
 	return func() tea.Msg {
 		return tuiAwait(gen, wait, func() tuiStateMsg {
-			if trk.ctx.Err() != nil { // 同 round:結束之後才跑到的按鍵不建 provider、不送
+			if trk.ctx.Err() != nil {
 				return tuiStateMsg{gen: gen, dropped: true}
 			}
 			start := time.Now()
@@ -253,10 +367,14 @@ func nowControl(ctx context.Context, trk *nowTracker, id, pin string, gen int, f
 			}
 			defer cancel()
 			if err := f(pc, fctx); err != nil {
-				if fctx.Err() != nil && ctx.Err() == nil {
-					err = i18n.Errorf("tui.err.ctl_timeout") // 可能已經送到了,只是回得太慢:不說「沒送」
+				if errors.Is(err, provider.ErrOpenedNotPlaying) {
+					trk.settleNow()
+					return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 				}
-				trk.expireExcept("") // 送不出去(例如沒有作用中的裝置):快取的狀態可能就是錯的,下一輪重問,不要照它再按一次同樣的鍵
+				if fctx.Err() != nil && ctx.Err() == nil {
+					err = i18n.Errorf("tui.err.ctl_timeout")
+				}
+				trk.expireExcept("")
 				return tuiStateMsg{err: err, fromCtl: true, gen: gen}
 			}
 			trk.settleNow()
@@ -265,9 +383,7 @@ func nowControl(ctx context.Context, trk *nowTracker, id, pin string, gen int, f
 	}
 }
 
-// afterExec:命令列跑完的子命令換了帳號、預設平台或播放狀態——收尾跟 web 的 /api/run 同一套(決策 51)。
-// 不然 play 之後狀態列要等 Spotify 閒置的有效期(15 秒)過了才跟上,auth login 之後要等一分鐘。
-func (m tuiModel) afterExec(args []string) {
+func (m *tuiModel) afterExec(args []string) {
 	c, _, err := newRootCmd().Find(args)
 	if err != nil {
 		return
@@ -275,45 +391,82 @@ func (m tuiModel) afterExec(args []string) {
 	path := c.CommandPath()
 	if webNowInvalidatedBy(path) {
 		m.trk.dropNow(webNowResetsShown(path, args))
+		if path == "capy config set" && tuiStoreAllowed() {
+			if cfg, err := config.Load(); err == nil && cfg.Theme != "" {
+				if ui.ApplyTheme(cfg.Theme) {
+					m.setTheme(ui.DefaultTheme)
+					m.themeName = cfg.Theme
+				}
+			}
+		}
 	}
 	if webNowSettledBy(path) {
 		m.trk.settleNow()
 	}
+	if path == "capy history clear" {
+		m.hist, m.histAt, m.histDraft = nil, 0, ""
+	}
 }
 
-// newChain:讓輪詢世代前進(舊鏈的 tick 到期時會被丟掉),回傳推進後的 model。
 func (m tuiModel) newChain() tuiModel {
 	m.gen++
 	m.stalled = false
 	return m
 }
 
+func (m *tuiModel) saveOptimistic() {
+	if m.st != nil && m.optBase == nil {
+		m.optBase = clonePlaybackState(m.st)
+		m.optAt = m.stAt
+	}
+}
+
+func (m tuiModel) currentProgressMS() int {
+	if m.st == nil || m.st.Track == nil {
+		return 0
+	}
+	prog := m.st.ProgressMS
+	if m.st.Playing && !m.stAt.IsZero() {
+		if now := webNowClock(); now.After(m.stAt) {
+			prog += int(now.Sub(m.stAt) / time.Millisecond)
+		}
+	}
+	if prog < 0 {
+		prog = 0
+	}
+	if d := m.st.Track.DurationMS; d > 0 && prog > d {
+		prog = d
+	}
+	return prog
+}
+
+func (m tuiModel) sleepBadge() string {
+	if m.sleep == nil {
+		return ""
+	}
+	return tuiSleepBadge(m.sleep.Snapshot())
+}
+
 // freeze:開場結束。水豚定格印進捲動區,之後 View 只剩底部四行、frame ticker 停掉。
-// 開場演完會呼叫,任何一個按鍵也會——不然「開場期間按 Enter」會在水豚還在 View 裡時 Exec,
-// 子命令的輸出印在它下面,開場演完再定格印一次,就又變成使用者回報的「水豚頭重複」。
+// 嚴守單向不變式(印過就不再常駐,避免捲動區與 View 各一隻)。
 func (m tuiModel) freeze() (tuiModel, tea.Cmd) { return m.freezeNoting("") }
 
-// freezeNoting:定格,並在招牌下面多交代一句。那一句跟橫幅必須是**同一次** tuiPrintln:分兩次推(tea.Sequence)的話,
-// 第二次推的時候 renderer 還拿著 15 行的舊高度算位置——那句話蓋掉橫幅的下半截,而且行程卡住、連 SIGTERM 都不理
-// (pty 實跑重現的;review #73 之後的第一版就是這樣寫的)。
 func (m tuiModel) freezeNoting(note string) (tuiModel, tea.Cmd) {
 	if m.frozen {
 		return m, nil
 	}
-	m.frozen, m.menuHigh = true, 0 // 下面就推東西進捲動區了:歸零的規矩同其他幾處(見 View);常駐時開過選單的話這裡還記著八列
+	m.frozen, m.menuHigh = true, 0
 	lines := capybaraStill()
 	if !m.bannerFits() {
 		lines = []string{capyOneLine}
 	}
-	banner := m.theme.Accented(strings.Join(lines, "\n")) + "\n\n  " + m.theme.Mutedly(capyTagline(m.provID))
+	banner := m.theme.Accented(strings.Join(lines, "\n")) + "\n\n  " + m.theme.Mutedly(capyTaglineWithTimer(m.provID, m.sleepBadge()))
 	if note != "" {
 		banner += "\n  " + m.theme.Mutedly(note)
 	}
 	return m, tuiPrintln(banner)
 }
 
-// execResult:子命令跑完。成功不印;非零結束碼推一行進捲動區。
-// capy 的 2(有待套用的變更)與 3(安全閥擋下)是設計出來的結束碼、不是壞掉,所以不掛 ✗。
 func (m tuiModel) execResult(msg tuiExecMsg) tea.Cmd {
 	if msg.err == nil {
 		return nil
@@ -324,7 +477,7 @@ func (m tuiModel) execResult(msg tuiExecMsg) tea.Cmd {
 		return m.println(tuiSeg{"✗ " + head + ":" + msg.err.Error(), m.theme.Mutedly})
 	}
 	mark := "✗ "
-	if c := ee.ExitCode(); c == 2 || c == 3 || c == 130 { // 130 = 在檢視窗格 / now --watch 裡按 Ctrl-C 離開,也不是壞掉
+	if c := ee.ExitCode(); c == 2 || c == 3 || c == 130 {
 		mark = "· "
 	}
 	return m.println(tuiSeg{mark + i18n.T("tui.exit_code", "cmd", head, "code", ee.ExitCode()), m.theme.Mutedly})
@@ -337,18 +490,12 @@ func (m tuiModel) viewWidth() int {
 	return m.width
 }
 
-// tuiPrintln:把一行推進捲動區(不歸 TUI 管、不會被重繪蓋掉)。測試替換點——tea.Println 產生的
-// printLineMessage 是 bubbletea 的私有型別,外面認不出來,換掉它才能斷言「哪些東西進了捲動區」。
-// 一定要夾寬度:insertAbove 用 ansi.StringWidth 算要捲幾行,量不到 ambiguous 字元(見 tui_width.go)。
 var tuiPrintln = func(s string) tea.Cmd { return tea.Println(s) }
 
 func (m tuiModel) println(segs ...tuiSeg) tea.Cmd {
 	return tuiPrintln(tuiJoin(m.viewWidth()-1, segs...))
 }
 
-// printBlock:多行文字逐行夾寬度再推進捲動區。tuiJoin 的預算是單行的 —— tuiWidth 把換行算 0 欄,
-// 整份鍵位表丟進去量到的是所有行的加總,九行被截成三行(PR #49 review;main 就這樣)。
-// insertAbove 自己逐行算捲動量,多行字串本身是安全的,只要每一行各自夾好。
 func (m tuiModel) printBlock(s string, style func(string) string) tea.Cmd {
 	lines := strings.Split(s, "\n")
 	for i, ln := range lines {
@@ -357,26 +504,28 @@ func (m tuiModel) printBlock(s string, style func(string) string) tea.Cmd {
 	return tuiPrintln(strings.Join(lines, "\n"))
 }
 
-// printErr:錯誤第一次出現時整段推進捲動區(永久記錄,可以回頭看);狀態列只留短版。
-// 同一則不重複印——輪詢每兩秒一次,重複印會把捲動區洗掉。
+func (m tuiModel) echoLine(raw string) tea.Cmd {
+	return tuiPrintln("\n" + tuiJoin(m.viewWidth()-1, tuiSeg{"> ", m.theme.Accented}, tuiSeg{raw, m.theme.Strong}))
+}
+
+func (m tuiModel) echoAndNote(raw, note string) tea.Cmd {
+	w := m.viewWidth() - 1
+	echo := "\n" + tuiJoin(w, tuiSeg{"> ", m.theme.Accented}, tuiSeg{raw, m.theme.Strong})
+	msg := tuiJoin(w, tuiSeg{note, m.theme.Mutedly})
+	return tuiPrintln(echo + "\n" + msg)
+}
+
 func (m *tuiModel) printErr(err error) tea.Cmd {
 	if err == nil || err.Error() == m.lastErr {
 		return nil
 	}
 	m.lastErr = err.Error()
-	m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
+	m.menuHigh = 0
 	return m.println(tuiSeg{"⚠ " + err.Error(), m.theme.Mutedly})
 }
 
-// tuiExecProcess:測試替換點——真的 fork 一個行程沒辦法在單元測試裡驗證,換掉它才能斷言「這一行
-// 被切成哪些參數」。正式路徑就是 tea.ExecProcess。
 var tuiExecProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd { return tea.ExecProcess(c, fn) }
 
-// withProviderFlag:capy --provider apple 開的介面是 Apple,命令列跑的卻是 config 的 default_provider——
-// 同一個畫面兩個平台,而且 pause 停的不是上面在播的那首。明指就一律附加;沒明指時,作用在「現在在播的那首」的命令
-// (pause / next / prev / seek / vol、不帶參數的 play、now)跟著狀態列上的平台走(決策 53),其他(search、
-// play <查詢>、pl …)照舊用 default_provider,使用者自己打了 --provider 就不動。要先確認目標子命令真的吃這個 flag:
-// auth / config / export / resolve 沒掛 --provider,多送一個會直接 unknown flag 退出。
 func (m tuiModel) withProviderFlag(args []string) []string {
 	c, rest, err := newRootCmd().Find(args)
 	if err != nil || c.Flags().Lookup(flagProvider) == nil {
@@ -385,14 +534,13 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 	id := m.provFlag
 	if id == "" {
 		path := c.CommandPath()
-		// rest 刻意連 flag 一起算:play --id X 的 id 是預設平台的 id 空間,play --pick 是搜尋——都照舊用 default_provider。
-		// 只看位置參數的話,這兩個會被送去顯示中的平台。
-		// now --watch 也附加(決策 58):從 TUI 開的 watch 看的是狀態列上的那一家——不附加的話它從 default_provider 起算,
-		// Apple 暫停、Spotify 閒置時會跑去顯示 Spotify,空白鍵播的就不是剛剛看著的那首。
 		follows := (webNowSettledBy(path) || path == "capy now") && !(path == "capy play" && len(rest) > 0)
-		if path == "capy wiki" { // 沒指定歌名就是「狀態列上這首」:位置參數或 --title 給了就不跟;--refresh / --json 照跟
+		if path == "capy wiki" {
 			_ = c.Flags().Parse(rest)
 			follows = len(c.Flags().Args()) == 0 && !c.Flags().Changed("title")
+		}
+		if path == "capy pl add" && slices.Contains(rest, "--now") && isProviderID(m.provID) {
+			follows = true
 		}
 		typed := slices.ContainsFunc(args, func(a string) bool { return a == "--"+flagProvider || strings.HasPrefix(a, "--"+flagProvider+"=") })
 		if !follows || typed {
@@ -400,14 +548,74 @@ func (m tuiModel) withProviderFlag(args []string) []string {
 		}
 		id = m.provID
 	}
+	if id == "" {
+		return args
+	}
 	return append(slices.Clone(args), "--"+flagProvider, id)
 }
 
-// runArgs:把輸入的一行拿去重新執行 capy 自己。執行期間 bubbletea 讓出終端機,子命令拿到真的 TTY。
 func (m tuiModel) runArgs(args []string) tea.Cmd {
 	full := m.withProviderFlag(args)
 	c := exec.CommandContext(m.ctx, m.exe, full...)
 	return tuiExecProcess(c, func(err error) tea.Msg { return tuiExecMsg{args: args, err: err} })
+}
+
+func (m tuiModel) startSubcommand(raw string, args []string) (tuiModel, tea.Cmd) {
+	if m.exe == "" {
+		return m, m.println(tuiSeg{"✗ " + i18n.T("tui.err.no_executable"), m.theme.Mutedly})
+	}
+	m.running, m.menuHigh = true, 0
+	return m, tea.Sequence(m.echoLine(raw), m.runArgs(args))
+}
+
+func tuiWikiTrackKey(prov string, tr *provider.Track) string {
+	if tr == nil || strings.TrimSpace(tr.Title) == "" {
+		return ""
+	}
+	return prov + "\x00" + tr.Title + "\x00" + strings.Join(tr.Artists, ", ")
+}
+
+func lookupWikiAsyncCmd(key string, song ai.Song) tea.Cmd {
+	return func() tea.Msg {
+		if !tuiStoreAllowed() {
+			return tuiWikiCachedMsg{key: key}
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			return tuiWikiCachedMsg{key: key}
+		}
+		v, _ := lookupCachedWiki(*cfg, song)
+		return tuiWikiCachedMsg{key: key, view: v}
+	}
+}
+
+func (m tuiModel) printCachedWiki(v *cachedWikiView) tea.Cmd {
+	w := max(2, m.viewWidth()-1)
+	var out []string
+	out = append(out, "")
+	out = append(out, tuiJoin(w, tuiSeg{"> ", m.theme.Accented}, tuiSeg{"wiki", m.theme.Strong}))
+	out = append(out, tuiJoin(w, tuiSeg{i18n.T("wiki.cached", "date", v.CreatedAt.Format("2006-01-02")), m.theme.Mutedly}))
+	for _, rawLine := range strings.Split(strings.TrimRight(v.Body, "\n"), "\n") {
+		heading := strings.HasPrefix(rawLine, "## ")
+		for _, ln := range tuiWrap(rawLine, w) {
+			if heading {
+				out = append(out, m.theme.Strong(ln))
+			} else {
+				out = append(out, ln)
+			}
+		}
+	}
+	out = append(out, "")
+	for _, footer := range []string{
+		i18n.T("wiki.mv", "url", v.MVURL),
+		i18n.T("wiki.source", "model", v.Model, "date", v.CreatedAt.Format("2006-01-02")),
+		v.Disclaimer,
+	} {
+		for _, ln := range tuiWrap(footer, w) {
+			out = append(out, m.theme.Mutedly(ln))
+		}
+	}
+	return tuiPrintln(strings.Join(out, "\n"))
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -415,63 +623,63 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		wasAlive := m.alive()
 		m.width, m.height = msg.Width, msg.Height
-		// 下限不能寫死:比終端機還寬的輸入行會換行,底部就從四行變五行 —— 正是這次要修掉的症狀。
 		m.input.SetWidth(max(8, msg.Width-4))
 		m.input.Placeholder = tuiPlaceholder(msg.Width)
 		if wasAlive && !m.alive() {
-			// 視窗縮到放不下常駐的水豚:定格。freeze 先把牠印進捲動區、畫面才變矮——推東西進捲動區之後縮才清得乾淨(見 View)。
-			// 定格是單向的,所以交代一句:不然使用者只是手滑縮了一下視窗,牠就再也不動了,也不知道為什麼(review #73)。
 			return m.freezeNoting(i18n.T("tui.frozen_note"))
 		}
 		return m, nil
 	case tuiFrameMsg:
-		if m.frozen { // 定格後不再有動畫,frame ticker 就此停掉:底部四行只在狀態變動與按鍵時重畫
+		if m.frozen {
 			return m, nil
 		}
-		// 放不下整隻的畫面沒有劇本可演(一行版是靜止的):不必陪著等三秒,第一個 tick 就定格(review #72)。
-		// 放在這裡而不是 Init:那時候還沒收到 WindowSizeMsg,寬度是預設的 80。
 		if !m.bannerFits() {
 			return m.freeze()
 		}
-		m.frame++ // 常駐時這條鏈一直走下去:劇本演完接 capyIdle(偶爾眨眼、撥耳朵、吃一根草)
+		m.frame++
 		return m, m.frameTick()
 	case tuiFreezeMsg:
-		if m.alive() { // 常駐的水豚不定格:開場演完就接著過日子
+		if m.alive() {
 			return m, nil
 		}
 		return m.freeze()
+	case tuiSecondMsg:
+		if msg.seq != m.clockSeq || !m.needSecondTick() {
+			m.clockRunning = false
+			return m, nil
+		}
+		seq := m.clockSeq
+		return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return tuiSecondMsg{seq: seq} })
 	case tuiPollMsg:
-		if msg.gen != m.gen || m.stalled { // 舊鏈:停在這裡,不要再排下一個 tick
+		if msg.gen != m.gen || m.stalled {
 			return m, nil
 		}
 		return m, m.poll()
 	case tuiStateMsg:
 		return m.applyState(msg)
+	case tuiWikiCachedMsg:
+		if msg.key != "" && msg.key == m.wikiKey {
+			m.wikiView = msg.view
+		}
+		return m, nil
+	case tuiDevicesMsg:
+		return m.applyDevicesMsg(msg)
 	case tuiExecMsg:
-		// 成功不印:子命令的輸出本身就是證據,多一行是雜訊。
-		// 不重排 tick:tea.Exec 擋住的是 event loop,不是 tea.Tick 的 timer(各自的 goroutine)。
-		// 排隊中的 tuiFrameMsg / tuiPollMsg 回來就會把兩條鏈接上,這裡再排一次會變成兩條(PR #41 review)。
-		m.running = false // 底部區恢復四行:從游標所在的那行(子命令輸出的下一行)往下畫
+		m.running = false
 		m.afterExec(msg.args)
 		return m, m.execResult(msg)
 	case tea.KeyPressMsg:
-		// 命令清單第一次按鍵才建。放進 newTUIModel 會形成初始化循環:tuiCommands → newRootCmd →
-		// runTUI(它是個 var)→ newTUIModel。而且介面開著卻一次都沒按鍵時,這份清單本來就不必存在。
 		if m.cmds == nil {
 			m.cmds = tuiCommands()
 		}
 		next, cmd := m.onKey(msg)
-		next.menuHigh = max(next.menuHigh, next.menuRows()) // 只長不縮,到下一個命令為止(見 View)
+		next.menuHigh = max(next.menuHigh, next.overlayRows())
 		return next, cmd
 	}
 	return m, nil
 }
 
 func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
-	// stale = 舊世代的回覆(控制鍵已經開了新鏈)。判斷要在所有分支之前:pollTick() 抓的是**目前**的
-	// gen,所以任何一條路徑只要排了 tick,舊鏈就復活成一條完全合法的新鏈——429 那條還會自我增強
-	// (鏈愈多愈容易 429,愈常走那條路徑,鏈又愈多)。停擺中同理:一則遲到的訊息不該把輪詢默默接回去,
-	// 畫面卻還在叫使用者按 r(PR #42 review)。
 	stale := msg.gen != m.gen
 	tick := func() tea.Cmd {
 		if stale || m.stalled {
@@ -479,8 +687,6 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.pollTick()
 	}
-	// 等太久了:接著等同一個結果——過期的也要等,那個結果可能是控制指令自己的錯(下面照樣要說)或 panic(要再丟)。
-	// 只有目前這條鏈的才說「等待平台回應」,畫面照舊;結果回來照常套用(失敗照算,過期的照樣丟)。
 	if msg.slow {
 		if !stale {
 			m.errShort = i18n.T("tui.status.waiting")
@@ -488,71 +694,119 @@ func (m tuiModel) applyState(msg tuiStateMsg) (tea.Model, tea.Cmd) {
 		pending := msg.pending
 		return m, func() tea.Msg { return (<-pending).repanic() }
 	}
-	// 控制指令自己的錯誤要說(那是使用者剛按的鍵失敗了),即使期間又按了一次鍵而變成 stale。
 	if msg.fromCtl && msg.err != nil {
-		pr := m.printErr(msg.err) // printErr 是指標 receiver,先叫再 return:
+		if errors.Is(msg.err, provider.ErrOpenedNotPlaying) {
+			label := ""
+			var oe *provider.OpenedError
+			if errors.As(msg.err, &oe) {
+				label = oe.Label
+			}
+			m.menuHigh = 0
+			pr := m.println(tuiSeg{"· " + i18n.T("play.opened_not_playing", "label", label), m.theme.Mutedly})
+			return m, tea.Batch(pr, tick())
+		}
+		if !stale && m.optBase != nil {
+			m.st = m.optBase
+			m.stAt = m.optAt
+			m.optBase = nil
+		}
+		pr := m.printErr(msg.err)
 		m.errShort = i18n.T("tui.status.ctl_failed")
-		return m, tea.Batch(pr, tick()) // 寫在 return 的運算式裡,m 有沒有帶到更新是規格未定義的
+		return m, tea.Batch(pr, tick())
 	}
-	if stale { // 過期的輪詢結果沒有價值:不顯示(否則一則遲到的「播放器未執行」會抹掉剛拿回來的狀態)
+	if stale {
 		return m, nil
 	}
-	if msg.dropped { // 已登出 / 換掉的帳號的結果:不顯示,鏈照走
+	if msg.dropped {
 		return m, tick()
 	}
-	if msg.provider != "" && msg.provider != m.provID { // 換平台:上一家的曲目與失敗次數不能掛在這一家名下(限流、出錯的分支都不動 st)
-		m.provID, m.st, m.fails = msg.provider, nil, 0
+	if msg.provider != "" && msg.provider != m.provID {
+		m.provID, m.st, m.stAt, m.optBase, m.fails = msg.provider, nil, time.Time{}, nil, 0
+		m.wikiKey, m.wikiView = "", nil
 	}
 	var be nowBuildErr
 	m.pcErr = nil
-	if errors.As(msg.err, &be) { // 沒登入、平台不支援:不是連不上,不計 fails、不進捲動區,狀態列說原因
-		m.st, m.pcErr, m.errShort, m.fails = nil, be.error, "", 0
+	if errors.As(msg.err, &be) {
+		m.st, m.stAt, m.optBase, m.pcErr, m.errShort, m.fails = nil, time.Time{}, nil, be.error, "", 0
+		m.wikiKey, m.wikiView = "", nil
 		return m, tick()
 	}
-	// 這兩條是狀態不是失敗,不進捲動區(Music.app 沒開、被限流都會持續好一陣子),但狀態列要說。
-	// lastErr 仍然記帳:換過狀態再換回同一則錯誤,是新的一件事,要能再印一次。
 	var rl *provider.RateLimitError
 	switch {
 	case errors.Is(msg.err, provider.ErrPlayerNotRunning):
-		m.st, m.errShort, m.fails, m.lastErr = nil, i18n.T("tui.status.player_not_running"), 0, msg.err.Error()
+		m.st, m.stAt, m.optBase, m.errShort, m.fails, m.lastErr = nil, time.Time{}, nil, i18n.T("tui.status.player_not_running"), 0, msg.err.Error()
+		m.wikiKey, m.wikiView = "", nil
+		m.observeSleepAsync()
 		return m, tick()
-	case errors.As(msg.err, &rl): // 照常每 2 秒問:冷卻期內 tracker 只端出快取,不會真的打(Retry-After 由它守)
+	case errors.As(msg.err, &rl):
 		m.errShort, m.fails, m.lastErr = i18n.T("tui.status.rate_limited", "time", msg.retryAt.Local().Format("15:04:05")), 0, msg.err.Error()
 		return m, tick()
 	}
 	if msg.err != nil {
-		if !msg.cached { // 快取裡的同一則錯誤不重複算:Spotify 出錯的結果留 15 秒,每 2 秒算一次的話不到十秒就停擺
+		if !msg.cached {
 			m.fails++
 		}
 		m.errShort = i18n.T("tui.status.state_unavailable")
-		// 整段錯誤推進捲動區(第一次、或內容變了才印),狀態列只留短版:
-		// 前一版把整段留在畫面上,osascript 那種長訊息會一直佔著看不到別的。
-		pr := m.printErr(msg.err) // 指標 receiver:一定要在 return 之前叫
+		pr := m.printErr(msg.err)
 		if m.fails >= tuiMaxFails {
-			// 不關介面:這裡的定位是「一行可以跑任何子命令」,播放狀態只是其中一格。連不上的時候
-			// 使用者最需要的正是那行命令列(auth login、doctor),把整個介面收掉等於把人關在門外
-			// (PR #41 review)。輪詢先停,按 r 重試。
 			m.stalled = true
 			return m, pr
 		}
 		return m, tea.Batch(pr, tick())
 	}
-	// 恢復了就把去重的記憶清掉:同一則錯誤在恢復之後再發生,是新的一件事,要再印一次。
-	m.st, m.errShort, m.fails, m.lastErr = msg.st, "", 0, ""
-	return m, tick()
+
+	m.st, m.stAt, m.optBase, m.errShort, m.fails, m.lastErr = msg.st, webNowClock(), nil, "", 0, ""
+	m.observeSleepAsync()
+
+	var wikiCmd, secCmd tea.Cmd
+	if !m.stalled {
+		if m.st == nil || m.st.Track == nil {
+			m.wikiKey, m.wikiView = "", nil
+		} else if wk := tuiWikiTrackKey(m.provID, m.st.Track); wk != m.wikiKey {
+			m.wikiKey = wk
+			m.wikiView = nil
+			wikiCmd = lookupWikiAsyncCmd(wk, songOf(m.st.Track))
+		}
+		m, secCmd = m.ensureSecondTick()
+	} else if m.st == nil || m.st.Track == nil {
+		m.wikiKey, m.wikiView = "", nil
+	}
+	return m, tea.Batch(tick(), wikiCmd, secCmd)
 }
 
-// menu:輸入行以 / 開頭時,回過濾後的清單與 true。選單沒有自己的開關狀態 —— 它就是輸入行的投影,
-// 少一個會和輸入行不同步的狀態。
+func (m tuiModel) observeSleepAsync() {
+	if m.sleep == nil {
+		return
+	}
+	if m.sleep.Snapshot().Mode == SleepOff {
+		m.sleep.Observe(m.provID, m.st)
+		return
+	}
+	prov := m.provID
+	st := clonePlaybackState(m.st)
+	sleep := m.sleep
+	if testing.Testing() {
+		sleep.Observe(prov, st)
+	} else {
+		go sleep.Observe(prov, st)
+	}
+}
+
+// menu:輸入行以 / 開頭時,回過濾後的清單與 true(包含第二階段參數補全)。
 func (m tuiModel) menu() ([]tuiCmdItem, bool) {
 	q, ok := tuiMenuQuery(m.input.Value())
-	if !ok || tuiIsCommand(m.cmds, q) { // 已經是完整命令(可帶參數):選單收起,⏎ 就是執行
+	if !ok {
+		return nil, false
+	}
+	if argItems, ok := tuiArgMenu(q, m.playTargetProvider()); ok {
+		return argItems, true
+	}
+	if tuiIsCommand(m.cmds, q) {
 		return nil, false
 	}
 	return tuiMenuFilter(m.cmds, q), true
 }
 
-// menuRows:選單目前佔幾列(收起 = 0;「沒有符合的命令」那一行也算一列)。View 用它撐高度。
 func (m tuiModel) menuRows() int {
 	items, ok := m.menu()
 	if !ok {
@@ -561,13 +815,18 @@ func (m tuiModel) menuRows() int {
 	return max(1, min(tuiMenuRows, len(items)))
 }
 
-// recall:↑↓ 翻命令歷史。d 為 -1 往回、+1 往前;翻回最新時拿回開始翻之前打到一半的那行
-// (bash / zsh 就是這樣;直接清成空行的話,打了一半想查歷史就等於把字弄丟)。
+func (m tuiModel) overlayRows() int {
+	if m.drawerOpen() {
+		return len(m.drawerView(m.viewWidth() - 1))
+	}
+	return m.menuRows()
+}
+
 func (m tuiModel) recall(d int) tuiModel {
 	if len(m.hist) == 0 {
 		return m
 	}
-	if m.histAt == len(m.hist) { // 還沒開始翻:先把打到一半的收起來
+	if m.histAt == len(m.hist) {
 		m.histDraft = m.input.Value()
 	}
 	at := min(len(m.hist), max(0, m.histAt+d))
@@ -583,15 +842,220 @@ func (m tuiModel) recall(d int) tuiModel {
 
 func (m tuiModel) interruptedByKey() bool { return m.ctrlC }
 
+// tryInProcessCmd:純播放控制命令與 /sleep 直接在 TUI 行程內執行,常駐水豚不閃退、不重讀 keychain。
+// 帶任何旗標(--provider / --help 等)時交回子行程處理以完整保留 cobra 旗標語意。
+func (m tuiModel) tryInProcessCmd(raw string, args []string) (tuiModel, tea.Cmd, bool) {
+	if len(args) == 0 || slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-") }) {
+		return m, nil, false
+	}
+	switch args[0] {
+	case "pause":
+		if len(args) != 1 {
+			return m, nil, false
+		}
+		m = m.newChain()
+		m.menuHigh = 0
+		if m.st != nil {
+			m.saveOptimistic()
+			cp := clonePlaybackState(m.st)
+			cp.Playing = false
+			m.st = cp
+		}
+		return m, tea.Sequence(m.echoLine(raw), m.control(provider.PlaybackController.Pause, false)), true
+
+	case "play":
+		if len(args) != 1 {
+			return m, nil, false
+		}
+		m = m.newChain()
+		m.menuHigh = 0
+		if m.st != nil {
+			m.saveOptimistic()
+			cp := clonePlaybackState(m.st)
+			cp.Playing = true
+			m.st = cp
+			if !m.stAt.IsZero() {
+				m.stAt = webNowClock()
+			}
+		}
+		ctl := m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+			return pc.Play(ctx, provider.PlayRequest{})
+		}, false)
+		return m, tea.Sequence(m.echoLine(raw), ctl), true
+
+	case "next":
+		if len(args) != 1 {
+			return m, nil, false
+		}
+		m = m.newChain()
+		m.menuHigh = 0
+		return m, tea.Sequence(m.echoLine(raw), m.control(provider.PlaybackController.Next, true)), true
+
+	case "prev":
+		if len(args) != 1 {
+			return m, nil, false
+		}
+		m = m.newChain()
+		m.menuHigh = 0
+		return m, tea.Sequence(m.echoLine(raw), m.control(provider.PlaybackController.Prev, true)), true
+
+	case "seek":
+		if len(args) != 2 {
+			return m, nil, false
+		}
+		pos, err := parseSeekPos(args[1])
+		m.menuHigh = 0
+		if err != nil {
+			return m, m.echoAndNote(raw, "✗ "+err.Error()), true
+		}
+		m = m.newChain()
+		if m.st != nil && m.st.Track != nil {
+			m.saveOptimistic()
+			cp := clonePlaybackState(m.st)
+			cp.ProgressMS = pos
+			m.st = cp
+			if !m.stAt.IsZero() {
+				m.stAt = webNowClock()
+			}
+		}
+		return m, tea.Sequence(m.echoLine(raw), m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+			return pc.Seek(ctx, pos)
+		}, false)), true
+
+	case "vol":
+		if len(args) != 2 {
+			return m, nil, false
+		}
+		pct, err := parseVolPct(args[1])
+		m.menuHigh = 0
+		if err != nil {
+			return m, m.echoAndNote(raw, "✗ "+err.Error()), true
+		}
+		m = m.newChain()
+		if m.st != nil && m.st.Device.VolumeKnown {
+			m.saveOptimistic()
+			cp := clonePlaybackState(m.st)
+			cp.Device.VolumePct = pct
+			m.st = cp
+		}
+		return m, tea.Sequence(m.echoLine(raw), m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+			return pc.SetVolume(ctx, pct)
+		}, false)), true
+
+	case "sleep":
+		return m.execSleepCommand(raw, args)
+	}
+	return m, nil, false
+}
+
+func (m tuiModel) execSleepCommand(raw string, args []string) (tuiModel, tea.Cmd, bool) {
+	m.menuHigh = 0
+	if m.sleep == nil {
+		return m, m.echoAndNote(raw, "* "+i18n.T("tui.sleep.off")), true
+	}
+	if len(args) != 2 {
+		val := strings.Join(args[1:], " ")
+		return m, m.echoAndNote(raw, "✗ "+i18n.T("tui.sleep.bad_arg", "value", strconv.Quote(val))), true
+	}
+	arg := strings.ToLower(strings.TrimSpace(args[1]))
+	prov := m.playTargetProvider()
+	switch arg {
+	case "off", "0", "cancel":
+		offCmd := m.turnSleepOffCmd()
+		return m, tea.Batch(m.echoAndNote(raw, "* "+i18n.T("tui.sleep.off")), offCmd), true
+	case "track", "eot", "end":
+		m.sleep.SetEndOfTrack(prov)
+		var secCmd tea.Cmd
+		m, secCmd = m.ensureSecondTick()
+		return m, tea.Batch(m.echoAndNote(raw, "* "+i18n.T("tui.sleep.track_set")), secCmd), true
+	case "yuzu", "pomodoro":
+		m.sleep.SetPomodoro(prov, 0, 0)
+		var secCmd tea.Cmd
+		m, secCmd = m.ensureSecondTick()
+		return m, tea.Batch(m.echoAndNote(raw, "* "+i18n.T("tui.sleep.yuzu_set")), secCmd), true
+	default:
+		mins, err := strconv.Atoi(strings.TrimSuffix(arg, "m"))
+		if err != nil || mins <= 0 {
+			return m, m.echoAndNote(raw, "✗ "+i18n.T("tui.sleep.bad_arg", "value", strconv.Quote(args[1]))), true
+		}
+		m.sleep.SetCountdownMinutes(prov, mins)
+		var secCmd tea.Cmd
+		m, secCmd = m.ensureSecondTick()
+		return m, tea.Batch(m.echoAndNote(raw, "* "+i18n.T("tui.sleep.countdown_set", "count", mins)), secCmd), true
+	}
+}
+
+func (m tuiModel) turnSleepOffCmd() tea.Cmd {
+	sleep := m.sleep
+	if sleep == nil {
+		return nil
+	}
+	if testing.Testing() {
+		sleep.Off()
+		return nil
+	}
+	return func() tea.Msg {
+		sleep.Off()
+		return nil
+	}
+}
+
+func (m tuiModel) cycleSleepTimer() (tuiModel, tea.Cmd) {
+	if m.sleep == nil {
+		return m, nil
+	}
+	prov := m.playTargetProvider()
+	snap := m.sleep.Snapshot()
+	switch snap.Mode {
+	case SleepOff:
+		m.sleep.SetEndOfTrack(prov)
+	case SleepEndOfTrack:
+		m.sleep.SetCountdownMinutes(prov, 15)
+	case SleepCountdown:
+		switch {
+		case snap.TotalSec <= 15*60:
+			m.sleep.SetCountdownMinutes(prov, 30)
+		case snap.TotalSec <= 30*60:
+			m.sleep.SetCountdownMinutes(prov, 60)
+		default:
+			m.sleep.SetPomodoro(prov, 0, 0)
+		}
+	case SleepYuzuPomodoro:
+		return m, m.turnSleepOffCmd()
+	}
+	return m.ensureSecondTick()
+}
+
+func (m tuiModel) cachedModeController() (provider.PlaybackModeController, bool) {
+	if m.trk == nil {
+		return nil, false
+	}
+	m.trk.nowMu.Lock()
+	pc, ok := m.trk.now[m.provID]
+	m.trk.nowMu.Unlock()
+	if !ok || pc == nil {
+		return nil, false
+	}
+	mc, ok := pc.(provider.PlaybackModeController)
+	return mc, ok
+}
+
+func (m tuiModel) reconnectPoll() (tuiModel, tea.Cmd) {
+	m = m.newChain()
+	m.errShort, m.fails, m.lastErr = "", 0, ""
+	m.trk.expireExcept("")
+	return m, m.poll()
+}
+
 func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
-	// 開場動畫期間按任何鍵都先定格:水豚還在 View 裡時 Exec,子命令的輸出會印在它下面,
-	// 開場演完再定格印一次 = 使用者回報的「水豚頭重複」。順帶也讓人可以跳過開場。
-	// 常駐的水豚不必:牠永遠不印進捲動區,執行命令時整塊畫面先縮成一行(見 View),不會留下第二隻。
 	if !m.frozen && !m.alive() {
 		var freeze tea.Cmd
 		m, freeze = m.freeze()
 		next, cmd := m.onKey(msg)
 		return next, tea.Sequence(freeze, cmd)
+	}
+	if m.drawerOpen() {
+		return m.onDrawerKey(msg)
 	}
 	if m.typing {
 		items, menuOpen := m.menu()
@@ -601,17 +1065,17 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			if msg.String() == "down" {
 				d = 1
 			}
-			if menuOpen { // 選單開著:↑↓ 是選擇
+			if menuOpen {
 				if len(items) > 0 {
 					m.menuSel = min(len(items)-1, max(0, m.menuSel+d))
 				}
 				return m, nil
 			}
-			return m.recall(d), nil // 否則翻歷史
-		case "ctrl+c": // raw mode 下 ctrl+c 不是 SIGINT 而是一個按鍵;不攔的話打字打到一半按它毫無反應
+			return m.recall(d), nil
+		case "ctrl+c":
 			m.ctrlC = true
 			return m, tea.Quit
-		case "esc": // 有字先清空(選單也跟著收起來,它就是輸入行的投影),空的再離開輸入
+		case "esc":
 			if m.input.Value() != "" {
 				m.input.SetValue("")
 				m.menuSel = 0
@@ -620,18 +1084,20 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			m.typing, m.input = false, blurred(m.input)
 			return m, nil
 		case "enter", "tab":
-			if menuOpen && len(items) > 0 { // Tab / ⏎ 帶進輸入行,不直接執行:多數命令還要補參數
-				m.input.SetValue(items[min(m.menuSel, len(items)-1)].path + " ")
+			if menuOpen && len(items) > 0 {
+				m.input.SetValue(items[min(m.menuSel, len(items)-1)].completion())
 				m.input.CursorEnd()
 				m.menuSel = 0
 				return m, nil
 			}
-			if msg.String() == "tab" { // 沒東西可補就不做事(textinput 自己的 Tab 是接受建議,我們沒開)
+			if msg.String() == "tab" {
+				if comp, ok := tuiTabCompleteArg(m.input.Value(), m.playTargetProvider()); ok {
+					m.input.SetValue(comp)
+					m.input.CursorEnd()
+				}
 				return m, nil
 			}
 			raw := m.input.Value()
-			// / 只是開選單的記號,執行時拿掉:打了完整命令(或選單比不到任何東西)就照打的跑,
-			// 比不到的由 cobra 報 unknown command。不然使用者得回到行首把 / 刪掉才送得出去。
 			if q, ok := tuiMenuQuery(raw); ok {
 				raw = strings.TrimSpace(q)
 			}
@@ -641,38 +1107,27 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			if len(args) == 0 {
 				return m, nil
 			}
-			if m.exe == "" {
-				return m, m.println(tuiSeg{"✗ " + i18n.T("tui.err.no_executable"), m.theme.Mutedly})
+			m.recordHistory(raw, args)
+			if next, cmd, handled := m.tryInProcessCmd(raw, args); handled {
+				return next, cmd
 			}
-			// 只在記憶體裡:存檔要決定寫哪、要不要清,是另一個決定。
-			// 連續重複的不記:↑ 翻出來再送出一次,不該讓下一次要多按幾下才走得回去。
-			if len(m.hist) == 0 || m.hist[len(m.hist)-1] != raw {
-				m.hist = append(m.hist, raw)
-			}
-			m.histAt, m.histDraft = len(m.hist), ""
-			m.running, m.menuHigh = true, 0 // 回音推進捲動區之後縮才乾淨(見 View)
-			// 回音先進捲動區再讓出終端機:Sequence 保序,而 exec 交出終端機前會 flush 一次
-			// (releaseTerminal → stopRenderer(false) → flush),所以回音一定在子命令輸出上面。
-			// 回音前空一行:不然這次的回音緊貼著上一個命令的輸出,段落分不開。
-			return m, tea.Sequence(
-				tuiPrintln("\n"+tuiJoin(m.viewWidth()-1, tuiSeg{"> ", m.theme.Accented}, tuiSeg{raw, m.theme.Strong})), // 提示符與輸入行一致
-				m.runArgs(args),
-			)
+			return m.startSubcommand(raw, args)
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		if items, ok := m.menu(); ok { // 打字改變了過濾結果,選取要夾回範圍內
+		if items, ok := m.menu(); ok {
 			m.menuSel = min(m.menuSel, max(0, len(items)-1))
 		}
 		return m, cmd
 	}
+
 	switch msg.String() {
 	case "q", "esc":
 		return m, tea.Quit
 	case "ctrl+c":
 		m.ctrlC = true
 		return m, tea.Quit
-	case "/": // 帶著 / 進輸入行:選單就是「輸入行以 / 開頭」的投影,和 Claude Code 的斜線命令一致
+	case "/":
 		m.typing, m.menuSel = true, 0
 		m.input.SetValue("/")
 		m.input.CursorEnd()
@@ -682,7 +1137,7 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.typing = true
 		m.input.Focus()
 		return m, textinput.Blink
-	case "up", "down": // 一般模式的 ↑↓ 也翻歷史:翻到就直接進輸入行
+	case "up", "down":
 		if len(m.hist) == 0 {
 			return m, nil
 		}
@@ -693,29 +1148,73 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.typing = true
 		m.input.Focus()
 		return m.recall(d), textinput.Blink
-	case "?": // 完整鍵位推進捲動區,不佔底部的行數
-		m.menuHigh = 0 // 推進捲動區之後縮才乾淨(見 View)
+	case "?":
+		m.menuHigh = 0
 		return m, m.printBlock(tuiKeymap(), m.theme.Mutedly)
-	case "w": // 狀態列上這首歌的 wiki(決策 59):跟打 /wiki 一樣的路——回音、讓出終端機、--provider 跟著狀態列;
-		// 放在 pcErr 的閘之前:沒有播放遙控時命令自己會說沒有在播、指路 --title,比按了沒反應好
-		if m.exe == "" {
-			return m, m.println(tuiSeg{"✗ " + i18n.T("tui.err.no_executable"), m.theme.Mutedly})
+	case "w":
+		view := m.wikiView
+		if view == nil && m.st != nil && m.st.Track != nil && tuiStoreAllowed() {
+			if cfg, err := config.Load(); err == nil {
+				if v, ok := lookupCachedWiki(*cfg, songOf(m.st.Track)); ok {
+					view = v
+					m.wikiView = v
+					m.wikiKey = tuiWikiTrackKey(m.provID, m.st.Track)
+				}
+			}
 		}
-		m.running, m.menuHigh = true, 0
-		return m, tea.Sequence(
-			tuiPrintln("\n"+tuiJoin(m.viewWidth()-1, tuiSeg{"> ", m.theme.Accented}, tuiSeg{"wiki", m.theme.Strong})),
-			m.runArgs([]string{"wiki"}),
-		)
+		if view != nil {
+			m.menuHigh = 0
+			return m, m.printCachedWiki(view)
+		}
+		return m.startSubcommand("wiki", []string{"wiki"})
+	case "W":
+		return m.startSubcommand("wiki --refresh", []string{"wiki", "--refresh"})
+	case "o":
+		return m.openQuickDeck(m.drawer.tab)
+	case "d":
+		return m.openQuickDeck(tuiDeckTabDevices)
+	case "f":
+		return m.openCollectDrawer()
+	case "F":
+		return m.collectToLast()
+	case "t":
+		return m.cycleSleepTimer()
+	case "C":
+		return m.openThemeDrawer()
+	case "R":
+		return m.reconnectPoll()
 	}
-	// r 在「沒有播放遙控」時也要能用:在別的終端機跑完 capy auth login 之後,不必等建不起來的結果過期(一分鐘)。
-	if msg.String() == "r" { // 輪詢停下來之後重新接上
+
+	if msg.String() == "r" {
+		if m.pcErr != nil || m.stalled || m.fails > 0 || m.errShort != "" || m.st == nil {
+			return m.reconnectPoll()
+		}
+		if _, ok := m.cachedModeController(); !ok {
+			return m.reconnectPoll()
+		}
+		var nextMode provider.RepeatMode
+		switch m.st.Repeat {
+		case provider.RepeatContext:
+			nextMode = provider.RepeatTrack
+		case provider.RepeatTrack:
+			nextMode = provider.RepeatOff
+		default:
+			nextMode = provider.RepeatContext
+		}
 		m = m.newChain()
-		// lastErr 也清掉:明確的重試是新的一件事,重試又撞到同一則錯誤時要再印一次,
-		// 不然使用者按了鍵,十秒內畫面上完全沒有任何事情發生過的痕跡。
-		m.errShort, m.fails, m.lastErr = "", 0, ""
-		m.trk.expireExcept("") // 真的重問,不是端出快取裡的同一則錯誤(限流的冷卻與「不支援播放」照守)
-		return m, m.poll()
+		m.saveOptimistic()
+		cp := clonePlaybackState(m.st)
+		cp.Repeat = nextMode
+		m.st = cp
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+			mc, ok := pc.(provider.PlaybackModeController)
+			if !ok {
+				return provider.ErrNotSupported
+			}
+			return mc.SetRepeat(ctx, nextMode)
+		}, false)
 	}
+
 	if m.pcErr != nil {
 		return m, nil
 	}
@@ -734,32 +1233,62 @@ func (m tuiModel) onKey(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case "p":
 		m = m.newChain()
 		return m, m.control(provider.PlaybackController.Prev, true)
+	case "s":
+		if m.st == nil {
+			return m, nil
+		}
+		if _, ok := m.cachedModeController(); !ok {
+			return m, nil
+		}
+		want := !m.st.Shuffle
+		m = m.newChain()
+		m.saveOptimistic()
+		cp := clonePlaybackState(m.st)
+		cp.Shuffle = want
+		m.st = cp
+		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error {
+			mc, ok := pc.(provider.PlaybackModeController)
+			if !ok {
+				return provider.ErrNotSupported
+			}
+			return mc.SetShuffle(ctx, want)
+		}, false)
 	case "left", "right":
 		pos, ok := m.seekTarget(msg.String() == "right")
 		if !ok {
 			return m, nil
 		}
-		m = m.newChain() // 不印提示:下一次輪詢就會把新位置寫進狀態列,那才是真的發生了
+		m = m.newChain()
+		m.saveOptimistic()
+		cp := clonePlaybackState(m.st)
+		cp.ProgressMS = pos
+		m.st = cp
+		if !m.stAt.IsZero() {
+			m.stAt = webNowClock()
+		}
 		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.Seek(ctx, pos) }, false)
 	case "+", "=", "-":
 		pct, ok := m.volTarget(msg.String() != "-")
 		if !ok {
 			return m, nil
 		}
-		m = m.newChain() // 同上:狀態列的「音量 N」會跟著更新
+		m = m.newChain()
+		m.saveOptimistic()
+		cp := clonePlaybackState(m.st)
+		cp.Device.VolumePct = pct
+		m.st = cp
 		return m, m.control(func(pc provider.PlaybackController, ctx context.Context) error { return pc.SetVolume(ctx, pct) }, false)
 	}
 	return m, nil
 }
 
-// seekTarget:目前位置 ±10 秒,夾在 [0, 長度]。沒有播放內容時不做事(沒有基準點可以加減)。
 func (m tuiModel) seekTarget(forward bool) (int, bool) {
 	if m.st == nil || m.st.Track == nil {
 		return 0, false
 	}
-	pos := m.st.ProgressMS + tuiSeekStep
+	pos := m.currentProgressMS() + tuiSeekStep
 	if !forward {
-		pos = m.st.ProgressMS - tuiSeekStep
+		pos = m.currentProgressMS() - tuiSeekStep
 	}
 	if pos < 0 {
 		pos = 0
@@ -770,8 +1299,6 @@ func (m tuiModel) seekTarget(forward bool) (int, bool) {
 	return pos, true
 }
 
-// volTarget:目前音量 ±5,夾在 [0, 100]。平台沒回音量(Apple 的 State 不帶)時不猜——
-// 但音量真的是 0(靜音)要能被 + 拉回來,所以看的是 VolumeKnown 而不是 VolumePct > 0。
 func (m tuiModel) volTarget(up bool) (int, bool) {
 	if m.st == nil || !m.st.Device.VolumeKnown {
 		return 0, false
@@ -788,8 +1315,6 @@ func blurred(in textinput.Model) textinput.Model {
 	return in
 }
 
-// splitArgs:把輸入的一行切成參數。以空白分隔,雙引號內的空白保留——清單名有空白很常見
-// (capy pl show "上班 通勤")。沒有跳脫、沒有單引號:再多就該用真的 shell 了。
 func splitArgs(line string) []string {
 	var out []string
 	var cur strings.Builder
@@ -816,21 +1341,36 @@ func splitArgs(line string) []string {
 	return out
 }
 
-// bannerFits:整隻水豚(capyBlockRows 行)畫得下,不然用一行版。寬度照舊;高度是這次才知道的(review #73):
-// 夠寬但很矮的終端機(編輯器底部的面板、tmux 上下分割)以前照樣畫 11 行的開場——畫面比終端機高,正是 PR #45 的成因。
-// 還不知道高度(0)時當作畫得下:跟以前一樣,而且第一個 WindowSizeMsg 幾乎馬上就到。
 func (m tuiModel) bannerFits() bool {
 	return m.viewWidth() >= max(tuiMinWidth, capybaraWidth()) && (m.height == 0 || m.height > capyBlockRows)
 }
 
-// alive:水豚常駐在 View 裡、一直動。要終端機夠高也夠寬、沒有關掉動畫,而且還沒定格過(frozen 是單向的)。
 func (m tuiModel) alive() bool {
 	return !m.frozen && m.motion && m.height >= tuiAliveMinHeight && m.bannerFits()
 }
 
-// View 回三種畫面:常駐的水豚 + 底部四行(終端機夠大)、開場的水豚(約三秒,終端機不夠大)、定格之後的底部四行。
-// 四行 = 分隔線 / 狀態 / 輸入 / 提示。每一行都夾在 w-1 欄:寫滿最後一欄時某些終端機會多換一行,
-// 底部就多佔一行、上緣被頂掉(前一版 19 行畫面崩掉的成因之一)。
+// progressLine:底部 4 行的第 1 行。無可計長度的播放曲目時畫純 ASCII 連字號分隔線;
+// 有曲目時渲染純 ASCII 雙色進度軸(已播 "=" + 游標 "o" 用 Accent,未播 "-" 用 Muted),嚴格夾在 w 欄。
+func (m tuiModel) progressLine(w int) string {
+	n := max(1, w)
+	if m.st == nil || m.st.Track == nil || m.st.Track.DurationMS <= 0 {
+		return m.theme.Mutedly(strings.Repeat("-", n))
+	}
+	prog := m.currentProgressMS()
+	dur := m.st.Track.DurationMS
+	pct := min(1.0, max(0.0, float64(prog)/float64(dur)))
+	pos := 0
+	if n > 1 {
+		pos = min(n-1, max(0, int(pct*float64(n-1))))
+	}
+	played := m.theme.Accented(strings.Repeat("=", pos) + "o")
+	rem := n - 1 - pos
+	if rem <= 0 {
+		return played
+	}
+	return played + m.theme.Mutedly(strings.Repeat("-", rem))
+}
+
 func (m tuiModel) View() tea.View {
 	w := m.viewWidth()
 	alive := m.alive()
@@ -838,27 +1378,18 @@ func (m tuiModel) View() tea.View {
 		return tea.NewView(m.intro())
 	}
 	if m.running {
-		// 子命令執行中只留一行空白,原因是 bubbletea 交出 / 收回終端機的方式:交出前它把游標移到畫面的
-		// 最後一行再清到底 —— 四行的話只清掉提示列,分隔線 / 狀態 / 輸入三行留在回音與子命令輸出之間;
-		// 收回後它以為游標還在畫面的最後一行,先上移「行數-1」再重畫 —— 四行就是上移三行,蓋掉子命令
-		// 輸出的最後三行(config list 五行只剩兩行)。縮成一行:清得乾淨、上移零行。
 		return tea.NewView(" ")
 	}
 	var lines []string
-	if items, ok := m.menu(); ok { // 選單向上長,壓在捲動區前面:不插進歷程(歷程是永久的,選單是暫時的)
+	if m.drawerOpen() {
+		lines = append(lines, m.drawerView(w-1)...)
+	} else if items, ok := m.menu(); ok {
 		lines = append(lines, tuiMenuView(items, m.menuSel, w-1, m.theme)...)
 	}
-	// 選單變短或收起時不縮、補空行撐到這一輪的最高點(menuHigh):bubbletea 的 inline renderer 縮短畫面
-	// 時只清底部那幾行,上面空出來的列原封不動留在捲動區 —— 打 /pl s 把選單從八列過濾到兩列,舊的六列
-	// 就疊在選單上方、再疊在下一個回音上方(現行版本就有)。推東西進捲動區(insertAbove)會把 renderer
-	// 的位置重設到畫面頂端,之後縮才清得乾淨,所以撐到下一次推為止:命令回音、? 鍵位表、printErr
-	// 都把 menuHigh 歸零(execResult 印結束碼時已經是 0)。
 	if pad := m.menuHigh - len(lines); pad > 0 && !alive {
 		lines = append(make([]string, pad), lines...)
 	}
 	if alive {
-		// 常駐的那一塊永遠是 capyBlockRows 行:水豚在的時候是水豚,選單打開時選單借牠的位置(貼著分隔線、上面補空行)。
-		// 高度固定 = 永遠不會踩到上面講的「畫面變矮留殘留」;選單最多 tuiMenuRows 列,放得下。
 		block := strings.Split(m.intro(), "\n")
 		if len(lines) > 0 {
 			block = append(make([]string, max(0, capyBlockRows-len(lines))), lines...)
@@ -866,39 +1397,35 @@ func (m tuiModel) View() tea.View {
 		lines = block
 	}
 	lines = append(lines,
-		// 分隔線刻意用 ASCII:U+2500 那排方框繪製字元是 East Asian Ambiguous,
-		// 在 CJK 終端機會變兩欄,一條滿版的線剛好翻倍成兩行(水豚踩過同一個坑)。
-		m.theme.Mutedly(strings.Repeat("-", max(1, w-1))),
+		m.progressLine(w-1),
 		m.statusLine(w-1),
-		// 輸入行不進 tuiClip:它已經帶著樣式,而 tuiClip 只會量純文字的寬度
-		// (跳脫碼會被逐位元組算進去,整行被截成一小截)。textinput 自己依 SetWidth 收邊,
-		// 而 SetWidth 給的是 w-4,留了餘裕吸收 › 這個 ambiguous 字元可能多佔的一欄。
 		m.input.View(),
 		tuiJoin(w-1, tuiSeg{"  " + m.hints(), m.theme.Mutedly}),
 	)
-	v := tea.NewView(strings.Join(lines, "\n")) // 不留結尾換行:那會被當成第五行
+	v := tea.NewView(strings.Join(lines, "\n"))
 	if c := m.input.Cursor(); c != nil {
-		c.Y += len(lines) - 2 // 輸入行是倒數第二行:上面有選單(可能沒有)、分隔線、狀態列
+		c.Y += len(lines) - 2
 		v.Cursor = c
 	}
 	return v
 }
 
-// intro:開場的那約三秒。只有水豚與招牌,底部四行還沒出現(定格之後它才是常駐的畫面)。
 func (m tuiModel) intro() string {
 	var lines []string
+	playing := m.motion && m.alive() && m.st != nil && m.st.Playing
 	if m.bannerFits() {
-		for _, l := range capybaraFrame(m.frame) {
+		for _, l := range capybaraLiveFrame(m.frame, playing) {
 			lines = append(lines, m.theme.Accented(l))
 		}
 	} else {
 		lines = append(lines, m.theme.Accented(capyOneLine))
 	}
-	return strings.Join(append(lines, "", "  "+m.theme.Mutedly(capyTagline(m.provID))), "\n")
+	tagline := capyTaglineWithTimer(m.provID, m.sleepBadge())
+	return strings.Join(append(lines, "", tuiJoin(m.viewWidth()-1, tuiSeg{"  " + tagline, m.theme.Mutedly})), "\n")
 }
 
-// statusLine:一行講完「現在怎麼了」。錯誤只留短版——整段在發生當下已經進捲動區了。
-// 短版要能接在曲目後面:限流時上一首歌還在播,只換掉整行的話畫面看起來一切正常,實際上正在被限流。
+// statusLine:底部第 2 行。先依優先級扣留右側高價值短資訊(錯誤/限流短訊 > 進度時間 > 平台與模式標記 > 音量 > 裝置),
+// 再將剩餘欄數交給曲名與歌手裁切,確保長歌名絕不會把限流提示與時間擠出畫面外。
 func (m tuiModel) statusLine(w int) string {
 	t := m.theme
 	if m.pcErr != nil {
@@ -908,51 +1435,148 @@ func (m tuiModel) statusLine(w int) string {
 	if m.stalled {
 		short = i18n.T("tui.status.stalled")
 	}
+	sb := ""
+	if m.frozen {
+		sb = m.sleepBadge()
+	}
 	if m.st == nil || m.st.Track == nil {
 		if short == "" {
 			short = i18n.T("tui.status.nothing_playing")
 		}
+		if sb != "" {
+			short += " · " + sb
+		}
 		return tuiJoin(w, tuiSeg{"  " + short, t.Mutedly})
 	}
+
 	st := m.st
 	mark := "⏸"
 	if st.Playing {
 		mark = "▶"
 	}
-	tail := " · " + ui.FormatDuration(st.ProgressMS) + " / " + ui.FormatDuration(st.Track.DurationMS)
+	prefix := "  " + mark + " "
+	pw := tuiWidth(prefix)
+	if w <= pw {
+		return tuiJoin(w, tuiSeg{prefix, t.Accented})
+	}
+	avail := w - pw
+	minSongW := min(16, max(6, avail/3))
+	if avail <= 8 {
+		minSongW = max(1, avail/2)
+	}
+	maxTailW := max(0, avail-minSongW)
+
+	type tailPiece struct {
+		order int
+		prio  int
+		text  string
+		keep  bool
+	}
+	var pieces []tailPiece
+
+	var badges []string
+	if m.provID != "" {
+		badges = append(badges, "["+m.provID+"]")
+	}
+	if st.Shuffle {
+		badges = append(badges, "[S]")
+	}
+	switch st.Repeat {
+	case provider.RepeatContext:
+		badges = append(badges, "[R]")
+	case provider.RepeatTrack:
+		badges = append(badges, "[R1]")
+	}
+	if m.wikiView != nil {
+		badges = append(badges, "[wiki]")
+	}
+	if sb != "" {
+		badges = append(badges, "["+sb+"]")
+	}
+	if len(badges) > 0 {
+		pieces = append(pieces, tailPiece{order: 0, prio: 3, text: " · " + strings.Join(badges, " ")})
+	}
+
+	pieces = append(pieces, tailPiece{
+		order: 1,
+		prio:  2,
+		text:  " · " + ui.FormatDuration(m.currentProgressMS()) + " / " + ui.FormatDuration(st.Track.DurationMS),
+	})
 	if st.Device.Name != "" {
-		tail += " · " + st.Device.Name
+		pieces = append(pieces, tailPiece{order: 2, prio: 5, text: " · " + st.Device.Name})
 	}
-	if st.Device.VolumeKnown { // 靜音要看得到「音量 0」,+/- 也才有可見的回饋
-		tail += " · " + i18n.T("tui.status.volume", "pct", st.Device.VolumePct)
+	if st.Device.VolumeKnown {
+		pieces = append(pieces, tailPiece{order: 3, prio: 4, text: " · " + i18n.T("tui.status.volume", "pct", st.Device.VolumePct)})
 	}
-	if short != "" { // 有曲目也可能同時有狀況(限流最典型):接在後面,不要蓋掉曲目
-		tail += " · " + short
+	if short != "" {
+		pieces = append(pieces, tailPiece{order: 4, prio: 1, text: " · " + short})
 	}
-	// 曲名是唯一沒有上限的段,留給它剩下的空間;tuiJoin 會在它那一段截斷。
-	return tuiJoin(w,
-		tuiSeg{"  " + mark + " ", t.Accented},
-		tuiSeg{st.Track.Title, t.Strong},
-		tuiSeg{tail, t.Mutedly},
-	)
+
+	byPrio := make([]int, len(pieces))
+	for i := range pieces {
+		byPrio[i] = i
+	}
+	slices.SortFunc(byPrio, func(a, b int) int { return pieces[a].prio - pieces[b].prio })
+
+	usedTail := 0
+	for _, idx := range byPrio {
+		tw := tuiWidth(pieces[idx].text)
+		if usedTail+tw <= maxTailW {
+			pieces[idx].keep = true
+			usedTail += tw
+		} else if pieces[idx].prio == 1 && usedTail == 0 && maxTailW >= 4 {
+			pieces[idx].text = tuiClip(pieces[idx].text, maxTailW)
+			pieces[idx].keep = true
+			usedTail += tuiWidth(pieces[idx].text)
+		}
+	}
+
+	var tailBuilder strings.Builder
+	for i := range pieces {
+		if pieces[i].keep {
+			tailBuilder.WriteString(pieces[i].text)
+		}
+	}
+	tail := tailBuilder.String()
+
+	songBudget := max(0, avail-tuiWidth(tail))
+	titleClip := tuiClip(st.Track.Title, songBudget)
+	var line strings.Builder
+	line.WriteString(t.Accented(prefix))
+	if titleClip != "" {
+		line.WriteString(t.Strong(titleClip))
+	}
+	remSong := songBudget - tuiWidth(titleClip)
+	if tuiWidth(st.Track.Title) <= songBudget && len(st.Track.Artists) > 0 && remSong >= 6 {
+		artistClip := tuiClip(" - "+strings.Join(st.Track.Artists, ", "), remSong)
+		if artistClip != "" {
+			line.WriteString(t.Mutedly(artistClip))
+		}
+	}
+	if tail != "" {
+		line.WriteString(t.Mutedly(tail))
+	}
+	return line.String()
 }
 
-// tuiPlaceholder:挑最長的、放得下的那句提示。textinput 不會把 placeholder 收得比它自己短,
-// 放不下就整行撐出終端機外 —— 底部從四行變五行。窄到連最短的都放不下就不放。寬度照當下語系的譯文量,不寫死。
 func tuiPlaceholder(w int) string {
 	for _, s := range []string{i18n.T("tui.placeholder.long"), i18n.T("tui.placeholder.short"), "pl list"} {
-		if tuiWidth(s)+4 <= w { // +4:提示符 "> " 與右邊的餘裕
+		if tuiWidth(s)+4 <= w {
 			return s
 		}
 	}
 	return ""
 }
 
-// tuiKeymap:? 印進捲動區的完整鍵位。底部只放最常用的幾個,其餘查這裡。
-// 是函式不是常數:語系在建命令樹之前才定,package 層級的值在那之前就算好了。
 func tuiKeymap() string { return i18n.T("tui.keymap") }
 
 func (m tuiModel) hints() string {
+	if m.drawerOpen() {
+		if m.drawer.mode == tuiDrawerDeck {
+			return i18n.T("tui.hint.deck")
+		}
+		return i18n.T("tui.hint.drawer")
+	}
 	if _, ok := m.menu(); ok {
 		return i18n.T("tui.hint.menu")
 	}
@@ -968,24 +1592,22 @@ func (m tuiModel) hints() string {
 	return i18n.T("tui.hint.playing")
 }
 
-// tuiQuietStderr:429 退避與等 token 鎖的提示不能印進畫面(狀態列另外會說「等待平台回應」)。以前只在啟動前建一次 provider,
-// 等鎖的提示印在畫面出來之前;跟著正在播的平台走之後,輪詢期間也會建。回傳還原的函式。
 func tuiQuietStderr() func() {
 	origBackoff, origLock := provider.BackoffStderr, auth.LockStderr
 	provider.BackoffStderr, auth.LockStderr = io.Discard, io.Discard
 	return func() { provider.BackoffStderr, auth.LockStderr = origBackoff, origLock }
 }
 
-// tuiRunProgram:runProgram 的測試替換點(驗 runTUI 在程式執行期間把提示丟掉)。
 var tuiRunProgram = runProgram
 
-// runTUI:互動式介面的進入點。取不到 provider 或播放遙控都不致命——介面照開,使用者可以在命令列
-// 跑 capy auth login。測試替換點。
 var runTUI = func(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	exe, err := os.Executable()
 	if err != nil {
-		exe = "" // 命令列停用,其餘照常
+		exe = ""
+	}
+	if cfg, err := config.Load(); err == nil && cfg.Theme != "" {
+		ui.ApplyTheme(cfg.Theme)
 	}
 	provFlag := ""
 	if cmd.Flags().Changed(flagProvider) {
@@ -993,13 +1615,14 @@ var runTUI = func(cmd *cobra.Command) error {
 	}
 	provID := provFlag
 	if provID == "" {
-		provID = loadDefaultProvider() // 第一輪回來之前先顯示預設平台
+		provID = loadDefaultProvider()
 	}
 	trk := &nowTracker{ctx: ctx, timeout: tuiStateTimeout}
 	m := newTUIModel(ctx, ui.DefaultTheme, exe, provID, provFlag, trk, watchPollSpotify)
+	if m.sleep != nil {
+		defer m.sleep.Close()
+	}
 	defer tuiQuietStderr()()
-	// 讀不到播放狀態不會讓程式結束(見 applyState 的 stalled),所以這裡沒有 fatal 要轉譯:
-	// 離開一律是使用者按 q / Esc(exit 0)、按 Ctrl-C 或從外面來的訊號(exit 130 / 143)——收尾在 runProgram。
 	_, err = tuiRunProgram(ctx, m, cmd.OutOrStdout())
 	return err
 }

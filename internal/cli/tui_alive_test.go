@@ -85,7 +85,7 @@ func TestTUIAliveMenuBorrowsTheCapybaraBlock(t *testing.T) {
 	if len(lines) != capyBlockRows+4 || strings.Contains(m.View().Content, capyFeet) {
 		t.Fatalf("選單開著:高度不變、水豚讓位:%d 行\n%s", len(lines), m.View().Content)
 	}
-	if !strings.Contains(lines[capyBlockRows-1], "pl ") || !strings.HasPrefix(ansi.Strip(lines[capyBlockRows]), "---") {
+	if !strings.Contains(lines[capyBlockRows-1], "pl ") || !strings.Contains(ansi.Strip(lines[capyBlockRows]), "o---") {
 		t.Errorf("選單要貼著分隔線:\n%s", m.View().Content)
 	}
 	m = typeKeys(t, m, " s") // 過濾變短:補空行,不縮

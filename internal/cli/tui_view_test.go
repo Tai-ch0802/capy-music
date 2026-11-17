@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -444,5 +445,56 @@ func TestTUIJoinStopsAtTruncation(t *testing.T) {
 	// 沒截斷時每一段都要在
 	if out := tuiJoin(40, tuiSeg{"a", nil}, tuiSeg{"b", nil}, tuiSeg{"c", nil}); out != "abc" {
 		t.Errorf("放得下就不該丟段:%q", out)
+	}
+}
+
+// 右側高優先預算:超長歌名與歌手名絕不可吃掉限流警告與時間讀數;同時驗證純 ASCII 進度軸與本地 1s 平滑讀秒。
+func TestTUIStatusLineRightPriorityProgressBarAndSmoothClock(t *testing.T) {
+	now := time.Date(2026, 11, 17, 20, 0, 0, 0, time.UTC)
+	origClock := webNowClock
+	webNowClock = func() time.Time { return now }
+	t.Cleanup(func() { webNowClock = origClock })
+
+	st := playingState()
+	st.Track.Title = strings.Repeat("無敵超長測試歌名", 20)
+	st.Shuffle = true
+	st.Repeat = provider.RepeatContext
+	f := &watchFake{st: st}
+	m := newTestTUI(t, f)
+	m = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24}, false)
+	m = step(t, m, tuiStateMsg{st: st, gen: m.gen}, false)
+	m = step(t, m, tuiStateMsg{err: &provider.RateLimitError{Seconds: 30, Message: "429"}, retryAt: now.Add(30 * time.Second), gen: m.gen}, false)
+
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("底部嚴格維持 4 行,got %d", len(lines))
+	}
+	// 第 0 行:純 ASCII 進度軸(含 =, o, -)
+	if !strings.Contains(lines[0], "=") || !strings.Contains(lines[0], "o") || !strings.Contains(lines[0], "-") {
+		t.Errorf("第 0 行應渲染純 ASCII 進度軸:%q", lines[0])
+	}
+	for _, r := range lines[0] {
+		if r > 127 {
+			t.Errorf("進度軸含非 ASCII 字元 %q:%q", r, lines[0])
+		}
+	}
+	// 第 1 行:即使歌名 160 字寬,右側限流短訊與時間 1:23 / 4:09 仍完整保留!
+	if !strings.Contains(lines[1], "限流") || !strings.Contains(lines[1], "1:23 / 4:09") {
+		t.Errorf("超長歌名不得吃掉右側限流警告與時間:%q", lines[1])
+	}
+	if got := wantWidth(lines[1]); got > 79 {
+		t.Errorf("狀態列寬度 %d 超過 w-1 (79):%q", got, lines[1])
+	}
+
+	// 本地 1s 平滑讀秒:推進單調時鐘 4 秒,零 State() 呼叫即可顯示 1:27 / 4:09,且超過時長時夾在 4:09 / 4:09。
+	now = now.Add(4 * time.Second)
+	linesAfter := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if !strings.Contains(linesAfter[1], "1:27 / 4:09") {
+		t.Errorf("本地時鐘推進 4s 後應顯示 1:27 / 4:09:%q", linesAfter[1])
+	}
+	now = now.Add(10 * time.Minute)
+	linesClamped := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if !strings.Contains(linesClamped[1], "4:09 / 4:09") {
+		t.Errorf("本地讀秒不得超過歌曲總長 4:09:%q", linesClamped[1])
 	}
 }

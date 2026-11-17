@@ -22,6 +22,8 @@ func newEnglishTUI(t *testing.T, w int) tuiModel {
 	withLanguage(t, "en") // 先換語系再建 model:placeholder 在 newTUIModel 裡就算好了
 	st := playingState()
 	st.Track.Title = "Party Animal"
+	st.Track.Artists = []string{"Mayday"}
+	st.Track.Album = "History of Tomorrow"
 	m := newTestTUI(t, &watchFake{st: st})
 	return step(t, m, tea.WindowSizeMsg{Width: w, Height: 24}, false)
 }
@@ -72,13 +74,17 @@ func TestEnglishTUIHintsAreWholeAt80(t *testing.T) {
 		setup func(tuiModel) tuiModel
 		want  string
 	}{
-		"playing":    {func(m tuiModel) tuiModel { return m }, "space play/pause · ←→ ±10 s · / commands · ? keys · q quit"},
+		"playing":    {func(m tuiModel) tuiModel { return m }, "space play/pause · ←→ ±10 s · o deck · / cmd · ? keys · q quit"},
 		"stalled":    {func(m tuiModel) tuiModel { m.stalled = true; return m }, "r reconnect · / commands · ? keys · q quit"},
 		"noplayback": {func(m tuiModel) tuiModel { m.pcErr = provider.ErrNotSupported; return m }, "/ commands · ? keys · q quit"},
 		"typing": {func(m tuiModel) tuiModel { return step(t, m, tea.KeyPressMsg{Code: ':'}, false) },
 			"↑↓ history · Enter run · Esc clear · Ctrl-C quit"},
 		"menu": {func(m tuiModel) tuiModel { return step(t, m, tea.KeyPressMsg{Code: '/'}, false) },
 			"↑↓ select · Tab/⏎ complete · Esc close"},
+		"deck": {func(m tuiModel) tuiModel { return step(t, m, tea.KeyPressMsg{Code: 'o', Text: "o"}, false) },
+			"↑↓ select · Tab switch tab · Enter apply · Esc close"},
+		"drawer": {func(m tuiModel) tuiModel { return step(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"}, false) },
+			"↑↓ select · Enter apply · Esc close"},
 	}
 	for name, c := range cases {
 		m := c.setup(newEnglishTUI(t, 80))
@@ -127,7 +133,7 @@ func TestEnglishTUIMenuRowsFit(t *testing.T) {
 				t.Errorf("w=%d 第 %d 行寬 %d:%q", w, i, got, l)
 			}
 		}
-		if !strings.HasPrefix(ansi.Strip(lines[len(lines)-4]), "--") || !strings.HasPrefix(ansi.Strip(lines[len(lines)-2]), ">") {
+		if !strings.Contains(ansi.Strip(lines[len(lines)-4]), "o---") || !strings.HasPrefix(ansi.Strip(lines[len(lines)-2]), ">") {
 			t.Errorf("w=%d 分隔線 / 輸入行的位置不對:%q", w, lines)
 		}
 	}
@@ -145,7 +151,15 @@ func TestEnglishTUIStatusLine(t *testing.T) {
 		want  string
 	}{
 		{"playing", func(m tuiModel) tuiModel { return m },
-			"  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50"},
+			"  ▶ Party Animal - Mayday · [spotify] · 1:23 / 4:09 · MacBook Pro · volume 50"},
+		{"modes and wiki", func(m tuiModel) tuiModel {
+			cp := clonePlaybackState(m.st)
+			cp.Shuffle = true
+			cp.Repeat = provider.RepeatTrack
+			m.st = cp
+			m.wikiView = &cachedWikiView{Title: "Party Animal"}
+			return m
+		}, "  ▶ Party Animal - Mayday · [spotify] [S] [R1] [wiki] · 1:23 / 4:09 · MacBook Pro · volume 50"},
 		{"nostate", func(m tuiModel) tuiModel { m.st = nil; return m }, "  Nothing playing"},
 		{"stalled", func(m tuiModel) tuiModel { m.st, m.stalled = nil, true; return m }, "  Polling stopped (r to retry)"},
 		{"noplayback", func(m tuiModel) tuiModel {
@@ -161,16 +175,34 @@ func TestEnglishTUIStatusLine(t *testing.T) {
 		{"rate limited", func(m tuiModel) tuiModel {
 			at := time.Date(2026, 9, 27, 14, 5, 0, 0, time.Local)
 			return step(t, m, tuiStateMsg{st: m.st, err: &provider.RateLimitError{Seconds: 30}, retryAt: at, gen: m.gen}, false)
-		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · Rate limited; retrying at 14:05:00"},
+		}, "  ▶ Party Animal - Mayday · [spotify] · 1:23 / 4:09 · Rate limited; retrying at 14:05:00"},
 		{"control failed", func(m tuiModel) tuiModel {
 			return step(t, m, tuiStateMsg{err: boom, fromCtl: true, gen: m.gen}, false)
-		}, "  ▶ Party Animal · 1:23 / 4:09 · MacBook Pro · volume 50 · That action failed (see above)"},
+		}, "  ▶ Party Animal - Ma.. · [spotify] · 1:23 / 4:09 · volume 50 · That action failed (see above)"},
 	}
 	for _, c := range cases {
 		recordPrintln(t)
 		m := c.setup(newEnglishTUI(t, 100))
 		if got := ansi.Strip(m.statusLine(99)); got != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestEnglishTUIDrawersFitWithoutCJK(t *testing.T) {
+	t.Cleanup(func() { ui.ApplyTheme(ui.DefaultThemeName) })
+	for _, w := range []int{30, 40, 80} {
+		for _, key := range []rune{'o', 'f', 'C'} {
+			m := newEnglishTUI(t, w)
+			m = step(t, m, tea.KeyPressMsg{Code: key, Text: string(key)}, false)
+			for i, l := range strings.Split(m.View().Content, "\n") {
+				if got := wantWidth(l); got > w-1 {
+					t.Errorf("w=%d key=%c line %d width %d > w-1:%q", w, key, i, got, l)
+				}
+				if hasCJK(l) {
+					t.Errorf("w=%d key=%c line %d has CJK:%q", w, key, i, l)
+				}
+			}
 		}
 	}
 }
