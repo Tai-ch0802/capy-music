@@ -12,7 +12,7 @@ jobs:
         with:
           fetch-depth: 0 # changelog 要看得到上一個 tag
           persist-credentials: false # GoReleaser 走 GITHUB_TOKEN 環境變數建 Release,不需要 git 憑證
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: stable
           # 發版不吃快取:快取是跨 workflow 共用的,被污染的 module / build cache
